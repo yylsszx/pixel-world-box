@@ -290,6 +290,10 @@ export const ICONS: Record<string, string[]> = {
     '.ggggg..', 'gGgggGg.', '.ggkgg..', '..GGG...',
     '.NnNnN..', '.NnNnN..', '.NnNnN..', '..N.N...',
   ],
+  lich: [
+    '..dddd..', '.dffffd.', '.dfvfvf.', '.dffffd.',
+    'ddDDDDdd', '.dDppDd.', '.dDppDd.', '.d.d.d..',
+  ],
   mage: [
     '....k...', '...kkk..', '..kkkkk.', '...vww..',
     '...vww..', '..vvvv..', '.vvvvvv.', '..y.vy..',
@@ -519,6 +523,7 @@ export const TOOLS: ToolDef[] = [
   { id: 'angel', label: '天使', desc: '光明使者：圣光治愈凡间众生，圣剑专为亡灵与恶魔出鞘', tab: 'creatures', icon: 'angel', single: true },
   { id: 'phoenix', label: '凤凰', desc: '浴火神鸟：烈焰为羽，陨落后自灰烬中重生（至多三次）', tab: 'creatures', icon: 'phoenix', single: true },
   { id: 'ent', label: '树人', desc: '森林守护者：播撒种子令森林扩张，为林间生灵扑灭火魔', tab: 'creatures', icon: 'ent', single: true },
+  { id: 'lich', label: '巫妖', desc: '死灵领主：将战场尸骸复生为骷髅，编入永夜的亡者军团', tab: 'creatures', icon: 'lich', single: true },
   // animals
   { id: 'sheep', label: '绵羊', desc: '温顺可爱，会咩咩叫', tab: 'animals', icon: 'sheep' },
   { id: 'wolf', label: '狼', desc: '成群猎食绵羊', tab: 'animals', icon: 'wolf' },
@@ -670,7 +675,7 @@ export const RACE_TOOL: Record<string, number> = {
   bear: R.BEAR, dragon: R.DRAGON, deer: R.DEER, penguin: R.PENGUIN, camel: R.CAMEL, scorpion: R.SCORPION, snake: R.SNAKE, snowwolf: R.SNOWWOLF,
   skeleton: R.SKELETON, demon: R.DEMON, mage: R.MAGE,
   lizard: R.LIZARD, goblin: R.GOBLIN, troll: R.TROLL, ogre: R.OGRE, whitewalker: R.WHITEWALKER, vampire: R.VAMPIRE,
-  kraken: R.KRAKEN, sandworm: R.SANDWORM, basilisk: R.BASILISK, angel: R.ANGEL, phoenix: R.PHOENIX, ent: R.ENT,
+  kraken: R.KRAKEN, sandworm: R.SANDWORM, basilisk: R.BASILISK, angel: R.ANGEL, phoenix: R.PHOENIX, ent: R.ENT, lich: R.LICH,
 };
 
 // —— 生物工具：统一挂「数量」参数（巨型异兽上限 8，普通生物上限 20）——

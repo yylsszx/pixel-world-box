@@ -1303,6 +1303,83 @@ export function drawEnt(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
   ctx.fillRect(px, py + 8, 1, 1);
 }
 
+/** 巫妖：悬浮的死灵领主 —— 铁冠骷髅颜/绿瞳灼灼/紫辉命匣/褴褛袍裾无足而行/绿魂火公转 */
+export function drawLich(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const isMoving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  const dim = u.hp < u.maxHp * 0.4;
+  const hurtFlash = u.hurt > 0;
+  // 悬浮 bob（14 帧周期，比天使更迟缓阴沉）+ 低血时坠得更高忽低（命匣渐弱）
+  const bob = ((frame % 14) < 7) ? 0 : 1;
+  const fade = dim && (frame % 22) < 4 ? 1 : 0; // 命匣不稳：低血周期性下沉 1px
+  const y = py - 1 - bob + fade;
+  const robe = hurtFlash ? '#c98a9e' : (dim ? '#2c2834' : '#37333b');  // 袍身（受击闪紫灰）
+  const robeD = hurtFlash ? '#8d5570' : '#1f1d24';                      // 袍影
+  const bone = '#f2ead8';                                                // 骨白
+  // —— 褴褛兜帽袍（上窄下展，底部三缕袍裾随移动飘散成雾）——
+  ctx.fillStyle = robe;
+  ctx.fillRect(px - 2, y, 5, 1);            // 兜帽顶
+  ctx.fillRect(px - 3, y + 1, 7, 2);        // 肩部
+  ctx.fillRect(px - 2, y + 3, 5, 3);        // 袍身
+  ctx.fillStyle = robeD;
+  ctx.fillRect(px - 3, y + 2, 1, 4);        // 左褶
+  ctx.fillRect(px + 2, y + 2, 1, 4);        // 右褶（对称暗褶）
+  // 袍裾（无足悬浮：底缘三缕碎布，移动时雾化拖尾）
+  ctx.fillStyle = robeD;
+  ctx.fillRect(px - 2, y + 6, 1, 1);
+  ctx.fillRect(px, y + 6, 1, 1);
+  ctx.fillRect(px + 2, y + 6, 1, 1);
+  if (isMoving && frame % 8 < 3) {
+    ctx.fillStyle = 'rgba(55,51,59,0.6)';
+    ctx.fillRect(px - f * 3, y + 6, 1, 1); // 身后飘散的袍雾
+  }
+  // —— 铁冠（三尖暗铁冠，中央嵌紫晶）——
+  ctx.fillStyle = '#3a342c';
+  ctx.fillRect(px - 2, y - 1, 1, 1);
+  ctx.fillRect(px, y - 1, 1, 1);
+  ctx.fillRect(px + 2, y - 1, 1, 1);
+  ctx.fillRect(px - 2, y - 2, 5, 1);        // 冠箍
+  ctx.fillStyle = '#b56cf0';
+  ctx.fillRect(px, y - 2, 1, 1);            // 中央紫晶（命匣同辉）
+  // —— 骷髅颜（兜帽阴影中浮出的白骨面孔）——
+  ctx.fillStyle = bone;
+  ctx.fillRect(px - 1, y + 1, 3, 2);        // 面骨
+  ctx.fillStyle = '#14100c';
+  ctx.fillRect(px - 1, y + 2, 3, 1);        // 鼻腔暗缝
+  // 绿瞳灼灼（4 帧呼吸明暗；低血时眨灭——魂火将熄）
+  const glow = dim ? (frame % 16 < 10) : (frame % 8 < 6);
+  ctx.fillStyle = glow ? '#64c95d' : '#2c5e24';
+  ctx.fillRect(px - 1, y + 1, 1, 1);
+  ctx.fillRect(px + 1, y + 1, 1, 1);
+  // —— 命匣（胸前紫辉宝石：呼吸脉动，巫妖的不死本源）——
+  ctx.fillStyle = frame % 12 < 6 ? '#b56cf0' : '#8a4bd0';
+  ctx.fillRect(px, y + 4, 1, 1);
+  // —— 双手骷骨（袍袖前伸，持骨杖姿势；移动时前后摆）——
+  ctx.fillStyle = bone;
+  const armSw = isMoving ? ((frame >> 3) & 1 ? 1 : -1) : 0;
+  ctx.fillRect(px - 4, y + 3 + armSw, 1, 1);
+  ctx.fillRect(px + 4, y + 3 - armSw, 1, 1);
+  // —— 灵魂火环绕（2 颗绿魂火确定性公转：巫妖身边的亡者低语）——
+  const orbT = frame * 0.11;
+  for (let k = 0; k < 2; k++) {
+    const ox = Math.round(Math.cos(orbT + k * Math.PI) * 4);
+    const oy = Math.round(Math.sin(orbT + k * Math.PI) * 2);
+    ctx.fillStyle = k === 0 ? '#64c95d' : '#3f8f4a';
+    ctx.fillRect(px + ox, y + 2 + oy, 1, 1);
+  }
+  // —— 地面阴魂圈（脚下暗紫雾圈：死亡气息浸染大地）——
+  ctx.fillStyle = 'rgba(138,75,208,0.35)';
+  ctx.fillRect(px - 3, py + 8, 1, 1);
+  ctx.fillRect(px + 3, py + 8, 1, 1);
+  ctx.fillRect(px, py + 8, 1, 1);
+  if (dim && frame % 20 < 5) {
+    ctx.fillStyle = 'rgba(100,201,93,0.5)';
+    ctx.fillRect(px - 1 - ((frame >> 2) & 3), py + 8, 1, 1); // 低血：魂火逸散
+  }
+}
+
 /** 巨魔：耸肩佝背的山岭巨怪（5 宽 8 高）——苔藓肩斑/长臂及地/獠牙/再生微光 */
 export function drawTroll(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;

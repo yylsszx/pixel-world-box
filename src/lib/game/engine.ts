@@ -1364,6 +1364,15 @@ export class GameEngine {
       this.fx('spark', x, y - 1, 24);
       this.shake = Math.max(this.shake, 3); // 沉重的脚步
     }
+    if (!opts?.silent && race === R.LICH) {
+      this.toast('死灵的号角长鸣——巫妖自坟茔中升起', 'danger');
+      this.addEvent('lich', '大地渗出冷雾，巫妖携着亡者的低语升起——战场的骸骨将应声而起，编入永夜的军团', { x, y });
+      this.fx('spawn', x, y, 40);
+      this.fx('smoke', x, y - 1, 30);
+      this.fx('skull', x, y - 2, 30);
+      this.shake = Math.max(this.shake, 4);
+      this.onSound?.('horn');
+    }
     if (!opts?.silent && race === R.MAGE) {
       this.toast('一位神秘的法师现身了', 'info');
     }
@@ -1919,7 +1928,8 @@ export class GameEngine {
     // 天使（R.ANGEL=28）/ 凤凰（R.PHOENIX=29）/ 树人（R.ENT=30）无需专门分支：恶魔/亡灵五族/巨龙/克拉肯/沙虫/蛇怪的
     // 「与众生为敌」分支对称覆盖三者（双侧为敌 = 圣剑/焰爪/枝干重击自动出鞘）；对无辜者
     // 由全零旗标自然放行 —— 与 wasm is_enemy_full（rust-core lib.rs）逐位一致。
-    // ⚠️ 若在此新增天使/凤凰/树人特判，必须同步 rust-core/src/lib.rs 并重建 wbcore.wasm。
+    // 巫妖（R.LICH=31）走 hostile+undead 既有亡灵逻辑（与骷髅同构），亦无需专门分支。
+    // ⚠️ 若在此新增天使/凤凰/树人/巫妖特判，必须同步 rust-core/src/lib.rs 并重建 wbcore.wasm。
     if (a.race === R.ZOMBIE || b.race === R.ZOMBIE) return a.race !== b.race;
     if (a.race === R.SKELETON || b.race === R.SKELETON) return a.race !== b.race; // 亡灵与众人为敌
     if (a.race === R.WHITEWALKER || b.race === R.WHITEWALKER) return a.race !== b.race; // 寒冰之主与众生为敌
@@ -2408,6 +2418,8 @@ export class GameEngine {
     if (this.phoenixAshes.length > 0) this.phoenixAshTick();
     // —— 树人播种（引擎级通道：和平野生单位被批内核接管；植树/灭火是纯地形操作无需 rust 镜像）——
     if (this.tickCount % 10 === 0) this.entGroveTick();
+    // —— 巫妖死灵复生（引擎级通道：复生是「尸体→新单位」的引擎操作，与批内核战斗无冲突）——
+    if (this.tickCount % 12 === 0) this.lichRaiseTick();
     // —— 深时引擎：动态温度场（每 120 tick：纬度+海拔+大陆度+灰烬+洋流异常耦合）——
     if (this.tickCount % 120 === 27) this.worldsim.tempTick();
     // —— 深时引擎：冰川系统（每 240 tick：积累/消融/进退——火山冬反馈环）——
@@ -11986,6 +11998,40 @@ export class GameEngine {
           }
         }
       }
+    }
+  }
+
+  /** 巫妖死灵复生（引擎级通道）：永夜亡者军团的源泉 ——
+   *  每 12 tick 扫描一次，每只巫妖拾取 r=4 内最陈旧的一具尸体，以死灵术唤起为骷髅：
+   *  尸体被消耗（从 corpses 移除），新骷髅走 spawnUnit 常规注册 + 打包（与批内核无冲突）。
+   *  细节：蛇怪石像跳过（石化凝视连灵魂都封住了，死灵术唤不醒）；
+   *  全图骷髅 > 40 时停手（军团也需节制，防尸山血海战场被无限刷穿）。
+   *  与树人播种构成正邪对偶：一个播撒生，一个收割死。 */
+  private lichRaiseTick() {
+    let skeletons = 0;
+    for (const s of this.units) if (!s.dead && s.race === R.SKELETON) skeletons++;
+    if (skeletons > 40) return;
+    let events = 0;
+    for (const l of this.units) {
+      if (l.dead || l.race !== R.LICH) continue;
+      let best = -1;
+      let bestAge = -1;
+      for (let i = 0; i < this.corpses.length; i++) {
+        const c = this.corpses[i];
+        if (c.stone) continue; // 石像：灵魂被封在石壳里
+        const dx = c.x - l.x;
+        const dy = c.y - l.y;
+        if (dx * dx + dy * dy > 16) continue; // 4²
+        if (c.age > bestAge) { bestAge = c.age; best = i; }
+      }
+      if (best < 0) continue;
+      const c = this.corpses[best];
+      const nu = this.spawnUnit(R.SKELETON, c.x, c.y, { silent: true });
+      if (!nu) continue; // 种族上限等分支：尸体保留，下轮再试
+      this.corpses.splice(best, 1);
+      this.fx('skull', c.x, c.y - 1, 26);
+      this.fx('smoke', c.x, c.y, 16);
+      if (events < 3) { this.addEvent('lich', '骸骨应声而起——巫妖的死灵术将亡者重新编入军团', { x: c.x, y: c.y }); events++; }
     }
   }
 
