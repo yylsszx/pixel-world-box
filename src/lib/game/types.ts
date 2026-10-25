@@ -411,6 +411,8 @@ export interface Unit {
   /** 搁浅归海目标缓存（每 20 tick 重搜最近水体，逐 tick 断言 tx/ty 对抗内核覆盖；不入档） */
   beachTx?: number;
   beachTy?: number;
+  /** 水生猎游粘性目标（猎手扑杀/导向共用：目标鱼 id，存活且 ≤40 格则粘住不换 — 不入档） */
+  beachTargetId?: number;
   /** 出生时的科技伤害乘数快照（科技回溯重算基准：completeTech 按新旧差重算；不入档，读档时按当前科技初始化） */
   tDmg?: number;
   /** 出生时的科技生命乘数快照（同 tDmg） */

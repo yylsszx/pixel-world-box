@@ -2138,7 +2138,10 @@ export class GameEngine {
     if (race === R.FISH) return 280;
     if (race === R.CRAB) return 90;
     if (race === R.TURTLE) return 90;
-    if (race === R.SHARK) return 40;
+    // 鲨鱼稀缺（Task 98 重校准 40→16）：旧 cap 40 + 扑杀预算 ≤10/轮 = 不可持续规模 —— boom 至
+    // 20+ 后食物摊薄、集体饿毙归零（吸收态），只能靠迁徙反复重播。16 头 × 0.5 food/tick = 8
+    // food/tick，预算 10 杀/轮（250 food）可持续供给 —— 舰队稳定在预算可养活的规模内。
+    if (race === R.SHARK) return 16;
     const d = this.dynRaces.get(race);
     if (!d) return 40;
     if (d.cap) return d.cap;
@@ -2597,6 +2600,8 @@ export class GameEngine {
     if (this.tickCount % 600 === 61) this.wildlifeReboundTick();
     // —— 猎手扑杀（引擎级通道：内核捕食者追不上猎物的能量链补环 —— 每 20 tick 一轮扑杀窗口）——
     if (this.tickCount % 20 === 7) this.predatorHuntTick();
+    // —— 鲨群繁衍辅助（引擎级通道：低种群地板机制 —— 肥鲨诞崽，<8 启动；内核繁衍率救不回震荡期）——
+    if (this.tickCount % 240 === 13) this.sharkBreedTick();
     // —— 深时引擎：动态温度场（每 120 tick：纬度+海拔+大陆度+灰烬+洋流异常耦合）——
     if (this.tickCount % 120 === 27) this.worldsim.tempTick();
     // —— 深时引擎：冰川系统（每 240 tick：积累/消融/进退——火山冬反馈环）——
@@ -12486,33 +12491,61 @@ export class GameEngine {
         u.beachT = 0;
         if ((u.fleeT ?? 0) > 0) { u.beachTx = undefined; u.beachTy = undefined; continue; } // 逃亡交给内核 AI
         if (def.predator) {
-          // 猎游启动阈值 58：鲨鱼 food 69 起步 -0.5/tick —— 晚启一步就少 26 格追击余量（实测远鱼 24 格即饿毙）
-          if ((u.food ?? 70) >= 58) { u.beachTx = undefined; u.beachTy = undefined; continue; } // 饱食猎游 → 内核自便
-          // 饥饿猎游：导向最近的水中猎物（每 20 tick 重采样，逐 tick 断言 tx/ty）
+          // 全时段猎游导向（Task 98 终版）：旧设计「饱食 ≥300 交内核自便」会把肥鲨随机游走带离
+          // 鱼群几十格，饿到阈值再导向 —— 散逸-通勤循环在多种子长程下反复把舰队送进死亡螺旋
+          // （yr38-46 十二鲨四年零扑杀 / yr12 后击杀归零等多起实证）。终版：任何食物水平都导向
+          // 最近猎物 —— 鲨群定居猎场；防滥杀由扑杀出手门（≤300）+ 弹性预算 + 猎物存量平滑
+          // 耦合把守，肥鲨只是守在鱼群边不落爪。
+          // 饥饿猎游：导向水中猎物（每 20 tick 重采样，逐 tick 断言 tx/ty）
           if (retarget || u.beachTx == null || u.beachTy == null) {
-            let best: Unit | null = null;
-            let bd = Infinity;
-            for (const q of this.units) {
-              if (q.dead || q.race === u.race) continue;
-              if (RACES[q.race].isCiv || !this.isHerbivoreRace(q.race)) continue;
-              const qx = Math.floor(q.x), qy = Math.floor(q.y);
-              const qj = qy * W + qx;
-              if (!isWater(this.terrain[qj])) continue; // 只追水中猎物（防导向陆地扑空搁浅）
-              // 实体水过滤：猎物须身处 ≥5 邻水的实心水体 —— 岸边浅洼里的鱼不去追
-              // （否则猎游目标与归海导向拔河，鲨鱼会追着一尾岸沟鱼活活搁浅而死 —— Task 96 实测）
-              let wn = 0;
-              for (let ny = -1; ny <= 1; ny++) for (let nx = -1; nx <= 1; nx++) {
-                const xx = qx + nx, yy = qy + ny;
-                if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
-                if (isWater(this.terrain[yy * W + xx])) wn++;
+            // 粘性目标 + 散签初选（Task 98 终版）：纯全局最近 → 全队锁死同一尾鱼（perpetual 惊逃
+            // 集体饿毙）；纯随机六选一 → 每 20 tick 换目标之字形游走永不闭合（实测击杀率再度塌陷）。
+            // 终版：目标鱼存活且 ≤40 格则粘住不换；失效才在最近 6 名中重新抽签 —— 单追可闭合，
+            // 初选分散防狗堆。
+            let tgt: Unit | null = null;
+            const tid = (u.beachTargetId ?? -1);
+            if (tid >= 0) {
+              const cand = this.units.find((q) => q.id === tid && !q.dead);
+              if (cand && !RACES[cand.race].isCiv) {
+                const cj = Math.floor(cand.y) * W + Math.floor(cand.x);
+                const dx = cand.x - u.x, dy = cand.y - u.y;
+                if (isWater(this.terrain[cj]) && dx * dx + dy * dy <= 1600) tgt = cand; // ≤40 格粘住（惊逃远逃仍尾随 —— 内核惊逃有间歇，远距粘性防换目标抖动）
               }
-              if (wn < 6) continue;
-              const dx = q.x - u.x, dy = q.y - u.y;
-              const d2 = dx * dx + dy * dy;
-              if (d2 < bd) { bd = d2; best = q; }
             }
-            if (best) { u.beachTx = best.x; u.beachTy = best.y; }
+            if (!tgt) {
+              const cands: { q: Unit; d2: number }[] = [];
+              for (const q of this.units) {
+                if (q.dead || q.race === u.race) continue;
+                if (RACES[q.race].isCiv || !this.isHerbivoreRace(q.race)) continue;
+                const qx = Math.floor(q.x), qy = Math.floor(q.y);
+                const qj = qy * W + qx;
+                if (!isWater(this.terrain[qj])) continue; // 只追水中猎物（防导向陆地扑空搁浅）
+                // 实体水过滤：猎物须身处 ≥5 邻水的实心水体 —— 岸边浅洼里的鱼不去追
+                // （否则猎游目标与归海导向拔河，鲨鱼会追着一尾岸沟鱼活活搁浅而死 —— Task 96 实测）
+                let wn = 0;
+                for (let ny = -1; ny <= 1; ny++) for (let nx = -1; nx <= 1; nx++) {
+                  const xx = qx + nx, yy = qy + ny;
+                  if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+                  if (isWater(this.terrain[yy * W + xx])) wn++;
+                }
+                if (wn < 6) continue;
+                const dx = q.x - u.x, dy = q.y - u.y;
+                cands.push({ q, d2: dx * dx + dy * dy });
+              }
+              if (cands.length > 0) {
+                cands.sort((a, b) => a.d2 - b.d2);
+                const top = cands.slice(0, Math.min(6, cands.length));
+                const pick = top[Math.floor(this.rng() * top.length)];
+                tgt = pick.q;
+              }
+            }
+            u.beachTargetId = tgt ? tgt.id : undefined;
+            if (tgt) { u.beachTx = tgt.x; u.beachTy = tgt.y; }
             else { u.beachTx = undefined; u.beachTy = undefined; }
+          } else if (u.beachTargetId != null) {
+            // 粘性目标的逐 tick 坐标刷新：目标鱼在游，断言坐标必须跟随（否则追着旧坐标扑空）
+            const tgt = this.units.find((q) => q.id === u.beachTargetId && !q.dead);
+            if (tgt) { u.beachTx = tgt.x; u.beachTy = tgt.y; }
           }
           if (u.beachTx != null && u.beachTy != null) { u.tx = u.beachTx; u.ty = u.beachTy; }
           continue;
@@ -12556,22 +12589,41 @@ export class GameEngine {
    *  让饥饿的野生捕食者（food<45）对 r=1.6 内最近的野生猎物发动扑杀 —— 走 u.dead 常规收尸
    *  （肉掉落/血泊/腐食回充自然接管）。预算弹性化（Task 97）：满额陆 8/水 4 防屠杀踩踏，且随
    *  猎物存量分级收缩（≤150 减半 / ≤60 收缩 / ≤25 生态保护期禁猎）—— 狼把羊吃到 0 的整群
-   *  清盘是吸收态，猎物崩溃期收刀给种群喘息窗口 —— Lotka-Volterra 的捕食腿 + 保险丝。 */
+   *  清盘是吸收态，猎物崩溃期收刀给种群喘息窗口 —— Lotka-Volterra 的捕食腿 + 保险丝。水生预算
+   *  随饿鲨规模伸缩（Task 98：4-12 弹性 + fishAlive≤40 保险丝）—— 猎场网络修通后鲨群恢复，
+   *  固定 4/轮连舰队折旧都盖不住（实测全员 food 贴地）。 */
   private predatorHuntTick() {
     // 扑杀预算水陆分账：units 数组序是「先到先得」—— 狼群爆发期（60-84 饿狼）会把全局名额
     // 垄断到海里一只也轮不上（Task 96 实测鲨鱼在狼 boom 世代集体饿毙的隐形之手）
     // 猎物存量普查（O(n) 每 20 tick 一次）：弹性预算的依据 —— 狼把羊吃到 0 的整群清盘
     // 是吸收态，迁徙重建要 3.3 年起步；猎物崩溃期收刀，给猎物种群一个喘息窗口（Task 97）
     let preyAlive = 0;
+    let fishAlive = 0;
     for (const q of this.units) {
-      if (!q.dead && !RACES[q.race].isCiv && this.isHerbivoreRace(q.race)) preyAlive++;
+      if (!q.dead && !RACES[q.race].isCiv && this.isHerbivoreRace(q.race)) {
+        preyAlive++;
+        if (RACES[q.race].aquatic) fishAlive++;
+      }
     }
-    // 分级预算：猎物>150 满额（陆8/水4）→ ≤150 减半（4/2）→ ≤60 收缩（2/1）→ ≤25 生态保护期禁猎
+    // 水生预算随饿鲨规模伸缩（Task 98）：固定 4/轮是单鲨时代的参数 —— 猎场网络修通后鲨群恢复
+    // 到 11+ 头，4 杀/轮连舰队折旧都盖不住（每杀 +25 vs 耗 0.5/tick → 11 头需 ~4.4 杀/轮持平），
+    // 实测鲨群 food 全员贴地 18-51。按饥饿水生捕食者数给配额（每 2 头 1 杀，4-12 弹性）；
+    // 鱼群专属保险丝：fishAlive≤40 时收缩至 1（鲨群不得把猎场网络吃穿 —— 迁徙重建要 3.3 年）。
+    let hungryAqua = 0;
+    for (const p of this.units) {
+      if (p.dead) continue;
+      const pd = RACES[p.race];
+      if (pd.predator && pd.aquatic && !pd.undead && !pd.isCiv && (p.food ?? 70) <= 300) hungryAqua++;
+    }
+    // 分级预算：猎物>150 满额（陆 8 固定 / 水 4-10 弹性）→ ≤150 减半 → ≤60 收缩 → ≤25 生态保护期禁猎
     let capLand = 8;
-    let capAqua = 4;
-    if (preyAlive <= 150) { capLand = 4; capAqua = 2; }
-    if (preyAlive <= 60) { capLand = 2; capAqua = 1; }
+    let capAqua = Math.min(10, Math.max(4, Math.ceil(hungryAqua * 0.75)));
+    if (preyAlive <= 150) { capLand = 4; capAqua = Math.ceil(capAqua / 2); }
+    if (preyAlive <= 60) { capLand = 2; capAqua = Math.max(1, Math.ceil(capAqua / 4)); }
     if (preyAlive <= 25) { capLand = 0; capAqua = 0; }
+    // 猎物存量平滑耦合（Task 98）：扑杀压力与鱼群存量成正比（280→10 杀/轮、120→4、56→2）——
+    // 硬保险丝（≤40 才收刀）放任鱼群先跌穿 2/3 再急刹，平滑 scaler 让 LV 振荡发生在半途。
+    capAqua = Math.min(capAqua, Math.max(1, Math.round(fishAlive / 28)));
     let killsLand = 0;
     let killsAqua = 0;
     for (const p of this.units) {
@@ -12579,9 +12631,14 @@ export class GameEngine {
       const pd = RACES[p.race];
       if (!pd.predator || pd.undead || pd.isCiv) continue;
       if (pd.aquatic ? killsAqua >= capAqua : killsLand >= capLand) continue; // 弹性预算（随猎物存量收缩）
-      if ((p.food ?? 70) > 45) continue; // 只有饥饿者出手（饱食者不滥杀）
+      // 出手门（Task 98）：水生与猎游阈值同轨（≤300）—— 旧门 ≤45 + 每杀 +25 是「贴地均衡」
+      // （45→70→45 振荡，净亏 0.5/tick），鲨群永远在饥饿线下、任何通勤开销即死；陆生维持 45
+      // （狼-羊平衡是 Task 95/97 调好的，勿动）。水生鲨群在猎场吃饱到 ~300，才有通勤/繁衍的盈余。
+      if ((p.food ?? 70) > (pd.aquatic ? 300 : 45)) continue; // 只有饥饿者出手（饱食者不滥杀）
       let prey: Unit | null = null;
-      let bd = pd.aquatic ? 25 : 2.56; // 扑杀窗口：陆捕 r=1.6 / 水捕 r=5（深海突袭 —— 内核不驱动追击，扑杀半径即鲨鱼的爪）
+      let bd = pd.aquatic ? 196 : 2.56; // 扑杀窗口：陆捕 r=1.6 / 水捕 r=14（深海突袭抽象 —— 内核猎物惊逃感知半径
+      // 大于追击可闭合距离，插桩实测 3 鲨 750 tick 零扑杀的死亡螺旋；r=14 让导向鲨在惊逃启动前
+      // 稳定落爪，防过杀由弹性预算 + 猎物存量平滑耦合把守）
       for (const q of this.units) {
         if (q.dead || (q.grab ?? 0) > 0) continue; // 神明手中之物不捕
         if (RACES[q.race].isCiv || !this.isHerbivoreRace(q.race)) continue;
@@ -12678,6 +12735,45 @@ export class GameEngine {
       }
       // 无鱼可锚（海洋真空）→ 落回通用随机采样
     }
+    // 鱼群补种撒网式落位（Task 98）：2-3 个互距 ≥18 格的锚点各落一小群 —— 猎场网络重建从多点
+    // 起步（单点奠基群会被饥饿的鲨鱼一锅端，网络重新退化为孤岛；多点撒布让任意海域的鲨鱼
+    // 都有一程续航之内的猎场）。鱼群灭绝时才触发（extinct 名单），无需检查与活鱼的距离。
+    if (seed.race === R.FISH) {
+      const spots: { x: number; y: number }[] = [];
+      for (let tries = 0; tries < 260 && spots.length < 3; tries++) {
+        const x = 2 + Math.floor(this.rng() * (W - 4));
+        const y = 2 + Math.floor(this.rng() * (H - 4));
+        const i = y * W + x;
+        if (!seed.habitat(this.terrain[i])) continue;
+        let ok = true;
+        for (const s of spots) {
+          const dx = s.x - x, dy = s.y - y;
+          if (dx * dx + dy * dy < 324) { ok = false; break; } // 锚间 ≥18 格
+        }
+        if (!ok) continue;
+        spots.push({ x, y });
+      }
+      let placed = 0;
+      for (const s of spots) {
+        const n = 2 + Math.floor(this.rng() * 2); // 每锚点 2-3 尾奠基鱼
+        for (let k = 0; k < n; k++) {
+          for (let t2 = 0; t2 < 8; t2++) {
+            const jx = s.x + (this.rng() * 2.5 - 1.25), jy = s.y + (this.rng() * 2.5 - 1.25);
+            const j = Math.max(0, Math.min(W * H - 1, Math.floor(jy) * W + Math.floor(jx)));
+            if (!seed.habitat(this.terrain[j])) continue;
+            if (this.spawnUnit(R.FISH, jx, jy, { silent: true })) placed++;
+            break;
+          }
+        }
+      }
+      if (placed > 0) {
+        this.reboundLast.set(seed.race, this.tickCount);
+        const s0 = spots[0];
+        this.fx('spawn', s0.x + 0.5, s0.y + 0.5, 46);
+        this.addEvent('eco', `洋流送来了远方的族群——${def.name}重新出现在这片水域`, { x: s0.x + 0.5, y: s0.y + 0.5 });
+      }
+      return;
+    }
     for (let tries = 0; tries < 140; tries++) {
       const x = 2 + Math.floor(this.rng() * (W - 4));
       const y = 2 + Math.floor(this.rng() * (H - 4));
@@ -12713,6 +12809,30 @@ export class GameEngine {
         : `远方的兽群跋涉而来——${def.name}重新踏上了这片大地`;
       this.addEvent('eco', msg, { x: x + 0.5, y: y + 0.5 });
       return; // 每轮至多一支兽群迁入（节奏克制，迁徙是稀客）
+    }
+  }
+
+  /** 鲨群繁衍辅助（引擎级通道，Task 98）：内核繁衍率在低种群下追不上死亡率 —— 震荡期 3-4 鲨
+   *  不可逆滑向灭绝（yr82 实测归零），迁徙重播平均 5.5 年一支救不回来。肥鲨（food>220 = 刚在
+   *  猎场吃饱）每 240 tick 诞一崽：种群 <8 才启动（地板机制，上限保护防爆炸），-60 母体食物 =
+   *  妊娠成本（食不够照常跌回捕食循环）。与凤凰涅槃/巫妖复生同范式 —— spawnUnit 常规注册+打包。 */
+  private sharkBreedTick() {
+    if (!this.laws.reproduction) return; // 神明关闭繁衍法则时静默
+    const sharks = this.units.filter((u) => !u.dead && u.race === R.SHARK);
+    if (sharks.length === 0 || sharks.length >= 8) return;
+    const mother = sharks.find((s) => (s.food ?? 0) > 220);
+    if (!mother) return;
+    for (let t = 0; t < 8; t++) {
+      const jx = Math.max(0.5, Math.min(W - 0.5, mother.x + (this.rng() * 3 - 1.5)));
+      const jy = Math.max(0.5, Math.min(H - 0.5, mother.y + (this.rng() * 3 - 1.5)));
+      const j = Math.floor(jy) * W + Math.floor(jx);
+      if (!isWater(this.terrain[j])) continue; // 诞崽必须落水（防搁浅夭折 —— Task 98 worldgen 教训）
+      const pup = this.spawnUnit(R.SHARK, jx, jy, { silent: true });
+      if (pup) {
+        mother.food = Math.max(0, (mother.food ?? 0) - 60);
+        this.fx('spawn', jx, jy, 30);
+      }
+      break;
     }
   }
 

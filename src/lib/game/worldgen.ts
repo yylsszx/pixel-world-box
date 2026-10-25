@@ -158,6 +158,56 @@ export function generateWorld(seed: number, params?: WorldGenParams): WorldGenRe
       }
     }
   };
+  /** 猎场网络均匀撒布（Task 98）：最远点采样（greedy k-center）—— 每步都挑「离已选锚点最远的
+   *  候选瓦片」，锚点天然向真空带铺开，任意海域到最近猎场的距离被直接压到最小。纯随机撒点
+   *  （泊松过程）会聚簇出 50+ 格无鱼真空带；min-dist 贪心防聚簇但不保证覆盖（实测仍有 78 格
+   *  孔洞）—— 只有覆盖式采样能满足鲨鱼的通勤经济学（满仓续航 ≈54 格，Task 96 实测 102 格
+   *  通勤必饿毙）。首锚由 rand 随机选取打破平局 → 同种子布局仍一致。 */
+  const trySpawnSpread = (race: number, count: number, group: [number, number], needs: number[]) => {
+    const cand: number[] = [];
+    for (let i = 0; i < terrain.length; i++) if (needs.indexOf(terrain[i]) >= 0) cand.push(i);
+    if (cand.length === 0) return;
+    // nearest[i] = 候选 i 到最近已选锚点的距离平方（增量更新 —— O(count×cand) 对一次性世界生成可忽略）
+    const nearest = new Float64Array(cand.length).fill(Infinity);
+    const px: number[] = [];
+    const py: number[] = [];
+    const seedAt = (ci: number) => {
+      const cx = ci % W;
+      const cy = (ci / W) | 0;
+      px.push(cx);
+      py.push(cy);
+      for (let i = 0; i < cand.length; i++) {
+        const dx = (cand[i] % W) - cx;
+        const dy = ((cand[i] / W) | 0) - cy;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < nearest[i]) nearest[i] = d2;
+      }
+    };
+    seedAt(Math.floor(rand() * cand.length)); // 首锚随机：打破 k-center 的平局对称性（同种子仍一致）
+    for (let k = 1; k < count; k++) {
+      let best = -1;
+      let bestD = -1;
+      for (let i = 0; i < cand.length; i++) {
+        if (nearest[i] > bestD) { bestD = nearest[i]; best = i; }
+      }
+      if (best < 0 || bestD <= 0) break; // 全图已覆盖（理论不可达）→ 提前收手
+      seedAt(cand[best]);
+    }
+    for (let p = 0; p < px.length; p++) {
+      spawnAnimals.push({ race, x: px[p] + 0.5, y: py[p] + 0.5 });
+      const n = group[0] + Math.floor(rand() * (group[1] - group[0] + 1));
+      for (let m = 1; m < n; m++) {
+        const mx = px[p] + (rand() - 0.5) * 5;
+        const my = py[p] + (rand() - 0.5) * 5;
+        if (mx < 0 || my < 0 || mx >= W || my >= H) continue;
+        const mi = Math.floor(my) * W + Math.floor(mx);
+        if (needs.indexOf(terrain[mi]) >= 0) {
+          spawnAnimals.push({ race, x: mx, y: my });
+        }
+      }
+    }
+  };
+
   trySpawn(R.SHEEP, 24, [4, 7], T.GRASS); // 羊：草原大群（密度足够支撑捕食链 —— LV 从第一年起就能运转）
   trySpawn(R.WOLF, 9, [2, 4], T.FOREST);
   trySpawn(R.BEAR, 5, [1, 1], T.FOREST);
@@ -173,8 +223,10 @@ export function generateWorld(seed: number, params?: WorldGenParams): WorldGenRe
   trySpawn(R.RABBIT, 12, [3, 6], T.GRASS);  // 兔：草地群穴（狐的猎物）
   trySpawn(R.RABBIT, 5, [2, 4], T.FOREST);  // 兔：林缘亦有
   trySpawn(R.FOX, 6, [1, 2], T.FOREST);     // 狐：森林猎手
-  trySpawn(R.FISH, 14, [5, 10], T.WATER);   // 鱼：5-10 只结群的鱼群
-  trySpawn(R.FISH, 5, [4, 7], T.DEEP);      // 深海亦有鱼群
+  // 鱼：猎场网络均匀撒布（Task 98）—— 纯随机撒点会聚簇出 50+ 格无鱼真空带，而鲨鱼的通勤经济学
+  // 依赖「任意海域到最近猎场的距离 ≤ 续航」。浅/深两次独立采样会有盲区：深洋候选集远大于锚数
+  // （实测 6 锚拉出 59-87 格孔洞）—— 合并为单一全局采样，浅水/深海底一起参与最远点竞选。
+  trySpawnSpread(R.FISH, 26, [5, 9], [T.WATER, T.DEEP]); // 鱼：26 锚覆盖式铺满全部海域（含深海）
   trySpawn(R.CRAB, 10, [2, 4], T.SAND, 2);  // 蟹：限邻水沙滩（2 格内有水）
   trySpawn(R.TURTLE, 9, [2, 4], T.DEEP);    // 龟：海洋游荡
   trySpawn(R.SHARK, 6, [1, 2], T.DEEP);     // 鲨鱼：深海独行猎手
@@ -184,9 +236,15 @@ export function generateWorld(seed: number, params?: WorldGenParams): WorldGenRe
     const fishSpots = spawnAnimals.filter((a) => a.race === R.FISH);
     for (const a of spawnAnimals) {
       if (a.race !== R.SHARK || fishSpots.length === 0) continue;
+      // 落点水域校验（Task 98）：±1.5 抖动可能落在岸上 —— 出世即搁浅（beachedAquaticTick
+      // 15 tick 窒息终局），实测 6 头创始鲨 4 头这样夭折。8 次重试都落水失败则留守原深水点。
       const f = fishSpots[Math.floor(rand() * fishSpots.length)];
-      a.x = Math.max(0.5, Math.min(W - 0.5, f.x + (rand() * 3 - 1.5)));
-      a.y = Math.max(0.5, Math.min(H - 0.5, f.y + (rand() * 3 - 1.5)));
+      for (let t = 0; t < 8; t++) {
+        const jx = Math.max(0.5, Math.min(W - 0.5, f.x + (rand() * 3 - 1.5)));
+        const jy = Math.max(0.5, Math.min(H - 0.5, f.y + (rand() * 3 - 1.5)));
+        const jt = terrain[Math.floor(jy) * W + Math.floor(jx)];
+        if (jt === T.WATER || jt === T.DEEP) { a.x = jx; a.y = jy; break; }
+      }
     }
   }
 
