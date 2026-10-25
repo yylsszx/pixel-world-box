@@ -2,8 +2,6 @@
 
 import dynamic from 'next/dynamic';
 
-import { VibeHubLoginRelay } from '@/components/vibehub/LoginRelay';
-
 // The game engine touches DOM (canvas) — skip SSR entirely
 const GameShell = dynamic(() => import('@/components/game/GameShell').then((m) => m.GameShell), {
   ssr: false,
@@ -18,11 +16,5 @@ const GameShell = dynamic(() => import('@/components/game/GameShell').then((m) =
 });
 
 export default function Home() {
-  return (
-    <>
-      <GameShell />
-      {/* VibeHub 登录中继：仅 development 构建渲染（生产/静态导出零影响） */}
-      {process.env.NODE_ENV === 'development' && <VibeHubLoginRelay />}
-    </>
-  );
+  return <GameShell />;
 }
