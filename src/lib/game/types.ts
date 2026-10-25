@@ -770,6 +770,7 @@ export type EffectKind =
   | 'mutate'
   | 'spark'
   | 'wrath'
+  | 'holystorm'
   // —— 天灾扩充（6）——
   | 'sandstorm'
   | 'typhoon'

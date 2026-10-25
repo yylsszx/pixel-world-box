@@ -279,8 +279,8 @@ export const ICONS: Record<string, string[]> = {
     '.rrrrr..', 'rrrrrrr.', '.r.rr.r.', '.r...r..',
   ],
   angel: [
-    '...yy...', '..fwwf..', '.fwywyf.', '..wwww..',
-    '.fw.wf..', '..w.w...', '..w.w...', '..y.y...',
+    '..yyyy..', '.fw..wf.', '.fwccwf.', '.fwwwwfY',
+    '..wwww.Y', '..wyyw.Y', '..w..w..', '..y..y..',
   ],
   phoenix: [
     '..r.y...', '.ryyor..', 'ryoooyr.', '.yoooy..',
@@ -382,6 +382,10 @@ export const ICONS: Record<string, string[]> = {
   wrath: [
     '.kkkkk..', 'kkkkkkk.', 'kyykkkk.', '........',
     '..y.....', '.yy.....', 'y.y.....', '........',
+  ],
+  holystorm: [
+    '..ffff..', '.ffyyf..', 'ffyyyyf.', 'fyywyyf.',
+    '.fyyyyf.', '..ffyf..', '...w.w..', '....w...',
   ],
   // —— 天灾扩充（6）——
   sandstorm: [
@@ -622,6 +626,10 @@ export const TOOLS: ToolDef[] = [
   { id: 'wrath', label: '天罚风暴', desc: '怒云压城：雷暴持续轰击区域（半径可调）', tab: 'powers', icon: 'wrath', single: true, params: [
     { key: 'radius', label: '雷域半径', min: 4, max: 14, step: 1, def: 5 },
     { key: 'duration', label: '持续', min: 60, max: 300, step: 10, def: 180, fmt: 'sec' },
+  ] },
+  { id: 'holystorm', label: '圣光风暴', desc: '金色圣云游荡：审判亡灵恶魔巨龙，治愈无辜生灵，浇灭火焰复苏焦土（半径可调）', tab: 'powers', icon: 'holystorm', single: true, params: [
+    { key: 'radius', label: '圣域半径', min: 4, max: 14, step: 1, def: 5 },
+    { key: 'duration', label: '持续', min: 60, max: 300, step: 10, def: 200, fmt: 'sec' },
   ] },
   // items（宝物：3 档宝箱 + 全量 102 件物品工具，由下方程序化生成）
   { id: 'chest', label: '宝箱', desc: '掉落一件随机宝物（普通为主），等待生物拾取', tab: 'items', icon: 'chest', single: true },

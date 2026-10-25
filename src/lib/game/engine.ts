@@ -9388,6 +9388,44 @@ export class GameEngine {
           const rr = this.rng() * e.r;
           this.lightning(e.x + Math.cos(ang) * rr, e.y + Math.sin(ang) * rr);
         }
+      } else if (e.kind === 'holystorm') {
+        // 圣光风暴：金色圣云游荡 —— 审判黑暗（亡灵/恶魔/巨龙 圣炎灼烧）+ 治愈无辜（微光甘霖/驱瘟）
+        // + 浇灭火焰/洗净辐射/复苏焦土（与唤雨同源的善力采样）
+        e.dir += (this.rng() - 0.5) * 0.2;
+        e.x = Math.max(2, Math.min(W - 3, e.x + Math.cos(e.dir) * 0.1));
+        e.y = Math.max(2, Math.min(H - 3, e.y + Math.sin(e.dir) * 0.1));
+        if (this.rng() < 1.2) {
+          const ang = this.rng() * Math.PI * 2;
+          const rr = this.rng() * e.r;
+          const j = idx(Math.floor(e.x + Math.cos(ang) * rr), Math.floor(e.y + Math.sin(ang) * rr));
+          if (j >= 0 && j < W * H) {
+            if (this.fire[j] > 0) { this.fire[j] = 0; this.fireSet.delete(j); this.fx('water', (j % W) + 0.5, ((j / W) | 0) + 0.5, 14); }
+            else if (this.radiate[j] > 0) { this.radiate[j] = 0; this.radSet.delete(j); this.markDirty(j); }
+            else if (this.terrain[j] === T.BURNT && this.rng() < 0.3) { this.setTerrain(j, T.GRASS); this.fx('spark', (j % W) + 0.5, ((j / W) | 0) + 0.5, 14); }
+          }
+        }
+        const hr2 = e.r * e.r;
+        for (const u of this.units) {
+          if (u.dead) continue;
+          const hdx = u.x - e.x;
+          const hdy = u.y - e.y;
+          if (hdx * hdx + hdy * hdy >= hr2) continue;
+          const ud = RACES[u.race];
+          const dark = ud.undead || u.race === R.DEMON || u.race === R.DRAGON; // 圣光审判名单：与天使圣剑同构（不伤克拉肯/沙虫/蛇怪等自然巨兽）
+          if (dark) {
+            u.hp -= 0.4; // 圣炎灼烧：比酸雨（0.3）更痛 —— 黑暗在圣光下无所遁形
+            u.hurt = 10;
+            if (u.hp <= 0) u.dead = true;
+            if (this.rng() < 0.2) this.fx('spark', u.x, u.y - 0.4, 16);
+          } else if (!ud.hostile) {
+            if (u.hp < u.maxHp) {
+              u.hp = Math.min(u.maxHp, u.hp + 0.15); // 微光甘霖：持续缓愈
+              if (this.rng() < 0.08) this.fx('bless', u.x, u.y - 0.4, 18);
+            }
+            if (u.infected) { u.infected = false; this.fx('bless', u.x, u.y - 0.4, 22); } // 圣光驱瘟
+          }
+          // 敌对自然巨兽（狼/熊/克拉肯等）：既不审判也不治愈 —— 圣光只针对超自然黑暗
+        }
       } else if (e.kind === 'sandstorm') {
         // 沙尘暴：游荡沙暴 —— 草被沙埋、生物迷失风中
         e.dir += (this.rng() - 0.5) * 0.25;
@@ -10202,6 +10240,17 @@ export class GameEngine {
     if (count >= 3) return;
     this.fx('wrath', x, y, ttl, { r: rr });
     this.addEvent('wrath', '神怒之云聚拢，雷霆将轮番轰击大地', { x, y });
+  }
+
+  /** 圣光风暴：首个光明阵营神力 —— 金色圣云游荡：审判亡灵/恶魔/巨龙（圣炎灼烧），
+   *  治愈无辜生灵（微光甘霖+驱散瘟疫），浇灭火焰/洗净辐射/复苏焦土（与唤雨同源善力）。 */
+  holyStorm(x: number, y: number, r: number, ttl = 200) {
+    const rr = Math.max(4, Math.min(14, r));
+    const count = this.effects.filter((e) => e.kind === 'holystorm').length;
+    if (count >= 3) return; // 上限防刷屏（与天罚风暴同策）
+    this.fx('holystorm', x, y, ttl, { r: rr });
+    this.addEvent('holystorm', '金色的圣云自天际涌来，圣光将审判黑暗、治愈无辜', { x, y });
+    this.onSound?.('shield');
   }
 
   // ---------------- 天灾扩充（沙尘暴/台风/天坑/冰河寒潮/饥荒/黑洞） ----------------
@@ -12172,6 +12221,9 @@ export class GameEngine {
         break;
       case 'wrath':
         this.wrathStorm(wx, wy, Math.max(4, r), durationP);
+        break;
+      case 'holystorm':
+        this.holyStorm(wx, wy, Math.max(4, r), durationP);
         break;
       // —— 天灾扩充 ——
       case 'sandstorm':
