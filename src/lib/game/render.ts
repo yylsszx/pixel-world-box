@@ -621,6 +621,53 @@ function dayTintOf(p: number): { r: number; g: number; b: number; a: number; n: 
   return t;
 }
 
+/** 冬夜极光（Task 104，季节 × 万物）：极地夜空的波动光帘 —— 2px/tile 天幕坐标，加性合成柔光。
+ *  夜色 n>0.35 渐入（fade 平滑），只在冬季极地雪原上空铺开；翡翠绿为主、青/紫点缀，
+ *  光帘随帧波动、脊线最亮、亮斑沿脊游移。与极地飘雪/寒风卷雪构成冬季天幕三重奏。 */
+function drawAurora(engine: GameEngine, sk: CanvasRenderingContext2D, nightN: number): boolean {
+  if (engine.nature.season !== 3 || nightN < 0.35) return false;
+  const fc = engine.frameCount;
+  const fade = Math.min(1, (nightN - 0.35) / 0.4);
+  // 北/南光帘锚点：极地带（cy/AH <0.18 / >0.82 → 天幕 y <58 / >262）内
+  const bands = [30, 290];
+  let drew = false;
+  sk.globalCompositeOperation = 'lighter';
+  for (let b = 0; b < 2; b++) {
+    const baseY = bands[b];
+    // 带底弥散光垫：光帘根部的柔光雾（线性渐变，每帧 2 次 createLinearGradient 可忽略）
+    const gg = sk.createLinearGradient(0, baseY - 26, 0, baseY + 20);
+    gg.addColorStop(0, 'rgba(96,255,168,0)');
+    gg.addColorStop(0.5, `rgba(110,232,190,${(0.06 * fade).toFixed(3)})`);
+    gg.addColorStop(1, 'rgba(96,255,168,0)');
+    sk.fillStyle = gg;
+    sk.fillRect(0, baseY - 26, 512, 46);
+    for (let px = 0; px < 512; px += 8) {
+      const wv = Math.sin(fc * 0.01 + px * 0.045 + b * 2.1);
+      const wv2 = Math.sin(fc * 0.017 - px * 0.021 + b * 0.7);
+      const h = (18 + 10 * wv) * (0.75 + 0.25 * wv2);
+      if (h <= 3) continue;
+      const yTop = baseY - h * 0.45 + Math.sin(fc * 0.013 + px * 0.09 + b * 3.1) * 3;
+      const inten = 0.5 + 0.5 * Math.sin(fc * 0.023 + px * 0.31 + b * 1.3);
+      const ci = (px >> 3) + b * 3;
+      const tint = ci % 5 === 2 ? '138,214,255' : ci % 7 === 3 ? '186,140,255' : '96,255,168';
+      const a = (0.1 + 0.14 * inten) * fade;
+      sk.fillStyle = `rgba(${tint},${a.toFixed(3)})`;
+      sk.fillRect(px, yTop, 10, h); // 10px 宽与步距 8 重叠 2px —— 连绵光帘而非栅栏柱
+      // 顶部亮脊：光帘最亮的一线
+      sk.fillStyle = `rgba(${tint},${(a * 0.85).toFixed(3)})`;
+      sk.fillRect(px + 2, yTop, 6, 3);
+      // 游移亮斑：沿脊线缓慢漂移的闪烁（ 每 11 根一根，帧推进带来漂移感）
+      if (((px >> 3) + (fc >> 4)) % 11 === 0) {
+        sk.fillStyle = `rgba(224,255,238,${(0.4 * fade).toFixed(3)})`;
+        sk.fillRect(px + 2, yTop - 1, 1, 1);
+      }
+      drew = true;
+    }
+  }
+  sk.globalCompositeOperation = 'source-over';
+  return drew;
+}
+
 /** —— 质感工程 v3（Task 49）：夜间辉光缓冲（512² 精灵坐标系，与单位层同构） ——
  *  光晕不再以方块矩形直接画进 worldCanvas（放大后呈块状光斑），而是画进低分
  *  辨率 glowCanvas，再经 blurCanvas 降采样后在屏幕侧以 lighter 加性合成 ——
@@ -1414,6 +1461,11 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
   }
   if (engine.bolts.length > 0) {
     drawBolts(engine, sk, x0, x1, y0, y1);
+    skyUsed = true;
+  }
+  // —— 冬夜极光（Task 104）：极地夜空的波动光帘——夜色越深越盛，昼间/无大气不显 ——
+  if (engine.fxPrefs.ambience && engine.laws.atmosphere && engine.fxPrefs.dayNight
+    && drawAurora(engine, sk, dayTintOf(engine.dayPhase()).n)) {
     skyUsed = true;
   }
 

@@ -281,6 +281,10 @@ export class GameEngine {
   ambLava = new Set<number>();
   /** 冰晶闪熠候选（ICE 格） */
   ambIce = new Set<number>();
+  /** 冬季雪人瞬态场（Task 104）：村民雪地堆起的装饰 —— 不入档（装饰性瞬态，读档清零），出冬渐融 */
+  snowman = new Uint8Array(W * H);
+  /** 当前雪人数（增量维护，免 O(n) 重数） */
+  snowmanN = 0;
   /** 贴岸浅水候选（WATER 且邻陆地格 —— 浪花/浅水波光） */
   ambShore = new Set<number>();
 
@@ -2546,6 +2550,8 @@ export class GameEngine {
     if (this.tickCount % 2 === 0) this.fpTick();
     // 冰面生态：消融（火/岩浆/暖气候）+ 极地自然冻结 + 海啸洪水退潮 + 湿沙干透（每 40 tick）
     if (this.tickCount % 40 === 0) this.iceTick();
+    // 冬季雪人（Task 104）：村民雪地堆雪人 / 出冬渐融（每 80 tick，与 iceTick 错峰）
+    if (this.tickCount % 80 === 16) this.snowmanTick();
     if (this.tickCount % 200 === 0) this.historyTick();
     if (this.tickCount % 150 === 0) this.victoryTick();
     if (this.tickCount % 200 === 0) this.warTick();
@@ -3020,6 +3026,53 @@ export class GameEngine {
     if (this.wet.size > 0) {
       for (const [i, at] of [...this.wet]) {
         if (this.tickCount >= at) this.wet.delete(i);
+      }
+    }
+  }
+
+  /** 冬季雪人（Task 104）：村民雪地堆雪人（装饰瞬态）/ 出冬渐融（每 80 tick，与 iceTick 错峰）。
+   *  抽样以村民为单位（站雪者身旁 5×5 找空雪格落人），上限 140 座防全图泛滥；
+   *  融化用步长 7919（与 40960 互素）全域扫融，每窗至多 40 座 → 一季内化完。 */
+  private snowmanTick() {
+    if (this.nature.season !== 3) {
+      if (this.snowmanN === 0) return;
+      const off = (this.rng() * W * H) | 0;
+      let melted = 0;
+      for (let k = 0; k < W * H && melted < 40; k++) {
+        const i = (k * 7919 + off) % (W * H);
+        if (!this.snowman[i]) continue;
+        this.snowman[i] = 0;
+        this.snowmanN--;
+        this.propsDirty.add(i);
+        if (this.rng() < 0.25) this.fx('water', (i % W) + 0.5, ((i / W) | 0) + 0.5, 14);
+        melted++;
+      }
+      return;
+    }
+    if (this.snowmanN >= 140 || this.units.length === 0) return;
+    let built = 0;
+    for (let k = 0; k < 12; k++) {
+      if (this.snowmanN >= 140 || built >= 3) break;
+      const u = this.units[(this.rng() * this.units.length) | 0];
+      if (!u || u.dead || u.civ < 0 || !RACES[u.race].isCiv) continue;
+      const ux = Math.floor(u.x);
+      const uy = Math.floor(u.y);
+      if (this.terrain[uy * W + ux] !== T.SNOW) continue;
+      // 身旁 5×5 随机找一块空雪格落人（雪人不占行走层，纯装饰）
+      const px = ux + ((this.rng() * 5) | 0) - 2;
+      const py = uy + ((this.rng() * 5) | 0) - 2;
+      if (px < 1 || py < 1 || px >= W - 1 || py >= H - 1) continue;
+      const i = py * W + px;
+      if (this.snowman[i] || this.terrain[i] !== T.SNOW || this.building[i] > 0) continue;
+      if (this.rng() >= 0.3) continue;
+      this.snowman[i] = 1;
+      this.snowmanN++;
+      this.propsDirty.add(i);
+      if (this.rng() < 0.5) this.fx('frost', px + 0.5, py + 0.5, 16);
+      built++;
+      if (!this.nature.snowmanChronDone) {
+        this.nature.snowmanChronDone = true;
+        this.addEvent('eco', '村民们在雪地里堆起了雪人——严冬之上也有嬉戏的时光', {});
       }
     }
   }
@@ -14283,6 +14336,25 @@ export class GameEngine {
           propsCtx.fillRect(x * 4 + (h & 1), y * 4 + ((h >> 2) & 1), 1, 1);
           propsCtx.fillRect(x * 4 + (h & 1), y * 4 + 1 - ((h >> 2) & 1), 1, 1);
         }
+      }
+      // —— 冬季雪人（Task 104）：村民堆起的雪人装饰。雪原白底上以色温差立形：
+      //  冷蓝白底球+底缘阴影、暖白头、双煤眼+胡萝卜鼻、枝手探出 ——
+      if (this.snowman[i]) {
+        const px = x * 4;
+        propsCtx.fillStyle = 'rgba(96,74,50,0.9)';
+        propsCtx.fillRect(px, y * 4 + 2, 1, 1);
+        propsCtx.fillRect(px + 3, y * 4 + 2, 1, 1);
+        propsCtx.fillStyle = '#dbe9f4';
+        propsCtx.fillRect(px + 1, y * 4 + 2, 2, 2);
+        propsCtx.fillStyle = 'rgba(150,180,205,0.65)';
+        propsCtx.fillRect(px + 1, y * 4 + 3, 2, 1);
+        propsCtx.fillStyle = '#f4f9fd';
+        propsCtx.fillRect(px + 1, y * 4, 2, 2);
+        // 单煤眼（2px 头双眼会吞满顶行读作黑发）+ 胡萝卜鼻
+        propsCtx.fillStyle = '#3a3226';
+        propsCtx.fillRect(px + 1, y * 4, 1, 1);
+        propsCtx.fillStyle = '#e08a3c';
+        propsCtx.fillRect(px + 2, y * 4 + 1, 1, 1);
       }
     }
     this.propsDirty.clear();
