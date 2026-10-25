@@ -282,6 +282,10 @@ export const ICONS: Record<string, string[]> = {
     '...yy...', '..fwwf..', '.fwywyf.', '..wwww..',
     '.fw.wf..', '..w.w...', '..w.w...', '..y.y...',
   ],
+  phoenix: [
+    '..r.y...', '.ryyor..', 'ryoooyr.', '.yoooy..',
+    '.yoyyoy.', '..yoyoy.', '...r.r..', '..y.y...',
+  ],
   mage: [
     '....k...', '...kkk..', '..kkkkk.', '...vww..',
     '...vww..', '..vvvv..', '.vvvvvv.', '..y.vy..',
@@ -505,6 +509,7 @@ export const TOOLS: ToolDef[] = [
   { id: 'sandworm', label: '沙虫', desc: '沙漠巨虫：沙下潜行，吞噬小型生物', tab: 'creatures', icon: 'sandworm', single: true },
   { id: 'basilisk', label: '蛇怪', desc: '毒牙与石化凝视：被它盯住的猎物化为石像', tab: 'creatures', icon: 'basilisk', single: true },
   { id: 'angel', label: '天使', desc: '光明使者：圣光治愈凡间众生，圣剑专为亡灵与恶魔出鞘', tab: 'creatures', icon: 'angel', single: true },
+  { id: 'phoenix', label: '凤凰', desc: '浴火神鸟：烈焰为羽，陨落后自灰烬中重生（至多三次）', tab: 'creatures', icon: 'phoenix', single: true },
   // animals
   { id: 'sheep', label: '绵羊', desc: '温顺可爱，会咩咩叫', tab: 'animals', icon: 'sheep' },
   { id: 'wolf', label: '狼', desc: '成群猎食绵羊', tab: 'animals', icon: 'wolf' },
@@ -652,7 +657,7 @@ export const RACE_TOOL: Record<string, number> = {
   bear: R.BEAR, dragon: R.DRAGON, deer: R.DEER, penguin: R.PENGUIN, camel: R.CAMEL, scorpion: R.SCORPION, snake: R.SNAKE, snowwolf: R.SNOWWOLF,
   skeleton: R.SKELETON, demon: R.DEMON, mage: R.MAGE,
   lizard: R.LIZARD, goblin: R.GOBLIN, troll: R.TROLL, ogre: R.OGRE, whitewalker: R.WHITEWALKER, vampire: R.VAMPIRE,
-  kraken: R.KRAKEN, sandworm: R.SANDWORM, basilisk: R.BASILISK, angel: R.ANGEL,
+  kraken: R.KRAKEN, sandworm: R.SANDWORM, basilisk: R.BASILISK, angel: R.ANGEL, phoenix: R.PHOENIX,
 };
 
 // —— 生物工具：统一挂「数量」参数（巨型异兽上限 8，普通生物上限 20）——

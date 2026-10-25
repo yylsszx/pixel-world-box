@@ -1168,6 +1168,72 @@ export function drawAngel(ctx: CanvasRenderingContext2D, u: Unit, frame: number)
   }
 }
 
+/** 凤凰：浴火神鸟（5 宽 8 高 + 悬浮）——焰羽振翅/三尾流焰/白热心脏/余烬环绕/冠羽摇曳 */
+export function drawPhoenix(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const isMoving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  // 悬浮起伏：飞行单位离地 + 缓慢漂移（与天使同款 8 帧周期）
+  const bob = Math.floor(frame / 8) % 2;
+  const py2 = py - 2 - bob;
+  // 焰羽振翅：每 5 帧收展（比天使更快更急，火鸟的急躁感）
+  const flap = Math.floor(frame / 5) % 2;
+  // 火焰状态：受击闪红白 / 低血量余烬将熄（整体调暗）
+  const dim = u.hp < u.maxHp * 0.4;
+  const hot = u.hurt > 0 ? '#ff6b5e' : '#ff9b2d';
+  const core = u.hurt > 0 ? '#ffd0b0' : '#ffd93d';
+  // —— 背后双层焰翼（外层橙红拍动 + 内层亮黄芯，翼尖挑高）——
+  ctx.fillStyle = dim ? '#c96a15' : (flap ? '#ff9b2d' : '#cf3f2e');
+  ctx.fillRect(px - 3, py2 - 1 - flap, 1, 2);
+  ctx.fillRect(px - 4, py2 - flap, 1, 2);
+  ctx.fillRect(px + 2, py2 - 1 - flap, 1, 2);
+  ctx.fillRect(px + 3, py2 - flap, 1, 2);
+  ctx.fillStyle = dim ? '#8c2317' : '#ffd93d';
+  ctx.fillRect(px - 3, py2 - flap, 1, 1);
+  ctx.fillRect(px + 2, py2 - flap, 1, 1);
+  // —— 头顶冠羽（三撮火苗随风摇曳，中高侧低）——
+  ctx.fillStyle = hot;
+  ctx.fillRect(px, py2 - 4, 1, 1);
+  ctx.fillRect(px + 1, py2 - 3, 1, 1);
+  if (frame % 10 < 6) { ctx.fillStyle = core; ctx.fillRect(px, py2 - 5, 1, 1); }
+  // —— 头（白热核心 + 深色瞳）——
+  ctx.fillStyle = core;
+  ctx.fillRect(px, py2 - 2, 2, 2);
+  ctx.fillStyle = '#8c2317';
+  ctx.fillRect(px + (u.flip ? 0 : 1), py2 - 1, 1, 1);
+  // —— 躯干（上亮下暗渐变，下摆随漂移微摆）——
+  ctx.fillStyle = hot;
+  ctx.fillRect(px - 1, py2, 3, 2);
+  ctx.fillStyle = '#cf3f2e';
+  ctx.fillRect(px - 1 + (bob ? 0 : 1), py2 + 2, 2, 1);
+  // —— 白热心脏（心口亮点呼吸明灭 —— 火种所在）——
+  ctx.fillStyle = frame % 14 < 7 ? '#fff3c4' : '#ffd93d';
+  ctx.fillRect(px, py2 + 1, 1, 1);
+  // —— 三尾流焰（身后拖曳波状摆动；移动时拉长为焰痕）——
+  const dimTail = dim ? '#c96a15' : '#ff9b2d';
+  ctx.fillStyle = dimTail;
+  for (let k = 0; k < 3; k++) {
+    const ty = py2 - 1 + k;
+    const sway = ((frame + k * 4) % 12) < 6 ? 0 : 1;
+    ctx.fillRect(px - 2 * f - sway, ty, 1, 1);
+    if (isMoving) ctx.fillRect(px - 3 * f - sway, ty, 1, 1);
+  }
+  // —— 余烬环绕（确定性公转：3 颗火星绕体，隔帧闪烁）——
+  ctx.fillStyle = '#ffd93d';
+  for (let k = 0; k < 3; k++) {
+    const ph = (frame * 0.6 + k * 2.1) % 6.283;
+    const ex = px + Math.round(Math.cos(ph) * (3 + (k & 1)));
+    const ey = py2 + Math.round(Math.sin(ph) * 2) - 1;
+    if ((frame + k * 7) % 3 !== 0) ctx.fillRect(ex, ey, 1, 1);
+  }
+  // —— 低血量：余烬将熄（头顶偶现灰烟）——
+  if (dim && frame % 16 < 4) {
+    ctx.fillStyle = '#575757';
+    ctx.fillRect(px + 1, py2 - 6, 1, 1);
+  }
+}
+
 /** 巨魔：耸肩佝背的山岭巨怪（5 宽 8 高）——苔藓肩斑/长臂及地/獠牙/再生微光 */
 export function drawTroll(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;

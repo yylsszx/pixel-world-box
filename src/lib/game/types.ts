@@ -58,6 +58,8 @@ export const R = {
   BASILISK: 27,
   /** 光明使者：治愈凡间众生，圣剑专为亡灵与恶魔出鞘 */
   ANGEL: 28,
+  /** 浴火神鸟：烈焰为羽，陨落后自灰烬中重生（至多三次），火焰岩浆皆不能伤 */
+  PHOENIX: 29,
 } as const;
 export type RaceId = (typeof R)[keyof typeof R];
 
@@ -95,7 +97,7 @@ export interface RaceDef {
   speed: number; // tiles per tick
   maxAge: number; // in game years
   repro: number; // reproduction chance per update
-  sprite: 'person' | 'sheep' | 'wolf' | 'bear' | 'dragon' | 'deer' | 'penguin' | 'camel' | 'scorpion' | 'snake' | 'snowwolf' | 'skeleton' | 'demon' | 'mage' | 'troll' | 'ogre' | 'whitewalker' | 'vampire' | 'kraken' | 'sandworm' | 'basilisk' | 'angel';
+  sprite: 'person' | 'sheep' | 'wolf' | 'bear' | 'dragon' | 'deer' | 'penguin' | 'camel' | 'scorpion' | 'snake' | 'snowwolf' | 'skeleton' | 'demon' | 'mage' | 'troll' | 'ogre' | 'whitewalker' | 'vampire' | 'kraken' | 'sandworm' | 'basilisk' | 'angel' | 'phoenix';
   /** 涌现物种标记：动态种化产生的新物种头顶 1px 突变色点（undefined = 预设原种） */
   dynTint?: string;
   /** 视觉基因组（涌现进化 v3）：动态物种携带 —— 色相/体型/角刺鬃尾/花纹全部程序化漂移 */
@@ -155,6 +157,7 @@ export const RACES: Record<number, RaceDef> = {
   [R.SANDWORM]: { key: 'sandworm', name: '沙虫', isCiv: false, hostile: true, flying: false, predator: true, undead: false, lavaImmune: false, sandswim: true, reach: 1.6, hp: 420, dmg: 40, speed: 0.14, maxAge: 9999, repro: 0, sprite: 'sandworm' },
   [R.BASILISK]: { key: 'basilisk', name: '蛇怪', isCiv: false, hostile: true, flying: false, predator: true, undead: false, lavaImmune: false, reach: 1.4, hp: 90, dmg: 14, speed: 0.11, maxAge: 400, repro: 0, sprite: 'basilisk' },
   [R.ANGEL]: { key: 'angel', name: '天使', isCiv: false, hostile: false, flying: true, predator: false, undead: false, lavaImmune: true, hp: 240, dmg: 22, speed: 0.105, maxAge: 9999, repro: 0, sprite: 'angel', archetype: '光明使者：圣光治愈凡间众生，圣剑专为亡灵与恶魔出鞘' },
+  [R.PHOENIX]: { key: 'phoenix', name: '凤凰', isCiv: false, hostile: false, flying: true, predator: false, undead: false, lavaImmune: true, hp: 200, dmg: 18, speed: 0.12, maxAge: 9999, repro: 0, sprite: 'phoenix', archetype: '浴火神鸟：烈焰为羽，火焰岩浆皆不能伤；陨落后自灰烬中重生（至多三次），第四次死亡方为真正的终焉' },
 };
 
 // ---------------- 种族系统 v2：种族关系（Race Relations） ----------------
@@ -357,6 +360,8 @@ export interface Unit {
   trk?: _ItemKind | null;
   /** 攻击动画计时（tick；>0 时摆出挥击姿势 — 瞬态不入档） */
   atk?: number;
+  /** 凤凰已用重生次数（0-3；第 4 次死亡魂飞魄散走常规收尸 — 不入档，读档后从 0 重计） */
+  rebirths?: number;
   /** 出生时的科技伤害乘数快照（科技回溯重算基准：completeTech 按新旧差重算；不入档，读档时按当前科技初始化） */
   tDmg?: number;
   /** 出生时的科技生命乘数快照（同 tDmg） */

@@ -1,7 +1,7 @@
 // ============ WorldBox Replica — Rendering pipeline ============
 import type { Army, Effect, Unit } from './types';
 import { T, R, RACES } from './types';
-import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster } from './sprites';
+import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster } from './sprites';
 import { visCacheFor } from './emergence';
 import { BUILDING_DEFS } from './types';
 import { GameEngine } from './engine';
@@ -1044,6 +1044,38 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
       }
     }
   }
+  // —— 凤凰灰烬堆：灰堆 + 余烬闪烁 + 烟丝；重生临近时火光渐盛（涅槃倒数可视化的仪式感）——
+  if (engine.phoenixAshes.length > 0) {
+    for (const a of engine.phoenixAshes) {
+      if (a.x < x0 - 2 || a.x > x1 + 2 || a.y < y0 - 2 || a.y > y1 + 2) continue;
+      const bx = Math.round(a.x * 2);
+      const by = Math.round(a.y * 2);
+      const prog = 1 - a.t / GameEngine.PHOENIX_ASH_TTL; // 0→1 涅槃进度
+      // 灰堆（三层：宽底 + 中堆 + 顶尖）
+      wc.fillStyle = 'rgba(90,87,83,0.9)';
+      wc.fillRect(bx - 2, by, 5, 1);
+      wc.fillRect(bx - 1, by - 1, 3, 1);
+      wc.fillStyle = 'rgba(120,116,110,0.85)';
+      wc.fillRect(bx, by - 2, 1, 1);
+      // 余烬（随重生临近越来越亮、闪烁越来越急）
+      const emberOn = frameCount % Math.max(3, Math.round(10 - prog * 7)) < 2;
+      if (emberOn) {
+        wc.fillStyle = prog > 0.75 ? '#ffd93d' : '#ff9b2d';
+        wc.fillRect(bx - 1 + ((a.x * 91) | 0) % 2, by - 1, 1, 1);
+        wc.fillRect(bx + ((a.y * 37) | 0) % 2, by, 1, 1);
+      }
+      // 顶部火苗渐起（后程；临近重生时白热）
+      if (prog > 0.5 && frameCount % 8 < 4) {
+        wc.fillStyle = prog > 0.8 ? '#fff3c4' : '#cf3f2e';
+        wc.fillRect(bx, by - 3, 1, 1);
+      }
+      // 烟丝（上升的灰烟，偶现）
+      if (frameCount % 20 < 6) {
+        wc.fillStyle = 'rgba(140,136,130,0.5)';
+        wc.fillRect(bx + ((frameCount >> 3) & 1), by - 4 - ((frameCount >> 4) & 1), 1, 1);
+      }
+    }
+  }
   if (engine.corpses.length > 0) {
     for (const c of engine.corpses) {
       if (c.x < x0 - 2 || c.x > x1 + 2 || c.y < y0 - 2 || c.y > y1 + 2) continue;
@@ -1723,6 +1755,7 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
     case 'skeleton': drawSkeleton(wc, u, engine.frameCount); break;
     case 'demon': drawDemon(wc, u, engine.frameCount); break;
     case 'angel': drawAngel(wc, u, engine.frameCount); break;
+    case 'phoenix': drawPhoenix(wc, u, engine.frameCount); break;
     case 'mage': drawMage(wc, u, engine.frameCount); break;
     case 'troll': drawTroll(wc, u, engine.frameCount); break;
     case 'ogre': drawOgre(wc, u, engine.frameCount); break;

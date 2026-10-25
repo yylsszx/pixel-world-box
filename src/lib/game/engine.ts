@@ -478,6 +478,8 @@ export class GameEngine {
   blood: BloodDecal[] = [];
   /** 尸骸残留：骸骨堆/蛇怪石像 */
   corpses: CorpseDecal[] = [];
+  /** 凤凰灰烬堆：陨落后的涅槃倒数（到点重生；不入档，读档后灰烬自然消失） */
+  phoenixAshes: { x: number; y: number; t: number; rebirths: number }[] = [];
   /** 冰面 tile 索引集合（消融管理：火/岩浆/暖气候） */
   frozen = new Set<number>();
   /** 海啸洪水退潮队列：tileIdx → 退潮 tick（到点后化回沙滩+湿沙标记） */
@@ -776,6 +778,7 @@ export class GameEngine {
     this.wet.clear();
     this.blood.length = 0;
     this.corpses.length = 0;
+    this.phoenixAshes.length = 0;
     this.regrow.clear();
     this.radSet.clear();
     this.riverDir = new Uint8Array(W * H);
@@ -1347,6 +1350,13 @@ export class GameEngine {
       this.fx('spawn', x, y, 40);
       this.onSound?.('heal');
     }
+    if (!opts?.silent && race === R.PHOENIX) {
+      this.toast('烈焰汇聚成翼——凤凰自火中降临', 'info');
+      this.addEvent('phoenix', '烈焰在空中盘旋凝成神鸟，凤凰降临世间——灰烬只是它的摇篮', { x, y });
+      this.fx('spawn', x, y, 40);
+      this.fx('fireball', x, y - 1, 24);
+      this.onSound?.('volcano');
+    }
     if (!opts?.silent && race === R.MAGE) {
       this.toast('一位神秘的法师现身了', 'info');
     }
@@ -1899,10 +1909,10 @@ export class GameEngine {
     const rb = RACES[b.race];
     // —— 亡者阵营：骷髅/僵尸/白行者/吸血鬼互不为敌，并肩作战争夺生者的世界 ——
     if (ra.undead && rb.undead) return false;
-    // 天使（R.ANGEL=28）无需专门分支：恶魔/亡灵五族/巨龙/克拉肯/沙虫/蛇怪的
-    // 「与众生为敌」分支对称覆盖天使（双侧为敌 = 圣剑自动出鞘）；天使对无辜者
+    // 天使（R.ANGEL=28）/ 凤凰（R.PHOENIX=29）无需专门分支：恶魔/亡灵五族/巨龙/克拉肯/沙虫/蛇怪的
+    // 「与众生为敌」分支对称覆盖二者（双侧为敌 = 圣剑/焰爪自动出鞘）；对无辜者
     // 由全零旗标自然放行 —— 与 wasm is_enemy_full（rust-core lib.rs）逐位一致。
-    // ⚠️ 若在此新增天使特判，必须同步 rust-core/src/lib.rs 并重建 wbcore.wasm。
+    // ⚠️ 若在此新增天使/凤凰特判，必须同步 rust-core/src/lib.rs 并重建 wbcore.wasm。
     if (a.race === R.ZOMBIE || b.race === R.ZOMBIE) return a.race !== b.race;
     if (a.race === R.SKELETON || b.race === R.SKELETON) return a.race !== b.race; // 亡灵与众人为敌
     if (a.race === R.WHITEWALKER || b.race === R.WHITEWALKER) return a.race !== b.race; // 寒冰之主与众生为敌
@@ -2387,6 +2397,8 @@ export class GameEngine {
     // —— 天使光环（引擎级通道：和平野生单位被 rust 批内核接管不经 updateUnit，
     //    治愈是纯 TS 增益无需 rust 镜像；每 3 tick 扫描，天使稀少开销可忽略）——
     if (this.tickCount % 3 === 0) this.angelAuraTick();
+    // —— 凤凰涅槃（引擎级通道：灰烬倒数到点重生；spawnUnit 走常规注册+打包，与批内核无冲突）——
+    if (this.phoenixAshes.length > 0) this.phoenixAshTick();
     // —— 深时引擎：动态温度场（每 120 tick：纬度+海拔+大陆度+灰烬+洋流异常耦合）——
     if (this.tickCount % 120 === 27) this.worldsim.tempTick();
     // —— 深时引擎：冰川系统（每 240 tick：积累/消融/进退——火山冬反馈环）——
@@ -2626,6 +2638,8 @@ export class GameEngine {
   static readonly CORPSE_MAX = 240;
   /** 尸骸存留 tick（≈7.5 年后淡出） */
   static readonly CORPSE_TTL = 300;
+  /** 凤凰涅槃耗时（tick；240 = 4s）：灰烬堆从余烬闪烁到火光渐盛的倒数可视化 */
+  static readonly PHOENIX_ASH_TTL = 240;
   /** 血迹存留 tick（受击飞溅 ≈7.5 年 / 血泊 ≈10 年） */
   static readonly BLOOD_TTL = 300;
 
@@ -2973,6 +2987,21 @@ export class GameEngine {
     for (let i = this.units.length - 1; i >= 0; i--) {
       const u = this.units[i];
       if (!u.dead) continue;
+      // —— 凤凰：浴火重生（灰烬涅槃倒数，至多三次；第四次死亡魂飞魄散走常规收尸）——
+      // 跳过骷髅/血泊/宝藏/家族吊唁全套常规死亡反馈：神鸟陨落只余一堆渐燃的灰
+      if (u.race === R.PHOENIX && (u.rebirths ?? 0) < 3) {
+        this.phoenixAshes.push({ x: u.x, y: u.y, t: GameEngine.PHOENIX_ASH_TTL, rebirths: (u.rebirths ?? 0) + 1 });
+        this.addEvent('phoenix', `凤凰陨落成灰——余烬仍在闪烁，传说它将自火中归来（第 ${(u.rebirths ?? 0) + 1} 次涅槃）`, { x: u.x, y: u.y });
+        this.fx('smoke', u.x, u.y, 30);
+        this.unitById.delete(u.id);
+        this.bumpWild(u.race, -1); // 野生动物计数同步（重生 spawn 时会 +1）
+        const last = this.units.pop()!;
+        if (i < this.units.length) { this.units[i] = last; WBB.touchRow(i); }
+        continue;
+      }
+      if (u.race === R.PHOENIX) {
+        this.addEvent('phoenix', '火种熄灭——这只凤凰耗尽了所有涅槃，化作永恒的灰烬', { x: u.x, y: u.y });
+      }
       // Task 38 在线采集：野生动物遭遇会话死亡结算（饿死 = 捕食者断粮；Map 空查 no-op）
       collectUnitDead(u.id, (u.food ?? 70) <= 0 && RACES[u.race].predator && !RACES[u.race].undead);
       if (u.civ >= 0 && this.civs[u.civ]) this.civs[u.civ].pop--;
@@ -11838,6 +11867,24 @@ export class GameEngine {
       const px = k === 0 ? wx : Math.max(0, Math.min(W - 0.5, wx + (this.rng() - 0.5) * 8));
       const py = k === 0 ? wy : Math.max(0, Math.min(H - 0.5, wy + (this.rng() - 0.5) * 8));
       fn(px, py);
+    }
+  }
+
+  /** 凤凰涅槃（引擎级通道）：灰烬倒数到点重生 —— spawnUnit 走常规注册+打包，与批内核无冲突。
+   *  重生体继承 rebirths 计数（累计 3 次后死亡走常规收尸 = 真终焉）；瞬态不入档。 */
+  private phoenixAshTick() {
+    for (let i = this.phoenixAshes.length - 1; i >= 0; i--) {
+      const a = this.phoenixAshes[i];
+      a.t -= 2; // 与 cd 同款节拍：1 tick = 2 单位（240 单位 ≈ 4s@1x）
+      if (a.t > 0) continue;
+      this.phoenixAshes.splice(i, 1);
+      const nu = this.spawnUnit(R.PHOENIX, a.x, a.y, { silent: true });
+      if (nu) nu.rebirths = a.rebirths; // 重生体继承涅槃计数（防御：spawnUnit 有种族上限 null 分支）
+      this.fx('spawn', a.x, a.y, 46);
+      this.fx('fireball', a.x, a.y - 1, 30);
+      this.toast('凤凰在灰烬中重生了', 'info');
+      this.addEvent('phoenix', '烈焰冲天而起——凤凰自灰烬中振翼重生', { x: a.x, y: a.y });
+      this.onSound?.('volcano');
     }
   }
 
