@@ -2576,6 +2576,10 @@ export class GameEngine {
     if (this.tickCount % 30 === 0) this.hydraRegenTick();
     // —— 水生搁浅整治（引擎级通道：和平单位被内核接管不经 updateUnit，救援必须在通道层）——
     this.beachedAquaticTick();
+    // —— 百兽迁徙（引擎级通道：灭绝野生动物的低频回归 —— 每 600 tick ≈3.3 年掷签一支迁徙兽群）——
+    if (this.tickCount % 600 === 61) this.wildlifeReboundTick();
+    // —— 猎手扑杀（引擎级通道：内核捕食者追不上猎物的能量链补环 —— 每 20 tick 一轮扑杀窗口）——
+    if (this.tickCount % 20 === 7) this.predatorHuntTick();
     // —— 深时引擎：动态温度场（每 120 tick：纬度+海拔+大陆度+灰烬+洋流异常耦合）——
     if (this.tickCount % 120 === 27) this.worldsim.tempTick();
     // —— 深时引擎：冰川系统（每 240 tick：积累/消融/进退——火山冬反馈环）——
@@ -3266,6 +3270,27 @@ export class GameEngine {
       // —— 肉掉落：普通动物（非文明/非巨怪/非亡灵）死亡掉 1-3 块肉，拾食链的源头 ——
       if (!RACES[u.race].isCiv && !GameEngine.MONSTER_LOOT.has(u.race) && !RACES[u.race].undead && this.rng() < 0.85) {
         this.dropMeat(u.x, u.y, 1 + this.rng() * 2 + (u.race === R.PIG ? 1 : 0));
+      }
+      // —— 腐食回充（引擎级通道，v0.49 内核生态修复）：捕食者的进食结算在 TS 战斗路径
+      //     （updateUnit 命中敌人 → food 回充），而 v0.49 起野生动物被批内核接管、不经 updateUnit
+      //     —— 内核捕食者「只猎不吃」，饥饿账本只出不进，数年内必然饿毙（67 年老世界实测：
+      //     狼/熊/狐/蛇/鲨全部归零）。此钩在收尸层补上能量转移：猎物倒下的地方，r=3.5 内
+      //     最饥饿的一只野生捕食者上前取食（猎获/食腐），饥饿账本回充 —— Lotka-Volterra 的能量腿。
+      if (this.isHerbivoreRace(u.race) && !RACES[u.race].isCiv) {
+        let best: Unit | null = null;
+        let bestHunger = 0;
+        for (const p of this.units) {
+          if (p.dead) continue;
+          const pd = RACES[p.race];
+          if (!pd.predator || pd.undead || pd.isCiv) continue;
+          const dx = p.x - u.x, dy = p.y - u.y;
+          if (dx * dx + dy * dy > 36) continue; // r=6 取食半径（嗅到血腥味循迹而来）
+          const hunger = 80 - (p.food ?? 0);
+          if (hunger <= bestHunger) continue; // 只喂最饥饿者（食物 <80 才进食）
+          bestHunger = hunger;
+          best = p;
+        }
+        if (best) best.food = Math.min(160, (best.food ?? 0) + 55 + Math.round(u.maxHp * 0.5));
       }
       if (this.items.length < 170) {
         const boss = GameEngine.MONSTER_LOOT.has(u.race);
@@ -12467,6 +12492,112 @@ export class GameEngine {
       }
       if (u.beachTx != null && u.beachTy != null) { u.tx = u.beachTx; u.ty = u.beachTy; }
       if ((u.beachT ?? 0) >= 15) u.dead = true; // 窒息终局：交还常规收尸（尸骸/捕食链自然接管）
+    }
+  }
+
+  /** 猎手扑杀（引擎级通道，v0.49 内核生态修复）：内核捕食者的进食公式（击杀→food 回充）本身完好
+   *  （实测鲨鱼吞鱼 food +33），但猎物逃跑速度 ≥ 捕食者 —— 狼追不上羊、内核战斗极少命中，
+   *  能量链净负 → 捕食者种群繁衍（food>40 门槛）后仍集体饿毙（实测 39→49→0）。此通道每 20 tick
+   *  让饥饿的野生捕食者（food<45）对 r=1.6 内最近的野生猎物发动扑杀 —— 走 u.dead 常规收尸
+   *  （肉掉落/血泊/腐食回充自然接管），单轮至多 8 杀防屠杀踩踏 —— Lotka-Volterra 的捕食腿。 */
+  private predatorHuntTick() {
+    let kills = 0;
+    for (const p of this.units) {
+      if (kills >= 8) break; // 单轮扑杀预算（防饥饿兽群一轮屠杀整群猎物）
+      if (p.dead) continue;
+      const pd = RACES[p.race];
+      if (!pd.predator || pd.undead || pd.isCiv) continue;
+      if ((p.food ?? 70) > 45) continue; // 只有饥饿者出手（饱食者不滥杀）
+      let prey: Unit | null = null;
+      let bd = pd.aquatic ? 5.76 : 2.56; // 扑杀窗口：陆捕 r=1.6 / 水捕 r=2.4（水域三维追猎）
+      for (const q of this.units) {
+        if (q.dead || (q.grab ?? 0) > 0) continue; // 神明手中之物不捕
+        if (RACES[q.race].isCiv || !this.isHerbivoreRace(q.race)) continue;
+        const dx = q.x - p.x, dy = q.y - p.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bd) { bd = d2; prey = q; }
+      }
+      if (!prey) continue;
+      prey.dead = true;
+      WB.syncDead(prey); // WASM 镜像：后续扫描即刻跳过亡者
+      this.fx('blood', prey.x, prey.y, 14);
+      kills++;
+      p.food = Math.min(160, (p.food ?? 0) + 25); // 扑杀即刻进食（腐食回充再补一口）
+    }
+  }
+
+  /** 百兽迁徙（引擎级通道）：野生动物灭绝是吸收态 —— 归零的种族永远消失，长寿世界里生态单调化
+   *  （67 年老世界实测：狼/熊/狐/鹿/蛇/鲨/雪狼……全部归零，仅高繁衍物种幸存 —— 捕食者饥饿
+   *  + 食物>40 繁衍门槛 + 灭绝无回归，Lotka-Volterra 的单向棘轮）。此通道让灭绝的野生种族以
+   *  「远方兽群迁徙而来」的方式低频回归：每 600 tick（≈3.3 年）检一轮，灭绝名单里掷签一个种族，
+   *  在其适宜栖息地投放一小群奠基者 —— 生态韧性（回迁腿），世界再老也生机不断。 */
+  private wildlifeReboundTick() {
+    if (!this.laws.reproduction) return; // 神明关闭繁衍法则时，世界静寂如死
+    if (this.wildAlive() >= MAX_WILDLIFE - 8) return; // 生态预算吃紧时不添乱
+    // 奠基者名单（与 worldgen trySpawn 播撒对齐；文明/神话/亡灵有自己的降临通道不入列）
+    // habitat：适宜栖息地判定（与 worldgen 的地形口径一致）；n：迁徙群规模区间
+    const isW = (t: number) => t === T.DEEP || t === T.WATER;
+    const SEED: Array<{ race: number; n: [number, number]; habitat: (t: number) => boolean }> = [
+      { race: R.SHEEP, n: [3, 5], habitat: (t) => t === T.GRASS },
+      { race: R.WOLF, n: [2, 3], habitat: (t) => t === T.FOREST },
+      { race: R.BEAR, n: [1, 2], habitat: (t) => t === T.FOREST },
+      { race: R.DEER, n: [2, 4], habitat: (t) => t === T.GRASS },
+      { race: R.PENGUIN, n: [2, 3], habitat: (t) => t === T.SNOW },
+      { race: R.CAMEL, n: [2, 3], habitat: (t) => t === T.SAND },
+      { race: R.SCORPION, n: [2, 3], habitat: (t) => t === T.SAND },
+      { race: R.SNAKE, n: [2, 3], habitat: (t) => t === T.SAND },
+      { race: R.SNOWWOLF, n: [2, 3], habitat: (t) => t === T.SNOW },
+      { race: R.CHICKEN, n: [3, 5], habitat: (t) => t === T.GRASS },
+      { race: R.PIG, n: [2, 4], habitat: (t) => t === T.GRASS },
+      { race: R.RABBIT, n: [3, 5], habitat: (t) => t === T.GRASS || t === T.FOREST },
+      { race: R.FOX, n: [1, 2], habitat: (t) => t === T.FOREST },
+      { race: R.FISH, n: [4, 7], habitat: isW },
+      { race: R.CRAB, n: [2, 3], habitat: (t) => t === T.SAND },
+      { race: R.TURTLE, n: [2, 3], habitat: isW },
+      { race: R.SHARK, n: [1, 2], habitat: isW },
+    ];
+    // 灭绝名单：wildCount 为 0 的候选（O(1) 分种族计数）
+    const extinct = SEED.filter((s) => (this.wildCount.get(s.race) ?? 0) === 0);
+    if (extinct.length === 0) return;
+    if (this.rng() > 0.6) return; // 掷签门：并非每轮都迁来 —— 平均 ~5.5 年一支兽群抵达
+    const seed = extinct[Math.floor(this.rng() * extinct.length)];
+    const def = RACES[seed.race];
+    const aquatic = !!def.aquatic;
+    // 栖息地采样：随机掷点找落位（蟹需 r=2 内有水 —— 沿 worldgen 口径）
+    for (let tries = 0; tries < 140; tries++) {
+      const x = 2 + Math.floor(this.rng() * (W - 4));
+      const y = 2 + Math.floor(this.rng() * (H - 4));
+      const i = y * W + x;
+      if (!seed.habitat(this.terrain[i])) continue;
+      if (seed.race === R.CRAB) {
+        let w = 0;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          if (isWater(this.terrain[ny * W + nx])) w++;
+        }
+        if (w === 0) continue;
+      }
+      // 奠基者落位：逐只采样（水生逐格校验水域；陆生允许 ±1.5 抖动）
+      const n = seed.n[0] + Math.floor(this.rng() * (seed.n[1] - seed.n[0] + 1));
+      let placed = 0;
+      for (let k = 0; k < n; k++) {
+        for (let t2 = 0; t2 < 10; t2++) {
+          const jx = x + (this.rng() * 3 - 1.5), jy = y + (this.rng() * 3 - 1.5);
+          const j = Math.max(0, Math.min(W * H - 1, Math.floor(jy) * W + Math.floor(jx)));
+          if (!seed.habitat(this.terrain[j])) continue;
+          const nu = this.spawnUnit(seed.race, jx, jy, { silent: true });
+          if (nu) placed++;
+          break;
+        }
+      }
+      if (placed === 0) continue; // 落点全数失败（预算/上限）→ 换个点再试
+      this.fx('spawn', x + 0.5, y + 0.5, 46);
+      const msg = aquatic
+        ? `洋流送来了远方的族群——${def.name}重新出现在这片水域`
+        : `远方的兽群跋涉而来——${def.name}重新踏上了这片大地`;
+      this.addEvent('eco', msg, { x: x + 0.5, y: y + 0.5 });
+      return; // 每轮至多一支兽群迁入（节奏克制，迁徙是稀客）
     }
   }
 
