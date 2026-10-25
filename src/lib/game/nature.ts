@@ -956,7 +956,9 @@ export class NatureSystem {
     return {
       season: this.season,
       seasonName: this.seasonName,
-      seasonYearIn: Math.floor(this.eng.yearF / SEASON_YEARS) % SEASON_YEARS,
+      // Task 100 修复：旧公式 floor(yearF/SY) % SY 实为「季节序号的奇偶」（值域恒 {0,1}，且与本季进度脱节）——
+      // 本季年进度 = yearF 对 SY 取余（相位 offset 只决定哪个季节先来，不影响季内进度）；保留 1 位小数供 HUD 直读
+      seasonYearIn: Math.round((this.eng.yearF % SEASON_YEARS) * 10) / 10,
       seasonYears: SEASON_YEARS,
       ash: Math.round(this.ash * 100) / 100,
       plates: this.plateN,

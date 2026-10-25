@@ -330,18 +330,20 @@ function NatureBody() {
           </p>
           <span className={`text-lg font-black leading-none ${seasonMeta.cls}`}>{nat?.seasonName ?? '夏'}</span>
         </div>
-        {/* 季节进度 + 四季刻度 */}
+        {/* 季节进度 + 四季刻度（Task 100：当前季段内嵌本季年进度填充——进度随 yearF 连续生长，换季即满格交棒下一段） */}
         <div className="flex h-2 gap-0.5 overflow-hidden rounded-sm" aria-label="季节进度">
-          {SEASON_META.map((s, i) => (
-            <span
-              key={s.label}
-              className={`h-full flex-1 ${i === (nat?.season ?? 1) ? s.bar : 'bg-zinc-700'}`}
-              title={`${s.label}季`}
-            />
-          ))}
+          {SEASON_META.map((s, i) => {
+            const cur = i === (nat?.season ?? 1);
+            const pct = cur ? Math.min(100, Math.max(0, ((nat?.seasonYearIn ?? 0) / (nat?.seasonYears || 2)) * 100)) : 0;
+            return (
+              <span key={s.label} className={`relative h-full flex-1 ${cur ? 'bg-zinc-700' : 'bg-zinc-700/60'}`} title={`${s.label}季${cur ? ` · 第 ${(nat?.seasonYearIn ?? 0).toFixed(1)} / ${nat?.seasonYears ?? 2} 年` : ''}`}>
+                {cur && <span className={`absolute inset-y-0 left-0 ${s.bar}`} style={{ width: `${pct}%` }} />}
+              </span>
+            );
+          })}
         </div>
         <p className="mt-1 text-[9px] text-zinc-500">
-          本季 {nat?.seasonYearIn ?? 0}/{nat?.seasonYears ?? 2} 年 · 每季 {nat?.seasonYears ?? 2} 年一轮 · 春催繁衍 冬压火苗
+          本季 {(nat?.seasonYearIn ?? 0).toFixed(1)}/{nat?.seasonYears ?? 2} 年 · 每季 {nat?.seasonYears ?? 2} 年一轮 · 春催繁衍 冬压火苗
         </p>
         {/* 火山灰警示 */}
         {(nat?.ash ?? 0) > 0.1 && (

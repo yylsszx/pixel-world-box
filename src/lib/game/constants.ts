@@ -288,7 +288,8 @@ export const ICONS: Record<string, string[]> = {
     '.rrrrr..', 'rrrrrrr.', '.r.rr.r.', '.r...r..',
   ],
   angel: [
-    'f......f', 'ff.yy.ff', 'ffwccwff', '.fwwwwf.',
+    // Task 100 v5 圣颜微调：脸侧 w→y（金发框脸）——暖白与肤色同属暖调对比弱，金框令 2px 脸部从翼/袍底色中跳出（Task 99 遗留①）
+    'f......f', 'ff.yy.ff', 'ffyccyff', '.fwwwwf.',
     '..wwwwy.', '..wyywy.', '..w..w..', '..y..y..',
   ],
   phoenix: [
