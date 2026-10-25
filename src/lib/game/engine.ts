@@ -2430,7 +2430,8 @@ export class GameEngine {
     // —— 树人播种（引擎级通道：和平野生单位被批内核接管；植树/灭火是纯地形操作无需 rust 镜像）——
     if (this.tickCount % 10 === 0) this.entGroveTick();
     // —— 巫妖死灵复生（引擎级通道：复生是「尸体→新单位」的引擎操作，与批内核战斗无冲突）——
-    if (this.tickCount % 12 === 0) this.lichRaiseTick();
+    // 巫妖复生节律（季节 × 万物）：寒冬死潮加速（12→8 tick）——长夜与寒冬是死灵的盟友
+    if (this.tickCount % (this.nature.season === 3 ? 8 : 12) === 0) this.lichRaiseTick();
     if (this.tickCount % 30 === 0) this.hydraRegenTick();
     // —— 深时引擎：动态温度场（每 120 tick：纬度+海拔+大陆度+灰烬+洋流异常耦合）——
     if (this.tickCount % 120 === 27) this.worldsim.tempTick();
@@ -3023,7 +3024,9 @@ export class GameEngine {
       // —— 凤凰：浴火重生（灰烬涅槃倒数，至多三次；第四次死亡魂飞魄散走常规收尸）——
       // 跳过骷髅/血泊/宝藏/家族吊唁全套常规死亡反馈：神鸟陨落只余一堆渐燃的灰
       if (u.race === R.PHOENIX && (u.rebirths ?? 0) < 3) {
-        this.phoenixAshes.push({ x: u.x, y: u.y, t: GameEngine.PHOENIX_ASH_TTL, rebirths: (u.rebirths ?? 0) + 1 });
+        // 季节节律（季节 × 万物）：寒冬涅槃迟缓 —— 霜冻延缓火种复燃（TTL ×1.5 ≈ 6s@1x）
+        const ashTtl = this.nature.season === 3 ? Math.round(GameEngine.PHOENIX_ASH_TTL * 1.5) : GameEngine.PHOENIX_ASH_TTL;
+        this.phoenixAshes.push({ x: u.x, y: u.y, t: ashTtl, rebirths: (u.rebirths ?? 0) + 1 });
         this.addEvent('phoenix', `凤凰陨落成灰——余烬仍在闪烁，传说它将自火中归来（第 ${(u.rebirths ?? 0) + 1} 次涅槃）`, { x: u.x, y: u.y });
         this.fx('smoke', u.x, u.y, 30);
         this.unitById.delete(u.id);
@@ -9198,10 +9201,11 @@ export class GameEngine {
     return true;
   }
 
-  /** 开发者：季节快进一档（春→夏→秋→冬循环；立即全图刷新色调） */
+  /** 开发者：季节快进一档（春→夏→秋→冬循环；立即全图刷新色调）
+   *  lastSeason 置为「上一季」而非 -1——seasonCheck 将其视为真实过渡，换季宣告照常触发 */
   devNextSeason(): number {
     this.nature.seasonOffset = (this.nature.seasonOffset + 1) % 4;
-    this.nature.lastSeason = -1;
+    this.nature.lastSeason = (this.nature.season + 3) % 4;
     this.nature.seasonCheck();
     this.statsTick();
     return this.nature.season;
@@ -12012,8 +12016,11 @@ export class GameEngine {
   }
 
   /** 九头蛇多头再生（引擎级通道）：hostile 巨兽被 rust 批内核接管，回血不在 TS updateUnit 里跑 ——
-   *  每 30 tick 全场九头蛇回复 2% maxHp（多头的顽强生命力；幼蛇同样受益）。与批内核无冲突。 */
+   *  每 30 tick 全场九头蛇回复 2% maxHp（多头的顽强生命力；幼蛇同样受益）。与批内核无冲突。
+   *  季节节律（季节 × 万物）：冬季冬眠 —— 冷血蛇虫蛰伏，代谢停滞伤口不愈
+   *  （对抗九头蛇的第二把钥匙：烈焰烧灼断颈之外，还可以把仗拖到冬天）。 */
   private hydraRegenTick() {
+    if (this.nature.season === 3) return; // 冬眠：霜降之日，多头蛇的再生之泉一并封冻
     for (const u of this.units) {
       if (u.dead || u.race !== R.HYDRA) continue;
       if (u.hp < u.maxHp) {
@@ -12026,13 +12033,17 @@ export class GameEngine {
   /** 树人播种（引擎级通道）：森林守护者的两大职责 ——
    *  ① 播种：每 10 tick 每棵树人采样周围 r=3 格，草地/沙地/焦土 概率化为森林（森林扩张是纯地形写，
    *     自然引擎 regrow 与野火系统会自然接管后续演化 —— 树人是活的绿化引擎）；
-   *  ② 扑火：扑灭周围 r=2.5 的火焰（森林卫士的本职；不灭岩浆 —— 那超出树人的能力）。
+   *     季节节律（季节 × 万物）：春季播种热情 ×1.3（春播），冬季蛰伏停播（树皮休眠，落叶纷飞的岁月）。
+   *  ② 扑火：扑灭周围 r=2.5 的火焰（森林卫士的本职；不灭岩浆 —— 那超出树人的能力；四季在岗不辍）。
    *  和平野生单位被 rust 批内核接管不经 updateUnit，地形操作挂引擎 tick 通道与批内核共存。 */
   private entGroveTick() {
     let planted = 0;
+    const sn = this.nature.season; // 季节节律：春播冬蛰（一次采样，循环内共用）
     for (const u of this.units) {
       if (u.dead || u.race !== R.ENT) continue;
-      // ① 播种：一次采样 2 个点（树人是慢节奏的园丁，不猛长）
+      // ① 播种：一次采样 2 个点（树人是慢节奏的园丁，不猛长；冬季蛰伏跳过）
+      if (sn !== 3) {
+      const pm = sn === 0 ? 1.3 : 1; // 春播热情：种子在暖雨里更敢扎根
       for (let k = 0; k < 2; k++) {
         const ang = this.rng() * Math.PI * 2;
         const rr = 1 + this.rng() * 2.5;
@@ -12040,12 +12051,13 @@ export class GameEngine {
         if (j < 0 || j >= W * H) continue;
         if (this.building[j] > 0) continue; // 有建筑的格子不种（屋顶下长树成何体统）
         const t = this.terrain[j];
-        if ((t === T.GRASS && this.rng() < 0.22) || (t === T.BURNT && this.rng() < 0.45) || (t === T.SAND && this.rng() < 0.06)) {
+        if ((t === T.GRASS && this.rng() < 0.22 * pm) || (t === T.BURNT && this.rng() < 0.45 * pm) || (t === T.SAND && this.rng() < 0.06 * pm)) {
           this.setTerrain(j, T.FOREST);
           planted++;
           if (planted <= 6) this.fx('spark', (j % W) + 0.5, ((j / W) | 0) + 0.5, 14);
         }
       }
+      } // 蛰伏：冬雪封地时树人收拢枝桠，静候春雷
       // ② 扑火：熄灭周围 r=2.5 的火焰
       const ex = Math.floor(u.x);
       const ey = Math.floor(u.y);

@@ -106,6 +106,8 @@ export const KIND_META: Record<WorldEventKind, { icon: LucideIcon; color: string
   lineage: { icon: Network, color: 'text-violet-300' },
   // —— v40：神谕 Agent（法则书写/宣告/热改参数） ——
   oracle: { icon: Wand2, color: 'text-fuchsia-300' },
+  // —— 季节 × 万物（换季宣告/生物节律） ——
+  season: { icon: Sun, color: 'text-amber-200' },
 };
 
 /** 过滤分类的元信息（图标 + 标签 + 主题色） */

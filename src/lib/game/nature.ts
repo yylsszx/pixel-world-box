@@ -167,15 +167,32 @@ export class NatureSystem {
     const avg = this.boundary.size > 0 ? sum / this.boundary.size : 0;
     return avg > ep('nature.quakeStress') * 0.72 ? 3 : avg > ep('nature.quakeStress') * 0.5 ? 2 : avg > ep('nature.quakeStress') * 0.3 ? 1 : 0;
   }
-  /** 季节推进检测（每 40 tick）：变化时全图刷新色调；森林同步重绘树冠（秋红冬秃春花） */
+  /** 季节推进检测（每 40 tick）：变化时全图刷新色调；森林同步重绘树冠（秋红冬秃春花）
+   *  换季宣告（季节 × 万物）：真实过渡（lastSeason >= 0，开局/读档静默）时 toast + 编年史，
+   *  文案自带机制提示——玩家由此得知季节正在改变生物节律 */
   lastSeason = -1;
   seasonCheck() {
     const s = this.season;
     if (s !== this.lastSeason) {
+      const first = this.lastSeason < 0;
       this.lastSeason = s;
       for (let i = 0; i < W * H; i++) {
         this.eng.dirty.add(i);
         if (this.eng.terrain[i] === T.FOREST) this.eng.propsDirty.add(i);
+      }
+      if (first) return; // 开局/读档基线：不宣告（HUD 已示当前季节）
+      if (s === 0) {
+        this.eng.toast('春回大地——草木返青，万物复苏，树人开始了春播', 'good');
+        this.eng.addEvent('season', '春回大地：万物复苏，草木返青（生物节律 · 春播加成）');
+      } else if (s === 1) {
+        this.eng.toast('盛夏来临——烈日当空，野火更易燎原', 'info');
+        this.eng.addEvent('season', '盛夏来临：烈日当空，野火更易燎原（火险上升）');
+      } else if (s === 2) {
+        this.eng.toast('秋色渐染——金风送爽，林梢染红，大地进入收获的季节', 'info');
+        this.eng.addEvent('season', '秋色渐染：金风送爽，林梢染红（草木生长放缓）');
+      } else {
+        this.eng.toast('寒冬降临——霜封大地，蛇虫蛰伏，亡灵在长夜中愈发活跃', 'danger');
+        this.eng.addEvent('season', '寒冬降临：霜封大地，蛇虫蛰伏，死灵在长夜中愈发活跃');
       }
     }
   }

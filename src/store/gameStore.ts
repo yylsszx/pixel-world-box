@@ -73,6 +73,8 @@ export const EVENT_CATEGORY: Record<WorldEventKind, Exclude<EventFilter, 'all'>>
   lineage: 'kingdom',
   // —— v40：神谕 Agent（法则书写/宣告/热改参数） ——
   oracle: 'world',
+  // —— 季节 × 万物（换季宣告） ——
+  season: 'world',
 };
 
 /** 手动存档槽位（3 槽）+ 独立自动存档槽 + 旧单槽只读兼容 */
