@@ -515,8 +515,8 @@ function drawWeather(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numbe
             const fy = ry + Math.floor(((hsh >> 7) + fc * 0.12) % 14);
             const pale = (hsh >> 11) & 1; // 深粉/浅粉两色瓣
             wc.fillStyle = pale ? 'rgba(244,168,196,0.82)' : 'rgba(250,196,216,0.78)';
-            // 2×2 px：天幕层 1px 粒子在超采样管线中会丢失（实测），两像素是可见性下限
-            wc.fillRect(Math.round(rx + sway), fy, 2, 2);
+            // 3×3 px：天幕层小粒子在超采样+视口裁剪 blit 管线中有可见性下限（实测 2×2 会丢），3×3 恰为半格瓣面
+            wc.fillRect(Math.round(rx + sway), fy, 3, 3);
           }
         }
       } else if (nat.season === 2 && m <= 0.62) {
@@ -533,7 +533,7 @@ function drawWeather(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numbe
             const fy = ry + Math.floor(ph);
             const cp = (hsh >> 12) % 3; // 橙/红/金三色叶
             wc.fillStyle = cp === 0 ? 'rgba(228,118,34,0.85)' : cp === 1 ? 'rgba(202,58,38,0.82)' : 'rgba(226,164,44,0.84)';
-            wc.fillRect(Math.round(rx + sway), fy, 2, 2); // 2×2：天幕层 1px 不可见（实测），叶面比瓣稍大更醒目
+            wc.fillRect(Math.round(rx + sway), fy, 3, 3); // 3×3：与花瓣同取可见性下限，落叶雨更醒目
           }
         }
       }
