@@ -4,7 +4,7 @@ import { T, R, RACES, TRAITS, CIV_RACES, DEFAULT_LAWS, ITEM_DEFS, describeCond, 
 import { EVO_KIND_META, applyEmTechMods, describeVis, inventIdea, inventTech, inventTrait, invalidateVisCache, mutateVis, tupleToVis, visFromGene, visToTuple } from './emergence';
 import type { EmModKey, EmTech, EvoKind, EvoNode, IdeaDef, VisGenome } from './emergence';
 import {
-  W, H, TICK_MS, YEAR_TICKS, MAX_UNITS, MAX_DRAGONS, MAX_DEMONS, MAX_ITEMS, HOUSE_CAP, MAX_WILDLIFE, MAX_TROLLS, MAX_OGRES, MAX_WHITEWALKERS, MAX_VAMPIRES, MAX_KRAKENS, MAX_SANDWORMS, MAX_BASILISKS,
+  W, H, TICK_MS, YEAR_TICKS, MAX_UNITS, MAX_DRAGONS, MAX_DEMONS, MAX_ITEMS, HOUSE_CAP, MAX_WILDLIFE, MAX_TROLLS, MAX_OGRES, MAX_WHITEWALKERS, MAX_VAMPIRES, MAX_KRAKENS, MAX_SANDWORMS, MAX_BASILISKS, MAX_HYDRAS,
   CIV_COLORS, FLAMMABLE, isWater, isLand, walkable, buildable,
   TERRAIN_RGB, TOOL_BY_ID, RACE_TOOL, ITEM_TOOL, CHEST_TIERS, rollChestItem,
   WATER_TIER_RGB, DEEP_TIER_RGB, SOFT_TERRAIN,
@@ -1262,6 +1262,7 @@ export class GameEngine {
     if (race === R.KRAKEN && (this.wildCount.get(race) ?? 0) >= MAX_KRAKENS) return null;
     if (race === R.SANDWORM && (this.wildCount.get(race) ?? 0) >= MAX_SANDWORMS) return null;
     if (race === R.BASILISK && (this.wildCount.get(race) ?? 0) >= MAX_BASILISKS) return null;
+    if (race === R.HYDRA && (this.wildCount.get(race) ?? 0) >= MAX_HYDRAS) return null;
     x = Math.max(0.5, Math.min(W - 0.5, x));
     y = Math.max(0.5, Math.min(H - 0.5, y));
 
@@ -1355,7 +1356,7 @@ export class GameEngine {
       this.addEvent('phoenix', '烈焰在空中盘旋凝成神鸟，凤凰降临世间——灰烬只是它的摇篮', { x, y });
       this.fx('spawn', x, y, 40);
       this.fx('fireball', x, y - 1, 24);
-      this.onSound?.('volcano');
+      this.onSound?.('phoenix');
     }
     if (!opts?.silent && race === R.ENT) {
       this.toast('古老的树人从林间苏醒', 'info');
@@ -1372,6 +1373,14 @@ export class GameEngine {
       this.fx('skull', x, y - 2, 30);
       this.shake = Math.max(this.shake, 4);
       this.onSound?.('horn');
+    }
+    if (!opts?.silent && race === R.HYDRA) {
+      this.toast('沼泽沸腾了——九头蛇自泥泞中爬出', 'danger');
+      this.addEvent('hydra', '泥浆翻涌，毒液滴落——九头巨蟒自沼泽深处爬出，每一颗头颅都在低嘶；斩下它的一颗头，它会还你两颗', { x, y });
+      this.fx('spawn', x, y, 40);
+      this.fx('smoke', x, y - 1, 30);
+      this.shake = Math.max(this.shake, 4); // 巨蟒爬行震动
+      this.onSound?.('hydra');
     }
     if (!opts?.silent && race === R.MAGE) {
       this.toast('一位神秘的法师现身了', 'info');
@@ -1929,7 +1938,8 @@ export class GameEngine {
     // 「与众生为敌」分支对称覆盖三者（双侧为敌 = 圣剑/焰爪/枝干重击自动出鞘）；对无辜者
     // 由全零旗标自然放行 —— 与 wasm is_enemy_full（rust-core lib.rs）逐位一致。
     // 巫妖（R.LICH=31）走 hostile+undead 既有亡灵逻辑（与骷髅同构），亦无需专门分支。
-    // ⚠️ 若在此新增天使/凤凰/树人/巫妖特判，必须同步 rust-core/src/lib.rs 并重建 wbcore.wasm。
+    // 九头蛇（R.HYDRA=32）走 hostile+predator 既有猎杀逻辑（与蛇怪同构），亦无需专门分支。
+    // ⚠️ 若在此新增天使/凤凰/树人/巫妖/九头蛇特判，必须同步 rust-core/src/lib.rs 并重建 wbcore.wasm。
     if (a.race === R.ZOMBIE || b.race === R.ZOMBIE) return a.race !== b.race;
     if (a.race === R.SKELETON || b.race === R.SKELETON) return a.race !== b.race; // 亡灵与众人为敌
     if (a.race === R.WHITEWALKER || b.race === R.WHITEWALKER) return a.race !== b.race; // 寒冰之主与众生为敌
@@ -2420,6 +2430,7 @@ export class GameEngine {
     if (this.tickCount % 10 === 0) this.entGroveTick();
     // —— 巫妖死灵复生（引擎级通道：复生是「尸体→新单位」的引擎操作，与批内核战斗无冲突）——
     if (this.tickCount % 12 === 0) this.lichRaiseTick();
+    if (this.tickCount % 30 === 0) this.hydraRegenTick();
     // —— 深时引擎：动态温度场（每 120 tick：纬度+海拔+大陆度+灰烬+洋流异常耦合）——
     if (this.tickCount % 120 === 27) this.worldsim.tempTick();
     // —— 深时引擎：冰川系统（每 240 tick：积累/消融/进退——火山冬反馈环）——
@@ -3022,6 +3033,47 @@ export class GameEngine {
       }
       if (u.race === R.PHOENIX) {
         this.addEvent('phoenix', '火种熄灭——这只凤凰耗尽了所有涅槃，化作永恒的灰烬', { x: u.x, y: u.y });
+      }
+      // —— 九头蛇：斩首分裂（被杀时断颈处萌发两条幼蛇；世代上限 2，第三世代死亡即真终焉）——
+      // 神话弱点：火焰烧灼断颈可阻止再生 —— 死亡位置燃着火 / 身陷岩浆 = 被烧灼，直接真死走常规收尸
+      // 分裂走 spawnUnit（受 MAX_HYDRAS / MAX_WILDLIFE 上限约束，spawnUnit 返回 null = 头颅再也长不出来）
+      if (u.race === R.HYDRA && (u.gen ?? 0) < 2) {
+        const ti = ((u.y | 0) * W) + (u.x | 0);
+        const seared = this.fire[ti] > 0 || this.terrain[ti] === T.LAVA;
+        if (!seared) {
+          const g = (u.gen ?? 0) + 1;
+          const born: Unit[] = [];
+          for (const [dx, dy] of [[-1.3, 0.5], [1.3, -0.5]] as const) {
+            const nu = this.spawnUnit(R.HYDRA, u.x + dx, u.y + dy, { silent: true });
+            if (nu) {
+              nu.gen = g;
+              nu.maxHp = Math.round(nu.maxHp * 0.6); // 幼蛇只继承了六成的伟力
+              nu.hp = nu.maxHp;
+              born.push(nu);
+            }
+          }
+          if (born.length > 0) {
+            this.addEvent('hydra', born.length > 1
+              ? `九头蛇被斩首——断颈处竟萌发出 ${born.length} 条幼蛇，每一颗都在嘶鸣（第 ${g} 世代）`
+              : `九头蛇倒下了——仅剩的一颗断颈仍萌发出一条幼蛇（第 ${g} 世代）`, { x: u.x, y: u.y });
+            this.fx('smoke', u.x, u.y, 36);
+            this.fx('blood', u.x, u.y, 20);
+            this.shake = Math.max(this.shake, 3);
+            this.onSound?.('hydra');
+            this.unitById.delete(u.id);
+            this.bumpWild(u.race, -1); // 母体计数 -1（幼蛇 spawn 各自 +1）
+            const last = this.units.pop()!;
+            if (i < this.units.length) { this.units[i] = last; WBB.touchRow(i); }
+            continue;
+          }
+          // 上限满 → 分裂失败，落入常规收尸（传说的尽头：头颅再也长不出来）
+          this.addEvent('hydra', '九头蛇倒下了——但世上九头蛇已经太多，断颈静寂，再无新生', { x: u.x, y: u.y });
+        } else {
+          this.addEvent('hydra', '烈焰烧灼了断颈——被火焚灭的九头蛇再也无法萌生新的头颅', { x: u.x, y: u.y });
+        }
+      }
+      if (u.race === R.HYDRA && (u.gen ?? 0) >= 2) {
+        this.addEvent('hydra', '最后一颗头颅垂下了——这条熬过两次斩首的老蛇终于真正死去', { x: u.x, y: u.y });
       }
       // Task 38 在线采集：野生动物遭遇会话死亡结算（饿死 = 捕食者断粮；Map 空查 no-op）
       collectUnitDead(u.id, (u.food ?? 70) <= 0 && RACES[u.race].predator && !RACES[u.race].undead);
@@ -11954,7 +12006,19 @@ export class GameEngine {
       this.fx('fireball', a.x, a.y - 1, 30);
       this.toast('凤凰在灰烬中重生了', 'info');
       this.addEvent('phoenix', '烈焰冲天而起——凤凰自灰烬中振翼重生', { x: a.x, y: a.y });
-      this.onSound?.('volcano');
+      this.onSound?.('phoenix');
+    }
+  }
+
+  /** 九头蛇多头再生（引擎级通道）：hostile 巨兽被 rust 批内核接管，回血不在 TS updateUnit 里跑 ——
+   *  每 30 tick 全场九头蛇回复 2% maxHp（多头的顽强生命力；幼蛇同样受益）。与批内核无冲突。 */
+  private hydraRegenTick() {
+    for (const u of this.units) {
+      if (u.dead || u.race !== R.HYDRA) continue;
+      if (u.hp < u.maxHp) {
+        u.hp = Math.min(u.maxHp, u.hp + u.maxHp * 0.02);
+        u.hurt = 0; // 再生中不残留受创闪红
+      }
     }
   }
 

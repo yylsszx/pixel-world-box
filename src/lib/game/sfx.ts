@@ -36,6 +36,8 @@ const PLAY_THROTTLE: Partial<Record<SoundKind, number>> = {
   dragon: 500,
   shield: 250,
   coin: 90,
+  hydra: 600,
+  phoenix: 450,
 };
 
 // ============ 环境音乐素材表（频率写死，全合成零素材） ============
@@ -237,6 +239,8 @@ export class SfxEngine {
       case 'dragon': this.dragon(); break;
       case 'shield': this.shield(); break;
       case 'coin': this.coin(); break;
+      case 'hydra': this.hydra(); break;
+      case 'phoenix': this.phoenixCall(); break;
     }
   }
 
@@ -829,6 +833,86 @@ export class SfxEngine {
       osc.start(st);
       osc.stop(st + 0.12);
     });
+  }
+
+  /** 九头蛇嘶吼：双支失谐锯齿下滑（180/240→90Hz）+ 嘶气噪声 —— 比巨龙更高频更阴冷，多头的和声感 */
+  private hydra(): void {
+    const ctx = this.ctx!;
+    const t = ctx.currentTime;
+    // 双锯齿失谐主体（两条颈同时嘶鸣的拍频）
+    for (const [f0, f1, vol] of [[180, 88, 0.22], [242, 120, 0.16]] as const) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const lp = ctx.createBiquadFilter();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(f0, t);
+      osc.frequency.exponentialRampToValueAtTime(f1, t + 1.0);
+      lp.type = 'lowpass';
+      lp.frequency.value = 900;
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.linearRampToValueAtTime(vol, t + 0.08);
+      gain.gain.setValueAtTime(vol, t + 0.6);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
+      osc.connect(lp).connect(gain).connect(this.sfxGain!);
+      osc.start(t);
+      osc.stop(t + 1.15);
+    }
+    // 嘶气噪声层（毒雾般的白噪上滑）
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuffer();
+    src.loop = true;
+    src.playbackRate.value = 1.2;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(900, t);
+    bp.frequency.linearRampToValueAtTime(2400, t + 0.7);
+    bp.Q.value = 2.2;
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.12, t);
+    ng.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+    src.connect(bp).connect(ng).connect(this.sfxGain!);
+    src.start(t);
+    src.stop(t + 0.95);
+  }
+
+  /** 凤鸣：清亮上滑正弦双音（880→1760Hz 主体 + 纯五度泛音）+ 颤音收尾 —— 神鸟的凤鸣九天 */
+  private phoenixCall(): void {
+    const ctx = this.ctx!;
+    const t = ctx.currentTime;
+    // 主体：八度上滑正弦（火中振翼的清越）
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, t);
+    osc.frequency.exponentialRampToValueAtTime(1760, t + 0.5);
+    gain.gain.setValueAtTime(0.001, t);
+    gain.gain.linearRampToValueAtTime(0.16, t + 0.1);
+    gain.gain.setValueAtTime(0.16, t + 0.55);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+    osc.connect(gain).connect(this.sfxGain!);
+    osc.start(t);
+    osc.stop(t + 0.95);
+    // 纯五度泛音（1320→2640Hz，更空灵）
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(1318.5, t);
+    osc2.frequency.exponentialRampToValueAtTime(2637, t + 0.5);
+    gain2.gain.setValueAtTime(0.001, t);
+    gain2.gain.linearRampToValueAtTime(0.07, t + 0.14);
+    gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.85);
+    osc2.connect(gain2).connect(this.sfxGain!);
+    osc2.start(t);
+    osc2.stop(t + 0.9);
+    // 颤音收尾（6.5Hz LFO，凤尾摇曳）
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    lfo.frequency.value = 6.5;
+    lfoGain.gain.value = 22;
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+    lfo.start(t + 0.45);
+    lfo.stop(t + 0.95);
   }
 }
 

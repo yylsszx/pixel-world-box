@@ -20,6 +20,8 @@ export const MAX_SANDWORMS = 3;
 export const MAX_BASILISKS = 6;
 export const MAX_OGRES = 5;
 export const MAX_WHITEWALKERS = 6;
+/** 九头蛇同屏上限（斩首分裂会瞬时 +2，从严控制防刷屏） */
+export const MAX_HYDRAS = 6;
 export const MAX_VAMPIRES = 8;
 /** 地面物品上限（防止刷屏） */
 export const MAX_ITEMS = 200;
@@ -294,6 +296,10 @@ export const ICONS: Record<string, string[]> = {
     '..dddd..', '.dffffd.', '.dfvfvf.', '.dffffd.',
     'ddDDDDdd', '.dDppDd.', '.dDppDd.', '.d.d.d..',
   ],
+  hydra: [
+    '.g...g..', 'gyg.gyg.', '.r...r..', '.G.G.G..',
+    '..GGG...', '.GgkgG..', '.GGGGG..', '..G.G...',
+  ],
   mage: [
     '....k...', '...kkk..', '..kkkkk.', '...vww..',
     '...vww..', '..vvvv..', '.vvvvvv.', '..y.vy..',
@@ -524,6 +530,7 @@ export const TOOLS: ToolDef[] = [
   { id: 'phoenix', label: '凤凰', desc: '浴火神鸟：烈焰为羽，陨落后自灰烬中重生（至多三次）', tab: 'creatures', icon: 'phoenix', single: true },
   { id: 'ent', label: '树人', desc: '森林守护者：播撒种子令森林扩张，为林间生灵扑灭火魔', tab: 'creatures', icon: 'ent', single: true },
   { id: 'lich', label: '巫妖', desc: '死灵领主：将战场尸骸复生为骷髅，编入永夜的亡者军团', tab: 'creatures', icon: 'lich', single: true },
+  { id: 'hydra', label: '九头蛇', desc: '斩首不死的沼泽巨蟒：被杀时断颈萌发两条幼蛇；唯有火焰烧灼方能阻止再生', tab: 'creatures', icon: 'hydra', single: true },
   // animals
   { id: 'sheep', label: '绵羊', desc: '温顺可爱，会咩咩叫', tab: 'animals', icon: 'sheep' },
   { id: 'wolf', label: '狼', desc: '成群猎食绵羊', tab: 'animals', icon: 'wolf' },
@@ -675,7 +682,7 @@ export const RACE_TOOL: Record<string, number> = {
   bear: R.BEAR, dragon: R.DRAGON, deer: R.DEER, penguin: R.PENGUIN, camel: R.CAMEL, scorpion: R.SCORPION, snake: R.SNAKE, snowwolf: R.SNOWWOLF,
   skeleton: R.SKELETON, demon: R.DEMON, mage: R.MAGE,
   lizard: R.LIZARD, goblin: R.GOBLIN, troll: R.TROLL, ogre: R.OGRE, whitewalker: R.WHITEWALKER, vampire: R.VAMPIRE,
-  kraken: R.KRAKEN, sandworm: R.SANDWORM, basilisk: R.BASILISK, angel: R.ANGEL, phoenix: R.PHOENIX, ent: R.ENT, lich: R.LICH,
+  kraken: R.KRAKEN, sandworm: R.SANDWORM, basilisk: R.BASILISK, angel: R.ANGEL, phoenix: R.PHOENIX, ent: R.ENT, lich: R.LICH, hydra: R.HYDRA,
 };
 
 // —— 生物工具：统一挂「数量」参数（巨型异兽上限 8，普通生物上限 20）——

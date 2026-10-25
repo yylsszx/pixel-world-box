@@ -1833,6 +1833,94 @@ export function drawBasilisk(ctx: CanvasRenderingContext2D, u: Unit, frame: numb
   }
 }
 
+/** 九头蛇：斩首不死的沼泽巨蟒 —— 宽扁巨躯 + 多条摆动颈项（世代决定头数：初代 3 / 幼蛇 2 / 末代 1）
+ *  + 猩红竖瞳 + 分叉吐信 + 背疣鳞纹 + 毒液滴落；低血时头颅低垂、鳞色转暗 —— 斩首越多身形越小。 */
+export function drawHydra(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const isMoving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  const gen = u.gen ?? 0;
+  const heads = [3, 2, 1][gen];
+  const bodyH = [3, 2, 1][gen]; // 躯干半高（世代递减 = 幼蛇更小）
+  const low = u.hp < u.maxHp * 0.35;
+  const step = isMoving ? ((frame >> 2) & 1) : 0;
+  const y = py - (isMoving ? step : 0);
+  const body = u.hurt > 0 ? '#ff6b5e' : low ? '#2c5223' : '#3f7a2e';
+  const dark = low ? '#1c3a17' : '#25501d';
+  const scale = low ? '#3a6e2c' : '#4f9e3a';
+  const belly = low ? '#6b8544' : '#8fae55';
+  // 泥浆涟漪环（巨躯爬行的湿地痕迹）
+  ctx.fillStyle = 'rgba(90,110,60,0.4)';
+  const ripple = (frame >> 3) % 3;
+  if (ripple === 0) ctx.fillRect(px - 4, y + bodyH + 1, 9, 1);
+  else if (ripple === 1) { ctx.fillRect(px - 5, y + bodyH + 1, 3, 1); ctx.fillRect(px + 3, y + bodyH + 1, 3, 1); }
+  else { ctx.fillRect(px - 6, y + bodyH + 1, 2, 1); ctx.fillRect(px + 5, y + bodyH + 1, 2, 1); }
+  // 毒液滴落（确定性：每 40 帧滴一滴）
+  if (frame % 40 < 3) {
+    ctx.fillStyle = '#9fd42e';
+    ctx.fillRect(px - 2 + ((frame >> 2) % 5), y + bodyH + 1 - (frame % 40), 1, 1);
+  }
+  // 宽扁巨躯（9 宽，随世代变矮）：沼泽绿 + 腹线 + 鳞纹
+  ctx.fillStyle = body;
+  ctx.fillRect(px - 4, y - bodyH, 9, bodyH * 2 + 1);
+  ctx.fillStyle = belly;
+  ctx.fillRect(px - 4, y + bodyH, 9, 1); // 腹线
+  ctx.fillStyle = scale;
+  for (let k = 0; k < 4; k++) {
+    if ((k + gen) % 2 === 0) ctx.fillRect(px - 3 + k * 2, y - bodyH + 1, 1, 1); // 交错鳞点
+  }
+  ctx.fillStyle = dark;
+  ctx.fillRect(px - 4, y - bodyH, 9, 1); // 背线
+  // 背疣（躯干顶缘疣突，移动时随步交替起伏）
+  for (let k = 0; k < 4; k++) {
+    const wx = px - 3 + k * 2;
+    if ((isMoving ? (k + step) % 2 === 0 : k % 2 === 0)) ctx.fillRect(wx, y - bodyH - 1, 1, 1);
+  }
+  // 多颈多头：中央颈恒在，两侧颈按世代存留；每颈 2 段相位摆动（低血时颈弯垂 1px）
+  const droop = low ? 1 : 0;
+  const necks: Array<{ nx: number; swayBase: number }> = heads >= 3
+    ? [{ nx: -3, swayBase: 0 }, { nx: 0, swayBase: 2 }, { nx: 3, swayBase: 4 }]
+    : heads === 2
+      ? [{ nx: -2, swayBase: 1 }, { nx: 2, swayBase: 3 }]
+      : [{ nx: 0, swayBase: 2 }];
+  for (const { nx, swayBase } of necks) {
+    const sway = ((frame >> 2) + swayBase) & 3; // 0..3 摆动相位
+    const lift = sway === 0 ? 0 : sway === 1 ? 1 : sway === 2 ? 2 : 1;
+    const cx = px + nx;
+    ctx.fillStyle = dark;
+    ctx.fillRect(cx - 1, y - bodyH - 1, 2, 1); // 颈根
+    ctx.fillStyle = body;
+    // 两段颈：下段固定 + 上段随相位横偏（S 形蠕动）
+    ctx.fillRect(cx - 1 + (lift > 1 ? f : 0), y - bodyH - 2, 2, 1);
+    ctx.fillRect(cx - 1 + (lift > 1 ? f * 2 : lift > 0 ? f : 0), y - bodyH - 3 + droop, 2, 1);
+    // 蛇头（2x2）：三角形轮廓 + 猩红竖瞳 + 周期性眨灭
+    const hx = cx + (lift > 1 ? f * 2 : lift > 0 ? f : 0);
+    const hy = y - bodyH - 4 + droop;
+    ctx.fillStyle = body;
+    ctx.fillRect(hx - 1, hy, 3, 2);
+    ctx.fillStyle = scale;
+    ctx.fillRect(hx - 1, hy, 1, 1); // 头顶亮鳞
+    const blink = frame % 23 < 2;
+    if (!blink) {
+      ctx.fillStyle = low ? '#8c2317' : '#ff4030';
+      ctx.fillRect(hx + (f > 0 ? 1 : 0), hy, 1, 1); // 猩红竖瞳
+    }
+    // 分叉吐信（低血时不再吐信 —— 虚弱）
+    if (!low && frame % 16 < 5) {
+      ctx.fillStyle = '#d556c0';
+      ctx.fillRect(hx + (f > 0 ? 2 : -1), hy + 1, 1, 1);
+    }
+  }
+  // 低血量警示 + 灰暗毒雾（将死的巨蟒）
+  if (low) {
+    ctx.fillStyle = '#cf3f2e';
+    ctx.fillRect(px - 3, y - bodyH - 6, 7, 1);
+    ctx.fillStyle = 'rgba(120,140,80,0.25)';
+    ctx.fillRect(px - 5, y + bodyH, 11, 1);
+  }
+}
+
 /** 法师：紫袍 + 尖帽 + 金杖尖，袍摆行走飘动，施法后短暂亮袍 */
 export function drawMage(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;

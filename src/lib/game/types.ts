@@ -63,6 +63,8 @@ export const R = {
   /** 森林守护者：古老的树皮巨人，游荡处播撒种子令森林扩张，并为林间生灵扑灭火魔 */
   ENT: 30,
   LICH: 31,
+  /** 九头沼泽巨蟒：斩首不死——断颈处萌发两条幼蛇；唯火焰烧灼可阻其再生 */
+  HYDRA: 32,
 } as const;
 export type RaceId = (typeof R)[keyof typeof R];
 
@@ -100,7 +102,7 @@ export interface RaceDef {
   speed: number; // tiles per tick
   maxAge: number; // in game years
   repro: number; // reproduction chance per update
-  sprite: 'person' | 'sheep' | 'wolf' | 'bear' | 'dragon' | 'deer' | 'penguin' | 'camel' | 'scorpion' | 'snake' | 'snowwolf' | 'skeleton' | 'demon' | 'mage' | 'troll' | 'ogre' | 'whitewalker' | 'vampire' | 'kraken' | 'sandworm' | 'basilisk' | 'angel' | 'phoenix' | 'ent' | 'lich';
+  sprite: 'person' | 'sheep' | 'wolf' | 'bear' | 'dragon' | 'deer' | 'penguin' | 'camel' | 'scorpion' | 'snake' | 'snowwolf' | 'skeleton' | 'demon' | 'mage' | 'troll' | 'ogre' | 'whitewalker' | 'vampire' | 'kraken' | 'sandworm' | 'basilisk' | 'angel' | 'phoenix' | 'ent' | 'lich' | 'hydra';
   /** 涌现物种标记：动态种化产生的新物种头顶 1px 突变色点（undefined = 预设原种） */
   dynTint?: string;
   /** 视觉基因组（涌现进化 v3）：动态物种携带 —— 色相/体型/角刺鬃尾/花纹全部程序化漂移 */
@@ -163,6 +165,7 @@ export const RACES: Record<number, RaceDef> = {
   [R.PHOENIX]: { key: 'phoenix', name: '凤凰', isCiv: false, hostile: false, flying: true, predator: false, undead: false, lavaImmune: true, hp: 200, dmg: 18, speed: 0.12, maxAge: 9999, repro: 0, sprite: 'phoenix', archetype: '浴火神鸟：烈焰为羽，火焰岩浆皆不能伤；陨落后自灰烬中重生（至多三次），第四次死亡方为真正的终焉' },
   [R.ENT]: { key: 'ent', name: '树人', isCiv: false, hostile: false, flying: false, predator: false, undead: false, lavaImmune: false, hp: 320, dmg: 26, speed: 0.055, maxAge: 9999, repro: 0, sprite: 'ent', archetype: '森林守护者：古老的树皮巨人，游荡处播撒种子令森林扩张，并为林间生灵扑灭火魔；沉重的枝干会砸碎任何敢犯森林的黑暗' },
   [R.LICH]: { key: 'lich', name: '巫妖', isCiv: false, hostile: true, flying: false, predator: true, undead: true, lavaImmune: false, hp: 260, dmg: 20, speed: 0.07, maxAge: 9999, repro: 0, sprite: 'lich', archetype: '不朽的死灵领主：魂魄封于命匣故永生不灭；收割生命的气息，将战场骸骨唤起编入永夜军团——圣光风暴是其天敌' },
+  [R.HYDRA]: { key: 'hydra', name: '九头蛇', isCiv: false, hostile: true, flying: false, predator: true, undead: false, lavaImmune: false, hp: 500, dmg: 30, speed: 0.05, maxAge: 9999, repro: 0, sprite: 'hydra', archetype: '九头沼泽巨蟒：斩首不死——被杀时断颈处萌发两条幼蛇，越杀越多；唯有火焰烧灼断颈（火中死亡/岩浆吞噬）方能阻止再生，凤凰与烈焰是其天敌' },
 };
 
 // ---------------- 种族系统 v2：种族关系（Race Relations） ----------------
@@ -367,6 +370,8 @@ export interface Unit {
   atk?: number;
   /** 凤凰已用重生次数（0-3；第 4 次死亡魂飞魄散走常规收尸 — 不入档，读档后从 0 重计） */
   rebirths?: number;
+  /** 九头蛇世代（0 初代 3 头 / 1 幼蛇 2 头 / 2 幼蛇 1 头；第 3 世代死亡即真终焉 — 不入档，与 rebirths 同策略） */
+  gen?: number;
   /** 出生时的科技伤害乘数快照（科技回溯重算基准：completeTech 按新旧差重算；不入档，读档时按当前科技初始化） */
   tDmg?: number;
   /** 出生时的科技生命乘数快照（同 tDmg） */
@@ -1407,7 +1412,7 @@ export interface ToastMsg {
 }
 
 /** 音效事件类型 — 引擎通过回调上报，由 WebAudio 模块合成（爆炸/雷击/放置/UI 等） */
-export type SoundKind = 'boom' | 'nuke' | 'thunder' | 'place' | 'quake' | 'heal' | 'volcano' | 'blizzard' | 'tsunami' | 'horn' | 'achieve' | 'era' | 'dragon' | 'shield' | 'coin';
+export type SoundKind = 'boom' | 'nuke' | 'thunder' | 'place' | 'quake' | 'heal' | 'volcano' | 'blizzard' | 'tsunami' | 'horn' | 'achieve' | 'era' | 'dragon' | 'shield' | 'coin' | 'hydra' | 'phoenix';
 
 /** 地图覆盖模式（顶栏切换）：无 / 政治（王国版图） / 温度 / 湿度 / 人口密度 / 生物群落 */
 export type OverlayMode = 'none' | 'political' | 'temperature' | 'moisture' | 'density' | 'biome' | 'alliance';

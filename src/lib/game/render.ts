@@ -1,7 +1,7 @@
 // ============ WorldBox Replica — Rendering pipeline ============
 import type { Army, Effect, Unit } from './types';
 import { T, R, RACES } from './types';
-import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster } from './sprites';
+import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawHydra, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster } from './sprites';
 import { visCacheFor } from './emergence';
 import { BUILDING_DEFS } from './types';
 import { GameEngine } from './engine';
@@ -1758,6 +1758,7 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
     case 'phoenix': drawPhoenix(wc, u, engine.frameCount); break;
     case 'ent': drawEnt(wc, u, engine.frameCount); break;
     case 'lich': drawLich(wc, u, engine.frameCount); break;
+    case 'hydra': drawHydra(wc, u, engine.frameCount); break;
     case 'mage': drawMage(wc, u, engine.frameCount); break;
     case 'troll': drawTroll(wc, u, engine.frameCount); break;
     case 'ogre': drawOgre(wc, u, engine.frameCount); break;
