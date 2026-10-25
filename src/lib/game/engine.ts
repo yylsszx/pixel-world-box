@@ -12455,7 +12455,7 @@ export class GameEngine {
             if (wn >= 6) { u.beachTx = wx + 0.5; u.beachTy = wy + 0.5; break; }
           }
         }
-        if (u.beachTx != null) { u.tx = u.beachTx; u.ty = u.beachTy; }
+        if (u.beachTx != null && u.beachTy != null) { u.tx = u.beachTx; u.ty = u.beachTy; }
         continue;
       }
       // —— 搁浅：窒息 + 归海导向 ——
@@ -12465,7 +12465,7 @@ export class GameEngine {
         const w = this.findWaterNear(u.x, u.y, 16);
         if (w) { u.beachTx = w.x; u.beachTy = w.y; }
       }
-      if (u.beachTx != null) { u.tx = u.beachTx; u.ty = u.beachTy; }
+      if (u.beachTx != null && u.beachTy != null) { u.tx = u.beachTx; u.ty = u.beachTy; }
       if ((u.beachT ?? 0) >= 15) u.dead = true; // 窒息终局：交还常规收尸（尸骸/捕食链自然接管）
     }
   }
