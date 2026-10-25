@@ -2574,6 +2574,8 @@ export class GameEngine {
     // 巫妖复生节律（季节 × 万物）：寒冬死潮加速（12→8 tick）——长夜与寒冬是死灵的盟友
     if (this.tickCount % (this.nature.season === 3 ? 8 : 12) === 0) this.lichRaiseTick();
     if (this.tickCount % 30 === 0) this.hydraRegenTick();
+    // —— 水生搁浅整治（引擎级通道：和平单位被内核接管不经 updateUnit，救援必须在通道层）——
+    this.beachedAquaticTick();
     // —— 深时引擎：动态温度场（每 120 tick：纬度+海拔+大陆度+灰烬+洋流异常耦合）——
     if (this.tickCount % 120 === 27) this.worldsim.tempTick();
     // —— 深时引擎：冰川系统（每 240 tick：积累/消融/进退——火山冬反馈环）——
@@ -3369,6 +3371,9 @@ export class GameEngine {
     if (this.radiate[ti] > 0) { u.hp -= 0.5; u.hurt = 20; }
     if (this.terrain[ti] === T.LAVA && !def.lavaImmune) { u.hp -= 15; u.hurt = 20; }
     if (!def.flying && !def.aquatic && u.race !== R.WHITEWALKER && isWater(this.terrain[ti])) { u.hp -= 4; u.hurt = 20; }
+    // 离水窒息（洪水/海啸退潮搁浅的生态闭环）：纯水生单位离水后缓慢缺氧（蹦跳自救需快于此——
+    // 鱼约 300 tick 窒息 vs 蹦跳 5 格约 66 tick），防止陆生鱼群永久自续成「陆上鱼海」的退化生态
+    if (def.aquatic && !def.beach && !isWater(this.terrain[ti])) { u.hp -= 0.02; u.hurt = Math.max(u.hurt, 2); }
     if (u.infected) {
       u.hp -= 0.15;
       if (this.rng() < 0.02) this.spreadPlague(u);
@@ -4020,8 +4025,13 @@ export class GameEngine {
           }
         }
         if (n >= 2) {
-          u.tx = Math.max(1, Math.min(W - 2, ax / n + (this.rng() - 0.5) * 2));
-          u.ty = Math.max(1, Math.min(H - 2, ay / n + (this.rng() - 0.5) * 2));
+          const gx2 = ax / n;
+          const gy2 = ay / n;
+          // 鱼群中心必须是水域：搁浅个体会把同群目标拽上岸（洪水退潮搁浅扩散源之一）
+          if (isWater(this.terrain[idx(Math.max(0, Math.min(W - 1, Math.floor(gx2))), Math.max(0, Math.min(H - 1, Math.floor(gy2))))])) {
+            u.tx = Math.max(1, Math.min(W - 2, gx2 + (this.rng() - 0.5) * 2));
+            u.ty = Math.max(1, Math.min(H - 2, gy2 + (this.rng() - 0.5) * 2));
+          }
         }
       }
       // 随机漫游触发判定（0.5² 平方距离：纯阈值比较，无需实距）
@@ -4059,6 +4069,21 @@ export class GameEngine {
           }
           if (!ok) { wx = u.x; wy = u.y; }
         }
+        // 纯水生（鱼/龟/鲨）：游荡目标必须为水域 —— 海啸/洪水退潮搁浅的入口封锁；
+        // 已搁浅个体则把目标导向最近水域（配合 moveUnit 搁浅蹦跳完成自救回归）
+        else if (def.aquatic) {
+          let ok = false;
+          for (let k = 0; k < 4 && !ok; k++) {
+            const cx2 = Math.max(0, Math.min(W - 1, Math.floor(wx)));
+            const cy2 = Math.max(0, Math.min(H - 1, Math.floor(wy)));
+            if (isWater(this.terrain[cy2 * W + cx2])) ok = true;
+            else { wx = u.x + (this.rng() * 2 - 1) * r; wy = u.y + (this.rng() * 2 - 1) * r; }
+          }
+          if (!ok) {
+            const w = isWater(this.terrain[idx(Math.floor(u.x), Math.floor(u.y))]) ? null : this.findWaterNear(u.x, u.y, 14);
+            if (w) { wx = w.x; wy = w.y; } else { wx = u.x; wy = u.y; }
+          }
+        }
         u.tx = Math.max(1, Math.min(W - 2, wx));
         u.ty = Math.max(1, Math.min(H - 2, wy));
       }
@@ -4075,7 +4100,8 @@ export class GameEngine {
     }
     // reproduce — 与战斗状态无关（否则被猎物包围的捕食者永不绝育 → 种群灭绝）
     // 繁衍：两段式 —— 先掷基础骰（绝大多数单位此 tick 直接跳过），过门再算增益（懒计算省 CPU）
-    if (this.laws.reproduction && def.repro > 0 && this.rng() < def.repro) {
+    // 搁浅的水生个体失去繁衍能力（离水濒死不产卵 —— 否则陆生鱼群自续成退化生态；beachT 由 beachedAquaticTick 维护）
+    if (this.laws.reproduction && def.repro > 0 && !(def.aquatic && !def.beach && (u.beachT ?? 0) > 0) && this.rng() < def.repro) {
       // 增益链：人口令 ×1.8 / 科技繁衍 / 爱之甘霖 ×2.5 / 基因繁衍 / 自然季节
       // 战乱年代生育率 ×0.55（兵荒马乱）；食草动物随植被丰度 ×0.75..1.5（草肥羊壮）
       const boost = (def.isCiv && u.civ >= 0 && this.activeDirective(u.civ, 'populate') ? 1.8 : 1)
@@ -5649,6 +5675,14 @@ export class GameEngine {
       // 滩涂两栖（蟹）：邻水沙滩亦可爬行
       const nt = this.terrain[idx(Math.floor(nx), Math.floor(ny))];
       if (nt === T.DEEP || nt === T.WATER || (def.beach && nt === T.SAND)) { u.x = nx; u.y = ny; }
+      else if (!isWater(cur) && !def.beach) {
+        // 搁浅自救（洪水/海啸退潮遗留）：离水的纯水生单位在陆上蹦跳（×0.7 蹒跚仍快于窒息线），
+        // 踏任何地表直奔目标（目标已被漫游限定为最近水域）—— 回海后恢复常态水游
+        const f = 0.7;
+        u.x = Math.max(0.5, Math.min(W - 0.5, u.x + (nx - u.x) * f));
+        u.y = Math.max(0.5, Math.min(H - 0.5, u.y + (ny - u.y) * f));
+        u.flip = dx < 0;
+      }
       else {
         // 留在深水：随机改向游动
         u.tx = Math.max(1, Math.min(W - 2, u.x + (this.rng() * 2 - 1) * 8));
@@ -12385,6 +12419,54 @@ export class GameEngine {
       const px = k === 0 ? wx : Math.max(0, Math.min(W - 0.5, wx + (this.rng() - 0.5) * 8));
       const py = k === 0 ? wy : Math.max(0, Math.min(H - 0.5, wy + (this.rng() - 0.5) * 8));
       fn(px, py);
+    }
+  }
+
+  /** 水生牧养（引擎级通道）：rust 批内核对和平水生单位的漫游无水域校验 —— 鱼会被内核 wander
+   *  目标遛上岸（实测水鱼 20s 内上岸），洪水/海啸退潮再把已深入内陆的个体晾死 —— 双重搁浅源。
+   *  此通道逐 tick 对纯水生单位（鱼/龟/鲨等；蟹 beach 两栖除外）断言水域目标：
+   *  ① 水中个体：水域内随机游走目标（每 20 tick 重采样，逐 tick 断言 tx/ty 对抗内核覆盖）——
+   *     鲨鱼（predator 猎游）与 fleeT>0（逃亡）时让位于内核 AI；
+   *  ② 搁浅个体：目标导向最近实体水域（findWaterNear ≥5 邻水实心水体）+ 窒息计数
+   *     （beachT 每 proc +1，≥15 ≈ 300 tick 挣扎窗口 → 标记死亡走常规收尸；内核拥有 hp，
+   *     TS 扣血会被回读覆写 —— 实测无效 —— 故用瞬态计数）。
+   *  近岸个体形成「挣扎回海」窗口，深内陆个体窒息终局 —— 陆生鱼群无法自续，退化生态自愈。 */
+  private beachedAquaticTick() {
+    const retarget = this.tickCount % 20 === 0; // 目标采样每 20 tick 一次；断言逐 tick 廉价
+    for (const u of this.units) {
+      if (u.dead) continue;
+      const def = RACES[u.race];
+      if (!def.aquatic || def.beach) continue;
+      const ti = idx(Math.floor(u.x), Math.floor(u.y));
+      if (isWater(this.terrain[ti])) {
+        u.beachT = 0; u.beachTx = undefined; u.beachTy = undefined;
+        if (def.predator || (u.fleeT ?? 0) > 0) continue; // 猎游/逃亡交给内核 AI
+        if (retarget || u.beachTx == null) {
+          // 水域内随机游走：采样 8 个候选点，取首个「实体水」（自身+≥5 邻水）—— 防止指向孤水坑/岸边
+          for (let k = 0; k < 8; k++) {
+            const wx = Math.max(1, Math.min(W - 2, Math.floor(u.x + (this.rng() * 2 - 1) * 6)));
+            const wy = Math.max(1, Math.min(H - 2, Math.floor(u.y + (this.rng() * 2 - 1) * 6)));
+            const j = wy * W + wx;
+            if (!isWater(this.terrain[j])) continue;
+            let wn = 0;
+            for (let ny = -1; ny <= 1; ny++) for (let nx = -1; nx <= 1; nx++) {
+              if (isWater(this.terrain[j + ny * W + nx])) wn++;
+            }
+            if (wn >= 6) { u.beachTx = wx + 0.5; u.beachTy = wy + 0.5; break; }
+          }
+        }
+        if (u.beachTx != null) { u.tx = u.beachTx; u.ty = u.beachTy; }
+        continue;
+      }
+      // —— 搁浅：窒息 + 归海导向 ——
+      u.beachT = (u.beachT ?? 0) + 1;
+      u.hurt = Math.max(u.hurt, 2);
+      if (retarget || u.beachTx == null) {
+        const w = this.findWaterNear(u.x, u.y, 16);
+        if (w) { u.beachTx = w.x; u.beachTy = w.y; }
+      }
+      if (u.beachTx != null) { u.tx = u.beachTx; u.ty = u.beachTy; }
+      if ((u.beachT ?? 0) >= 15) u.dead = true; // 窒息终局：交还常规收尸（尸骸/捕食链自然接管）
     }
   }
 

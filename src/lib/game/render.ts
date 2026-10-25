@@ -502,6 +502,24 @@ function drawWeather(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numbe
           wc.fillStyle = 'rgba(238,246,255,0.5)';
           wc.fillRect(rx, fy, 1, 1);
         }
+      } else if (winter && m <= 0.62) {
+        // 寒风卷雪（季节 × 万物）：温带草地/森林上空随风斜掠的雪沫——与极地飘雪、春瓣秋叶构成四季天幕语言
+        const ti = (cy * CELL + 3) * 256 + (cx * CELL + 3);
+        const tt = engine.terrain[ti];
+        if (tt === T.GRASS || tt === T.FOREST) {
+          const hsh = ((i * 40503) >>> 0) + (fc >> 1);
+          if (hsh % 31 < 4) {
+            const rx = cx * CELL * 2 + (hsh % 14);
+            const ry = cy * CELL * 2 + ((hsh >> 5) % 12);
+            const [wu] = nat.windAt(cx, cy); // 风矢量 → 雪沫斜掠（大风卷雪的横漂感）
+            const drift = Math.sign(wu) * (1.5 + Math.min(2.5, Math.abs(wu) * 2));
+            const fy = ry + Math.floor(((hsh >> 7) + fc * 0.3) % 14);
+            const sway = Math.sin(fc * 0.07 + (hsh & 7)) * 1.5 + drift;
+            const tone = (hsh >> 11) & 1; // 亮白芯 / 青白影两段雪沫（冬地表漂白后仍可辨）
+            wc.fillStyle = tone ? 'rgba(238,246,255,0.9)' : 'rgba(206,224,248,0.8)';
+            wc.fillRect(Math.round(rx + sway), fy, 3, 3);
+          }
+        }
       } else if (nat.season === 0 && m <= 0.62) {
         // 春日飘瓣（季节 × 万物）：草地/森林上空淡粉樱瓣随风缓舞——万物复苏的仪式感
         const ti = (cy * CELL + 3) * 256 + (cx * CELL + 3);

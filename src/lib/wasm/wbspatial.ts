@@ -773,7 +773,10 @@ class WbBatch {
         if (d.undead) f1 |= 4;
         if (d.predator) f1 |= 8;
         if (id === 6 || id === 10 || id === 11 || id === 12 || id === 33 || id === 34 || id === 35 || id === 37) f1 |= 16; // SHEEP/DEER/PENGUIN/CAMEL + CHICKEN/PIG/RABBIT/FISH
-        if (d.flying) f1 |= 32; // 飞行位：与 Stage-1 语义一致（rust 水伤害豁免读 f1 bit32）
+        // 飞行位：与 Stage-1 语义一致（rust 水伤害豁免读 f1 bit32）——
+        // 水生单位同样置位（部署版 wasm 的水伤害豁免只认此位：鱼/龟/鲨在水中被内核 -4/tick 溺杀的根因；
+        // 移动约束在 tbf byte0 —— 不给水生置位，游动仍受限水域）
+        if (d.flying || d.aquatic) f1 |= 32;
         rf[id] = f1;
         let f2 = 0;
         if (d.lavaImmune) f2 |= 1;

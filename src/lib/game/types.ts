@@ -406,6 +406,11 @@ export interface Unit {
   rebirths?: number;
   /** 九头蛇世代（0 初代 3 头 / 1 幼蛇 2 头 / 2 幼蛇 1 头；第 3 世代死亡即真终焉 — 不入档，与 rebirths 同策略） */
   gen?: number;
+  /** 水生搁浅计数（beachedAquaticTick 每 proc +1，回水清零；≥15 窒息死亡 — 内核拥有 hp 故用瞬态计数而非扣血；不入档） */
+  beachT?: number;
+  /** 搁浅归海目标缓存（每 20 tick 重搜最近水体，逐 tick 断言 tx/ty 对抗内核覆盖；不入档） */
+  beachTx?: number;
+  beachTy?: number;
   /** 出生时的科技伤害乘数快照（科技回溯重算基准：completeTech 按新旧差重算；不入档，读档时按当前科技初始化） */
   tDmg?: number;
   /** 出生时的科技生命乘数快照（同 tDmg） */
