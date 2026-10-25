@@ -480,6 +480,9 @@ export class GameEngine {
   corpses: CorpseDecal[] = [];
   /** 凤凰灰烬堆：陨落后的涅槃倒数（到点重生；不入档，读档后灰烬自然消失） */
   phoenixAshes: { x: number; y: number; t: number; rebirths: number }[] = [];
+  /** 百兽迁徙最近一次迁入的 tick（按种族）：迁徙掷签加权依据 —— 灭绝越久权重越高，
+   *  久别的客人先请进门（狐狸不再饿死在 17 选 1 的签筒底）；不入档，读档后从均匀权重重启 */
+  reboundLast = new Map<number, number>();
   /** 冰面 tile 索引集合（消融管理：火/岩浆/暖气候） */
   frozen = new Set<number>();
   /** 海啸洪水退潮队列：tileIdx → 退潮 tick（到点后化回沙滩+湿沙标记） */
@@ -12551,17 +12554,31 @@ export class GameEngine {
    *  （实测鲨鱼吞鱼 food +33），但猎物逃跑速度 ≥ 捕食者 —— 狼追不上羊、内核战斗极少命中，
    *  能量链净负 → 捕食者种群繁衍（food>40 门槛）后仍集体饿毙（实测 39→49→0）。此通道每 20 tick
    *  让饥饿的野生捕食者（food<45）对 r=1.6 内最近的野生猎物发动扑杀 —— 走 u.dead 常规收尸
-   *  （肉掉落/血泊/腐食回充自然接管），单轮至多 8 杀防屠杀踩踏 —— Lotka-Volterra 的捕食腿。 */
+   *  （肉掉落/血泊/腐食回充自然接管）。预算弹性化（Task 97）：满额陆 8/水 4 防屠杀踩踏，且随
+   *  猎物存量分级收缩（≤150 减半 / ≤60 收缩 / ≤25 生态保护期禁猎）—— 狼把羊吃到 0 的整群
+   *  清盘是吸收态，猎物崩溃期收刀给种群喘息窗口 —— Lotka-Volterra 的捕食腿 + 保险丝。 */
   private predatorHuntTick() {
     // 扑杀预算水陆分账：units 数组序是「先到先得」—— 狼群爆发期（60-84 饿狼）会把全局名额
     // 垄断到海里一只也轮不上（Task 96 实测鲨鱼在狼 boom 世代集体饿毙的隐形之手）
+    // 猎物存量普查（O(n) 每 20 tick 一次）：弹性预算的依据 —— 狼把羊吃到 0 的整群清盘
+    // 是吸收态，迁徙重建要 3.3 年起步；猎物崩溃期收刀，给猎物种群一个喘息窗口（Task 97）
+    let preyAlive = 0;
+    for (const q of this.units) {
+      if (!q.dead && !RACES[q.race].isCiv && this.isHerbivoreRace(q.race)) preyAlive++;
+    }
+    // 分级预算：猎物>150 满额（陆8/水4）→ ≤150 减半（4/2）→ ≤60 收缩（2/1）→ ≤25 生态保护期禁猎
+    let capLand = 8;
+    let capAqua = 4;
+    if (preyAlive <= 150) { capLand = 4; capAqua = 2; }
+    if (preyAlive <= 60) { capLand = 2; capAqua = 1; }
+    if (preyAlive <= 25) { capLand = 0; capAqua = 0; }
     let killsLand = 0;
     let killsAqua = 0;
     for (const p of this.units) {
       if (p.dead) continue;
       const pd = RACES[p.race];
       if (!pd.predator || pd.undead || pd.isCiv) continue;
-      if (pd.aquatic ? killsAqua >= 4 : killsLand >= 8) continue; // 单轮扑杀预算：陆 8 / 水 4（防屠杀踩踏）
+      if (pd.aquatic ? killsAqua >= capAqua : killsLand >= capLand) continue; // 弹性预算（随猎物存量收缩）
       if ((p.food ?? 70) > 45) continue; // 只有饥饿者出手（饱食者不滥杀）
       let prey: Unit | null = null;
       let bd = pd.aquatic ? 25 : 2.56; // 扑杀窗口：陆捕 r=1.6 / 水捕 r=5（深海突袭 —— 内核不驱动追击，扑杀半径即鲨鱼的爪）
@@ -12615,7 +12632,21 @@ export class GameEngine {
     const extinct = SEED.filter((s) => (this.wildCount.get(s.race) ?? 0) === 0);
     if (extinct.length === 0) return;
     if (this.rng() > 0.6) return; // 掷签门：并非每轮都迁来 —— 平均 ~5.5 年一支兽群抵达
-    const seed = extinct[Math.floor(this.rng() * extinct.length)];
+    // 加权掷签（Task 97）：灭绝越久的种族权重越高（1 → 最高 5，2400 tick ≈ 13 年封顶）——
+    // 久别的客人先请进门；从未迁入过的种族以最高权重优先登场，迁入后权重回落重新排队
+    const weights = extinct.map((s) => {
+      const last = this.reboundLast.get(s.race);
+      const ago = last === undefined ? Number.MAX_SAFE_INTEGER : this.tickCount - last;
+      return 1 + Math.min(4, ago / 2400);
+    });
+    const totalW = weights.reduce((a, b) => a + b, 0);
+    let pick = this.rng() * totalW;
+    let idx = extinct.length - 1;
+    for (let i = 0; i < extinct.length; i++) {
+      pick -= weights[i];
+      if (pick <= 0) { idx = i; break; }
+    }
+    const seed = extinct[idx];
     const def = RACES[seed.race];
     const aquatic = !!def.aquatic;
     // 预算按轨检（水生掷签看海洋配额，陆生看全球预算）—— 羊群饱和不再挡住鲨鱼的迁徙回归
@@ -12639,6 +12670,7 @@ export class GameEngine {
           }
         }
         if (placed > 0) {
+          this.reboundLast.set(seed.race, this.tickCount);
           this.fx('spawn', fishes[0].x, fishes[0].y, 46);
           this.addEvent('eco', `洋流送来了远方的族群——${def.name}循着鱼群的踪迹重新游回了这片海域`, { x: fishes[0].x, y: fishes[0].y });
         }
@@ -12674,6 +12706,7 @@ export class GameEngine {
         }
       }
       if (placed === 0) continue; // 落点全数失败（预算/上限）→ 换个点再试
+      this.reboundLast.set(seed.race, this.tickCount);
       this.fx('spawn', x + 0.5, y + 0.5, 46);
       const msg = aquatic
         ? `洋流送来了远方的族群——${def.name}重新出现在这片水域`
