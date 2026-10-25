@@ -5,7 +5,7 @@
 
 ## 🎮 在线游玩
 
-**https://https://yylsszx.github.io/pixel-world-box/**
+**https://yylsszx.github.io/pixel-world-box/**
 
 无需安装、无需注册、无需服务器 —— 整个游戏（含模拟引擎与存档）全部在你的浏览器本地运行。
 
