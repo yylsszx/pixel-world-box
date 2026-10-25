@@ -9,7 +9,7 @@
 import type { GameEngine } from './engine';
 import type { Cyclone, NatureSnapshot } from './types';
 import { W, H } from './constants';
-import { T } from './types';
+import { T, R } from './types';
 import { mulberry32, valueNoise } from './noise';
 import { ep } from './engineParams';
 
@@ -171,11 +171,14 @@ export class NatureSystem {
    *  换季宣告（季节 × 万物）：真实过渡（lastSeason >= 0，开局/读档静默）时 toast + 编年史，
    *  文案自带机制提示——玩家由此得知季节正在改变生物节律 */
   lastSeason = -1;
+  /** 冬季封冻纪事防重标记（瞬态：本轮冬季已播过「千里冰封」；离冬即复位，不入档） */
+  iceChronDone = false;
   seasonCheck() {
     const s = this.season;
     if (s !== this.lastSeason) {
       const first = this.lastSeason < 0;
       this.lastSeason = s;
+      if (s !== 3) this.iceChronDone = false; // 离冬复位：下个冬季重新择机播报封冻
       for (let i = 0; i < W * H; i++) {
         this.eng.dirty.add(i);
         if (this.eng.terrain[i] === T.FOREST) this.eng.propsDirty.add(i);
@@ -234,6 +237,32 @@ export class NatureSystem {
     }
     return [r, g, b];
   }
+  /** 当季生物节律（Task 101）：引擎实况计算——单趟 O(n) 收集存活种族，
+   *  对应种族灭绝的节律自动退场（不会对空林播「树人春播」）；火险/繁衍等气候节律常驻。
+   *  数值与引擎钩子严格同源：fireMul（夏1.3/冬0.45/秋0.8）、reproMul（春1.14/冬0.78）、
+   *  树人播种 pm（春1.3）、巫妖死潮（冬 8/12 tick）、凤凰灰烬 TTL（冬 ×1.5） */
+  rhythmChips(): { label: string; desc: string; tone: 'good' | 'info' | 'danger' }[] {
+    const s = this.season;
+    const out: { label: string; desc: string; tone: 'good' | 'info' | 'danger' }[] = [];
+    const present = new Set<number>();
+    for (const u of this.eng.units) if (!u.dead) present.add(u.race);
+    if (s === 0) {
+      out.push({ label: '万物萌动', desc: '繁衍时节 ×1.14，生机盎然', tone: 'good' });
+      if (present.has(R.ENT)) out.push({ label: '树人春播', desc: '播种造林 ×1.3，森林扩张', tone: 'good' });
+    } else if (s === 1) {
+      out.push({ label: '烈日火险', desc: '野火蔓延 ×1.3，天干物燥', tone: 'danger' });
+    } else if (s === 2) {
+      out.push({ label: '秋高气爽', desc: '火势回落 ×0.8，金风送爽', tone: 'info' });
+    } else {
+      out.push({ label: '霜寒火抑', desc: '野火蔓延 ×0.45，生息收敛 ×0.78', tone: 'info' });
+      if (present.has(R.LICH)) out.push({ label: '死潮高涨', desc: '亡灵复生加速 ×1.5', tone: 'danger' });
+      if (present.has(R.HYDRA)) out.push({ label: '九头蛇冬眠', desc: '再生之泉封冻，断首不再萌发', tone: 'info' });
+      if (present.has(R.ENT)) out.push({ label: '树人蛰伏', desc: '春播暂停，扑火不休', tone: 'info' });
+      if (present.has(R.PHOENIX)) out.push({ label: '涅槃迟缓', desc: '灰烬滞留 ×1.5，重生更慢', tone: 'info' });
+    }
+    return out;
+  }
+
   /** 火焰蔓延季节/降雨系数（fireTick 概率乘子） */
   fireMul(i: number): number {
     // 深时引擎：冰川覆被之上不燃（冰上无草木可焚）
@@ -956,6 +985,7 @@ export class NatureSystem {
     return {
       season: this.season,
       seasonName: this.seasonName,
+      rhythms: this.rhythmChips(),
       // Task 100 修复：旧公式 floor(yearF/SY) % SY 实为「季节序号的奇偶」（值域恒 {0,1}，且与本季进度脱节）——
       // 本季年进度 = yearF 对 SY 取余（相位 offset 只决定哪个季节先来，不影响季内进度）；保留 1 位小数供 HUD 直读
       seasonYearIn: Math.round((this.eng.yearF % SEASON_YEARS) * 10) / 10,

@@ -9,7 +9,7 @@ import {
   MountainSnow, X, Flower2, Sun, Leaf, CloudSnow, Tornado, Waves,
   Thermometer, Droplets, Cloud, Activity, TriangleAlert, Mountain, Zap, Wind, Hourglass,
 } from 'lucide-react';
-import type { NatureSnapshot, WorldEvent } from '@/lib/game/types';
+import type { NatureSnapshot, SeasonRhythm, WorldEvent } from '@/lib/game/types';
 
 /** 板块配色（7 板块上限） */
 const PLATE_COLORS = ['#c96a4a', '#4a9ec9', '#8a6ac9', '#5ac96e', '#c9b04a', '#c94a8a', '#4ac9b0'];
@@ -21,6 +21,13 @@ const SEASON_META = [
   { label: '秋', icon: Leaf, cls: 'text-orange-300', bar: 'bg-orange-400', border: 'border-orange-500' },
   { label: '冬', icon: CloudSnow, cls: 'text-cyan-300', bar: 'bg-cyan-400', border: 'border-cyan-500' },
 ];
+
+/** 当季节律徽章色调（Task 101）：good 生机 / info 中性 / danger 危机 */
+const RHYTHM_TONE: Record<SeasonRhythm['tone'], string> = {
+  good: 'border-lime-600 bg-lime-500/15 text-lime-300',
+  info: 'border-cyan-600 bg-cyan-500/15 text-cyan-300',
+  danger: 'border-red-600 bg-red-500/15 text-red-300',
+};
 
 /** 地震风险等级元数据 */
 const QUAKE_RISK_META = [
@@ -345,6 +352,20 @@ function NatureBody() {
         <p className="mt-1 text-[9px] text-zinc-500">
           本季 {(nat?.seasonYearIn ?? 0).toFixed(1)}/{nat?.seasonYears ?? 2} 年 · 每季 {nat?.seasonYears ?? 2} 年一轮 · 春催繁衍 冬压火苗
         </p>
+        {/* 当季节律（Task 101）：引擎实况计算——种族灭绝的节律自动退场，火险/繁衍等气候节律常驻 */}
+        {(nat?.rhythms?.length ?? 0) > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1" aria-label="当季节律">
+            {nat!.rhythms.map((r) => (
+              <span
+                key={r.label}
+                title={r.desc}
+                className={`cursor-help border px-1.5 py-0.5 text-[9px] font-bold ${RHYTHM_TONE[r.tone]}`}
+              >
+                {r.label}
+              </span>
+            ))}
+          </div>
+        )}
         {/* 火山灰警示 */}
         {(nat?.ash ?? 0) > 0.1 && (
           <p className="mt-1.5 flex items-center gap-1 border border-stone-600 bg-stone-500/15 px-1.5 py-1 text-[9px] font-bold text-stone-300">

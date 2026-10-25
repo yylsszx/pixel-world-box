@@ -1407,12 +1407,24 @@ export interface Cyclone {
   landed: boolean;
 }
 
+/** 当季生物节律条目（NaturePanel「四季轮转」下的动态徽章） */
+export interface SeasonRhythm {
+  /** 短标签（如「树人春播」「九头蛇冬眠」） */
+  label: string;
+  /** 机制说明（悬停提示） */
+  desc: string;
+  /** 色调语义 */
+  tone: 'good' | 'info' | 'danger';
+}
+
 /** 自然引擎快照（UI 展示 + 神喩6上下文） */
 export interface NatureSnapshot {
   /** 当前季节 0 春 1 夏 2 秋 3 冬（法则关闭时永夏） */
   season: number;
   /** 季节名称 */
   seasonName: string;
+  /** 当季生物节律（Task 101：引擎实况计算——对应种族灭绝的节律自动退场，火险等气候节律常驻） */
+  rhythms: SeasonRhythm[];
   /** 本季已过年数 */
   seasonYearIn: number;
   /** 每季年数 */

@@ -2904,6 +2904,12 @@ export class GameEngine {
           if (this.terrain[j] === T.LAVA || this.fire[j] > 0) { hot = true; break; }
         }
         if (hot) { this.meltIce(i); continue; }
+        // 春汛解冻（Task 101）：春回大地，冻结线北退——中低纬冰面春季快速消融，
+        // 极地（latF ≥ 0.62）不受此通道影响（极地冰盖「常年不化」语义由既有暖候通道接管）
+        if (this.nature.season === 0) {
+          const latF2 = Math.abs(y / H - 0.5) * 2;
+          if (latF2 < 0.62 && this.rng() < 0.06 + 0.28 * (1 - latF2)) { this.meltIce(i); continue; }
+        }
         // 暖气候小概率消融（极地 temp 低则几乎不化；夏季/火山冬调制）
         const meltP = 0.012 * this.nature.iceMul();
         if (this.rng() < meltP && this.tempMap[i] > 96) this.meltIce(i);
@@ -2924,6 +2930,39 @@ export class GameEngine {
         const t = this.terrain[j];
         if (t === T.WATER && this.rng() < 0.3) this.setTerrain(j, T.ICE);
         else if (t === T.DEEP && this.rng() < 0.04) this.setTerrain(j, T.ICE);
+      }
+    }
+    // 2b. 冬季大封冻（Task 101「千里冰封」）：中纬度水面季节性结冰——冻结线随纬度自两极向赤道推进，
+    //  岸缘优先封冻（岸冰 p 全额 / 湖心 p 三折——真实湖泊自岸向心冻结的观感），赤道无冰带（latF < 0.26）永不封冻；
+    //  深洋仅极北封冻（latF ≥ 0.5 且概率锐减）。冻结的水面可行走（落水者自担风险），水中鱼群被冻上岸由
+    //  beachedAquaticTick 归海导向自愈。冰面生态循环每 40 tick 一次，每季约 2 轮 → 预算按「可感知」标定。
+    if (this.nature.season === 3) {
+      let frozeN = 0;
+      for (let k = 0; k < 1100; k++) {
+        const x = 1 + Math.floor(this.rng() * (W - 2));
+        const y = 1 + Math.floor(this.rng() * (H - 2));
+        const i = idx(x, y);
+        const t = this.terrain[i];
+        if (t !== T.WATER && t !== T.DEEP) continue;
+        const latF = Math.abs(y / H - 0.5) * 2;
+        if (t === T.WATER) {
+          if (latF < 0.26) continue;
+          // 岸缘判定：4 邻存在任何陆地（非水）→ 岸冰全额概率，湖心缓冻
+          let shore = false;
+          for (let q = 0; q < 4 && !shore; q++) {
+            const xx = x + (q === 0 ? -1 : q === 1 ? 1 : 0);
+            const yy = y + (q === 2 ? -1 : q === 3 ? 1 : 0);
+            if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+            const tt = this.terrain[idx(xx, yy)];
+            if (tt !== T.WATER && tt !== T.DEEP) shore = true;
+          }
+          if (this.rng() < Math.min(0.9, (latF - 0.24) * (shore ? 0.9 : 0.3))) { this.setTerrain(i, T.ICE); frozeN++; }
+        } else if (latF >= 0.5 && this.rng() < (latF - 0.5) * 0.22) { this.setTerrain(i, T.ICE); frozeN++; }
+      }
+      // 封冻纪事（每冬至多一条；冰晶灯效应之外的机制提示——冰面可行走）
+      if (frozeN >= 12 && !this.nature.iceChronDone) {
+        this.nature.iceChronDone = true;
+        this.addEvent('geo', '千里冰封——寒潮封住了北地的湖泽，冰面覆霜可行走，鱼群潜入未冻的深水', {});
       }
     }
     // 3. 海啸洪水退潮：到期回退为沙滩 + 湿沙（接自然水域的保留为海）
