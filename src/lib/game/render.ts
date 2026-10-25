@@ -668,6 +668,54 @@ function drawAurora(engine: GameEngine, sk: CanvasRenderingContext2D, nightN: nu
   return drew;
 }
 
+/** 夏日神光（Task 105，季节 × 万物）：夏季白昼天幕的烈日光柱 —— 金色加性光带自天顶斜落，
+ *  倾角随太阳方位（晨东暮西）、亮度随太阳高度呼吸、位置缓慢游移。
+ *  四季天幕的最后一块拼图：春瓣/秋叶/冬雪·极光之后，盛夏烈日有了自己的光。
+ *  门控与极光对仗：仅夏季 × 白昼（夜色 n>0.3 渐隐）× 大气 × 昼夜偏好，性能 ~8 fillRect+4 渐变/帧。 */
+function drawSunRays(engine: GameEngine, sk: CanvasRenderingContext2D, nightN: number): boolean {
+  if (engine.nature.season !== 1 || nightN > 0.3) return false;
+  const fc = engine.frameCount;
+  const sun = sunCached(engine);
+  const fade = Math.max(0, Math.min(1, sun.level * (1 - nightN / 0.3)));
+  if (fade < 0.06) return false;
+  const tilt = sun.sx * 46; // 影子方位 → 光柱倾角（光自天顶射向影子侧，晨斜东暮斜西、正午近乎垂直）
+  sk.globalCompositeOperation = 'lighter';
+  let drew = false;
+  for (let b = 0; b < 4; b++) {
+    // 主光带：基准位 + 缓慢游移 + 倾角（正午聚合垂直，晨昏整组斜列）
+    const bx = 48 + b * 132 + Math.sin(fc * 0.0019 + b * 1.7) * 30 + tilt * 0.22;
+    const w = 13 + 6 * Math.sin(fc * 0.0027 + b * 2.3); // 7-19px 光带宽度呼吸
+    const a = (0.10 + 0.07 * Math.sin(fc * 0.0047 + b * 1.1)) * fade;
+    if (a <= 0.004 || w <= 3) continue;
+    // 光带本体：云隙亮源最亮 → 落地渐隐（线性渐变，每帧 4 次可忽略）
+    const gg = sk.createLinearGradient(0, 0, 0, 320);
+    gg.addColorStop(0, `rgba(255,240,190,${(a * 2.0).toFixed(3)})`);
+    gg.addColorStop(0.3, `rgba(255,228,150,${(a * 1.35).toFixed(3)})`);
+    gg.addColorStop(0.7, `rgba(255,220,140,${(a * 0.75).toFixed(3)})`);
+    gg.addColorStop(1, 'rgba(255,220,140,0)');
+    sk.fillStyle = gg;
+    sk.beginPath();
+    sk.moveTo(bx, 0);
+    sk.lineTo(bx + w, 0);
+    sk.lineTo(bx + w + tilt, 320);
+    sk.lineTo(bx + tilt, 320);
+    sk.closePath();
+    sk.fill();
+    // 内亮芯：窄而亮的中心线（云隙光最亮的一缕）
+    sk.fillStyle = `rgba(255,244,206,${(a * 1.7).toFixed(3)})`;
+    sk.beginPath();
+    sk.moveTo(bx + w * 0.3, 0);
+    sk.lineTo(bx + w * 0.7, 0);
+    sk.lineTo(bx + w * 0.55 + tilt, 320);
+    sk.lineTo(bx + w * 0.25 + tilt, 320);
+    sk.closePath();
+    sk.fill();
+    drew = true;
+  }
+  sk.globalCompositeOperation = 'source-over';
+  return drew;
+}
+
 /** —— 质感工程 v3（Task 49）：夜间辉光缓冲（512² 精灵坐标系，与单位层同构） ——
  *  光晕不再以方块矩形直接画进 worldCanvas（放大后呈块状光斑），而是画进低分
  *  辨率 glowCanvas，再经 blurCanvas 降采样后在屏幕侧以 lighter 加性合成 ——
@@ -1466,6 +1514,11 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
   // —— 冬夜极光（Task 104）：极地夜空的波动光帘——夜色越深越盛，昼间/无大气不显 ——
   if (engine.fxPrefs.ambience && engine.laws.atmosphere && engine.fxPrefs.dayNight
     && drawAurora(engine, sk, dayTintOf(engine.dayPhase()).n)) {
+    skyUsed = true;
+  }
+  // —— 夏日神光（Task 105）：盛夏白昼的烈日光柱——太阳越盛越亮，暮色渐隐；与极光构成冷夜/烈昼对仗 ——
+  if (engine.fxPrefs.ambience && engine.laws.atmosphere && engine.fxPrefs.dayNight
+    && drawSunRays(engine, sk, dayTintOf(engine.dayPhase()).n)) {
     skyUsed = true;
   }
 
