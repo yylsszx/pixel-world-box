@@ -1336,10 +1336,16 @@ export class GameEngine {
       this.addEvent('dragon', '一头巨龙降临世界，火光将在大地蔓延', { x, y });
       this.onSound?.('dragon'); // 巨龙低吼（42-e 接线）
     }
-    if (!opts?.silent && race === RD) {
+    if (!opts?.silent && race === R.DEMON) {
       this.toast('恶魔从地狱的裂隙中爬了出来', 'danger');
       this.addEvent('demon', '地狱的裂隙开启，一头恶魔降临大地', { x, y });
       this.shake = Math.max(this.shake, 6);
+    }
+    if (!opts?.silent && race === R.ANGEL) {
+      this.toast('一道圣光划破长空——天使降临了', 'info');
+      this.addEvent('angel', '圣光自云层倾泻，一位天使振翼而降，将守望这片大地的凡间众生', { x, y });
+      this.fx('spawn', x, y, 40);
+      this.onSound?.('heal');
     }
     if (!opts?.silent && race === R.MAGE) {
       this.toast('一位神秘的法师现身了', 'info');
@@ -1893,6 +1899,10 @@ export class GameEngine {
     const rb = RACES[b.race];
     // —— 亡者阵营：骷髅/僵尸/白行者/吸血鬼互不为敌，并肩作战争夺生者的世界 ——
     if (ra.undead && rb.undead) return false;
+    // 天使（R.ANGEL=28）无需专门分支：恶魔/亡灵五族/巨龙/克拉肯/沙虫/蛇怪的
+    // 「与众生为敌」分支对称覆盖天使（双侧为敌 = 圣剑自动出鞘）；天使对无辜者
+    // 由全零旗标自然放行 —— 与 wasm is_enemy_full（rust-core lib.rs）逐位一致。
+    // ⚠️ 若在此新增天使特判，必须同步 rust-core/src/lib.rs 并重建 wbcore.wasm。
     if (a.race === R.ZOMBIE || b.race === R.ZOMBIE) return a.race !== b.race;
     if (a.race === R.SKELETON || b.race === R.SKELETON) return a.race !== b.race; // 亡灵与众人为敌
     if (a.race === R.WHITEWALKER || b.race === R.WHITEWALKER) return a.race !== b.race; // 寒冰之主与众生为敌
@@ -2374,6 +2384,9 @@ export class GameEngine {
     if (this.tickCount % 600 === 31) this.nature.geologyTick();
     // —— 深时引擎：洋流环流（每 120 tick：风应力+科氏 Jacobi 流函数 → 西向强化暖流）——
     if (this.tickCount % 120 === 15) this.worldsim.oceanTick();
+    // —— 天使光环（引擎级通道：和平野生单位被 rust 批内核接管不经 updateUnit，
+    //    治愈是纯 TS 增益无需 rust 镜像；每 3 tick 扫描，天使稀少开销可忽略）——
+    if (this.tickCount % 3 === 0) this.angelAuraTick();
     // —— 深时引擎：动态温度场（每 120 tick：纬度+海拔+大陆度+灰烬+洋流异常耦合）——
     if (this.tickCount % 120 === 27) this.worldsim.tempTick();
     // —— 深时引擎：冰川系统（每 240 tick：积累/消融/进退——火山冬反馈环）——
@@ -3522,6 +3535,8 @@ export class GameEngine {
           this.dragonBreath(u);
         }
       }
+      // 注：天使治愈光环不在 updateUnit 内 —— 天使是和平野生单位，会被 rust 批内核
+      // 整批接管（TS 和平分支不执行）；光环改由引擎级 angelAuraTick() 驱动（见 tick 通道）。
       if (def.isCiv && u.civ >= 0) {
         const job = u.job ?? 0;
         const warring = this.civAtWar(u.civ);
@@ -11823,6 +11838,36 @@ export class GameEngine {
       const px = k === 0 ? wx : Math.max(0, Math.min(W - 0.5, wx + (this.rng() - 0.5) * 8));
       const py = k === 0 ? wy : Math.max(0, Math.min(H - 0.5, wy + (this.rng() - 0.5) * 8));
       fn(px, py);
+    }
+  }
+
+  /** 天使光环（引擎级通道）：治愈周围无辜生灵（含国民/动物）+ 驱散瘟疫。
+   *  为什么不在 updateUnit：天使是和平野生单位，会被 rust 批内核整批接管，
+   *  TS 的和平分支不执行（实证 breath 不衰减）；治愈是纯 TS 增益，挂 tick 通道。
+   *  节律：每 3 tick 扫描一次，(phase + id*13) % 50 === 0 时触发
+   *  —— 每只天使约每 150 tick（10s@1x）一轮，相位按 id 错开防同帧扎堆。 */
+  private angelAuraTick() {
+    const phase = (this.tickCount / 3) | 0;
+    for (const a of this.units) {
+      if (a.dead || a.race !== R.ANGEL) continue;
+      if ((phase + a.id * 13) % 50 !== 0) continue;
+      let healed = 0;
+      for (const o of this.units) {
+        if (o.dead || o === a) continue;
+        const od = RACES[o.race];
+        if (od.hostile || od.undead) continue; // 只渡无辜者
+        if (o.hp >= o.maxHp && !o.infected) continue;
+        const dxo = o.x - a.x;
+        const dyo = o.y - a.y;
+        if (dxo * dxo + dyo * dyo > 12.25) continue; // 3.5²
+        if (o.hp < o.maxHp) {
+          o.hp = Math.min(o.maxHp, o.hp + Math.max(10, o.maxHp * 0.25));
+          this.fx('bless', o.x, o.y, 16);
+        }
+        if (o.infected) { o.infected = false; this.fx('bless', o.x, o.y, 20); }
+        if (++healed >= 10) break;
+      }
+      if (healed > 0) { this.fx('bless', a.x, a.y, 34); this.onSound?.('heal'); }
     }
   }
 

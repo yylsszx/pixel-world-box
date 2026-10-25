@@ -1116,6 +1116,58 @@ export function drawDemon(ctx: CanvasRenderingContext2D, u: Unit, frame: number)
   }
 }
 
+/** 天使：光明使者（4 宽 6 高 + 悬浮光环）——白袍金环、振翼悬浮、圣剑在鞘 */
+export function drawAngel(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  // 悬浮起伏：飞行单位离地 + 缓慢上下漂移（8 帧周期）
+  const bob = Math.floor(frame / 8) % 2;
+  const py2 = py - 2 - bob;
+  // 翼拍：每 7 帧收展一次（展翼 2px 高，收翼 1px）
+  const flap = Math.floor(frame / 7) % 2;
+  const robe = u.hurt > 0 ? '#ffb9ad' : '#f7f9fb';
+  const shade = '#cfd4e0';
+  // 圣光光环（头顶金色圆环，呼吸明灭）
+  ctx.fillStyle = frame % 12 < 6 ? '#ffd93d' : '#ffe98a';
+  ctx.fillRect(px - 1, py2 - 4, 3, 1);
+  // 背后双翼（白翼，拍动时上下扇；翼尖挑高）
+  ctx.fillStyle = flap ? '#ffffff' : '#e8ecf5';
+  ctx.fillRect(px - 3, py2 - 1 - flap, 1, 2);
+  ctx.fillRect(px - 4, py2 - flap, 1, 1);
+  ctx.fillRect(px + 2, py2 - 1 - flap, 1, 2);
+  ctx.fillRect(px + 3, py2 - flap, 1, 1);
+  // 头（明亮圣颜 + 金瞳）
+  ctx.fillStyle = '#f2ead8';
+  ctx.fillRect(px, py2 - 2, 2, 2);
+  ctx.fillStyle = '#c98d5a';
+  ctx.fillRect(px + (u.flip ? 0 : 1), py2 - 1, 1, 1);
+  // 白袍躯干（下摆随飘浮微微摆动）
+  ctx.fillStyle = robe;
+  ctx.fillRect(px - 1, py2, 3, 2);
+  ctx.fillStyle = shade;
+  ctx.fillRect(px - 1 + (bob ? 0 : 1), py2 + 2, 2, 1);
+  // 圣剑（持于体侧，剑尖偶有圣光闪烁）
+  ctx.fillStyle = '#cdd6e0';
+  ctx.fillRect(px + 2 * f, py2 + 1, 1, 2);
+  if (frame % 20 < 3) {
+    ctx.fillStyle = '#fff7c2';
+    ctx.fillRect(px + 2 * f, py2, 1, 1);
+  }
+  // 腰带（金丝束腰）
+  ctx.fillStyle = '#ffd93d';
+  ctx.fillRect(px - 1, py2 + 1, 3, 1);
+  // 足尖微光（悬浮不着地）
+  ctx.fillStyle = '#ffe98a';
+  ctx.fillRect(px, py2 + 3, 1, 1);
+  ctx.fillRect(px + 1, py2 + 3, 1, 1);
+  // 低血量警示
+  if (u.hp < u.maxHp * 0.4) {
+    ctx.fillStyle = '#ffd93d';
+    ctx.fillRect(px - 2, py2 - 5, 5, 1);
+  }
+}
+
 /** 巨魔：耸肩佝背的山岭巨怪（5 宽 8 高）——苔藓肩斑/长臂及地/獠牙/再生微光 */
 export function drawTroll(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;

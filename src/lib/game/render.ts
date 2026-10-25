@@ -1,7 +1,7 @@
 // ============ WorldBox Replica — Rendering pipeline ============
 import type { Army, Effect, Unit } from './types';
 import { T, R, RACES } from './types';
-import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster } from './sprites';
+import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster } from './sprites';
 import { visCacheFor } from './emergence';
 import { BUILDING_DEFS } from './types';
 import { GameEngine } from './engine';
@@ -1722,6 +1722,7 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
     case 'dragon': drawDragon(wc, u, engine.frameCount); break;
     case 'skeleton': drawSkeleton(wc, u, engine.frameCount); break;
     case 'demon': drawDemon(wc, u, engine.frameCount); break;
+    case 'angel': drawAngel(wc, u, engine.frameCount); break;
     case 'mage': drawMage(wc, u, engine.frameCount); break;
     case 'troll': drawTroll(wc, u, engine.frameCount); break;
     case 'ogre': drawOgre(wc, u, engine.frameCount); break;

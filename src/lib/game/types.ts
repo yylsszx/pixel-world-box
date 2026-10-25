@@ -56,6 +56,8 @@ export const R = {
   SANDWORM: 26,
   /** 蛇怪：毒牙+石化凝视，被害者化为石像 */
   BASILISK: 27,
+  /** 光明使者：治愈凡间众生，圣剑专为亡灵与恶魔出鞘 */
+  ANGEL: 28,
 } as const;
 export type RaceId = (typeof R)[keyof typeof R];
 
@@ -93,7 +95,7 @@ export interface RaceDef {
   speed: number; // tiles per tick
   maxAge: number; // in game years
   repro: number; // reproduction chance per update
-  sprite: 'person' | 'sheep' | 'wolf' | 'bear' | 'dragon' | 'deer' | 'penguin' | 'camel' | 'scorpion' | 'snake' | 'snowwolf' | 'skeleton' | 'demon' | 'mage' | 'troll' | 'ogre' | 'whitewalker' | 'vampire' | 'kraken' | 'sandworm' | 'basilisk';
+  sprite: 'person' | 'sheep' | 'wolf' | 'bear' | 'dragon' | 'deer' | 'penguin' | 'camel' | 'scorpion' | 'snake' | 'snowwolf' | 'skeleton' | 'demon' | 'mage' | 'troll' | 'ogre' | 'whitewalker' | 'vampire' | 'kraken' | 'sandworm' | 'basilisk' | 'angel';
   /** 涌现物种标记：动态种化产生的新物种头顶 1px 突变色点（undefined = 预设原种） */
   dynTint?: string;
   /** 视觉基因组（涌现进化 v3）：动态物种携带 —— 色相/体型/角刺鬃尾/花纹全部程序化漂移 */
@@ -152,6 +154,7 @@ export const RACES: Record<number, RaceDef> = {
   [R.KRAKEN]: { key: 'kraken', name: '克拉肯', isCiv: false, hostile: true, flying: false, predator: true, undead: false, lavaImmune: false, aquatic: true, reach: 2.4, hp: 520, dmg: 30, speed: 0.07, maxAge: 9999, repro: 0, sprite: 'kraken' },
   [R.SANDWORM]: { key: 'sandworm', name: '沙虫', isCiv: false, hostile: true, flying: false, predator: true, undead: false, lavaImmune: false, sandswim: true, reach: 1.6, hp: 420, dmg: 40, speed: 0.14, maxAge: 9999, repro: 0, sprite: 'sandworm' },
   [R.BASILISK]: { key: 'basilisk', name: '蛇怪', isCiv: false, hostile: true, flying: false, predator: true, undead: false, lavaImmune: false, reach: 1.4, hp: 90, dmg: 14, speed: 0.11, maxAge: 400, repro: 0, sprite: 'basilisk' },
+  [R.ANGEL]: { key: 'angel', name: '天使', isCiv: false, hostile: false, flying: true, predator: false, undead: false, lavaImmune: true, hp: 240, dmg: 22, speed: 0.105, maxAge: 9999, repro: 0, sprite: 'angel', archetype: '光明使者：圣光治愈凡间众生，圣剑专为亡灵与恶魔出鞘' },
 };
 
 // ---------------- 种族系统 v2：种族关系（Race Relations） ----------------

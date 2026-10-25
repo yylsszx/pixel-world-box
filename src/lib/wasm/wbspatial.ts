@@ -229,7 +229,7 @@ class WbSpatial {
       for (const k of raceKeys) {
         const id = Number(k);
         if (id >= MAX_RACES) continue;
-        const d = (RACES as Record<number, { hostile?: boolean; isCiv?: boolean; undead?: boolean; predator?: boolean }>)[id];
+        const d = (RACES as Record<number, { hostile?: boolean; isCiv?: boolean; undead?: boolean; predator?: boolean; flying?: boolean }>)[id];
         if (!d) continue;
         let f = 0;
         if (d.hostile) f |= F_HOSTILE;
@@ -237,6 +237,7 @@ class WbSpatial {
         if (d.undead) f |= F_UNDEAD;
         if (d.predator) f |= F_PREDATOR;
         if (id === 6 || id === 10 || id === 11 || id === 12) f |= F_HERBIVORE; // SHEEP/DEER/PENGUIN/CAMEL
+        if (d.flying) f |= 32; // 飞行位：rust 地形伤害豁免读 f1 bit32（units.rs 水伤害检查）—— 之前漏写导致巨龙/天使在批内核下被“溺水”
         this.vRaceFlags[id] = f;
       }
       this.raceCount = raceKeys.length;
@@ -772,6 +773,7 @@ class WbBatch {
         if (d.undead) f1 |= 4;
         if (d.predator) f1 |= 8;
         if (id === 6 || id === 10 || id === 11 || id === 12) f1 |= 16; // SHEEP/DEER/PENGUIN/CAMEL
+        if (d.flying) f1 |= 32; // 飞行位：与 Stage-1 语义一致（rust 水伤害豁免读 f1 bit32）
         rf[id] = f1;
         let f2 = 0;
         if (d.lavaImmune) f2 |= 1;
