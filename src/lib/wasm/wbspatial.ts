@@ -782,6 +782,9 @@ class WbBatch {
         if (d.aquatic) f2 |= 64;
         if (d.sandswim) f2 |= 128;
         tbf[id * 2 + 1] = f2;
+        // 飞行移动位：rust moveUnit 的自由飞行分支读 TBF byte0 bit32（units.rs L1701）——
+        // 之前漏写导致批内核下飞行单位（巨龙/天使）按"游泳 passTile"移动，与 JS 路径发散
+        if (d.flying) tbf[id * 2] |= 32;
       }
       // —— 职业 TBJ ——
       const tbj = new Float64Array(m, A(OFF_TBJ), 7 * 5);
