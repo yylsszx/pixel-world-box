@@ -4,7 +4,7 @@ import { T, R, RACES, TRAITS, CIV_RACES, DEFAULT_LAWS, ITEM_DEFS, describeCond, 
 import { EVO_KIND_META, applyEmTechMods, describeVis, inventIdea, inventTech, inventTrait, invalidateVisCache, mutateVis, tupleToVis, visFromGene, visToTuple } from './emergence';
 import type { EmModKey, EmTech, EvoKind, EvoNode, IdeaDef, VisGenome } from './emergence';
 import {
-  W, H, TICK_MS, YEAR_TICKS, MAX_UNITS, MAX_DRAGONS, MAX_DEMONS, MAX_ITEMS, HOUSE_CAP, MAX_WILDLIFE, MAX_TROLLS, MAX_OGRES, MAX_WHITEWALKERS, MAX_VAMPIRES, MAX_KRAKENS, MAX_SANDWORMS, MAX_BASILISKS, MAX_HYDRAS,
+  W, H, TICK_MS, YEAR_TICKS, MAX_UNITS, MAX_DRAGONS, MAX_DEMONS, MAX_ITEMS, HOUSE_CAP, MAX_WILDLIFE, MAX_WILDLIFE_AQUATIC, MAX_TROLLS, MAX_OGRES, MAX_WHITEWALKERS, MAX_VAMPIRES, MAX_KRAKENS, MAX_SANDWORMS, MAX_BASILISKS, MAX_HYDRAS,
   CIV_COLORS, FLAMMABLE, isWater, isLand, walkable, buildable,
   TERRAIN_RGB, TOOL_BY_ID, RACE_TOOL, ITEM_TOOL, CHEST_TIERS, rollChestItem,
   WATER_TIER_RGB, DEEP_TIER_RGB, SOFT_TERRAIN,
@@ -1081,6 +1081,15 @@ export class GameEngine {
     return n;
   }
 
+  /** 当前在世纯水生野生动物总数（鱼/龟/鲨/蟹及演化后裔；与 wildAlive 同账本按旗标分账） */
+  wildAliveAquatic(): number {
+    let n = 0;
+    for (const [race, v] of this.wildCount) {
+      if (RACES[race]?.aquatic) n += v;
+    }
+    return n;
+  }
+
   // ---------------- 涌现社会内核（Task 39）：家族谱系 / 血仇网络 / 恐慌传染场 ----------------
 
   /** 家族姓氏词库：前缀 × 后缀词法组合（16×12=192 —— 重姓本就自然，不查重） */
@@ -1267,7 +1276,12 @@ export class GameEngine {
     // 预算分轨：文明人口受 MAX_UNITS 限制；野生动物有独立的 MAX_WILDLIFE 生态预算（两项之和为绝对性能上界）。
     // （否则文明人口膨胀会挤占全部单位预算，野生动物被饿死灭绝且无法恢复 —— 700 年长时程实测发现）
     if (def.isCiv && this.units.length >= MAX_UNITS) return null;
-    if (!def.isCiv && this.wildAlive() >= MAX_WILDLIFE) return null; // 含僵尸（防刷屏无上限）
+    // 预算三轨：文明 MAX_UNITS / 陆生野生 MAX_WILDLIFE / 纯水生 MAX_WILDLIFE_AQUATIC ——
+    // 水生独立配额后海洋可繁衍至自身承载（此前全球预算被羊群饱和占用，鱼被封顶 ~40、鲨鱼复兴无门）
+    if (!def.isCiv) {
+      if (def.aquatic) { if (this.wildAliveAquatic() >= MAX_WILDLIFE_AQUATIC) return null; }
+      else if (this.wildAlive() >= MAX_WILDLIFE) return null; // 含僵尸（防刷屏无上限）
+    }
     if (race === R2 && (this.wildCount.get(race) ?? 0) >= MAX_DRAGONS) return null;
     if (race === RD && (this.wildCount.get(race) ?? 0) >= MAX_DEMONS) return null;
     // 新智慧巨怪同屏上限（防止性能崩溃 + 稀缺感）
@@ -3290,7 +3304,7 @@ export class GameEngine {
           bestHunger = hunger;
           best = p;
         }
-        if (best) best.food = Math.min(160, (best.food ?? 0) + 55 + Math.round(u.maxHp * 0.5));
+        if (best) best.food = Math.min(400, (best.food ?? 0) + 55 + Math.round(u.maxHp * 0.5)); // 400：可携带一个鱼群的能量远航
       }
       if (this.items.length < 170) {
         const boss = GameEngine.MONSTER_LOOT.has(u.race);
@@ -12451,7 +12465,9 @@ export class GameEngine {
    *  目标遛上岸（实测水鱼 20s 内上岸），洪水/海啸退潮再把已深入内陆的个体晾死 —— 双重搁浅源。
    *  此通道逐 tick 对纯水生单位（鱼/龟/鲨等；蟹 beach 两栖除外）断言水域目标：
    *  ① 水中个体：水域内随机游走目标（每 20 tick 重采样，逐 tick 断言 tx/ty 对抗内核覆盖）——
-   *     鲨鱼（predator 猎游）与 fleeT>0（逃亡）时让位于内核 AI；
+   *     fleeT>0（逃亡）时让位于内核 AI；饱食的捕食者（food≥45）猎游让位内核；
+   *     饥饿的捕食者（food<45）由引擎导向最近的水中猎物（Task 96 实测：内核不追鱼——
+   *     280 条鱼擦着鲨鱼游过，鲨鱼仍然饿毙 —— 内核猎游对水生猎物形同虚设，引擎代驾）；
    *  ② 搁浅个体：目标导向最近实体水域（findWaterNear ≥5 邻水实心水体）+ 窒息计数
    *     （beachT 每 proc +1，≥15 ≈ 300 tick 挣扎窗口 → 标记死亡走常规收尸；内核拥有 hp，
    *     TS 扣血会被回读覆写 —— 实测无效 —— 故用瞬态计数）。
@@ -12464,13 +12480,49 @@ export class GameEngine {
       if (!def.aquatic || def.beach) continue;
       const ti = idx(Math.floor(u.x), Math.floor(u.y));
       if (isWater(this.terrain[ti])) {
-        u.beachT = 0; u.beachTx = undefined; u.beachTy = undefined;
-        if (def.predator || (u.fleeT ?? 0) > 0) continue; // 猎游/逃亡交给内核 AI
+        u.beachT = 0;
+        if ((u.fleeT ?? 0) > 0) { u.beachTx = undefined; u.beachTy = undefined; continue; } // 逃亡交给内核 AI
+        if (def.predator) {
+          // 猎游启动阈值 58：鲨鱼 food 69 起步 -0.5/tick —— 晚启一步就少 26 格追击余量（实测远鱼 24 格即饿毙）
+          if ((u.food ?? 70) >= 58) { u.beachTx = undefined; u.beachTy = undefined; continue; } // 饱食猎游 → 内核自便
+          // 饥饿猎游：导向最近的水中猎物（每 20 tick 重采样，逐 tick 断言 tx/ty）
+          if (retarget || u.beachTx == null || u.beachTy == null) {
+            let best: Unit | null = null;
+            let bd = Infinity;
+            for (const q of this.units) {
+              if (q.dead || q.race === u.race) continue;
+              if (RACES[q.race].isCiv || !this.isHerbivoreRace(q.race)) continue;
+              const qx = Math.floor(q.x), qy = Math.floor(q.y);
+              const qj = qy * W + qx;
+              if (!isWater(this.terrain[qj])) continue; // 只追水中猎物（防导向陆地扑空搁浅）
+              // 实体水过滤：猎物须身处 ≥5 邻水的实心水体 —— 岸边浅洼里的鱼不去追
+              // （否则猎游目标与归海导向拔河，鲨鱼会追着一尾岸沟鱼活活搁浅而死 —— Task 96 实测）
+              let wn = 0;
+              for (let ny = -1; ny <= 1; ny++) for (let nx = -1; nx <= 1; nx++) {
+                const xx = qx + nx, yy = qy + ny;
+                if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+                if (isWater(this.terrain[yy * W + xx])) wn++;
+              }
+              if (wn < 6) continue;
+              const dx = q.x - u.x, dy = q.y - u.y;
+              const d2 = dx * dx + dy * dy;
+              if (d2 < bd) { bd = d2; best = q; }
+            }
+            if (best) { u.beachTx = best.x; u.beachTy = best.y; }
+            else { u.beachTx = undefined; u.beachTy = undefined; }
+          }
+          if (u.beachTx != null && u.beachTy != null) { u.tx = u.beachTx; u.ty = u.beachTy; }
+          continue;
+        }
+        u.beachTx = undefined; u.beachTy = undefined;
         if (retarget || u.beachTx == null) {
           // 水域内随机游走：采样 8 个候选点，取首个「实体水」（自身+≥5 邻水）—— 防止指向孤水坑/岸边
+          // 25% 远散布（±14）：鱼群低频外溢 —— 高密鱼团让鲨鱼的校际通勤饿毙（Task 96 实测 102 格通勤）
+          const far = this.rng() < 0.25;
+          const spread = far ? 14 : 6;
           for (let k = 0; k < 8; k++) {
-            const wx = Math.max(1, Math.min(W - 2, Math.floor(u.x + (this.rng() * 2 - 1) * 6)));
-            const wy = Math.max(1, Math.min(H - 2, Math.floor(u.y + (this.rng() * 2 - 1) * 6)));
+            const wx = Math.max(1, Math.min(W - 2, Math.floor(u.x + (this.rng() * 2 - 1) * spread)));
+            const wy = Math.max(1, Math.min(H - 2, Math.floor(u.y + (this.rng() * 2 - 1) * spread)));
             const j = wy * W + wx;
             if (!isWater(this.terrain[j])) continue;
             let wn = 0;
@@ -12501,15 +12553,18 @@ export class GameEngine {
    *  让饥饿的野生捕食者（food<45）对 r=1.6 内最近的野生猎物发动扑杀 —— 走 u.dead 常规收尸
    *  （肉掉落/血泊/腐食回充自然接管），单轮至多 8 杀防屠杀踩踏 —— Lotka-Volterra 的捕食腿。 */
   private predatorHuntTick() {
-    let kills = 0;
+    // 扑杀预算水陆分账：units 数组序是「先到先得」—— 狼群爆发期（60-84 饿狼）会把全局名额
+    // 垄断到海里一只也轮不上（Task 96 实测鲨鱼在狼 boom 世代集体饿毙的隐形之手）
+    let killsLand = 0;
+    let killsAqua = 0;
     for (const p of this.units) {
-      if (kills >= 8) break; // 单轮扑杀预算（防饥饿兽群一轮屠杀整群猎物）
       if (p.dead) continue;
       const pd = RACES[p.race];
       if (!pd.predator || pd.undead || pd.isCiv) continue;
+      if (pd.aquatic ? killsAqua >= 4 : killsLand >= 8) continue; // 单轮扑杀预算：陆 8 / 水 4（防屠杀踩踏）
       if ((p.food ?? 70) > 45) continue; // 只有饥饿者出手（饱食者不滥杀）
       let prey: Unit | null = null;
-      let bd = pd.aquatic ? 5.76 : 2.56; // 扑杀窗口：陆捕 r=1.6 / 水捕 r=2.4（水域三维追猎）
+      let bd = pd.aquatic ? 25 : 2.56; // 扑杀窗口：陆捕 r=1.6 / 水捕 r=5（深海突袭 —— 内核不驱动追击，扑杀半径即鲨鱼的爪）
       for (const q of this.units) {
         if (q.dead || (q.grab ?? 0) > 0) continue; // 神明手中之物不捕
         if (RACES[q.race].isCiv || !this.isHerbivoreRace(q.race)) continue;
@@ -12521,8 +12576,9 @@ export class GameEngine {
       prey.dead = true;
       WB.syncDead(prey); // WASM 镜像：后续扫描即刻跳过亡者
       this.fx('blood', prey.x, prey.y, 14);
-      kills++;
-      p.food = Math.min(160, (p.food ?? 0) + 25); // 扑杀即刻进食（腐食回充再补一口）
+      if (pd.aquatic) killsAqua++; else killsLand++;
+      p.food = Math.min(400, (p.food ?? 0) + 25); // 扑杀即刻进食（腐食回充再补一口）
+      if ((p.food ?? 0) >= 380) break; // 吃饱了就收手 —— 满仓过杀只会浪费猎物（能量随尸体蒸发）
     }
   }
 
@@ -12533,7 +12589,6 @@ export class GameEngine {
    *  在其适宜栖息地投放一小群奠基者 —— 生态韧性（回迁腿），世界再老也生机不断。 */
   private wildlifeReboundTick() {
     if (!this.laws.reproduction) return; // 神明关闭繁衍法则时，世界静寂如死
-    if (this.wildAlive() >= MAX_WILDLIFE - 8) return; // 生态预算吃紧时不添乱
     // 奠基者名单（与 worldgen trySpawn 播撒对齐；文明/神话/亡灵有自己的降临通道不入列）
     // habitat：适宜栖息地判定（与 worldgen 的地形口径一致）；n：迁徙群规模区间
     const isW = (t: number) => t === T.DEEP || t === T.WATER;
@@ -12563,7 +12618,34 @@ export class GameEngine {
     const seed = extinct[Math.floor(this.rng() * extinct.length)];
     const def = RACES[seed.race];
     const aquatic = !!def.aquatic;
+    // 预算按轨检（水生掷签看海洋配额，陆生看全球预算）—— 羊群饱和不再挡住鲨鱼的迁徙回归
+    if (aquatic ? this.wildAliveAquatic() >= MAX_WILDLIFE_AQUATIC - 8 : this.wildAlive() >= MAX_WILDLIFE - 8) return;
     // 栖息地采样：随机掷点找落位（蟹需 r=2 内有水 —— 沿 worldgen 口径）
+    // 鲨鱼特例：锚定一条活鱼落位（猎手跟着鱼群走 —— 随机深水的鲨鱼追不上远处的鱼群，Task 96 实测）
+    if (seed.race === R.SHARK) {
+      const fishes = this.units.filter((q) => !q.dead && q.race === R.FISH);
+      if (fishes.length > 0) {
+        let placed = 0;
+        const n = seed.n[0] + Math.floor(this.rng() * (seed.n[1] - seed.n[0] + 1));
+        for (let k = 0; k < n; k++) {
+          const f = fishes[Math.floor(this.rng() * fishes.length)];
+          for (let t2 = 0; t2 < 8; t2++) {
+            const jx = Math.max(0.5, Math.min(W - 0.5, f.x + (this.rng() * 3 - 1.5)));
+            const jy = Math.max(0.5, Math.min(H - 0.5, f.y + (this.rng() * 3 - 1.5)));
+            const j = Math.floor(jy) * W + Math.floor(jx);
+            if (!isWater(this.terrain[j])) continue;
+            if (this.spawnUnit(R.SHARK, jx, jy, { silent: true })) placed++;
+            break;
+          }
+        }
+        if (placed > 0) {
+          this.fx('spawn', fishes[0].x, fishes[0].y, 46);
+          this.addEvent('eco', `洋流送来了远方的族群——${def.name}循着鱼群的踪迹重新游回了这片海域`, { x: fishes[0].x, y: fishes[0].y });
+        }
+        return;
+      }
+      // 无鱼可锚（海洋真空）→ 落回通用随机采样
+    }
     for (let tries = 0; tries < 140; tries++) {
       const x = 2 + Math.floor(this.rng() * (W - 4));
       const y = 2 + Math.floor(this.rng() * (H - 4));

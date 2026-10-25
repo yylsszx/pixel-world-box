@@ -178,6 +178,17 @@ export function generateWorld(seed: number, params?: WorldGenParams): WorldGenRe
   trySpawn(R.CRAB, 10, [2, 4], T.SAND, 2);  // 蟹：限邻水沙滩（2 格内有水）
   trySpawn(R.TURTLE, 9, [2, 4], T.DEEP);    // 龟：海洋游荡
   trySpawn(R.SHARK, 6, [1, 2], T.DEEP);     // 鲨鱼：深海独行猎手
+  // 鲨鱼锚定鱼群：远洋独行猎手的猎场 = 鱼群巡游处 —— 随机深水的鲨鱼追不上 24 格外的鱼群
+  // （Task 96 实测：距猎物 6 格饿毙），开局落位必须跟着鱼群走，否则整代猎手饿毙在猎场路上
+  {
+    const fishSpots = spawnAnimals.filter((a) => a.race === R.FISH);
+    for (const a of spawnAnimals) {
+      if (a.race !== R.SHARK || fishSpots.length === 0) continue;
+      const f = fishSpots[Math.floor(rand() * fishSpots.length)];
+      a.x = Math.max(0.5, Math.min(W - 0.5, f.x + (rand() * 3 - 1.5)));
+      a.y = Math.max(0.5, Math.min(H - 0.5, f.y + (rand() * 3 - 1.5)));
+    }
+  }
 
   // sanity: ensure at least some land
   let land = 0;

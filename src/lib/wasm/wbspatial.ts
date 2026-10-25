@@ -815,7 +815,11 @@ class WbBatch {
       for (const k of Object.keys(RACES)) {
         const id = Number(k);
         if (id < 0 || id >= 512) continue;
-        wildcap[id] = caps[id] ?? 40;
+        // 缺省改以引擎 wildCapOf 为单一真相源 —— v0.49 八新动物（鱼/鸡/猪/兔/狐/蟹/龟/鲨）不在
+        // caps 表内，曾全部落回缺省 40：内核侧繁衍被钉死（实测鱼/龟/蟹/鸡/猪/兔恒 = 40），
+        // 鱼 280/兔 220 的设计承载形同虚设。经典 8 种与 wildCapOf 数值一致（保留为显式快路径）；
+        // 巨怪上限仍由 moncap 单独管辖（wildCapOf 对巨怪返回 40，与旧缺省一致，零行为变化）。
+        wildcap[id] = caps[id] ?? engine.wildCapOf(id);
       }
       const mcaps: Record<number, number> = { 9: 4, 17: 2, 21: 5, 22: 5, 23: 6, 24: 8, 25: 3, 26: 3, 27: 6 };
       for (const [k, v] of Object.entries(mcaps)) moncap[+k] = v;
@@ -824,8 +828,11 @@ class WbBatch {
       const tbhp = new Float64Array(m, A(OFF_TBHP), 16);
       for (let k = 1; k <= 10; k++) tbhp[k] = BUILDING_DEFS[k]?.hp ?? 70;
       // —— MISC ——
+      // misc[1] = 野生全局预算：同步三轨上界（陆 900 + 水生 520 = 1420）——
+      // 若仍填 900，内核侧总预算会被羊群（陆生）先行占满，鱼群内核繁衍依旧被挤死
+      // （实测 1220 时总单位顶格 1219：鱼 280 + 龟 90 + 蟹 90 已 460，陆生繁衍被挤到贴边）
       const misc = new Int32Array(m, A(OFF_MISC), 32);
-      misc[0] = 2400; misc[1] = 900;
+      misc[0] = 2400; misc[1] = 900 + 520;
       this.tablesVersion = 1;
     }
     void ex;
