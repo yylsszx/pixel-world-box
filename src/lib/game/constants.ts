@@ -297,8 +297,8 @@ export const ICONS: Record<string, string[]> = {
     'ddDDDDdd', '.dDppDd.', '.dDppDd.', '.d.d.d..',
   ],
   hydra: [
-    '.g...g..', 'gyg.gyg.', '.r...r..', '.G.G.G..',
-    '..GGG...', '.GgkgG..', '.GGGGG..', '..G.G...',
+    '.g..g..g', 'gy..y..y', '.g..g..g', '.G.GG.G.',
+    '..GGGG..', '.GGgGGg.', '.GGGGGG.', '..r..r..',
   ],
   mage: [
     '....k...', '...kkk..', '..kkkkk.', '...vww..',

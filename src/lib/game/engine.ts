@@ -1364,6 +1364,7 @@ export class GameEngine {
       this.fx('spawn', x, y, 40);
       this.fx('spark', x, y - 1, 24);
       this.shake = Math.max(this.shake, 3); // 沉重的脚步
+      this.onSound?.('ent'); // 树皮嗓音的苏醒吱吟
     }
     if (!opts?.silent && race === R.LICH) {
       this.toast('死灵的号角长鸣——巫妖自坟茔中升起', 'danger');
@@ -12063,6 +12064,8 @@ export class GameEngine {
         }
       }
     }
+    // 播种木语：本轮有种下新林时低概率鸣响（慢节奏的园丁不喧哗；throttle 900ms 防叠音）
+    if (planted > 0 && this.rng() < 0.35) this.onSound?.('ent');
   }
 
   /** 巫妖死灵复生（引擎级通道）：永夜亡者军团的源泉 ——

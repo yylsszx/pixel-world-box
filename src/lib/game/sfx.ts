@@ -38,6 +38,7 @@ const PLAY_THROTTLE: Partial<Record<SoundKind, number>> = {
   coin: 90,
   hydra: 600,
   phoenix: 450,
+  ent: 900,
 };
 
 // ============ 环境音乐素材表（频率写死，全合成零素材） ============
@@ -241,6 +242,7 @@ export class SfxEngine {
       case 'coin': this.coin(); break;
       case 'hydra': this.hydra(); break;
       case 'phoenix': this.phoenixCall(); break;
+      case 'ent': this.ent(); break;
     }
   }
 
@@ -873,6 +875,43 @@ export class SfxEngine {
     src.connect(bp).connect(ng).connect(this.sfxGain!);
     src.start(t);
     src.stop(t + 0.95);
+  }
+
+  /** 树人木语：低沉三角波短哼（220→165Hz，树皮嗓音）+ 枝叶窸窣（高频带通噪声短脉冲）—— 森林守护者的吱吟 */
+  private ent(): void {
+    const ctx = this.ctx!;
+    const t = ctx.currentTime;
+    // 木质喉音主体：三角波下滑（老树吱呀）
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(220, t);
+    osc.frequency.exponentialRampToValueAtTime(165, t + 0.45);
+    gain.gain.setValueAtTime(0.001, t);
+    gain.gain.linearRampToValueAtTime(0.18, t + 0.09);
+    gain.gain.setValueAtTime(0.18, t + 0.35);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+    osc.connect(gain).connect(this.sfxGain!);
+    osc.start(t);
+    osc.stop(t + 0.65);
+    // 枝叶窸窣：两段高频噪声短脉冲（叶片摩擦）
+    for (const [st, dur] of [[0.05, 0.12], [0.3, 0.18]] as const) {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuffer();
+      src.loop = true;
+      src.playbackRate.value = 1.6;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 3200;
+      bp.Q.value = 1.2;
+      const ng = ctx.createGain();
+      ng.gain.setValueAtTime(0.001, t + st);
+      ng.gain.linearRampToValueAtTime(0.05, t + st + 0.02);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + st + dur);
+      src.connect(bp).connect(ng).connect(this.sfxGain!);
+      src.start(t + st);
+      src.stop(t + st + dur + 0.02);
+    }
   }
 
   /** 凤鸣：清亮上滑正弦双音（880→1760Hz 主体 + 纯五度泛音）+ 颤音收尾 —— 神鸟的凤鸣九天 */
