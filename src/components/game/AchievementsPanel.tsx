@@ -1,12 +1,12 @@
 'use client';
 // ============ Achievements Panel: 成就墙（桌面左侧栏 + 移动端底部抽屉） ============
-// 跨世界元进度：24 项成就（文明/战争/科技/传奇/天灾/进化），青铜→传说四档稀有度
+// 跨世界元进度：27 项成就（文明/战争/科技/传奇/天灾/进化/季节），青铜→传说四档稀有度
 // 解锁 → 纪事播报 + 本面板亮灯 + localStorage 永久保存；未解锁展示进度条
 import { useGameStore } from '@/store/gameStore';
 import { ACHIEVEMENTS, TIER_META, type AchievementDef } from '@/lib/game/achievements';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Trophy, X, Lock, Flag, Castle, Users, Crown, Skull, Swords, Lightbulb, Scroll, Landmark, Biohazard, Droplets, Hammer, Radiation, Orbit, Sparkles, Dna, Flame, Handshake } from 'lucide-react';
+import { Trophy, X, Lock, Flag, Castle, Users, Crown, Skull, Swords, Lightbulb, Scroll, Landmark, Biohazard, Droplets, Hammer, Radiation, Orbit, Sparkles, Dna, Flame, Handshake, Sun, Ghost } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 /** 成就图标映射（definitions 用字符串键，UI 侧映射 lucide 组件） */
@@ -15,7 +15,7 @@ const ICONS: Record<string, LucideIcon> = {
   swords: Swords, lightbulb: Lightbulb, scroll: Scroll,
   landmark: Landmark, biohazard: Biohazard, droplets: Droplets, hammer: Hammer,
   radiation: Radiation, orbit: Orbit, sparkles: Sparkles, dna: Dna, flame: Flame,
-  handshake: Handshake,
+  handshake: Handshake, sun: Sun, ghost: Ghost,
 };
 
 /** 稀有度排序权重（解锁优先，其次按稀有度降序） */

@@ -31,7 +31,7 @@ export const TIER_META: Record<AchTier, { label: string; cls: string; ring: stri
   legend: { label: '传说', cls: 'border-fuchsia-400/60 bg-fuchsia-400/10 text-fuchsia-300', ring: 'ring-fuchsia-400/40' },
 };
 
-/** 24 项成就（文明/战争/科技/传奇/天灾/进化六大类） */
+/** 27 项成就（文明/战争/科技/传奇/天灾/进化/季节七大类） */
 export const ACHIEVEMENTS: AchievementDef[] = [
   // —— 文明史诗 ——
   {
@@ -155,6 +155,22 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     id: 'grand-coalition', name: '大同盟', desc: '一个联盟聚集 5 个成员国', tier: 'gold', icon: 'handshake',
     check: (e) => e.alliances.some((al) => al.members.length >= 5),
     progress: (e) => Math.max(0, ...e.alliances.map((al) => al.members.length), 0), goal: 5,
+  },
+  // —— 季节 × 万物（Task 93）——
+  {
+    id: 'four-seasons', name: '四季轮回', desc: '见证一轮完整的春夏秋冬（八年一轮）', tier: 'gold', icon: 'sun',
+    check: (e) => e.laws.seasons && e.yearF >= 8,
+    progress: (e) => (e.laws.seasons ? e.yearF : 0), goal: 8,
+  },
+  {
+    id: 'necro-court', name: '白骨朝廷', desc: '巫妖麾下的骷髅军团达到 15 名', tier: 'silver', icon: 'ghost',
+    check: (e) => e.units.some((l) => !l.dead && l.race === R.LICH) && e.units.filter((u) => !u.dead && u.race === R.SKELETON).length >= 15,
+    progress: (e) => (e.units.some((l) => !l.dead && l.race === R.LICH) ? e.units.filter((u) => !u.dead && u.race === R.SKELETON).length : 0), goal: 15,
+  },
+  {
+    id: 'summer-wildfire', name: '盛夏燎原', desc: '夏季一场野火同时蔓延 40 个地块', tier: 'bronze', icon: 'flame',
+    check: (e) => e.nature.season === 1 && e.fireSet.size >= 40,
+    progress: (e) => (e.nature.season === 1 ? e.fireSet.size : 0), goal: 40,
   },
 ];
 

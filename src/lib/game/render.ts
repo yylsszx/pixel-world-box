@@ -502,6 +502,40 @@ function drawWeather(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numbe
           wc.fillStyle = 'rgba(238,246,255,0.5)';
           wc.fillRect(rx, fy, 1, 1);
         }
+      } else if (nat.season === 0 && m <= 0.62) {
+        // 春日飘瓣（季节 × 万物）：草地/森林上空淡粉樱瓣随风缓舞——万物复苏的仪式感
+        const ti = (cy * CELL + 3) * 256 + (cx * CELL + 3);
+        const tt = engine.terrain[ti];
+        if (tt === T.GRASS || tt === T.FOREST) {
+          const hsh = ((i * 2654435761) >>> 0) + (fc >> 1);
+          if (hsh % 43 < 3) {
+            const rx = cx * CELL * 2 + (hsh % 15);
+            const ry = cy * CELL * 2 + ((hsh >> 5) % 13);
+            const sway = Math.sin(fc * 0.05 + (hsh & 7)) * 2.2; // 花瓣轻舞
+            const fy = ry + Math.floor(((hsh >> 7) + fc * 0.12) % 14);
+            const pale = (hsh >> 11) & 1; // 深粉/浅粉两色瓣
+            wc.fillStyle = pale ? 'rgba(244,168,196,0.82)' : 'rgba(250,196,216,0.78)';
+            // 2×2 px：天幕层 1px 粒子在超采样管线中会丢失（实测），两像素是可见性下限
+            wc.fillRect(Math.round(rx + sway), fy, 2, 2);
+          }
+        }
+      } else if (nat.season === 2 && m <= 0.62) {
+        // 秋叶辞树（季节 × 万物）：森林上空橙红金三色落叶打旋而下——金风扫林的落叶雨
+        const ti = (cy * CELL + 3) * 256 + (cx * CELL + 3);
+        const tt = engine.terrain[ti];
+        if (tt === T.FOREST) {
+          const hsh = ((i * 2246822519) >>> 0) + (fc >> 1);
+          if (hsh % 23 < 4) {
+            const rx = cx * CELL * 2 + (hsh % 14);
+            const ry = cy * CELL * 2 + ((hsh >> 5) % 12);
+            const ph = ((hsh >> 7) + fc * 0.28) % 16;
+            const sway = Math.sin(fc * 0.08 + (hsh & 15)) * 3; // 叶片打旋的横向摆
+            const fy = ry + Math.floor(ph);
+            const cp = (hsh >> 12) % 3; // 橙/红/金三色叶
+            wc.fillStyle = cp === 0 ? 'rgba(228,118,34,0.85)' : cp === 1 ? 'rgba(202,58,38,0.82)' : 'rgba(226,164,44,0.84)';
+            wc.fillRect(Math.round(rx + sway), fy, 2, 2); // 2×2：天幕层 1px 不可见（实测），叶面比瓣稍大更醒目
+          }
+        }
       }
     }
   }
