@@ -668,6 +668,32 @@ function drawAurora(engine: GameEngine, sk: CanvasRenderingContext2D, nightN: nu
   return drew;
 }
 
+/** 雨后彩虹（Task 110，天气 × 天幕）：骤歇暴雨上空的七色同心弧——
+ *  亮度随昼夜门渐隐（黄昏淡出）、随 TTL 尾段消散、半径呼吸微动；
+ *  与雨丝/雷暴构成完整天气戏剧（雨来了→天怒了→雨停了）。性能 7 次 stroke 弧/帧。 */
+function drawRainbow(engine: GameEngine, sk: CanvasRenderingContext2D, nightN: number): boolean {
+  const nat = engine.nature;
+  if (nat.rainbowTTL <= 0 || nightN > 0.35) return false;
+  const ttl = nat.rainbowTTL;
+  // 渐入 10%（首 240 tick）→ 常亮 → 渐出 40%（尾 960 tick）× 夜色渐隐
+  const fade = (ttl > 2160 ? (2400 - ttl) / 240 : ttl < 960 ? ttl / 960 : 1) * Math.max(0, 1 - nightN / 0.35);
+  if (fade <= 0.01) return false;
+  const fc = engine.frameCount;
+  const cx = nat.rainbowX * 2 + Math.sin(fc * 0.003) * 2;
+  const cy = Math.max(84, nat.rainbowY * 2 - 26); // 弧心钳制：保证弧顶不入画外
+  const COLORS = ['255,66,66', '255,152,44', '255,224,66', '96,224,96', '72,192,255', '96,116,255', '176,96,236'];
+  sk.globalCompositeOperation = 'lighter';
+  for (let k = 0; k < 7; k++) {
+    sk.strokeStyle = `rgba(${COLORS[k]},${(0.09 * fade).toFixed(3)})`;
+    sk.lineWidth = 2.4;
+    sk.beginPath();
+    sk.arc(cx, cy, 64 - k * 2 + Math.sin(fc * 0.006 + k * 0.9) * 1.2, Math.PI, 2 * Math.PI);
+    sk.stroke();
+  }
+  sk.globalCompositeOperation = 'source-over';
+  return true;
+}
+
 /** 夏日神光（Task 105，季节 × 万物）：夏季白昼天幕的烈日光柱 —— 金色加性光带自天顶斜落，
  *  倾角随太阳方位（晨东暮西）、亮度随太阳高度呼吸、位置缓慢游移。
  *  四季天幕的最后一块拼图：春瓣/秋叶/冬雪·极光之后，盛夏烈日有了自己的光。
@@ -1536,6 +1562,11 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
   // —— 夏日神光（Task 105）：盛夏白昼的烈日光柱——太阳越盛越亮，暮色渐隐；与极光构成冷夜/烈昼对仗 ——
   if (engine.fxPrefs.ambience && engine.laws.atmosphere && engine.fxPrefs.dayNight
     && drawSunRays(engine, sk, dayTintOf(engine.dayPhase()).n)) {
+    skyUsed = true;
+  }
+  // —— 雨后彩虹（Task 110）：骤歇暴雨上空的七色弧——黄昏渐隐、夜空不显；与雨丝/雷暴构成天气戏剧闭环 ——
+  if (engine.fxPrefs.ambience && engine.laws.atmosphere
+    && drawRainbow(engine, sk, dayTintOf(engine.dayPhase()).n)) {
     skyUsed = true;
   }
 

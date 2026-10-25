@@ -26,6 +26,9 @@ const STORM_NAMES = ['海燕', '山竹', '天鸽', '榴莲', '白鹿', '烟花',
 /** 由风暴 id 确定性取名（存档恢复时零成本重算） */
 export const STORM_NAME_AT = (id: number) => STORM_NAMES[Math.min(STORM_NAMES.length - 1, Math.max(0, id) % STORM_NAMES.length)];
 
+/** 冷血种族集合（Task 109）：节律徽章判定用 —— types.RaceDef.coldBlood 的引擎侧镜像 */
+const COLD_BLOOD_RACES: ReadonlySet<number> = new Set([R.SCORPION, R.SNAKE, R.LIZARD, R.BASILISK, R.HYDRA, R.TURTLE]);
+
 export class NatureSystem {
   eng: GameEngine;
   seed: number;
@@ -182,6 +185,12 @@ export class NatureSystem {
   boltChronDone = false;
   /** 自然闪电累计（QA 可观测：eng.nature.lightningN；瞬态不入档） */
   lightningN = 0;
+  /** 雨后彩虹（瞬态装饰，不入档）：弧心世界坐标 + TTL tick；prevRain 为上一大气步雨情快照（大雨骤停检测） */
+  rainbowX = -1;
+  rainbowY = -1;
+  rainbowTTL = 0;
+  prevRain = new Uint8Array(AW * AH);
+  rainbowChronDone = false;
   seasonCheck() {
     const s = this.season;
     if (s !== this.lastSeason) {
@@ -270,7 +279,9 @@ export class NatureSystem {
       if (present.has(R.HYDRA)) out.push({ label: '九头蛇冬眠', desc: '再生之泉封冻，断首不再萌发', tone: 'info' });
       if (present.has(R.ENT)) out.push({ label: '树人蛰伏', desc: '春播暂停，扑火不休', tone: 'info' });
       if (present.has(R.PHOENIX)) out.push({ label: '涅槃迟缓', desc: '灰烬滞留 ×1.5，重生更慢', tone: 'info' });
-      if (present.has(R.SNAKE) || present.has(R.SCORPION) || present.has(R.LIZARD) || present.has(R.BASILISK) || present.has(R.HYDRA) || present.has(R.TURTLE)) out.push({ label: '冷血缓滞', desc: '变温生物代谢迟缓，移速 ×0.6', tone: 'info' });
+      let cold = false;
+      for (const cr of COLD_BLOOD_RACES) if (present.has(cr)) { cold = true; break; }
+      if (cold) out.push({ label: '冷血缓滞', desc: '变温生物代谢迟缓，移速 ×0.6', tone: 'info' });
     }
     return out;
   }
@@ -509,6 +520,26 @@ export class NatureSystem {
         }
       }
     }
+    // —— 雨后彩虹：上一拍的大雨（≥120）本拍骤停 + 白昼 + 概率门 → 天幕挂一道渐隐彩虹；
+    //    全场至多一道（rainbowTTL 期间不再触发）；prevRain 快照供下一拍对比 ——
+    if (this.rainbowTTL > 0) {
+      this.rainbowTTL -= 10;
+    } else if (eng.dayPhase() < 0.42) {
+      for (let i = 0; i < AW * AH; i++) {
+        if (this.prevRain[i] >= 120 && this.rainCell[i] === 0 && eng.rng() < 0.02) {
+          this.rainbowTTL = 2400;
+          this.rainbowX = (i % AW) * CELL + CELL / 2;
+          this.rainbowY = ((i / AW) | 0) * CELL + CELL / 2;
+          if (!this.rainbowChronDone) {
+            this.rainbowChronDone = true;
+            this.eng.toast('雨过天青——一道彩虹横跨天际', 'good');
+            this.eng.addEvent('geo', '雨过天青：骤歇的暴雨在天幕留下一道彩虹');
+          }
+          break;
+        }
+      }
+    }
+    this.prevRain.set(this.rainCell);
   }
 
   /** 气压系统生命周期（每大气步）：低压生于 ITCZ/中纬锋面，高压生于副热带与极地；
