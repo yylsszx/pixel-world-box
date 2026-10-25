@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>PwbValidate</AssemblyName>
+    <OutputType>Library</OutputType>
+    <!-- 纯静态验证:不产出运行物 -->
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="UnityEngineStubs.cs" />
+    <Compile Include="..\..\Assets\Scripts\**\*.cs" />
+  </ItemGroup>
+</Project>

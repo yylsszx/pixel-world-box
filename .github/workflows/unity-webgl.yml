@@ -1,0 +1,82 @@
+name: Unity WebGL Deploy
+
+# Unity 6 重制分支的自动构建部署链(契约 §7):
+# push unity 分支 / 手动触发 → game-ci/unity-builder@v4 构建 WebGL →
+# checkout gh-pages → 覆盖 gh-pages/unity/ 子目录(不动根站点)→ commit/push(冲突 rebase 重试)。
+# 需要 Secrets:UNITY_LICENSE(.ulf 内容)/ UNITY_EMAIL / UNITY_PASSWORD(个人版激活三件套)。
+on:
+  push:
+    branches: [unity]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: unity-webgl-deploy
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & Deploy Unity WebGL
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Unity project (WebGL)
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          targetPlatform: WebGL
+          unityVersion: 6000.6.7f1
+          projectPath: unity
+
+      - name: Decompress WebGL assets (Pages serves raw bytes)
+        run: |
+          set -euo pipefail
+          cd build/WebGL
+          # Unity 默认 Brotli/Gzip 压缩,而 GitHub Pages 不发 Content-Encoding 头 → 白屏。
+          # 就地解压为原始文件(.data/.wasm/.loader.js),服务器直出。
+          pip install brotli --quiet 2>/dev/null || true
+          find . -name '*.gz' | while read -r f; do gunzip -kf "$f" && mv "${f%.gz}" "$f.tmp" && mv "$f.tmp" "${f%.gz}" && rm -f "$f" || true; done
+          find . -name '*.br' | while read -r f; do
+            out="${f%.br}"
+            python3 -c "import brotli,sys; open(sys.argv[2],'wb').write(brotli.decompress(open(sys.argv[1],'rb').read()))" "$f" "$out" && rm -f "$f"
+          done
+          find . -name '*.gz' -delete || true
+          find . -name '*.br' -delete || true
+          ls -la Build 2>/dev/null || true
+
+      - name: Checkout gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages
+
+      - name: Deploy to gh-pages/unity
+        run: |
+          set -euo pipefail
+          rm -rf gh-pages/unity
+          mkdir -p gh-pages/unity
+          cp -r build/WebGL/. gh-pages/unity/
+          # 根无 .nojekyll 才补(Pages 会忽略 _ 开头目录,WebGL 构建含 _data 等)
+          if [ ! -e gh-pages/.nojekyll ]; then
+            touch gh-pages/.nojekyll
+            touch gh-pages/unity/.nojekyll
+          fi
+          cd gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add unity
+          [ -f .nojekyll ] && git add .nojekyll || true
+          if git diff --cached --quiet; then
+            echo "No changes to deploy, skip commit."
+            exit 0
+          fi
+          git commit -m "Unity WebGL build"
+          git push || (git pull --rebase origin gh-pages && git push)

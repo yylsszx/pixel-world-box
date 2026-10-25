@@ -1,0 +1,17 @@
+# Unity 生成目录(不入库;CI/本地打开工程时自动重建)
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+
+# Asset 本地 meta 忽略规则:正常入库,但崩溃转储/录制不入
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+sysinfo.txt
+*.stackdump
+*.playscript
