@@ -938,7 +938,7 @@ function drawChimneySmoke(engine: GameEngine, wc: CanvasRenderingContext2D, x0: 
 }
 
 /** —— Task 48-B1：脚印（雪/沙/湿地面渐消足迹，在 decals 之下、单位之下） —— */
-/** 脚印颜色查表：寿命量化 8 档 × 3 种地面 —— 免逐印 rgba 字符串拼接（420 印 × 60fps 的 GC 压力） */
+/** 脚印颜色查表：寿命量化 8 档 × 4 种地面 —— 免逐印 rgba 字符串拼接（420 印 × 60fps 的 GC 压力） */
 const FP_COLORS: string[][] = [
   // 雪：青灰凹痕
   Array.from({ length: 8 }, (_, k) => `rgba(104,124,148,${(0.52 * (1 - k / 8)).toFixed(3)})`),
@@ -946,6 +946,8 @@ const FP_COLORS: string[][] = [
   Array.from({ length: 8 }, (_, k) => `rgba(120,96,58,${(0.46 * (1 - k / 8)).toFixed(3)})`),
   // 湿地：深泥
   Array.from({ length: 8 }, (_, k) => `rgba(74,60,44,${(0.5 * (1 - k / 8)).toFixed(3)})`),
+  // 冰（Task 103）：淡青白擦痕——踏冰渡湖的足迹叙事
+  Array.from({ length: 8 }, (_, k) => `rgba(214,238,252,${(0.55 * (1 - k / 8)).toFixed(3)})`),
 ];
 const FP_SNOW_EDGE = Array.from({ length: 8 }, (_, k) => `rgba(235,242,250,${(0.35 * (1 - k / 8)).toFixed(3)})`);
 
@@ -963,7 +965,7 @@ function drawFootprints(engine: GameEngine, wc: CanvasRenderingContext2D, x0: nu
     const side = (((fp.x * 131 + fp.y * 37) | 0) & 1) === 1 ? 0.5 : -0.5;
     // 颜色查表（寿命 8 档量化）
     const li = Math.min(7, ((1 - life) * 8) | 0);
-    const ci = fp.t === T.SNOW ? 0 : fp.t === T.SAND ? 1 : 2;
+    const ci = fp.t === T.SNOW ? 0 : fp.t === T.SAND ? 1 : fp.t === T.ICE ? 3 : 2;
     wc.fillStyle = FP_COLORS[ci][li];
     wc.fillRect(bx + side, by, 1, 1);
     if (fp.t === T.SNOW && life > 0.55) {

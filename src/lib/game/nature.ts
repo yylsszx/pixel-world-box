@@ -173,12 +173,15 @@ export class NatureSystem {
   lastSeason = -1;
   /** 冬季封冻纪事防重标记（瞬态：本轮冬季已播过「千里冰封」；离冬即复位，不入档） */
   iceChronDone = false;
+  /** 春汛落冰湖纪事防重标记（瞬态：本春已播过「冰面行人落水」；离春即复位，不入档） */
+  thawChronDone = false;
   seasonCheck() {
     const s = this.season;
     if (s !== this.lastSeason) {
       const first = this.lastSeason < 0;
       this.lastSeason = s;
       if (s !== 3) this.iceChronDone = false; // 离冬复位：下个冬季重新择机播报封冻
+      if (s !== 0) this.thawChronDone = false; // 离春复位：下个春季重新播报落冰湖
       for (let i = 0; i < W * H; i++) {
         this.eng.dirty.add(i);
         if (this.eng.terrain[i] === T.FOREST) this.eng.propsDirty.add(i);

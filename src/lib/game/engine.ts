@@ -351,8 +351,8 @@ export class GameEngine {
       const i = (u.y | 0) * W + (u.x | 0);
       const t = this.terrain[i];
       const isWet = wet.has(i);
-      if (t !== T.SNOW && t !== T.SAND && !isWet) continue;
-      fps.push({ x: u.x, y: u.y, f: u.flip ? 1 : 0, age: 0, t: isWet && t !== T.SNOW && t !== T.SAND ? -1 : t });
+      if (t !== T.SNOW && t !== T.SAND && t !== T.ICE && !isWet) continue;
+      fps.push({ x: u.x, y: u.y, f: u.flip ? 1 : 0, age: 0, t: t === T.ICE ? T.ICE : isWet && t !== T.SNOW && t !== T.SAND ? -1 : t });
       push++;
     }
     if (push > 0 && fps.length > GameEngine.FP_CAP) fps.splice(0, fps.length - GameEngine.FP_CAP);
@@ -2916,6 +2916,20 @@ export class GameEngine {
             this.meltIce(i);
             // 融滴（Task 102）：春汛解冻的细微水花反馈，与封冻闪晶同节奏
             if (this.rng() < 0.2) this.fx('water', x + 0.5, y + 0.5, 26);
+            // 落冰湖纪事（Task 103）：融冰瞬间冰面上若有非水生单位，它即将坠入湖水——每春播报一次
+            if (!this.nature.thawChronDone) {
+              let fell = false;
+              for (const u of this.units) {
+                if (u.dead || u.boat) continue;
+                const def = RACES[u.race];
+                if (def.aquatic || def.flying) continue;
+                if ((u.x | 0) === x && (u.y | 0) === y) { fell = true; break; }
+              }
+              if (fell) {
+                this.nature.thawChronDone = true;
+                this.addEvent('geo', '春汛冰消——冰面上的行人随碎裂的冰层跌入湖水，春寒刺骨', { x, y });
+              }
+            }
             continue;
           }
         }
