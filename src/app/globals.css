@@ -1,0 +1,870 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   SUPER UI「BRASS OBSERVATORY」— Task 68 复古豪华驾驶舱设计系统
+   ── 复古高级配色（浓缩咖啡棕 × 奶油象牙 × 黄铜金）+ macOS SF 字体
+   ── 玻璃拟态 · 精密仪器感 · 全局 zinc→暖色重映射（unlayered 覆盖 Tailwind 层）
+   ════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* —— 复古高级调色板 —— */
+  --su-void: #131009;            /* 最深底 */
+  --su-espresso: #1d1712;        /* 面板基色（浓缩咖啡） */
+  --su-espresso-2: #262019;      /* 抬升层 */
+  --su-umber: #322a1f;           /* 交互底 */
+  --su-umber-2: #3e3527;         /* 悬停 */
+  --su-line: rgba(214, 178, 120, 0.14);
+  --su-line-strong: rgba(214, 178, 120, 0.26);
+  --su-ink: #f1e8d6;             /* 象牙主文 */
+  --su-ink-dim: #cfc2a6;         /* 次级 */
+  --su-ink-faint: #a2957c;       /* 弱化 */
+  --su-ink-ghost: #75694f;       /* 幽灵 */
+  --su-brass: #d9a35a;           /* 黄铜主强调 */
+  --su-brass-bright: #efc377;    /* 亮铜 */
+  --su-brass-deep: #9c7638;      /* 深铜 */
+  --su-sage: #a7b97e;            /* 鼠尾草（正向） */
+  --su-rust: #d97e55;            /* 锈红（危险） */
+  --su-petrol: #7fa9ab;          /* 石油青（信息） */
+  --su-lilac: #b8a3cf;           /* 丁香紫（心智） */
+  /* —— macOS 字体栈（Inter Variable 自托管：任何设备都渲染出 SF Pro 同源观感） —— */
+  --su-font: "Inter Variable", -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+    "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  --su-mono: ui-monospace, "SF Mono", "SF Mono Regular", Menlo, Monaco,
+    "Cascadia Mono", "Roboto Mono", "Liberation Mono", monospace;
+}
+
+/* 全应用 = 游戏：body 直接吃 macOS 字体（含 Radix Portal 挂载的浮层） */
+body {
+  font-family: var(--su-font);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "ss01" on, "cv01" on, "cv11" on;
+  letter-spacing: -0.006em;
+}
+
+::selection {
+  background: rgba(217, 163, 90, 0.32);
+  color: #fff8ea;
+}
+
+/* ─────────────────────────────────────────────
+   ① 全局 zinc→暖色重映射（unlayered 覆盖 Tailwind utilities 层）
+   一处定义，全站 20+ 组件瞬间换装复古暖调
+   ───────────────────────────────────────────── */
+.bg-zinc-950 { background-color: var(--su-void); }
+.bg-zinc-900\/95, .bg-zinc-900\/90 { background-color: rgba(29, 23, 18, 0.93); }
+.bg-zinc-900\/80, .bg-zinc-900\/70 { background-color: rgba(29, 23, 18, 0.86); }
+.bg-zinc-900 { background-color: var(--su-espresso); }
+.bg-zinc-800\/80, .bg-zinc-800\/70, .bg-zinc-800\/60 { background-color: rgba(50, 42, 31, 0.62); }
+.bg-zinc-800\/50 { background-color: rgba(50, 42, 31, 0.45); }
+.bg-zinc-800 { background-color: var(--su-umber); }
+.bg-zinc-700\/80 { background-color: rgba(62, 53, 39, 0.85); }
+.bg-zinc-700 { background-color: var(--su-umber-2); }
+.bg-zinc-600 { background-color: #4a3f2e; }
+
+.border-zinc-800, .border-zinc-800\/80, .border-zinc-800\/60 { border-color: rgba(214, 178, 120, 0.10); }
+.border-zinc-700, .border-zinc-700\/90, .border-zinc-700\/80 { border-color: rgba(214, 178, 120, 0.20); }
+.border-zinc-600, .border-zinc-600\/60, .border-zinc-600\/50 { border-color: rgba(214, 178, 120, 0.30); }
+.border-zinc-500 { border-color: rgba(214, 178, 120, 0.42); }
+.border-zinc-400 { border-color: rgba(214, 178, 120, 0.55); }
+
+.text-zinc-100, .text-zinc-200 { color: var(--su-ink); }
+.text-zinc-300 { color: #d8cbae; }
+.text-zinc-400 { color: #b3a688; }
+.text-zinc-500 { color: #8f836a; }
+.text-zinc-600 { color: #6f6549; }
+.text-zinc-700 { color: #5b5340; }
+
+.hover\:bg-zinc-800:hover, .hover\:bg-zinc-800\/80:hover { background-color: rgba(62, 53, 39, 0.78); }
+.hover\:bg-zinc-700\/80:hover, .hover\:bg-zinc-700:hover, .hover\:bg-zinc-700\/60:hover { background-color: rgba(76, 65, 48, 0.88); }
+.hover\:bg-zinc-900\/80:hover { background-color: rgba(38, 32, 25, 0.9); }
+.hover\:border-zinc-500:hover, .hover\:border-zinc-400:hover { border-color: rgba(214, 178, 120, 0.45); }
+.hover\:border-zinc-600:hover { border-color: rgba(214, 178, 120, 0.36); }
+.hover\:text-zinc-200:hover, .hover\:text-zinc-100:hover { color: var(--su-ink); }
+.hover\:text-zinc-300:hover { color: #d8cbae; }
+
+/* —— 黄铜统一（amber → 复古铜金，降饱和提质感） —— */
+.text-amber-200 { color: #f0dcae; }
+.text-amber-300 { color: #e6ba6c; }
+.text-amber-400 { color: #dcab5a; }
+.text-amber-500 { color: #d9a35a; }
+.bg-amber-400 { background-color: #c8964a; }
+.bg-amber-400\/15, .bg-amber-400\/20, .bg-amber-300\/20 { background-color: rgba(217, 163, 90, 0.16); }
+.bg-amber-300\/25 { background-color: rgba(217, 163, 90, 0.22); }
+.border-amber-400, .border-amber-300 { border-color: #c8964a; }
+.border-amber-400\/70 { border-color: rgba(200, 150, 74, 0.75); }
+.border-amber-600\/70 { border-color: rgba(156, 118, 56, 0.8); }
+.shadow-\[0_0_0_1px_rgba\(251\,191\,36\,0\.35\)\] { box-shadow: 0 0 0 1px rgba(217, 163, 90, 0.4); }
+
+/* —— 语义色复古化 —— */
+.text-teal-200 { color: #a8cacb; }
+.text-teal-300 { color: #8fb9ba; }
+.text-teal-400 { color: var(--su-petrol); }
+.bg-teal-400\/10, .bg-teal-400\/15 { background-color: rgba(127, 169, 171, 0.16); }
+.border-teal-400 { border-color: var(--su-petrol); }
+.text-red-300 { color: #e39a7b; }
+.text-red-400 { color: var(--su-rust); }
+.border-red-400\/70 { border-color: rgba(217, 126, 85, 0.7); }
+.bg-red-500\/30 { background-color: rgba(217, 126, 85, 0.3); }
+.bg-red-500\/20 { background-color: rgba(217, 126, 85, 0.2); }
+.text-orange-300 { color: #e8b088; }
+.text-orange-400 { color: #dd8f5e; }
+.text-orange-500 { color: #d07850; }
+.border-orange-500 { border-color: #c76e48; }
+.text-emerald-300 { color: #bcc98e; }
+.border-emerald-400 { border-color: var(--su-sage); }
+.bg-emerald-400\/15 { background-color: rgba(167, 185, 126, 0.16); }
+.text-lime-300 { color: #c3cf95; }
+.border-lime-400 { border-color: var(--su-sage); }
+.bg-lime-400\/15 { background-color: rgba(167, 185, 126, 0.14); }
+.text-violet-300 { color: #c5b1dc; }
+.border-violet-400 { border-color: var(--su-lilac); }
+.bg-violet-400\/15 { background-color: rgba(184, 163, 207, 0.15); }
+.text-yellow-400 { color: #e0b568; }
+.border-yellow-400 { border-color: #c8964a; }
+.bg-yellow-400\/15 { background-color: rgba(217, 163, 90, 0.16); }
+.text-stone-300 { color: #c9bda2; }
+.text-cyan-200 { color: #a8cacb; }
+
+/* ─────────────────────────────────────────────
+   ② 玻璃拟态组件类（su-*）
+   ───────────────────────────────────────────── */
+.su-glass {
+  background: linear-gradient(180deg, rgba(50, 42, 31, 0.86) 0%, rgba(29, 23, 18, 0.92) 100%);
+  backdrop-filter: blur(16px) saturate(1.18);
+  border: 1px solid var(--su-line-strong);
+  border-radius: 14px;
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.5),
+    0 2px 8px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(241, 232, 214, 0.07);
+}
+
+/* 浮动面板皮肤：圆角 + 玻璃（几何由 .su-panel-l 负责；右面板只挂本类做皮肤） */
+.su-panel {
+  background: linear-gradient(180deg, rgba(50, 42, 31, 0.88) 0%, rgba(29, 23, 18, 0.93) 100%);
+  backdrop-filter: blur(16px) saturate(1.15);
+  border: 1px solid var(--su-line-strong);
+  border-radius: 14px;
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(241, 232, 214, 0.06);
+}
+/* 自带滚动根的面板保留滚动能力，其余裁圆角 */
+.su-panel:not([class*="overflow-y-auto"]):not([class*="overflow-auto"]) { overflow: hidden; }
+.su-panel[class*="overflow-y-auto"] { overflow-y: auto; }
+
+/* ══ SideDock 一体化侧边坞（Task 69 超级 UI v2）：导航轨 + 面板同壳 ══
+   几何：壳 left-2 top-[60px]（OmniBar 下缘 56+4），max-h 100dvh-352（停在世界罗盘上方）。
+   面板区仅在左面板开启时可见（data-open），面板自滚动（max-h 同公式三重保险）。 */
+.su-dock-shell {
+  display: flex;
+  align-items: stretch;
+  max-height: calc(100dvh - 352px);
+  background: linear-gradient(180deg, rgba(50, 42, 31, 0.88) 0%, rgba(29, 23, 18, 0.93) 100%);
+  backdrop-filter: blur(16px) saturate(1.15);
+  border: 1px solid var(--su-line-strong);
+  border-radius: 14px;
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(241, 232, 214, 0.06);
+  overflow: hidden;
+}
+/* 坞内导航轨（48px 图标条；组间发丝线；超高时静默滚动） */
+.su-dock-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  width: 48px;
+  flex: 0 0 48px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.su-dock-rail::-webkit-scrollbar { display: none; }
+.su-dock-rail-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.25rem;
+  width: 2.25rem;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  color: var(--su-ink-faint);
+  transition: color 0.16s ease, background-color 0.16s ease, transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.su-dock-rail-item:hover {
+  color: var(--su-ink);
+  background-color: rgba(62, 53, 39, 0.75);
+}
+.su-dock-rail-item[data-active="true"] {
+  color: var(--su-brass-bright);
+  background-color: rgba(217, 163, 90, 0.14);
+}
+.su-dock-rail-item[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--su-brass);
+  box-shadow: 0 0 8px rgba(217, 163, 90, 0.55);
+}
+/* 面板舱：发丝分隔 + 深一度底色，开启时滑入 */
+.su-dock-zone {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  max-height: calc(100dvh - 352px);
+  overflow: hidden;
+  border-left: 1px solid var(--su-line);
+  background: rgba(19, 16, 9, 0.22);
+  animation: su-dock-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.su-dock-zone[data-open="false"] { display: none; }
+.su-dock-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 0;
+  max-height: calc(100dvh - 352px);
+  /* 宽度不在此声明：由各面板根上的 w-60/w-72/w-80 工具类决定（unlayered 会压过 utilities 层） */
+}
+.su-dock-panel[class*="overflow-y-auto"], .su-dock-panel[class*="overflow-auto"] { overflow-y: auto; }
+.su-dock-panel:not([class*="overflow-y-auto"]):not([class*="overflow-auto"]):not([class*="overflow-hidden"]) { overflow: hidden; }
+@keyframes su-dock-in {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .su-dock-zone { animation: none; }
+}
+
+/* 顶栏 OmniBar 胶囊 */
+.su-capsule {
+  background: linear-gradient(180deg, rgba(50, 42, 31, 0.9) 0%, rgba(26, 21, 16, 0.94) 100%);
+  backdrop-filter: blur(18px) saturate(1.2);
+  border: 1px solid var(--su-line-strong);
+  border-radius: 16px;
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(241, 232, 214, 0.08);
+}
+
+/* 左侧导航栏（旧独立胶囊；SideDock 内改用 su-dock-rail，保留给未迁移处） */
+.su-rail {
+  background: linear-gradient(180deg, rgba(50, 42, 31, 0.88) 0%, rgba(26, 21, 16, 0.92) 100%);
+  backdrop-filter: blur(16px) saturate(1.18);
+  border: 1px solid var(--su-line-strong);
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(241, 232, 214, 0.07);
+}
+.su-rail-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.375rem;
+  width: 2.375rem;
+  border-radius: 11px;
+  color: var(--su-ink-faint);
+  transition: color 0.16s ease, background-color 0.16s ease, transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.su-rail-item:hover {
+  color: var(--su-ink);
+  background-color: rgba(62, 53, 39, 0.75);
+  transform: translateX(1px);
+}
+.su-rail-item[data-active="true"] {
+  color: var(--su-brass-bright);
+  background-color: rgba(217, 163, 90, 0.14);
+}
+.su-rail-item[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--su-brass);
+  box-shadow: 0 0 8px rgba(217, 163, 90, 0.55);
+}
+
+/* 底部 Dock 工具架 */
+.su-dock {
+  background: linear-gradient(180deg, rgba(50, 42, 31, 0.9) 0%, rgba(26, 21, 16, 0.94) 100%);
+  backdrop-filter: blur(18px) saturate(1.2);
+  border: 1px solid var(--su-line-strong);
+  border-radius: 16px;
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(241, 232, 214, 0.08);
+  padding: 6px 8px;
+}
+/* dock 工具钮（JS 放大由 --su-mag 控制 transform，origin 底部） */
+.su-dock-item {
+  transform: scale(var(--su-mag, 1)) translateY(calc((var(--su-mag, 1) - 1) * -16px));
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .su-dock-item { transform: none !important; }
+}
+
+/* 分段胶囊（速度运输段 / tab 段） */
+.su-segment {
+  background: rgba(19, 16, 9, 0.55);
+  border: 1px solid var(--su-line);
+  border-radius: 11px;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.su-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.75rem;
+  min-width: 1.75rem;
+  border-radius: 8px;
+  color: var(--su-ink-faint);
+  transition: color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.su-seg-btn:hover { color: var(--su-ink); background: rgba(62, 53, 39, 0.7); }
+.su-seg-btn[data-on="true"] {
+  color: var(--su-brass-bright);
+  background: linear-gradient(180deg, rgba(217, 163, 90, 0.24), rgba(217, 163, 90, 0.12));
+  box-shadow: inset 0 1px 0 rgba(241, 232, 214, 0.12), 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* 智能提示芯片 */
+.su-chip {
+  background: linear-gradient(180deg, rgba(50, 42, 31, 0.94) 0%, rgba(29, 23, 18, 0.96) 100%);
+  backdrop-filter: blur(16px) saturate(1.2);
+  border: 1px solid rgba(217, 163, 90, 0.35);
+  border-radius: 999px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5), 0 0 24px rgba(217, 163, 90, 0.08), inset 0 1px 0 rgba(241, 232, 214, 0.08);
+}
+.su-chip-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 1.5rem;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(217, 163, 90, 0.4);
+  background: rgba(217, 163, 90, 0.12);
+  color: var(--su-brass-bright);
+  font-size: 11px;
+  font-weight: 600;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.su-chip-action:hover {
+  background: rgba(217, 163, 90, 0.24);
+  border-color: rgba(217, 163, 90, 0.65);
+  transform: translateY(-1px);
+}
+
+/* macOS 键帽 */
+.su-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 4px;
+  border-radius: 5px;
+  border: 1px solid rgba(214, 178, 120, 0.28);
+  border-bottom-width: 2px;
+  background: rgba(19, 16, 9, 0.6);
+  color: var(--su-ink-dim);
+  font-family: var(--su-mono);
+  font-size: 10px;
+  line-height: 1;
+}
+
+/* 竖直发丝分隔线 */
+.su-vline {
+  width: 1px;
+  align-self: stretch;
+  margin: 6px 2px;
+  background: linear-gradient(180deg, transparent, var(--su-line-strong) 20%, var(--su-line-strong) 80%, transparent);
+}
+
+/* 通用暖色按钮皮肤（覆盖 shadcn ghost hover 的冷灰） */
+.su-ibtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 2rem;
+  width: 2rem;
+  border-radius: 10px;
+  color: var(--su-ink-faint);
+  transition: color 0.15s ease, background-color 0.15s ease, transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.su-ibtn:hover { color: var(--su-ink); background: rgba(62, 53, 39, 0.72); }
+.su-ibtn:active { transform: scale(0.94); }
+.su-ibtn[data-on="true"] { color: var(--su-brass-bright); background: rgba(217, 163, 90, 0.15); }
+
+/* ─────────────────────────────────────────────
+   ③ 动效（弹簧曲线 / 升起 / 呼吸点）
+   ───────────────────────────────────────────── */
+@keyframes su-rise {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.su-rise { animation: su-rise 0.34s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes su-slide-l {
+  from { opacity: 0; transform: translateX(-14px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.su-slide-l { animation: su-slide-l 0.32s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes su-breathe {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.25); }
+}
+.su-breathe { animation: su-breathe 2.2s ease-in-out infinite; }
+
+/* 输入聚焦黄铜光晕（呼吸感） */
+.su-panel input:focus, .su-capsule input:focus, .su-dock input:focus {
+  outline: none;
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px rgba(217, 163, 90, 0.35), 0 0 18px rgba(217, 163, 90, 0.18);
+  transition: box-shadow 0.25s ease;
+}
+
+/* 罗盘地图边界光扫（实时呼吸感） */
+.su-map-sheen {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 30%, rgba(241, 232, 214, 0.05) 45%, rgba(239, 195, 119, 0.12) 50%, rgba(241, 232, 214, 0.05) 55%, transparent 70%);
+  background-size: 250% 100%;
+  animation: su-sheen 6.5s ease-in-out infinite;
+}
+@keyframes su-sheen {
+  0%, 100% { background-position: 120% 0; }
+  50% { background-position: -20% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .su-rise, .su-slide-l, .su-breathe, .su-map-sheen { animation: none; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Task 70 神谕圣装 —— 移动端沉浸式神明 UI
+   （岁月沙漏 / 神之印记 / 图腾抽屉 / 水晶球 / 透视气泡 / 施法隐身）
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* 神之印记（底部发光圆钮）：黄铜呼吸光晕 + 环形流光 */
+.su-seal {
+  position: relative;
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 32% 28%, rgba(241, 232, 214, 0.16), transparent 55%),
+    linear-gradient(180deg, #3e3527 0%, #262019 100%);
+  border: 1.5px solid rgba(217, 163, 90, 0.55);
+  box-shadow:
+    0 0 14px rgba(217, 163, 90, 0.28),
+    0 0 34px rgba(217, 163, 90, 0.12),
+    inset 0 1px 0 rgba(241, 232, 214, 0.14);
+  animation: su-seal-glow 3s ease-in-out infinite;
+}
+.su-seal::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  border: 1px solid rgba(239, 195, 119, 0);
+  animation: su-seal-ring 3s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes su-seal-glow {
+  0%, 100% { box-shadow: 0 0 12px rgba(217, 163, 90, 0.24), 0 0 30px rgba(217, 163, 90, 0.10), inset 0 1px 0 rgba(241, 232, 214, 0.14); }
+  50% { box-shadow: 0 0 20px rgba(217, 163, 90, 0.44), 0 0 46px rgba(217, 163, 90, 0.20), inset 0 1px 0 rgba(241, 232, 214, 0.14); }
+}
+@keyframes su-seal-ring {
+  0%, 100% { border-color: rgba(239, 195, 119, 0); transform: scale(1); }
+  50% { border-color: rgba(239, 195, 119, 0.35); transform: scale(1.06); }
+}
+
+/* 手势盘抽屉：毛玻璃大圆角底板（升起过渡由组件 transform 控制） */
+.su-drawer {
+  border-radius: 26px 26px 0 0;
+  background: linear-gradient(180deg, rgba(38, 32, 25, 0.82) 0%, rgba(19, 16, 9, 0.92) 100%);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(214, 178, 120, 0.20);
+  border-bottom: none;
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(241, 232, 214, 0.08);
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.26s ease;
+}
+
+/* 图腾钮：圆形符文石（active = 金环发光 + 底部指示点） */
+.su-totem {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 34% 30%, rgba(241, 232, 214, 0.10), transparent 60%),
+    linear-gradient(180deg, rgba(62, 53, 39, 0.95), rgba(38, 32, 25, 0.95));
+  border: 1.5px solid rgba(214, 178, 120, 0.24);
+  color: #a2957c;
+  transition: border-color 0.2s ease, color 0.2s ease, box-shadow 0.25s ease, transform 0.2s ease;
+}
+.su-totem:active { transform: scale(0.92); }
+.su-totem[data-on='true'] {
+  border-color: rgba(217, 163, 90, 0.75);
+  color: #efc377;
+  box-shadow: 0 0 12px rgba(217, 163, 90, 0.30), inset 0 0 10px rgba(217, 163, 90, 0.10);
+}
+.su-totem[data-on='true']::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  background: #efc377;
+  box-shadow: 0 0 6px rgba(239, 195, 119, 0.8);
+  transform: translateX(-50%);
+}
+
+/* 工具散开（点图腾后工具从下方浮起散开） */
+@keyframes su-scatter {
+  from { opacity: 0; transform: translateY(10px) scale(0.92); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.su-scatter { animation: su-scatter 0.26s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* 岁月沙漏大事件脉冲：红光呼吸 + 微震（泛红 = 点击飞往纪事） */
+@keyframes su-pulse-red {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(217, 126, 85, 0.45), 0 0 16px rgba(217, 126, 85, 0.25); }
+  50% { box-shadow: 0 0 0 1.5px rgba(230, 140, 100, 0.8), 0 0 26px rgba(217, 126, 85, 0.5); }
+}
+.su-pulse-red { animation: su-pulse-red 1.1s ease-in-out infinite; }
+@keyframes su-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-2px); }
+  40% { transform: translateX(2px); }
+  60% { transform: translateX(-1.5px); }
+  80% { transform: translateX(1px); }
+}
+.su-shake { animation: su-shake 0.5s ease-in-out 1; }
+
+/* 速度流光数字（双指捏合调速时闪现 1×/3×/8×） */
+@keyframes su-flare {
+  0% { opacity: 0; transform: translate(-50%, 6px) scale(0.8); }
+  18% { opacity: 1; transform: translate(-50%, 0) scale(1.05); }
+  100% { opacity: 0; transform: translate(-50%, -22px) scale(1); }
+}
+.su-flare { animation: su-flare 0.9s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* 神界之眼水晶球：圆形玻璃 + 缓慢旋转的星光弧 */
+.su-orb {
+  position: relative;
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 32% 28%, rgba(241, 232, 214, 0.14), transparent 55%),
+    linear-gradient(180deg, rgba(38, 32, 25, 0.9), rgba(19, 16, 9, 0.94));
+  border: 1.5px solid rgba(217, 163, 90, 0.5);
+  box-shadow: 0 0 14px rgba(217, 163, 90, 0.22), inset 0 1px 0 rgba(241, 232, 214, 0.12);
+  overflow: hidden;
+}
+.su-orb::after {
+  content: '';
+  position: absolute;
+  inset: -40%;
+  background: conic-gradient(from 0deg, transparent 0deg, rgba(239, 195, 119, 0.22) 40deg, transparent 90deg, transparent 200deg, rgba(241, 232, 214, 0.10) 250deg, transparent 300deg);
+  animation: su-orb-spin 9s linear infinite;
+  pointer-events: none;
+}
+@keyframes su-orb-spin { to { transform: rotate(360deg); } }
+
+/* 透视气泡（神之视界 / 单位头顶气泡）：毛玻璃 + 底部小箭头 + 浮现 */
+.su-gaze {
+  position: relative;
+  background: linear-gradient(180deg, rgba(38, 32, 25, 0.9), rgba(23, 19, 13, 0.94));
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(214, 178, 120, 0.28);
+  border-radius: 13px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(241, 232, 214, 0.08);
+}
+.su-gaze::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  background: #1a1610;
+  border-right: 1px solid rgba(214, 178, 120, 0.28);
+  border-bottom: 1px solid rgba(214, 178, 120, 0.28);
+  transform: translateX(-50%) rotate(45deg);
+}
+@keyframes su-gaze-in {
+  from { opacity: 0; transform: translate(-50%, -6px) scale(0.92); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+.su-gaze-in { animation: su-gaze-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* 透视气泡入场（无位移版：外层 wrapper 负责定位 transform，内层只做透明度+缩放，避免 transform 叠加冲突） */
+@keyframes su-gaze-pop {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+.su-gaze-pop { animation: su-gaze-pop 0.18s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* 施法隐身：施放期间移动端 HUD 整体淡出（只留画布与范围圈，世界独占视野）。
+ * visibility:hidden 随 opacity 一起过渡（离散插值：淡出结束帧才真隐藏）——
+ * 隐藏后浏览器完全跳过毛玻璃 backdrop-filter 的 GPU 绘制，施法期间帧率显著回升。 */
+.su-cast-hide {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+.su-cast-show {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.45s ease, visibility 0.45s ease;
+}
+
+/* —— Task 71 触屏防冲突：UI 钮/输入框禁用浏览器双击缩放（300ms 延迟与误缩放一并消除）——
+ * 画布自有 touch-none；此处覆盖所有可交互元素；manipulation 保留平移与捏合能力 */
+button,
+[role='button'],
+input,
+select,
+textarea,
+a,
+label {
+  touch-action: manipulation;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .su-seal, .su-seal::before, .su-orb::after, .su-pulse-red, .su-shake,
+  .su-flare, .su-scatter, .su-gaze-in { animation: none; }
+  .su-drawer { transition: opacity 0.15s ease; }
+  .su-cast-hide, .su-cast-show { transition: none; }
+}
+
+/* 滑条（shadcn Slider）拖动热区自带手势：禁止 UI 级 touch-action 干扰其横向拖动。
+ * manipulation 已允许平移/捏合但不允许双击缩放 —— 滑条轨道需要完全接管触摸，
+ * data-[orientation] 保守起见恢复 auto 由组件自身 pointer 事件处理。 */
+[data-radix-slider-track] {
+  touch-action: auto;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Pixel World Box game chrome（既有基建保留）
+   ════════════════════════════════════════════════════════════════════════ */
+.pixel-canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* 面板滚动条（复古铜暖调） */
+.game-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.game-scroll::-webkit-scrollbar-track {
+  background: rgba(19, 16, 9, 0.5);
+  border: 1px solid rgba(214, 178, 120, 0.08);
+}
+.game-scroll::-webkit-scrollbar-thumb {
+  background: rgba(214, 178, 120, 0.22);
+  border: 2px solid rgba(19, 16, 9, 0.6);
+  border-radius: 6px;
+}
+.game-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(214, 178, 120, 0.4);
+}
+
+/* 细横滚动条（单行条带） */
+.game-scroll-x {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(214, 178, 120, 0.25) transparent;
+}
+.game-scroll-x::-webkit-scrollbar {
+  height: 5px;
+}
+.game-scroll-x::-webkit-scrollbar-track {
+  background: transparent;
+}
+.game-scroll-x::-webkit-scrollbar-thumb {
+  background: rgba(214, 178, 120, 0.22);
+  border-radius: 3px;
+}
+.game-scroll-x::-webkit-scrollbar-thumb:hover {
+  background: rgba(214, 178, 120, 0.4);
+}
+
+/* retro heading utility */
+.game-title {
+  font-family: var(--su-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* ── 王国外交图谱动效 ── */
+.wb-war-edge {
+  animation: wb-dash-march 1.1s linear infinite;
+}
+@keyframes wb-dash-march {
+  to { stroke-dashoffset: -16; }
+}
+.wb-war-ring {
+  animation: wb-war-pulse 1.6s ease-in-out infinite;
+}
+@keyframes wb-war-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+.wb-trade-edge {
+  animation: wb-dash-trade 1.4s linear infinite;
+}
+@keyframes wb-dash-trade {
+  to { stroke-dashoffset: -12; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wb-war-edge,
+  .wb-war-ring,
+  .wb-trade-edge {
+    animation: none;
+  }
+}
+
+/* recompile-trigger 1792408445 */
+
+/* bump 1792408601561061970 */
