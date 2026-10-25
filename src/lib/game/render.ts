@@ -2941,6 +2941,32 @@ function drawWorldEffect(engine: GameEngine, e: Effect, wc: CanvasRenderingConte
       }
       break;
     }
+    case 'frost': {
+      // 封冻闪晶（Task 102）：湖泽结冰瞬间的冰晶星芒——青白四芒外扩 + 斜位细闪，读作「水面凝霜」
+      const a = 1 - t;
+      const seed = e.seed || 0;
+      const ext = 0.8 + t * 1.8;
+      wc.fillStyle = `rgba(223,242,255,${0.9 * a})`;
+      wc.fillRect(px - 0.5, py - 0.5, 1, 1); // 晶核
+      wc.fillRect(px - 0.5, py - 0.5 - ext, 1, 1); // 四向主芒（随 t 外扩）
+      wc.fillRect(px - 0.5, py - 0.5 + ext, 1, 1);
+      wc.fillRect(px - 0.5 - ext, py - 0.5, 1, 1);
+      wc.fillRect(px - 0.5 + ext, py - 0.5, 1, 1);
+      // 斜位短芒（seed 奇偶决定对角方向，错开整齐感）+ 两粒飘闪
+      wc.fillStyle = `rgba(168,216,240,${0.65 * a})`;
+      const d = ext * 0.62;
+      if (seed & 1) {
+        wc.fillRect(px - 0.5 + d, py - 0.5 + d, 1, 1);
+        wc.fillRect(px - 0.5 - d, py - 0.5 - d, 1, 1);
+      } else {
+        wc.fillRect(px - 0.5 + d, py - 0.5 - d, 1, 1);
+        wc.fillRect(px - 0.5 - d, py - 0.5 + d, 1, 1);
+      }
+      wc.fillStyle = `rgba(240,250,255,${0.5 * a})`;
+      wc.fillRect(px + ((seed % 3) - 1), py - 0.5 - ext * 1.5, 1, 1);
+      wc.fillRect(px - ((seed % 3) - 1), py - 0.5 + ext * 1.5, 1, 1);
+      break;
+    }
     case 'hammer': {
       // 维修火花（建筑师修复）：金橙十字敲击星
       const a = 1 - t;

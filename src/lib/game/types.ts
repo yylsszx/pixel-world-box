@@ -831,6 +831,8 @@ export type EffectKind =
   | 'drought'
   | 'water'
   | 'hammer'
+  // —— 冰霜（Task 102：湖泽封冻瞬间的冰晶星芒）——
+  | 'frost'
   // —— 神力扩充（7）——
   | 'rainstorm'
   | 'bless'

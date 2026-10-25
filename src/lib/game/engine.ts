@@ -394,7 +394,8 @@ export class GameEngine {
     this.onSound?.('thunder');
   }
 
-  /** 生成一群迁徙鸟（从视野边缘外切入，横越世界） */
+  /** 生成一群迁徙鸟（从视野边缘外切入，横越世界）
+   *  候鸟季节节律（Task 102）：春秋迁徙季大群频现（雁南飞/雁北归），夏常态小群，冬雁去雪稀 */
   private spawnFlock() {
     const ang = Math.random() * Math.PI * 2;
     const r = Math.max(this.viewW, this.viewH) / (this.cam.zoom * 2) + 14;
@@ -403,11 +404,13 @@ export class GameEngine {
     const spd = 5.5 + Math.random() * 3.5;
     // 朝向镜头中心附近穿过（不精确瞄准：加随机偏角）
     const aim = Math.atan2(this.cam.y - y, this.cam.x - x) + (Math.random() - 0.5) * 0.9;
+    const s = this.nature.season;
+    const n = (s === 0 || s === 2) ? 6 + ((Math.random() * 5) | 0) : s === 3 ? 2 + ((Math.random() * 2) | 0) : 3 + ((Math.random() * 4) | 0);
     this.flocks.push({
       x, y,
       vx: Math.cos(aim) * spd,
       vy: Math.sin(aim) * spd,
-      n: 3 + ((Math.random() * 4) | 0),
+      n,
       age: 0,
       ph: Math.random() * Math.PI * 2,
     });
@@ -435,12 +438,13 @@ export class GameEngine {
     for (const b of this.bolts) b.age += dtMs;
     if (this.bolts.length > 0) this.bolts = this.bolts.filter((b) => b.age < b.ttl);
 
-    // —— 鸟群：定时生成 + 匀速巡航 + 出界回收 ——
+    // —— 鸟群：定时生成（候鸟季节节律：春秋迁徙频密/冬稀少） + 匀速巡航 + 出界回收 ——
     if (this.fxPrefs.ambience && this.speed > 0) {
       this.flockTimer -= dtMs / 1000;
       if (this.flockTimer <= 0) {
         this.spawnFlock();
-        this.flockTimer = 16 + Math.random() * 22;
+        const s = this.nature.season;
+        this.flockTimer = s === 0 || s === 2 ? 9 + Math.random() * 12 : s === 3 ? 38 + Math.random() * 30 : 16 + Math.random() * 22;
       }
       const ds = dtMs / 1000;
       for (const f of this.flocks) {
@@ -2908,7 +2912,12 @@ export class GameEngine {
         // 极地（latF ≥ 0.62）不受此通道影响（极地冰盖「常年不化」语义由既有暖候通道接管）
         if (this.nature.season === 0) {
           const latF2 = Math.abs(y / H - 0.5) * 2;
-          if (latF2 < 0.62 && this.rng() < 0.06 + 0.28 * (1 - latF2)) { this.meltIce(i); continue; }
+          if (latF2 < 0.62 && this.rng() < 0.06 + 0.28 * (1 - latF2)) {
+            this.meltIce(i);
+            // 融滴（Task 102）：春汛解冻的细微水花反馈，与封冻闪晶同节奏
+            if (this.rng() < 0.2) this.fx('water', x + 0.5, y + 0.5, 26);
+            continue;
+          }
         }
         // 暖气候小概率消融（极地 temp 低则几乎不化；夏季/火山冬调制）
         const meltP = 0.012 * this.nature.iceMul();
@@ -2956,7 +2965,12 @@ export class GameEngine {
             const tt = this.terrain[idx(xx, yy)];
             if (tt !== T.WATER && tt !== T.DEEP) shore = true;
           }
-          if (this.rng() < Math.min(0.9, (latF - 0.24) * (shore ? 0.9 : 0.3))) { this.setTerrain(i, T.ICE); frozeN++; }
+          if (this.rng() < Math.min(0.9, (latF - 0.24) * (shore ? 0.9 : 0.3))) {
+            this.setTerrain(i, T.ICE);
+            frozeN++;
+            // 封冻闪晶（Task 102）：1/4 概率在新冻格上绽开冰晶星芒——冻结线推进肉眼可辨
+            if (this.rng() < 0.25) this.fx('frost', x + 0.5, y + 0.5, 36);
+          }
         } else if (latF >= 0.5 && this.rng() < (latF - 0.5) * 0.22) { this.setTerrain(i, T.ICE); frozeN++; }
       }
       // 封冻纪事（每冬至多一条；冰晶灯效应之外的机制提示——冰面可行走）
@@ -9693,7 +9707,7 @@ export class GameEngine {
   /** 特效密度档位 → 同屏上限（低/标准/华丽） */
   static readonly FX_CAPS = [260, 620, 1500] as const;
   /** 次要特效类型（满员时优先逐出/丢弃） */
-  static readonly FX_MINOR: ReadonlySet<Effect['kind']> = new Set(['dmg', 'hit', 'smoke', 'spawn', 'heart', 'skull', 'arrow', 'coin', 'blood', 'dust', 'bullet'] as Effect['kind'][]);
+  static readonly FX_MINOR: ReadonlySet<Effect['kind']> = new Set(['dmg', 'hit', 'smoke', 'spawn', 'heart', 'skull', 'arrow', 'coin', 'blood', 'dust', 'bullet', 'frost'] as Effect['kind'][]);
 
   fx(kind: Effect['kind'], x: number, y: number, ttl: number, opts?: Partial<Effect>): Effect | null {
     // 特效总量控制：同屏超出上限时先逐出最老的次要特效；全是关键特效时丢弃新的次要特效（天灾必须可见）
