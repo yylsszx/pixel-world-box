@@ -270,6 +270,7 @@ export class NatureSystem {
       if (present.has(R.HYDRA)) out.push({ label: '九头蛇冬眠', desc: '再生之泉封冻，断首不再萌发', tone: 'info' });
       if (present.has(R.ENT)) out.push({ label: '树人蛰伏', desc: '春播暂停，扑火不休', tone: 'info' });
       if (present.has(R.PHOENIX)) out.push({ label: '涅槃迟缓', desc: '灰烬滞留 ×1.5，重生更慢', tone: 'info' });
+      if (present.has(R.SNAKE) || present.has(R.SCORPION) || present.has(R.LIZARD) || present.has(R.BASILISK) || present.has(R.HYDRA) || present.has(R.TURTLE)) out.push({ label: '冷血缓滞', desc: '变温生物代谢迟缓，移速 ×0.6', tone: 'info' });
     }
     return out;
   }

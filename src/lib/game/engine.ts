@@ -5820,6 +5820,8 @@ export class GameEngine {
     let step = u.speed * 2 * mul * (u.chill ? 0.55 : 1) * (u.curse ? 0.75 : 1);
     // 沼泽泥泞：陷足难行（移速 ×0.6）
     if (this.terrain[idx(Math.floor(u.x), Math.floor(u.y))] === T.SWAMP) step *= 0.6;
+    // 冷血缓滞（季节节律）：寒冬降临变温生物代谢迟缓，爬行/变温种族移速 ×0.6
+    if (def.coldBlood && this.nature.season === 3) step *= 0.6;
     // 深度打磨：道路行军加成 — 土路上的军队/商队/平民提速 45%（路网价值）
     if (this.road[idx(Math.floor(u.x), Math.floor(u.y))] > 0) step *= 1.45;
     const nx = u.x + (dx / d) * step;
@@ -10541,7 +10543,11 @@ export class GameEngine {
     for (const u of this.units) {
       if (u.dead) continue;
       const d = Math.hypot(u.x - x, u.y - y);
-      if (d < 1.6) { u.hp -= 26; u.hurt = 22; if (u.hp <= 0) u.dead = true; }
+      if (d < 1.6) {
+        // 冷血体质对剧烈环境冲击更脆弱（×1.4）；冬季在暴雨中僵直的爬虫首当其冲
+        const mult = RACES[u.race].coldBlood ? 1.4 : 1;
+        u.hp -= 26 * mult; u.hurt = 22; if (u.hp <= 0) u.dead = true;
+      }
     }
   }
 
