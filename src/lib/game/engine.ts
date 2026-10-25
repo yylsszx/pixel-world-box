@@ -12650,7 +12650,14 @@ export class GameEngine {
       prey.dead = true;
       WB.syncDead(prey); // WASM 镜像：后续扫描即刻跳过亡者
       this.fx('blood', prey.x, prey.y, 14);
-      if (pd.aquatic) killsAqua++; else killsLand++;
+      if (pd.aquatic) {
+        killsAqua++;
+        // 深海突袭水花（Task 98 遗留④）：r=14 的引擎级扑杀本是"隔空"抽象 —— 水花 + 血渍
+        // 双特效把 hit 翻译成可读的突袭视觉（水花蓝色四溅 + 中心水柱闪光，与灭火同款语言）
+        this.fx('water', prey.x, prey.y, 16);
+      } else {
+        killsLand++;
+      }
       p.food = Math.min(400, (p.food ?? 0) + 25); // 扑杀即刻进食（腐食回充再补一口）
       if ((p.food ?? 0) >= 380) break; // 吃饱了就收手 —— 满仓过杀只会浪费猎物（能量随尸体蒸发）
     }
@@ -12831,6 +12838,7 @@ export class GameEngine {
       if (pup) {
         mother.food = Math.max(0, (mother.food ?? 0) - 60);
         this.fx('spawn', jx, jy, 30);
+        this.fx('water', jx, jy, 18); // 诞崽水花（生产涟漪 —— 与突袭水花同语言）
       }
       break;
     }

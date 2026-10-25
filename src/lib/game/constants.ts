@@ -288,8 +288,8 @@ export const ICONS: Record<string, string[]> = {
     '.rrrrr..', 'rrrrrrr.', '.r.rr.r.', '.r...r..',
   ],
   angel: [
-    '..yyyy..', '.fw..wf.', '.fwccwf.', '.fwwwwfY',
-    '..wwww.Y', '..wyyw.Y', '..w..w..', '..y..y..',
+    'f......f', 'ff.yy.ff', 'ffwccwff', '.fwwwwf.',
+    '..wwwwy.', '..wyywy.', '..w..w..', '..y..y..',
   ],
   phoenix: [
     '..r.y...', '.ryyor..', 'ryoooyr.', '.yoooy..',
