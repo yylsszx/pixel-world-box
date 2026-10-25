@@ -180,15 +180,18 @@ export class NatureSystem {
   thawChronDone = false;
   /** 冬季雪人纪事防重标记（瞬态：本冬已播过「堆雪人」；离冬即复位，不入档） */
   snowmanChronDone = false;
-  /** 自然雷暴闪电冷却 tick（瞬态：冷却期内不再落雷，不入档）；本局首场雷暴纪事防重 */
+  /** 自然雷暴闪电冷却 tick（瞬态：冷却期内不再落雷，不入档）；本局首场雷暴/雷打雪纪事防重（冬夏各记一次） */
   boltCool = 0;
   boltChronDone = false;
+  tSnowChronDone = false;
   /** 自然闪电累计（QA 可观测：eng.nature.lightningN；瞬态不入档） */
   lightningN = 0;
   /** 雨后彩虹（瞬态装饰，不入档）：弧心世界坐标 + TTL tick；prevRain 为上一大气步雨情快照（大雨骤停检测） */
   rainbowX = -1;
   rainbowY = -1;
   rainbowTTL = 0;
+  /** 彩虹节流冷却（瞬态）：一道彩虹谢幕后 90s 内不再出新虹——连雨天气防彩虹泛滥 */
+  rainbowCool = 0;
   prevRain = new Uint8Array(AW * AH);
   rainbowChronDone = false;
   seasonCheck() {
@@ -403,8 +406,12 @@ export class NatureSystem {
   }
   atmTick() {
     const eng = this.eng;
-    if (!eng.laws.atmosphere) return;
+    if (!eng.laws.atmosphere) {
+      this.prevRain.fill(0); // 大气关停期间清空快照：重启后首拍不得用残留旧雨情误判「骤停出彩虹」
+      return;
+    }
     if (this.boltCool > 0) this.boltCool -= 10; // 闪电冷却（atmTick 每 10 tick 一步）
+    if (this.rainbowCool > 0) this.rainbowCool -= 10;
     this.windPhase += 0.012;
     const s = this.season;
     // —— 气压系统生命周期（风场的发动机：生成/引导气流漂移/衰减） ——
@@ -484,6 +491,7 @@ export class NatureSystem {
       }
     }
     // 降雨作用于世界（灭火 / 加速复苏 / 洪水累计 / 沙漠逆转）
+    const winterBolt = s === 3; // 冬季降水为雪：雷暴即「雷打雪」罕见景观
     for (let cy = 0; cy < AH; cy++) {
       for (let cx = 0; cx < AW; cx++) {
         const i = cy * AW + cx;
@@ -507,12 +515,20 @@ export class NatureSystem {
           this.eng.natureFlood(cx * CELL + 4, cy * CELL + 4);
         }
         // 雷暴：强对流暴雨云（r≥190）中的自然闪电——冷却门控稀疏化（3-7s 一道），
-        // 弱伤害不点燃（natureLightning）；首道雷播报「雷暴降临」
-        if (r >= 190 && this.boltCool <= 0 && eng.laws.naturalDisasters && eng.rng() < 0.05) {
-          this.boltCool = 180 + Math.floor(eng.rng() * 240); // 180-420 tick 冷却
+        // 弱伤害不点燃（natureLightning）；首道雷播报「雷暴降临」。
+        // 冬季降水为雪（雪暴/冰暴云 r 同样可达 255）——「雷打雪」：概率更低、
+        // 冷却更长（10-20s 一道），纪事独立防重（冬夏各记一次首见）
+        if (r >= 190 && this.boltCool <= 0 && eng.laws.naturalDisasters && eng.rng() < (winterBolt ? 0.012 : 0.05)) {
+          this.boltCool = winterBolt ? 600 + Math.floor(eng.rng() * 600) : 180 + Math.floor(eng.rng() * 240); // 冬 600-1200 / 夏 180-420 tick
           this.lightningN++;
           this.eng.natureLightning(cx * CELL + 4, cy * CELL + 4);
-          if (!this.boltChronDone) {
+          if (winterBolt) {
+            if (!this.tSnowChronDone) {
+              this.tSnowChronDone = true;
+              this.eng.toast('雷打雪——暴雪云中惊雷乍响，冬雷震震', 'danger');
+              this.eng.addEvent('geo', '雷打雪：罕见的冬季雷暴在暴雪云中炸响，冬雷震震（雷击对暴露的单位有危险）');
+            }
+          } else if (!this.boltChronDone) {
             this.boltChronDone = true;
             this.eng.toast('雷暴降临——暴雨云中电光乍裂，惊雷滚过大地', 'danger');
             this.eng.addEvent('geo', '雷暴降临：强对流暴雨中的闪电开始叩击大地（雷击对暴露的单位有危险）');
@@ -521,13 +537,15 @@ export class NatureSystem {
       }
     }
     // —— 雨后彩虹：上一拍的大雨（≥120）本拍骤停 + 白昼 + 概率门 → 天幕挂一道渐隐彩虹；
-    //    全场至多一道（rainbowTTL 期间不再触发）；prevRain 快照供下一拍对比 ——
+    //    全场至多一道（rainbowTTL 期间不再触发）+ 谢幕节流（rainbowCool：90s 内不出第二道，
+    //    连雨天气防彩虹连环泛滥）；prevRain 快照供下一拍对比 ——
     if (this.rainbowTTL > 0) {
       this.rainbowTTL -= 10;
-    } else if (eng.dayPhase() < 0.42) {
+    } else if (eng.dayPhase() < 0.42 && this.rainbowCool <= 0) {
       for (let i = 0; i < AW * AH; i++) {
         if (this.prevRain[i] >= 120 && this.rainCell[i] === 0 && eng.rng() < 0.02) {
           this.rainbowTTL = 2400;
+          this.rainbowCool = 5400; // 谢幕后 50s 间隔（TTL 40s + 50s = 90s 一道上限）
           this.rainbowX = (i % AW) * CELL + CELL / 2;
           this.rainbowY = ((i / AW) | 0) * CELL + CELL / 2;
           if (!this.rainbowChronDone) {
