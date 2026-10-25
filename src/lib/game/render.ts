@@ -694,6 +694,43 @@ function drawRainbow(engine: GameEngine, sk: CanvasRenderingContext2D, nightN: n
   return true;
 }
 
+/** 晴夜流星（Task 112，天文 × 天幕）：深夜晴空一道白金色亮痕倏然划过——
+ *  头部亮核 + 渐隐尾迹，自随机方向斜落；夜色足够深才可见（n>0.45 渐显）。
+ *  与极光（冬夜常驻）/神光（夏日白昼）/彩虹（雨后白昼）补全天幕家族的天文象限：
+ *  稀有（60-150s 间隔）、短暂（约 1s 划过）、万里无云才显。
+ *  运动为 tick 驱动 6 段步进（像素定格动画语感；speed=0 冻结 → QA 可截图）。
+ *  性能：寿命期内 1 渐变 stroke + 1 头部亮核/帧，寿命外零开销。 */
+function drawMeteor(engine: GameEngine, sk: CanvasRenderingContext2D, nightN: number): boolean {
+  const nat = engine.nature;
+  if (nat.meteorTTL <= 0 || nightN < 0.45) return false;
+  const fade = Math.min(1, (nightN - 0.45) / 0.25);
+  const t = 1 - nat.meteorTTL / 60; // 0→1：TTL 越小飞得越远
+  const env = (0.55 + 0.45 * t) * (t < 0.7 ? 1 : (1 - t) / 0.3); // 亮起即现、尾段渐熄
+  if (env <= 0.02) return false;
+  const x = nat.meteorX * 2 + nat.meteorDx * t * 96; // 全程 96 天幕 px（≈48 tile）
+  const y = nat.meteorY * 2 + nat.meteorDy * t * 96;
+  const tail = 30 + 16 * env;
+  const tx = x - nat.meteorDx * tail;
+  const ty = y - nat.meteorDy * tail;
+  const g = sk.createLinearGradient(tx, ty, x, y);
+  g.addColorStop(0, 'rgba(255,244,214,0)');
+  g.addColorStop(0.65, `rgba(255,240,198,${(0.42 * env * fade).toFixed(3)})`);
+  g.addColorStop(1, `rgba(255,250,232,${(0.72 * env * fade).toFixed(3)})`);
+  sk.globalCompositeOperation = 'lighter';
+  sk.strokeStyle = g;
+  sk.lineWidth = 1.8;
+  sk.lineCap = 'round';
+  sk.beginPath();
+  sk.moveTo(tx, ty);
+  sk.lineTo(x, y);
+  sk.stroke();
+  sk.fillStyle = `rgba(255,252,240,${(0.95 * env * fade).toFixed(3)})`;
+  sk.fillRect(x - 1.2, y - 1.2, 2.6, 2.6); // 头部亮核
+  sk.lineCap = 'butt';
+  sk.globalCompositeOperation = 'source-over';
+  return true;
+}
+
 /** 夏日神光（Task 105，季节 × 万物）：夏季白昼天幕的烈日光柱 —— 金色加性光带自天顶斜落，
  *  倾角随太阳方位（晨东暮西）、亮度随太阳高度呼吸、位置缓慢游移。
  *  四季天幕的最后一块拼图：春瓣/秋叶/冬雪·极光之后，盛夏烈日有了自己的光。
@@ -1567,6 +1604,11 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
   // —— 雨后彩虹（Task 110）：骤歇暴雨上空的七色弧——黄昏渐隐、夜空不显；与雨丝/雷暴构成天气戏剧闭环 ——
   if (engine.fxPrefs.ambience && engine.laws.atmosphere
     && drawRainbow(engine, sk, dayTintOf(engine.dayPhase()).n)) {
+    skyUsed = true;
+  }
+  // —— 晴夜流星（Task 112）：深夜晴空的倏然亮痕——夜色越深越亮，白昼/云雨/昼夜偏好关不显 ——
+  if (engine.fxPrefs.ambience && engine.laws.atmosphere && engine.fxPrefs.dayNight
+    && drawMeteor(engine, sk, dayTintOf(engine.dayPhase()).n)) {
     skyUsed = true;
   }
 

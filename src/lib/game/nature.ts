@@ -194,6 +194,18 @@ export class NatureSystem {
   rainbowCool = 0;
   prevRain = new Uint8Array(AW * AH);
   rainbowChronDone = false;
+  /** 晴夜流星（瞬态装饰，不入档）：起点世界坐标 + 单位方向向量 + TTL tick（tick 驱动阶梯步进，speed=0 冻结可截图） */
+  meteorX = -1;
+  meteorY = -1;
+  meteorDx = 0.7;
+  meteorDy = 0.5;
+  meteorTTL = 0;
+  /** 流星间隔冷却（瞬态）：一道划过后 60-150s 内不再出现——稀疏天象而非烟花 */
+  meteorCool = 0;
+  /** 流星累计（QA 可观测：eng.nature.meteorsN；瞬态不入档） */
+  meteorsN = 0;
+  /** 首颗流星纪事防重标记（瞬态，不入档） */
+  meteorChronDone = false;
   seasonCheck() {
     const s = this.season;
     if (s !== this.lastSeason) {
@@ -412,6 +424,7 @@ export class NatureSystem {
     }
     if (this.boltCool > 0) this.boltCool -= 10; // 闪电冷却（atmTick 每 10 tick 一步）
     if (this.rainbowCool > 0) this.rainbowCool -= 10;
+    if (this.meteorCool > 0) this.meteorCool -= 10;
     this.windPhase += 0.012;
     const s = this.season;
     // —— 气压系统生命周期（风场的发动机：生成/引导气流漂移/衰减） ——
@@ -526,12 +539,12 @@ export class NatureSystem {
             if (!this.tSnowChronDone) {
               this.tSnowChronDone = true;
               this.eng.toast('雷打雪——暴雪云中惊雷乍响，冬雷震震', 'danger');
-              this.eng.addEvent('geo', '雷打雪：罕见的冬季雷暴在暴雪云中炸响，冬雷震震（雷击对暴露的单位有危险）');
+              this.eng.addEvent('geo', '雷打雪：罕见的冬季雷暴在暴雪云中炸响，冬雷震震（雷击对暴露的单位有危险）', { x: cx * CELL + 4, y: cy * CELL + 4 });
             }
           } else if (!this.boltChronDone) {
             this.boltChronDone = true;
             this.eng.toast('雷暴降临——暴雨云中电光乍裂，惊雷滚过大地', 'danger');
-            this.eng.addEvent('geo', '雷暴降临：强对流暴雨中的闪电开始叩击大地（雷击对暴露的单位有危险）');
+            this.eng.addEvent('geo', '雷暴降临：强对流暴雨中的闪电开始叩击大地（雷击对暴露的单位有危险）', { x: cx * CELL + 4, y: cy * CELL + 4 });
           }
         }
       }
@@ -554,6 +567,38 @@ export class NatureSystem {
             this.eng.addEvent('geo', '雨过天青：骤歇的暴雨在天幕留下一道彩虹');
           }
           break;
+        }
+      }
+    }
+    // —— 晴夜流星：夜色深沉（0.54-0.86 深夜档）× 万里无云（任一格有降水即遮星）×
+    //    概率门 × 间隔冷却（60-150s）→ 一道白金色流星划过天幕；首见播报「星陨」。
+    //    天幕家族的天文象限：极光=冬夜常驻 / 神光=夏日白昼 / 彩虹=雨后白昼 / 流星=深夜稀客
+    //    ——稀有、短暂（约 1s 划过）、可遇不可求 ——
+    if (this.meteorTTL > 0) {
+      this.meteorTTL -= 10;
+    } else if (this.meteorCool <= 0) {
+      const p = eng.dayPhase();
+      if (p > 0.54 && p < 0.86) {
+        let rainy = false;
+        for (let i = 0; i < AW * AH; i += 4) {
+          if (this.rainCell[i] > 15) { rainy = true; break; }
+        }
+        if (!rainy && eng.rng() < 0.045) {
+          this.meteorCool = 600 + Math.floor(eng.rng() * 900); // 60-150s 后才可能有下一道
+          this.meteorTTL = 60; // 划过约 1s（tick 驱动 6 段步进：像素定格动画语感，speed=0 冻结）
+          const ang = 0.32 + eng.rng() * 0.6; // 俯角 18°-53° 斜落
+          const dir = eng.rng() < 0.5 ? -1 : 1;
+          this.meteorDx = Math.cos(ang) * dir;
+          this.meteorDy = Math.sin(ang);
+          // 锚定观测者：相机邻域随机（天象在头顶——走到哪都能撞见；落在视口外则自然错过）
+          this.meteorX = Math.min(W - 24, Math.max(24, eng.cam.x + (eng.rng() - 0.5) * 180));
+          this.meteorY = Math.min(H - 56, Math.max(14, eng.cam.y - 44 + (eng.rng() - 0.5) * 70));
+          this.meteorsN++;
+          if (!this.meteorChronDone) {
+            this.meteorChronDone = true;
+            eng.toast('星陨——一颗流星划过夜空', 'good');
+            eng.addEvent('geo', '星陨：晴朗的深夜里一颗流星倏然划过天幕，转瞬即逝');
+          }
         }
       }
     }
