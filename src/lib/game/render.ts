@@ -710,6 +710,23 @@ function drawSunRays(engine: GameEngine, sk: CanvasRenderingContext2D, nightN: n
     sk.lineTo(bx + w * 0.25 + tilt, 320);
     sk.closePath();
     sk.fill();
+    // —— 地表亮斑（Task 106，Task 105 遗留①）：光柱沿线的淡金椭圆光斑 ——
+    // 亮地形（沙漠/雪原）上平直光带会被背景亮度吞没；径向渐变的落点光斑保持可辨，
+    // 三个纬度站随光带游移 + 倾角平移 + 半径呼吸（12-28px），椭圆压扁自带「贴地」透视感。
+    for (let s2 = 0; s2 < 3; s2++) {
+      const gy = 96 + s2 * 104; // 96/200/304 —— 世界 y=48/100/152 三个纬度站
+      const gx = bx + w * 0.5 + tilt * (gy / 320); // 站点横坐标沿光带倾角平移
+      const rr = 20 + 8 * Math.sin(fc * 0.0031 + b * 1.9 + s2 * 2.6);
+      if (rr <= 4) continue;
+      const rg = sk.createRadialGradient(gx, gy, 1, gx, gy, rr);
+      rg.addColorStop(0, `rgba(255,236,180,${(a * 1.2).toFixed(3)})`);
+      rg.addColorStop(0.55, `rgba(255,226,150,${(a * 0.55).toFixed(3)})`);
+      rg.addColorStop(1, 'rgba(255,226,150,0)');
+      sk.fillStyle = rg;
+      sk.beginPath();
+      sk.ellipse(gx, gy, rr, rr * 0.62, 0, 0, Math.PI * 2);
+      sk.fill();
+    }
     drew = true;
   }
   sk.globalCompositeOperation = 'source-over';

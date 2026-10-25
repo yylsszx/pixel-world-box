@@ -109,6 +109,8 @@ export function GameCanvas() {
     const engine = getEngine();
     const store = useGameStore.getState();
     (window as unknown as { __wbEngine?: unknown }).__wbEngine = engine;
+    // QA/调试句柄：音频引擎（季节环境音确定性验证用，与 __wbEngine 同款模式）
+    (window as unknown as { __wbSfx?: unknown }).__wbSfx = sfx;
 
     // 【75 指挥模式】复杂交互总门控：简洁模式（默认）只保留 拖动平移 / 滚轮·双指缩放 /
     // 工具施放 / 点选检查器；框选 / 右键·长按菜单 / 凝视 / 悬停芯片 / 命令面板 / 书签

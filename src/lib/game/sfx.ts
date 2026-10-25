@@ -15,7 +15,7 @@ export interface VolumeSettings {
 export interface MoodSettings {
   /** 夜晚：只留和声垫，更稀疏更暗 */
   night?: boolean;
-  /** 季节 0-3（春/夏/秋/冬）：根音移调 */
+  /** 季节 0-3（春/夏/秋/冬）：根音移调 + 环境音分派（春鸟/夏蝉/秋蛩/冬风） */
   season?: number;
   /** 战争：和声小调进行 + 拨弦密度加倍 + 根音下移 */
   war?: boolean;
@@ -127,6 +127,13 @@ export class SfxEngine {
   private activeMusic: Array<{ src: AudioScheduledSourceNode; nodes: AudioNode[] }> = [];
   /** 音乐情绪（调度决策依据） */
   private mood: Required<MoodSettings> = { night: false, season: 0, war: false, paused: false };
+  // ---- 季节环境音状态（Task 106：春鸟鸣/夏蝉噪/秋虫吟/冬风啸） ----
+  /** 下一发自然声的调度时点（ctx.currentTime 域；随音乐调度器心跳检查） */
+  private nextAmbTime = 0;
+  /** 环境音触发计数（QA 可观测：window.__wbSfx 直读） */
+  ambCount = 0;
+  /** 最近一次触发的环境音种类（'bird'|'cicada'|'cricket'|'wind'；无声时段 ''） */
+  lastAmb = '';
 
   /** 用户手势后调用：创建 AudioContext（已存在则 resume） */
   ensureInit(): void {
@@ -344,6 +351,7 @@ export class SfxEngine {
     // 相位归零：下次 startMusic 从头起句
     this.nextChordTime = 0;
     this.nextPluckTime = 0;
+    this.nextAmbTime = 0;
   }
 
   private startScheduler(): void {
@@ -351,6 +359,7 @@ export class SfxEngine {
     const now = this.ctx.currentTime;
     if (this.nextChordTime <= 0) this.nextChordTime = now + 0.1; // 垫先行
     if (this.nextPluckTime <= 0) this.nextPluckTime = now + 1.5; // 拨弦稍晚，避免开场拥挤
+    if (this.nextAmbTime <= 0) this.nextAmbTime = now + 3; // 环境音更晚：和弦垫先行立氛围
     this.musicTimer = setInterval(() => this.musicTick(), 250);
   }
 
@@ -372,6 +381,10 @@ export class SfxEngine {
       if (!this.mood.night) this.schedulePluck(this.nextPluckTime); // 夜晚只留垫
       this.nextPluckTime += this.pluckRest();
     }
+    // —— 季节环境音（Task 106）：稀疏自然声点缀音乐垫，走 musicGain 氛围通道 ——
+    // 挂起追赶保护与和弦同款；到点即触发并按返回的休止秒数轮询下一发
+    if (this.nextAmbTime < now - 0.5) this.nextAmbTime = now + 0.5;
+    if (now >= this.nextAmbTime) this.nextAmbTime = now + this.fireAmbient();
   }
 
   /** 当前和弦时长：和平 8s / 战争 6.5s（更不安）/ 夜晚 10s（更绵长） */
@@ -457,6 +470,156 @@ export class SfxEngine {
       const i = this.activeMusic.indexOf(rec);
       if (i >= 0) this.activeMusic.splice(i, 1);
     };
+  }
+
+  // ============ 季节环境音（Task 106：四季的自然声，走 musicGain 氛围通道） ============
+
+  /** 环境音调度门：战争/暂停不出自然声（暂停时 master 已渐出静音，省调度） */
+  private fireAmbient(): number {
+    if (this.mood.war || this.mood.paused) return 6;
+    return this.fireAmbientCore();
+  }
+
+  /** 按季节 × 昼夜分派四种声音并返回休止秒数（春夜/夏夜鸟蝉歇息 → 长休止） */
+  private fireAmbientCore(): number {
+    const s = this.mood.season;
+    const night = this.mood.night;
+    if (s === 0 && !night) { this.ambBird(); return 4 + Math.random() * 5; } // 春昼：鸟鸣 4-9s 一声
+    if (s === 1 && !night) { this.ambCicada(); return 7 + Math.random() * 8; } // 夏昼：蝉噪长鸣
+    if (s === 2 && night) { this.ambCricket(); return 3 + Math.random() * 4; } // 秋夜：虫吟正密
+    if (s === 2) { this.ambCricket(); return 9 + Math.random() * 8; } // 秋昼：暖午后偶鸣
+    if (s === 3) { this.ambWind(); return 9 + Math.random() * 8; } // 冬：风啸昼夜不息
+    this.lastAmb = '';
+    return 7; // 春夜/夏夜：只留音乐垫
+  }
+
+  /** 开发/QA：无视战争/暂停门直发一发当前季节环境音（确定性验证用），返回触发的种类 */
+  devFireAmbient(): string {
+    if (!this.ctx || !this.musicGain) return 'no-ctx';
+    this.fireAmbientCore();
+    return this.lastAmb;
+  }
+
+  /** 春·鸟鸣：2-4 声清脆短啭（正弦 2.5-3.6kHz 快速下滑），声间隔 90-230ms，存在感低于和弦垫 */
+  private ambBird(): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.musicGain) return;
+    this.lastAmb = 'bird';
+    this.ambCount++;
+    const t = ctx.currentTime + 0.02;
+    const notes = 2 + Math.floor(Math.random() * 3);
+    let st = t;
+    for (let i = 0; i < notes; i++) {
+      const f = 2500 + Math.random() * 1100;
+      const dur = 0.07 + Math.random() * 0.06;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(f, st);
+      osc.frequency.exponentialRampToValueAtTime(f * 0.72, st + dur); // 下滑啭鸣
+      gain.gain.setValueAtTime(0.0001, st);
+      gain.gain.linearRampToValueAtTime(0.016 + Math.random() * 0.012, st + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, st + dur);
+      osc.connect(gain).connect(this.musicGain);
+      osc.start(st);
+      osc.stop(st + dur + 0.02);
+      st += dur + 0.09 + Math.random() * 0.14;
+    }
+  }
+
+  /** 夏·蝉噪：1.8-3.2s 带通噪声蝉鸣（5-5.8kHz 窄带 + 38-52Hz 振翅颤音 AM，慢起缓收） */
+  private ambCicada(): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.musicGain) return;
+    this.lastAmb = 'cicada';
+    this.ambCount++;
+    const t = ctx.currentTime + 0.02;
+    const dur = 1.8 + Math.random() * 1.4;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuffer();
+    src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 5000 + Math.random() * 800;
+    bp.Q.value = 6;
+    // 振翅颤音：38-52Hz LFO 调制增益（蝉腹共鸣的嗡颤）
+    const trem = ctx.createGain();
+    trem.gain.value = 0.5;
+    const lfo = ctx.createOscillator();
+    const lfoG = ctx.createGain();
+    lfo.type = 'sine';
+    lfo.frequency.value = 38 + Math.random() * 14;
+    lfoG.gain.value = 0.42;
+    lfo.connect(lfoG);
+    lfoG.connect(trem.gain);
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.linearRampToValueAtTime(0.03, t + 0.35);
+    env.gain.setValueAtTime(0.03, t + dur * 0.7);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(bp).connect(trem).connect(env).connect(this.musicGain);
+    src.start(t);
+    src.stop(t + dur + 0.05);
+    lfo.start(t);
+    lfo.stop(t + dur + 0.05);
+  }
+
+  /** 秋·虫吟：2-3 组节律脉冲（每组 3-4 个 20ms 正弦 4.1-4.5kHz，组间 250-430ms） */
+  private ambCricket(): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.musicGain) return;
+    this.lastAmb = 'cricket';
+    this.ambCount++;
+    const t = ctx.currentTime + 0.02;
+    const f = 4100 + Math.random() * 400;
+    const groups = 2 + Math.floor(Math.random() * 2);
+    let st = t;
+    for (let g = 0; g < groups; g++) {
+      const pulses = 3 + Math.floor(Math.random() * 2);
+      for (let p = 0; p < pulses; p++) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = f;
+        gain.gain.setValueAtTime(0.0001, st);
+        gain.gain.linearRampToValueAtTime(0.02, st + 0.006);
+        gain.gain.exponentialRampToValueAtTime(0.0001, st + 0.02);
+        osc.connect(gain).connect(this.musicGain);
+        osc.start(st);
+        osc.stop(st + 0.03);
+        st += 0.042; // 脉冲节拍
+      }
+      st += 0.25 + Math.random() * 0.18; // 组间休止（蟋蟀换气）
+    }
+  }
+
+  /** 冬·风啸：2.5-4s 带通噪声慢摆呼啸（blizzard 的低音量近亲，350-1200Hz 两折慢摆） */
+  private ambWind(): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.musicGain) return;
+    this.lastAmb = 'wind';
+    this.ambCount++;
+    const t = ctx.currentTime + 0.02;
+    const dur = 2.5 + Math.random() * 1.5;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuffer();
+    src.loop = true;
+    src.playbackRate.value = 0.85;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = 1.8;
+    const f0 = 320 + Math.random() * 200;
+    bp.frequency.setValueAtTime(f0, t);
+    bp.frequency.linearRampToValueAtTime(f0 * 2.4, t + dur * 0.45); // 风起：呼啸扬上去
+    bp.frequency.linearRampToValueAtTime(f0 * 1.1, t + dur); // 风落：沉沉散去
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.02, t + 0.5);
+    gain.gain.setValueAtTime(0.02, t + dur * 0.65);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(bp).connect(gain).connect(this.musicGain);
+    src.start(t);
+    src.stop(t + dur + 0.05);
   }
 
   // ============ SFX 合成（全部走 sfxGain 通道） ============
