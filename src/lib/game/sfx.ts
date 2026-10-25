@@ -134,6 +134,14 @@ export class SfxEngine {
   ambCount = 0;
   /** 最近一次触发的环境音种类（'bird'|'cicada'|'cricket'|'wind'；无声时段 ''） */
   lastAmb = '';
+  // ---- 雨声层状态（Task 107：连续天气织体，增益跟随视口雨情） ----
+  private rainSrc: AudioBufferSourceNode | null = null;
+  private rainBp: BiquadFilterNode | null = null;
+  private rainGain: GainNode | null = null;
+  /** 雨情目标（0-1，setRainLevel 记账；层未建/音乐未开时先行暂存，起调时补应用） */
+  private rainTarget = 0;
+  /** 最近应用的雨情（QA 可观测：window.__wbSfx.rainLevel 直读） */
+  rainLevel = 0;
 
   /** 用户手势后调用：创建 AudioContext（已存在则 resume） */
   ensureInit(): void {
@@ -352,6 +360,7 @@ export class SfxEngine {
     this.nextChordTime = 0;
     this.nextPluckTime = 0;
     this.nextAmbTime = 0;
+    this.teardownRainLayer(); // 雨声层走 musicGain 通道：环境音乐关 = 雨声也歇（下次 setRainLevel 重建）
   }
 
   private startScheduler(): void {
@@ -360,6 +369,10 @@ export class SfxEngine {
     if (this.nextChordTime <= 0) this.nextChordTime = now + 0.1; // 垫先行
     if (this.nextPluckTime <= 0) this.nextPluckTime = now + 1.5; // 拨弦稍晚，避免开场拥挤
     if (this.nextAmbTime <= 0) this.nextAmbTime = now + 3; // 环境音更晚：和弦垫先行立氛围
+    if (this.rainTarget > 0) {
+      this.ensureRainLayer(); // 音乐起调时补建雨声层（setRainLevel 可能在音乐开启前已记账）
+      this.applyRainLevel();
+    }
     this.musicTimer = setInterval(() => this.musicTick(), 250);
   }
 
@@ -487,7 +500,7 @@ export class SfxEngine {
     if (s === 0 && !night) { this.ambBird(); return 4 + Math.random() * 5; } // 春昼：鸟鸣 4-9s 一声
     if (s === 1 && !night) { this.ambCicada(); return 7 + Math.random() * 8; } // 夏昼：蝉噪长鸣
     if (s === 2 && night) { this.ambCricket(); return 3 + Math.random() * 4; } // 秋夜：虫吟正密
-    if (s === 2) { this.ambCricket(); return 9 + Math.random() * 8; } // 秋昼：暖午后偶鸣
+    if (s === 2) { this.ambCricket(); return 12 + Math.random() * 13; } // 秋昼：暖午后偶鸣（Task 106 遗留②：9-17s 偏密改 12-25s，蟋蟀主要在黄昏后）
     if (s === 3) { this.ambWind(); return 9 + Math.random() * 8; } // 冬：风啸昼夜不息
     this.lastAmb = '';
     return 7; // 春夜/夏夜：只留音乐垫
@@ -518,7 +531,8 @@ export class SfxEngine {
       osc.frequency.setValueAtTime(f, st);
       osc.frequency.exponentialRampToValueAtTime(f * 0.72, st + dur); // 下滑啭鸣
       gain.gain.setValueAtTime(0.0001, st);
-      gain.gain.linearRampToValueAtTime(0.016 + Math.random() * 0.012, st + 0.015);
+      // Task 107 提档 1.5x（Task 106 遗留①：0.016-0.028 存在感偏低，实机听感偏弱）
+      gain.gain.linearRampToValueAtTime(0.024 + Math.random() * 0.018, st + 0.015);
       gain.gain.exponentialRampToValueAtTime(0.0001, st + dur);
       osc.connect(gain).connect(this.musicGain);
       osc.start(st);
@@ -554,8 +568,8 @@ export class SfxEngine {
     lfoG.connect(trem.gain);
     const env = ctx.createGain();
     env.gain.setValueAtTime(0.0001, t);
-    env.gain.linearRampToValueAtTime(0.03, t + 0.35);
-    env.gain.setValueAtTime(0.03, t + dur * 0.7);
+    env.gain.linearRampToValueAtTime(0.045, t + 0.35); // Task 107 提档 1.5x
+    env.gain.setValueAtTime(0.045, t + dur * 0.7);
     env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     src.connect(bp).connect(trem).connect(env).connect(this.musicGain);
     src.start(t);
@@ -582,7 +596,7 @@ export class SfxEngine {
         osc.type = 'sine';
         osc.frequency.value = f;
         gain.gain.setValueAtTime(0.0001, st);
-        gain.gain.linearRampToValueAtTime(0.02, st + 0.006);
+        gain.gain.linearRampToValueAtTime(0.03, st + 0.006); // Task 107 提档 1.5x
         gain.gain.exponentialRampToValueAtTime(0.0001, st + 0.02);
         osc.connect(gain).connect(this.musicGain);
         osc.start(st);
@@ -614,12 +628,84 @@ export class SfxEngine {
     bp.frequency.linearRampToValueAtTime(f0 * 1.1, t + dur); // 风落：沉沉散去
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.linearRampToValueAtTime(0.02, t + 0.5);
-    gain.gain.setValueAtTime(0.02, t + dur * 0.65);
+    gain.gain.linearRampToValueAtTime(0.03, t + 0.5); // Task 107 提档 1.5x
+    gain.gain.setValueAtTime(0.03, t + dur * 0.65);
     gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     src.connect(bp).connect(gain).connect(this.musicGain);
     src.start(t);
     src.stop(t + dur + 0.05);
+  }
+
+  // ============ 雨声层（Task 107：连续天气织体，与季节环境音同走 musicGain） ============
+  // 与季节环境音（稀疏点缀、战争静默）不同：雨是天气不是「自然声部」，战争天照下雨，
+  // 故不设战争门；暂停由 master 渐出统一静音；环境音乐关 = 雨声也歇（同通道语义）。
+
+  /**
+   * 上报视口雨情（0-1）：GameCanvas 每秒级调用。懒建音频层；
+   * 音乐未开时只记账（startScheduler 起调时补建补应用）。
+   * 增益 τ=0.9s 平滑跟随——雨来渐起、雨歇渐散，与天幕雨丝的视觉节奏对齐。
+   */
+  setRainLevel(v: number): void {
+    const t = Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0;
+    this.rainTarget = t;
+    if (!this.musicOn || !this.ctx || !this.musicGain) return;
+    this.ensureRainLayer();
+    this.applyRainLevel();
+  }
+
+  /** 懒建雨声层：白噪声环 → 宽带带通（雨的中频沙沙）→ 增益（0 起步）→ musicGain */
+  private ensureRainLayer(): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.musicGain || this.rainSrc) return;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuffer();
+    src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 2200;
+    bp.Q.value = 0.7; // 宽带：雨声是宽谱沙沙而非窄带嗡鸣
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    src.connect(bp).connect(gain).connect(this.musicGain);
+    src.start();
+    this.rainSrc = src;
+    this.rainBp = bp;
+    this.rainGain = gain;
+  }
+
+  /** 雨情 → 声学参数三联动：小雨高频沙沙稀、大雨低频连绵响 */
+  private applyRainLevel(): void {
+    if (!this.ctx || !this.rainGain || !this.rainBp) return;
+    const now = this.ctx.currentTime;
+    const v = this.rainTarget;
+    this.rainGain.gain.setTargetAtTime(v * 0.032, now, 0.9);
+    this.rainBp.frequency.setTargetAtTime(3000 - v * 1400, now, 1.2); // 3000→1600Hz：雨大势沉
+    this.rainLevel = v;
+  }
+
+  /** 停音乐时拆雨声层：快淡出 + 断链防泄漏（setRainLevel 下一发会懒建新层） */
+  private teardownRainLayer(): void {
+    const src = this.rainSrc;
+    const nodes = [this.rainBp, this.rainGain];
+    this.rainSrc = null;
+    this.rainBp = null;
+    this.rainGain = null;
+    this.rainLevel = 0;
+    if (!this.ctx || !src) return;
+    const now = this.ctx.currentTime;
+    try {
+      src.stop(now + 0.25);
+    } catch {
+      /* 已停止 */
+    }
+    setTimeout(() => {
+      try {
+        src.disconnect();
+        for (const n of nodes) if (n) n.disconnect();
+      } catch {
+        /* 忽略已释放节点 */
+      }
+    }, 400);
   }
 
   // ============ SFX 合成（全部走 sfxGain 通道） ============

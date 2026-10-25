@@ -13403,6 +13403,36 @@ export class GameEngine {
   }
 
   // ---------------- camera ----------------
+  /**
+   * 视口雨情 0-1（Task 107 雨声环境音数据源）：把当前视口映射到 nature 雨格
+   * （CELL=8 tile），≤36 格步进采样 rainCell 均值。全海视口/无雨世界自然为 0；
+   * zoom 越小视口越广，采样自动扩到更大范围。GameCanvas 每秒级调用一次。
+   */
+  rainAmbienceLevel(cw: number, ch: number): number {
+    const z = Math.max(0.01, this.cam.zoom);
+    const wx0 = this.cam.x - cw / 2 / z;
+    const wy0 = this.cam.y - ch / 2 / z;
+    const wx1 = this.cam.x + cw / 2 / z;
+    const wy1 = this.cam.y + ch / 2 / z;
+    const cx0 = Math.max(0, Math.floor(wx0 / CELL));
+    const cy0 = Math.max(0, Math.floor(wy0 / CELL));
+    const cx1 = Math.min(AW - 1, Math.floor(wx1 / CELL));
+    const cy1 = Math.min(AH - 1, Math.floor(wy1 / CELL));
+    if (cx1 < cx0 || cy1 < cy0) return 0;
+    const sx = Math.max(1, Math.ceil((cx1 - cx0 + 1) / 6));
+    const sy = Math.max(1, Math.ceil((cy1 - cy0 + 1) / 6));
+    let sum = 0;
+    let n = 0;
+    for (let cy = cy0; cy <= cy1; cy += sy) {
+      for (let cx = cx0; cx <= cx1; cx += sx) {
+        sum += this.nature.rainCell[cy * AW + cx];
+        n++;
+      }
+    }
+    if (n === 0) return 0;
+    return Math.min(1, sum / n / 255);
+  }
+
   screenToWorld(px: number, py: number, cw: number, ch: number) {
     return {
       wx: (px - cw / 2) / this.cam.zoom + this.cam.x,

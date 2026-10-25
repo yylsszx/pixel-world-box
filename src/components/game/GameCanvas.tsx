@@ -1045,6 +1045,8 @@ export function GameCanvas() {
         }
         const dp = engine.dayPhase();
         sfx.setMood({ night: dp >= 0.52 && dp < 0.88, season: engine.nature.season, war: atWar, paused: engine.speed === 0 });
+        // 雨声层（Task 107）：视口雨情采样与情绪同节奏（每 60 帧 ≈ 1s），增益 τ=0.9s 平滑跟随
+        sfx.setRainLevel(engine.rainAmbienceLevel(sizeRef.current.w, sizeRef.current.h));
       }
       raf = requestAnimationFrame(loop);
     };
