@@ -1234,6 +1234,75 @@ export function drawPhoenix(ctx: CanvasRenderingContext2D, u: Unit, frame: numbe
   }
 }
 
+/** 树人：森林守护者（7 宽 9 高，高大威严）——摇曳树冠/树皮纹躯干/琥珀明眸/根须跨步/苔藓肩斑 */
+export function drawEnt(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const isMoving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  const step = isMoving ? ((frame >> 4) & 1) : 0; // 树人步伐极慢（16 帧一换）
+  const dim = u.hp < u.maxHp * 0.4;
+  const hurtFlash = u.hurt > 0;
+  const bark = hurtFlash ? '#ff9b8a' : '#6e4a2b';   // 树皮主色（受击闪红）
+  const barkD = hurtFlash ? '#d97a66' : '#4a3018';  // 树皮暗纹
+  const leaf = dim ? '#3d6b2c' : '#4f9e3a';          // 树冠（低血量蔫绿）
+  const leafD = dim ? '#2c5e24' : '#2c7a2a';
+  // —— 树冠（三层叶团，随风摇曳 sway：12 帧周期左右偏移）——
+  const sway = Math.floor(frame / 12) % 2;
+  ctx.fillStyle = leafD;
+  ctx.fillRect(px - 2 + sway, py - 5, 5, 1);
+  ctx.fillRect(px + 1 + sway, py - 5, 1, 1);
+  ctx.fillStyle = leaf;
+  ctx.fillRect(px - 3 + sway, py - 4, 7, 2);
+  ctx.fillRect(px - 1 - sway, py - 6, 3, 1); // 冠顶新芽（反向摇曳）
+  ctx.fillStyle = leafD;
+  ctx.fillRect(px - 2 + sway, py - 2, 5, 1); // 冠底阴影圈
+  // 垂落的枯叶（低血量：偶有黄叶飘落 —— 老树将枯）
+  if (dim && frame % 24 < 6) {
+    ctx.fillStyle = '#c9a02a';
+    ctx.fillRect(px - 3 + ((frame >> 2) & 3), py - 1, 1, 1);
+  }
+  // —— 树洞脸（深色树洞 + 琥珀明眸，眨眼 40 帧一次）——
+  ctx.fillStyle = '#2a1c0e';
+  ctx.fillRect(px - 1, py - 1, 3, 2);
+  const blink = frame % 40 < 5;
+  ctx.fillStyle = blink ? '#6e4a2b' : '#ffb938';
+  ctx.fillRect(px - 1 + (u.flip ? 0 : 1), py - 1, 1, 1); // 单侧亮眸（朝向侧）
+  ctx.fillRect(px + (u.flip ? 1 : 0), py, 1, 1);          // 对角第二眸（错位感更妖异古老）
+  // —— 躯干（宽树干 + 竖向树皮裂纹 + 苔藓肩斑）——
+  ctx.fillStyle = bark;
+  ctx.fillRect(px - 2, py + 1, 5, 5);
+  ctx.fillStyle = barkD;
+  ctx.fillRect(px - 1, py + 2, 1, 3);   // 主裂纹
+  ctx.fillRect(px + 1, py + 3, 1, 2);   // 副裂纹（错位）
+  ctx.fillStyle = '#5a7a2c';            // 苔藓（肩部两撇）
+  ctx.fillRect(px - 2, py + 1, 2, 1);
+  ctx.fillRect(px + 2, py + 2, 1, 1);
+  // —— 臂枝（两侧斜伸，移动时前后摆）——
+  ctx.fillStyle = bark;
+  const armSw = isMoving ? (step ? 1 : -1) : 0;
+  ctx.fillRect(px - 4, py + 1 + armSw, 2, 1);           // 左臂
+  ctx.fillRect(px - 5, py + 2 + armSw, 1, 1);           // 左指节
+  ctx.fillRect(px + 3, py + 2 - armSw, 2, 1);           // 右臂（反向摆）
+  ctx.fillRect(px + 5, py + 1 - armSw, 1, 1);           // 右指节
+  // —— 根足（跨步：单侧根须抬起）——
+  ctx.fillStyle = barkD;
+  if (step === 1) {
+    ctx.fillRect(px - 2, py + 6, 2, 1);
+    ctx.fillRect(px + 1, py + 6, 1, 1);
+  } else {
+    ctx.fillRect(px - 2, py + 6, 1, 1);
+    ctx.fillRect(px, py + 6, 2, 1);
+  }
+  ctx.fillRect(px - 2 + step, py + 7, 1, 1); // 扎地的根尖
+  ctx.fillRect(px + 1 - step, py + 7, 1, 1);
+  // —— 地面落叶圈（树人在哪儿，金叶落哪儿）——
+  ctx.fillStyle = 'rgba(201,160,42,0.55)';
+  ctx.fillRect(px - 3, py + 8, 1, 1);
+  ctx.fillRect(px + 2, py + 8, 1, 1);
+  ctx.fillRect(px, py + 8, 1, 1);
+}
+
 /** 巨魔：耸肩佝背的山岭巨怪（5 宽 8 高）——苔藓肩斑/长臂及地/獠牙/再生微光 */
 export function drawTroll(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;

@@ -1357,6 +1357,13 @@ export class GameEngine {
       this.fx('fireball', x, y - 1, 24);
       this.onSound?.('volcano');
     }
+    if (!opts?.silent && race === R.ENT) {
+      this.toast('古老的树人从林间苏醒', 'info');
+      this.addEvent('ent', '一声深沉的吱吟自林间响起，古老的树人拔根而行——它走过的地方，森林将生长', { x, y });
+      this.fx('spawn', x, y, 40);
+      this.fx('spark', x, y - 1, 24);
+      this.shake = Math.max(this.shake, 3); // 沉重的脚步
+    }
     if (!opts?.silent && race === R.MAGE) {
       this.toast('一位神秘的法师现身了', 'info');
     }
@@ -1909,10 +1916,10 @@ export class GameEngine {
     const rb = RACES[b.race];
     // —— 亡者阵营：骷髅/僵尸/白行者/吸血鬼互不为敌，并肩作战争夺生者的世界 ——
     if (ra.undead && rb.undead) return false;
-    // 天使（R.ANGEL=28）/ 凤凰（R.PHOENIX=29）无需专门分支：恶魔/亡灵五族/巨龙/克拉肯/沙虫/蛇怪的
-    // 「与众生为敌」分支对称覆盖二者（双侧为敌 = 圣剑/焰爪自动出鞘）；对无辜者
+    // 天使（R.ANGEL=28）/ 凤凰（R.PHOENIX=29）/ 树人（R.ENT=30）无需专门分支：恶魔/亡灵五族/巨龙/克拉肯/沙虫/蛇怪的
+    // 「与众生为敌」分支对称覆盖三者（双侧为敌 = 圣剑/焰爪/枝干重击自动出鞘）；对无辜者
     // 由全零旗标自然放行 —— 与 wasm is_enemy_full（rust-core lib.rs）逐位一致。
-    // ⚠️ 若在此新增天使/凤凰特判，必须同步 rust-core/src/lib.rs 并重建 wbcore.wasm。
+    // ⚠️ 若在此新增天使/凤凰/树人特判，必须同步 rust-core/src/lib.rs 并重建 wbcore.wasm。
     if (a.race === R.ZOMBIE || b.race === R.ZOMBIE) return a.race !== b.race;
     if (a.race === R.SKELETON || b.race === R.SKELETON) return a.race !== b.race; // 亡灵与众人为敌
     if (a.race === R.WHITEWALKER || b.race === R.WHITEWALKER) return a.race !== b.race; // 寒冰之主与众生为敌
@@ -2399,6 +2406,8 @@ export class GameEngine {
     if (this.tickCount % 3 === 0) this.angelAuraTick();
     // —— 凤凰涅槃（引擎级通道：灰烬倒数到点重生；spawnUnit 走常规注册+打包，与批内核无冲突）——
     if (this.phoenixAshes.length > 0) this.phoenixAshTick();
+    // —— 树人播种（引擎级通道：和平野生单位被批内核接管；植树/灭火是纯地形操作无需 rust 镜像）——
+    if (this.tickCount % 10 === 0) this.entGroveTick();
     // —— 深时引擎：动态温度场（每 120 tick：纬度+海拔+大陆度+灰烬+洋流异常耦合）——
     if (this.tickCount % 120 === 27) this.worldsim.tempTick();
     // —— 深时引擎：冰川系统（每 240 tick：积累/消融/进退——火山冬反馈环）——
@@ -11934,6 +11943,49 @@ export class GameEngine {
       this.toast('凤凰在灰烬中重生了', 'info');
       this.addEvent('phoenix', '烈焰冲天而起——凤凰自灰烬中振翼重生', { x: a.x, y: a.y });
       this.onSound?.('volcano');
+    }
+  }
+
+  /** 树人播种（引擎级通道）：森林守护者的两大职责 ——
+   *  ① 播种：每 10 tick 每棵树人采样周围 r=3 格，草地/沙地/焦土 概率化为森林（森林扩张是纯地形写，
+   *     自然引擎 regrow 与野火系统会自然接管后续演化 —— 树人是活的绿化引擎）；
+   *  ② 扑火：扑灭周围 r=2.5 的火焰（森林卫士的本职；不灭岩浆 —— 那超出树人的能力）。
+   *  和平野生单位被 rust 批内核接管不经 updateUnit，地形操作挂引擎 tick 通道与批内核共存。 */
+  private entGroveTick() {
+    let planted = 0;
+    for (const u of this.units) {
+      if (u.dead || u.race !== R.ENT) continue;
+      // ① 播种：一次采样 2 个点（树人是慢节奏的园丁，不猛长）
+      for (let k = 0; k < 2; k++) {
+        const ang = this.rng() * Math.PI * 2;
+        const rr = 1 + this.rng() * 2.5;
+        const j = idx(Math.floor(u.x + Math.cos(ang) * rr), Math.floor(u.y + Math.sin(ang) * rr));
+        if (j < 0 || j >= W * H) continue;
+        if (this.building[j] > 0) continue; // 有建筑的格子不种（屋顶下长树成何体统）
+        const t = this.terrain[j];
+        if ((t === T.GRASS && this.rng() < 0.22) || (t === T.BURNT && this.rng() < 0.45) || (t === T.SAND && this.rng() < 0.06)) {
+          this.setTerrain(j, T.FOREST);
+          planted++;
+          if (planted <= 6) this.fx('spark', (j % W) + 0.5, ((j / W) | 0) + 0.5, 14);
+        }
+      }
+      // ② 扑火：熄灭周围 r=2.5 的火焰
+      const ex = Math.floor(u.x);
+      const ey = Math.floor(u.y);
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          if (dx * dx + dy * dy > 6.25) continue;
+          const xx = ex + dx;
+          const yy = ey + dy;
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+          const j = idx(xx, yy);
+          if (this.fire[j] > 0) {
+            this.fire[j] = 0;
+            this.fireSet.delete(j);
+            this.fx('water', xx + 0.5, yy + 0.5, 12);
+          }
+        }
+      }
     }
   }
 

@@ -60,6 +60,8 @@ export const R = {
   ANGEL: 28,
   /** 浴火神鸟：烈焰为羽，陨落后自灰烬中重生（至多三次），火焰岩浆皆不能伤 */
   PHOENIX: 29,
+  /** 森林守护者：古老的树皮巨人，游荡处播撒种子令森林扩张，并为林间生灵扑灭火魔 */
+  ENT: 30,
 } as const;
 export type RaceId = (typeof R)[keyof typeof R];
 
@@ -97,7 +99,7 @@ export interface RaceDef {
   speed: number; // tiles per tick
   maxAge: number; // in game years
   repro: number; // reproduction chance per update
-  sprite: 'person' | 'sheep' | 'wolf' | 'bear' | 'dragon' | 'deer' | 'penguin' | 'camel' | 'scorpion' | 'snake' | 'snowwolf' | 'skeleton' | 'demon' | 'mage' | 'troll' | 'ogre' | 'whitewalker' | 'vampire' | 'kraken' | 'sandworm' | 'basilisk' | 'angel' | 'phoenix';
+  sprite: 'person' | 'sheep' | 'wolf' | 'bear' | 'dragon' | 'deer' | 'penguin' | 'camel' | 'scorpion' | 'snake' | 'snowwolf' | 'skeleton' | 'demon' | 'mage' | 'troll' | 'ogre' | 'whitewalker' | 'vampire' | 'kraken' | 'sandworm' | 'basilisk' | 'angel' | 'phoenix' | 'ent';
   /** 涌现物种标记：动态种化产生的新物种头顶 1px 突变色点（undefined = 预设原种） */
   dynTint?: string;
   /** 视觉基因组（涌现进化 v3）：动态物种携带 —— 色相/体型/角刺鬃尾/花纹全部程序化漂移 */
@@ -158,6 +160,7 @@ export const RACES: Record<number, RaceDef> = {
   [R.BASILISK]: { key: 'basilisk', name: '蛇怪', isCiv: false, hostile: true, flying: false, predator: true, undead: false, lavaImmune: false, reach: 1.4, hp: 90, dmg: 14, speed: 0.11, maxAge: 400, repro: 0, sprite: 'basilisk' },
   [R.ANGEL]: { key: 'angel', name: '天使', isCiv: false, hostile: false, flying: true, predator: false, undead: false, lavaImmune: true, hp: 240, dmg: 22, speed: 0.105, maxAge: 9999, repro: 0, sprite: 'angel', archetype: '光明使者：圣光治愈凡间众生，圣剑专为亡灵与恶魔出鞘' },
   [R.PHOENIX]: { key: 'phoenix', name: '凤凰', isCiv: false, hostile: false, flying: true, predator: false, undead: false, lavaImmune: true, hp: 200, dmg: 18, speed: 0.12, maxAge: 9999, repro: 0, sprite: 'phoenix', archetype: '浴火神鸟：烈焰为羽，火焰岩浆皆不能伤；陨落后自灰烬中重生（至多三次），第四次死亡方为真正的终焉' },
+  [R.ENT]: { key: 'ent', name: '树人', isCiv: false, hostile: false, flying: false, predator: false, undead: false, lavaImmune: false, hp: 320, dmg: 26, speed: 0.055, maxAge: 9999, repro: 0, sprite: 'ent', archetype: '森林守护者：古老的树皮巨人，游荡处播撒种子令森林扩张，并为林间生灵扑灭火魔；沉重的枝干会砸碎任何敢犯森林的黑暗' },
 };
 
 // ---------------- 种族系统 v2：种族关系（Race Relations） ----------------
