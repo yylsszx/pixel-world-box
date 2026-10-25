@@ -196,6 +196,20 @@ export function DivineDial() {
             <span className="h-1 w-9 rounded-full bg-[rgba(214,178,120,0.25)]" aria-hidden />
           </div>
 
+          {/* 选中工具速览：抽屉顶部常显当前工具名 + 一行描述（260ms 自动收回前仍可辨认所选）；
+              造物/动态工具若无描述字段则回退显示所属分类名 */}
+          {tool !== 'select' && activeDef && (
+            <div className="mb-1 flex items-center gap-2.5 px-1">
+              <PixelIcon icon={activeDef.icon} size={20} className="shrink-0" />
+              <div className="min-w-0">
+                <p className="truncate text-[11px] font-bold tracking-widest text-[#efc377]">{activeDef.label}</p>
+                <p className="truncate text-[9px] leading-tight text-[#a2957c]">
+                  {activeDef.desc || TAB_META.find((t) => t.id === activeDef.tab)?.label}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* 图腾行：观察图腾置首 + 六分类图腾（无文字；窄屏自动换行） */}
           <div className="flex flex-wrap items-center justify-center gap-3.5">
             {/* 观察图腾：回到纯看世界，选完即收（观察没有"选中反馈"可看，无需延迟） */}

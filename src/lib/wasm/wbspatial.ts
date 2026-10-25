@@ -236,7 +236,7 @@ class WbSpatial {
         if (d.isCiv) f |= F_CIV;
         if (d.undead) f |= F_UNDEAD;
         if (d.predator) f |= F_PREDATOR;
-        if (id === 6 || id === 10 || id === 11 || id === 12) f |= F_HERBIVORE; // SHEEP/DEER/PENGUIN/CAMEL
+        if (id === 6 || id === 10 || id === 11 || id === 12 || id === 33 || id === 34 || id === 35 || id === 37) f |= F_HERBIVORE; // SHEEP/DEER/PENGUIN/CAMEL + CHICKEN/PIG/RABBIT/FISH
         if (d.flying) f |= 32; // 飞行位：rust 地形伤害豁免读 f1 bit32（units.rs 水伤害检查）—— 之前漏写导致巨龙/天使在批内核下被“溺水”
         this.vRaceFlags[id] = f;
       }
@@ -772,7 +772,7 @@ class WbBatch {
         if (d.isCiv) f1 |= 2;
         if (d.undead) f1 |= 4;
         if (d.predator) f1 |= 8;
-        if (id === 6 || id === 10 || id === 11 || id === 12) f1 |= 16; // SHEEP/DEER/PENGUIN/CAMEL
+        if (id === 6 || id === 10 || id === 11 || id === 12 || id === 33 || id === 34 || id === 35 || id === 37) f1 |= 16; // SHEEP/DEER/PENGUIN/CAMEL + CHICKEN/PIG/RABBIT/FISH
         if (d.flying) f1 |= 32; // 飞行位：与 Stage-1 语义一致（rust 水伤害豁免读 f1 bit32）
         rf[id] = f1;
         let f2 = 0;

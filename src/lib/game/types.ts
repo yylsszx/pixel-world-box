@@ -20,6 +20,8 @@ export const T = {
   BURNT: 9,
   /** 冰面：暴风雪/白行者冻结的水面 —— 可行走、会消融（火/岩浆/暖气候） */
   ICE: 10,
+  /** 沼泽：高湿洼地的浑水湿地 —— 可行走（迟缓）、不燃、不建造 */
+  SWAMP: 11,
 } as const;
 export type Terrain = (typeof T)[keyof typeof T];
 
@@ -65,6 +67,23 @@ export const R = {
   LICH: 31,
   /** 九头沼泽巨蟒：斩首不死——断颈处萌发两条幼蛇；唯火焰烧灼可阻其再生 */
   HYDRA: 32,
+  // —— 八新动物（ID 33-40：28-32 让位给仓库线神话种族，保线上存档兼容）——
+  /** 鸡：村落草地的小型家禽 */
+  CHICKEN: 33,
+  /** 猪：村落草地的杂食家畜（掉肉大户） */
+  PIG: 34,
+  /** 兔：草地与森林边缘的机敏小兽，狐狸的猎物 */
+  RABBIT: 35,
+  /** 狐：森林猎手，捕食兔与鸡 */
+  FOX: 36,
+  /** 鱼：群游的小型水生动物，鲨鱼与水岸的猎物 */
+  FISH: 37,
+  /** 蟹：限邻水沙滩横行的小家伙 */
+  CRAB: 38,
+  /** 龟：海洋游荡的长寿浮游者 */
+  TURTLE: 39,
+  /** 鲨鱼：海洋顶级掠食者，捕食鱼群与游泳单位 */
+  SHARK: 40,
 } as const;
 export type RaceId = (typeof R)[keyof typeof R];
 
@@ -91,6 +110,8 @@ export interface RaceDef {
   lavaImmune: boolean;
   /** 水生：只能在水域移动（克拉肯），不溺水 */
   aquatic?: boolean;
+  /** 两栖滩涂（蟹）：水域 + 邻水沙滩均可活动 */
+  beach?: boolean;
   /** 沙泳：只能在沙/草/焦土潜行（沙虫） */
   sandswim?: boolean;
   /** 近战触及距离（默认 0.9；克拉肯的触手 2.4） */
@@ -102,7 +123,7 @@ export interface RaceDef {
   speed: number; // tiles per tick
   maxAge: number; // in game years
   repro: number; // reproduction chance per update
-  sprite: 'person' | 'sheep' | 'wolf' | 'bear' | 'dragon' | 'deer' | 'penguin' | 'camel' | 'scorpion' | 'snake' | 'snowwolf' | 'skeleton' | 'demon' | 'mage' | 'troll' | 'ogre' | 'whitewalker' | 'vampire' | 'kraken' | 'sandworm' | 'basilisk' | 'angel' | 'phoenix' | 'ent' | 'lich' | 'hydra';
+  sprite: 'person' | 'sheep' | 'wolf' | 'bear' | 'dragon' | 'deer' | 'penguin' | 'camel' | 'scorpion' | 'snake' | 'snowwolf' | 'skeleton' | 'demon' | 'mage' | 'troll' | 'ogre' | 'whitewalker' | 'vampire' | 'kraken' | 'sandworm' | 'basilisk' | 'angel' | 'phoenix' | 'ent' | 'lich' | 'hydra' | 'chicken' | 'pig' | 'rabbit' | 'fox' | 'fish' | 'crab' | 'turtle' | 'shark';
   /** 涌现物种标记：动态种化产生的新物种头顶 1px 突变色点（undefined = 预设原种） */
   dynTint?: string;
   /** 视觉基因组（涌现进化 v3）：动态物种携带 —— 色相/体型/角刺鬃尾/花纹全部程序化漂移 */
@@ -161,11 +182,21 @@ export const RACES: Record<number, RaceDef> = {
   [R.KRAKEN]: { key: 'kraken', name: '克拉肯', isCiv: false, hostile: true, flying: false, predator: true, undead: false, lavaImmune: false, aquatic: true, reach: 2.4, hp: 520, dmg: 30, speed: 0.07, maxAge: 9999, repro: 0, sprite: 'kraken' },
   [R.SANDWORM]: { key: 'sandworm', name: '沙虫', isCiv: false, hostile: true, flying: false, predator: true, undead: false, lavaImmune: false, sandswim: true, reach: 1.6, hp: 420, dmg: 40, speed: 0.14, maxAge: 9999, repro: 0, sprite: 'sandworm' },
   [R.BASILISK]: { key: 'basilisk', name: '蛇怪', isCiv: false, hostile: true, flying: false, predator: true, undead: false, lavaImmune: false, reach: 1.4, hp: 90, dmg: 14, speed: 0.11, maxAge: 400, repro: 0, sprite: 'basilisk' },
+  // —— 神话种族（仓库线：光明/浴火/守护/死灵/九头）——
   [R.ANGEL]: { key: 'angel', name: '天使', isCiv: false, hostile: false, flying: true, predator: false, undead: false, lavaImmune: true, hp: 240, dmg: 22, speed: 0.105, maxAge: 9999, repro: 0, sprite: 'angel', archetype: '光明使者：圣光治愈凡间众生，圣剑专为亡灵与恶魔出鞘' },
   [R.PHOENIX]: { key: 'phoenix', name: '凤凰', isCiv: false, hostile: false, flying: true, predator: false, undead: false, lavaImmune: true, hp: 200, dmg: 18, speed: 0.12, maxAge: 9999, repro: 0, sprite: 'phoenix', archetype: '浴火神鸟：烈焰为羽，火焰岩浆皆不能伤；陨落后自灰烬中重生（至多三次），第四次死亡方为真正的终焉' },
   [R.ENT]: { key: 'ent', name: '树人', isCiv: false, hostile: false, flying: false, predator: false, undead: false, lavaImmune: false, hp: 320, dmg: 26, speed: 0.055, maxAge: 9999, repro: 0, sprite: 'ent', archetype: '森林守护者：古老的树皮巨人，游荡处播撒种子令森林扩张，并为林间生灵扑灭火魔；沉重的枝干会砸碎任何敢犯森林的黑暗' },
   [R.LICH]: { key: 'lich', name: '巫妖', isCiv: false, hostile: true, flying: false, predator: true, undead: true, lavaImmune: false, hp: 260, dmg: 20, speed: 0.07, maxAge: 9999, repro: 0, sprite: 'lich', archetype: '不朽的死灵领主：魂魄封于命匣故永生不灭；收割生命的气息，将战场骸骨唤起编入永夜军团——圣光风暴是其天敌' },
   [R.HYDRA]: { key: 'hydra', name: '九头蛇', isCiv: false, hostile: true, flying: false, predator: true, undead: false, lavaImmune: false, hp: 500, dmg: 30, speed: 0.05, maxAge: 9999, repro: 0, sprite: 'hydra', archetype: '九头沼泽巨蟒：斩首不死——被杀时断颈处萌发两条幼蛇，越杀越多；唯有火焰烧灼断颈（火中死亡/岩浆吞噬）方能阻止再生，凤凰与烈焰是其天敌' },
+  // —— 八新动物（陆地家禽野兽 + 水生鱼蟹龟鲨）——
+  [R.CHICKEN]: { key: 'chicken', name: '鸡', isCiv: false, hostile: false, flying: false, predator: false, undead: false, lavaImmune: false, hp: 10, dmg: 1, speed: 0.05, maxAge: 14, repro: 0.011, sprite: 'chicken' },
+  [R.PIG]: { key: 'pig', name: '猪', isCiv: false, hostile: false, flying: false, predator: false, undead: false, lavaImmune: false, hp: 30, dmg: 2, speed: 0.055, maxAge: 22, repro: 0.008, sprite: 'pig' },
+  [R.RABBIT]: { key: 'rabbit', name: '兔', isCiv: false, hostile: false, flying: false, predator: false, undead: false, lavaImmune: false, hp: 12, dmg: 1, speed: 0.13, maxAge: 12, repro: 0.014, sprite: 'rabbit' },
+  [R.FOX]: { key: 'fox', name: '狐', isCiv: false, hostile: false, flying: false, predator: true, undead: false, lavaImmune: false, hp: 28, dmg: 8, speed: 0.105, maxAge: 18, repro: 0.004, sprite: 'fox' },
+  [R.FISH]: { key: 'fish', name: '鱼', isCiv: false, hostile: false, flying: false, predator: false, undead: false, lavaImmune: false, aquatic: true, hp: 6, dmg: 0.5, speed: 0.075, maxAge: 10, repro: 0.016, sprite: 'fish' },
+  [R.CRAB]: { key: 'crab', name: '蟹', isCiv: false, hostile: false, flying: false, predator: false, undead: false, lavaImmune: false, aquatic: true, beach: true, hp: 16, dmg: 3, speed: 0.03, maxAge: 16, repro: 0.007, sprite: 'crab' },
+  [R.TURTLE]: { key: 'turtle', name: '龟', isCiv: false, hostile: false, flying: false, predator: false, undead: false, lavaImmune: false, aquatic: true, hp: 40, dmg: 1, speed: 0.028, maxAge: 120, repro: 0.003, sprite: 'turtle' },
+  [R.SHARK]: { key: 'shark', name: '鲨鱼', isCiv: false, hostile: false, flying: false, predator: true, undead: false, lavaImmune: false, aquatic: true, reach: 1.3, hp: 85, dmg: 18, speed: 0.1, maxAge: 40, repro: 0.002, sprite: 'shark' },
 };
 
 // ---------------- 种族系统 v2：种族关系（Race Relations） ----------------
@@ -268,6 +299,8 @@ export const JOBS: JobDef[] = [
   { key: 'builder', name: '建筑师', desc: '加速王国建造新房屋', hpMul: 1.15, dmgMul: 0.95, speedMul: 1.05, weight: 5, color: '#ff9b2d' },
   { key: 'merchant', name: '商人', desc: '往来集市贸易，为王國积累财富', hpMul: 1, dmgMul: 0.9, speedMul: 1.2, weight: 2, color: '#6fd66f' },
   { key: 'noble', name: '贵族', desc: '居于王都，供养国库', hpMul: 1.25, dmgMul: 1.1, speedMul: 1, weight: 1, color: '#b56cf0' },
+  // 国王：唯一（建国/继承加冕产生；weight 0 = 永不自然出生），hp/dmg ×1.5
+  { key: 'king', name: '国王', desc: '一国之主：驾崩则举国缟素，继承者加冕', hpMul: 1.5, dmgMul: 1.5, speedMul: 1, weight: 0, color: '#ffd700' },
 ];
 export type JobId = number; // index into JOBS
 export const JOB_KEY: Record<string, number> = Object.fromEntries(JOBS.map((j, i) => [j.key, i]));
@@ -299,9 +332,10 @@ export const BUILDING_DEFS: BuildingDef[] = [
   { key: 'library', name: '图书馆', hp: 110, cost: 18, desc: '每年产出知识，解锁高阶建筑' },
   { key: 'market', name: '集市', hp: 100, cost: 12, desc: '每年产出财富' },
   { key: 'temple', name: '神殿', hp: 140, cost: 22, needKnowledge: 10, desc: '治疗光环庇佑周边单位' },
+  { key: 'wall', name: '城墙', hp: 200, cost: 2, desc: '环都城防：敌方陆行单位不可逾越，守军借墙而战' },
 ];
 export const BUILD_KINDS = {
-  HOUSE: 1, CAPITAL: 2, TOWER: 3, FARM: 4, BARRACKS: 5, CASTLE: 6, PORT: 7, LIBRARY: 8, MARKET: 9, TEMPLE: 10,
+  HOUSE: 1, CAPITAL: 2, TOWER: 3, FARM: 4, BARRACKS: 5, CASTLE: 6, PORT: 7, LIBRARY: 8, MARKET: 9, TEMPLE: 10, WALL: 11,
 } as const;
 /** 可被占领（易帜而非摧毁）的建筑 */
 export const CAPTURABLE = new Set<number>([BUILD_KINDS.HOUSE, BUILD_KINDS.FARM, BUILD_KINDS.MARKET, BUILD_KINDS.BARRACKS, BUILD_KINDS.PORT]);
@@ -411,6 +445,20 @@ export interface Unit {
   fam?: number;
   /** 家族代数（初代 = 1；子代 = 母代 +1 —— 「第 N 代」展示） */
   fgn?: number;
+  // —— 王权（国王实体：加冕时置 true + job 'king'；旧档缺省 = 平民）——
+  /** 是否国王（一国至多一位；驾崩触发继承与稳定度下降） */
+  king?: boolean;
+  // ---------------- 神之手指（抓取投掷：瞬态不入档） ----------------
+  /** 被抓起/眩晕剩余 tick（>0 = AI 暂停 + 免疫地面伤害；抓取时由 moveGrab 持续刷新） */
+  grab?: number;
+  /** 投掷飞行剩余 tick（>0 = 抛物线飞行中） */
+  thrT?: number;
+  /** 投掷水平速度（tile/tick） */
+  thrVx?: number;
+  thrVy?: number;
+  /** 投掷起点（落地伤害按飞行距离结算） */
+  thrX0?: number;
+  thrY0?: number;
 }
 
 /** 家族谱系（Lineage）：血脉传承的名门统计体（engine.families 注册表） */
@@ -478,7 +526,10 @@ export interface Civ {
   frontier: number[]; // expansion frontier
   houses: number;
   capital: number; // tile index or -1
+  /** 国王名（词法生成；加冕实体单位后与国王单位名同步） */
   kingName: string;
+  /** 现任国王单位 id（undefined/-1 = 尚未加冕或已驾崩待继承；crownVacantTick 自动补冕 —— 旧档王国亦然） */
+  kingId?: number;
   alive: boolean;
   banner: string; // one-word banner word
   /** 下一次允许派出殖民船的 tick */
@@ -528,7 +579,7 @@ export interface Civ {
   ideas?: string[];
 }
 
-export type BuildKind = number; // 0 none, 1 house, 2 capital, 3 tower, 4 farm, 5 barracks, 6 castle, 7 port, 8 library, 9 market, 10 temple
+export type BuildKind = number; // 0 none, 1 house, 2 capital, 3 tower, 4 farm, 5 barracks, 6 castle, 7 port, 8 library, 9 market, 10 temple, 11 wall
 
 // ---------------- 军团方阵（Army Formation System） ----------------
 export type ArmyState =
@@ -867,6 +918,12 @@ export type WorldEventKind =
   | 'extinct'
   // —— 涌现社会内核：兽群溃逃雪崩 / 血仇得报 / 家族里程碑 ——
   | 'panic' | 'revenge' | 'lineage'
+  // —— 王权（加冕/驾崩/继承）——
+  | 'king'
+  // —— 神话种族（光明/浴火/守护/死灵/九头）——
+  | 'angel' | 'phoenix' | 'ent' | 'lich' | 'hydra'
+  // —— 圣光风暴（光明阵营神力）——
+  | 'holystorm'
   // —— v40：神谕 Agent（法则书写/宣告/热改参数） ——
   | 'oracle'
   // —— 季节 × 万物（换季宣告/生物节律） ——
@@ -1434,6 +1491,8 @@ export interface WorldLaws {
   dragonSpawns: boolean;
   /** 僵尸咬死的单位转化为僵尸 */
   zombieInfect: boolean;
+  /** 僵尸病毒：瘟疫致死的单位有 35% 概率尸变为僵尸（旧档缺字段按 true 处理 —— 由 DEFAULT_LAWS 合并兜底） */
+  zombieVirus: boolean;
   /** 亡者复生：自然死亡/战死者小概率化为骷髅 */
   undeadRise: boolean;
   /** 大王国可能爆发叛乱分裂 */
@@ -1456,6 +1515,7 @@ export const DEFAULT_LAWS: WorldLaws = {
   banditRaids: true,
   dragonSpawns: false,
   zombieInfect: true,
+  zombieVirus: true,
   undeadRise: false,
   rebels: true,
   tectonics: true,

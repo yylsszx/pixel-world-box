@@ -1,6 +1,6 @@
 // ============ WorldBox Replica — Simulation Engine ============
-import type { Army, ArmyState, Building, CasusKind, Civ, Cyclone, Directive, DirectiveKind, Effect, EmergentWeapon, FxPrefs, Gene, GroundItem, ItemDef, ItemKind, BloodDecal, CorpseDecal, OverlayMode, RaceDef, SaveData, SaveDataV1, SaveDataV2, SoundKind, SpeciesEco, StatsSnapshot, ToastMsg, TriggerCond, TriggerDef, TriggerRow, Unit, WarInfo, WeaponDefense, WeaponDoctrine, WorldEvent, WorldEventKind, WorldLaws, WorldWarState, Alliance, Family } from './types';
-import { T, R, RACES, TRAITS, CIV_RACES, DEFAULT_LAWS, ITEM_DEFS, describeCond, JOBS, BUILDING_DEFS, BUILD_KINDS, CAPTURABLE, SLOT_FIELD, SLOT_ORDER, RARITY_META, BEST_BY_SLOT, CASUS_META, RACE_REL_BASE, ALLIANCE_COLORS } from './types';
+import type { Army, ArmyState, Building, CasusKind, Civ, Cyclone, Directive, DirectiveKind, Effect, EmergentWeapon, FxPrefs, Gene, GroundItem, ItemDef, ItemKind, BloodDecal, CorpseDecal, OverlayMode, RaceDef, RaceId, SaveData, SaveDataV1, SaveDataV2, SoundKind, SpeciesEco, StatsSnapshot, ToastMsg, TriggerCond, TriggerDef, TriggerRow, Unit, WarInfo, WeaponDefense, WeaponDoctrine, WorldEvent, WorldEventKind, WorldLaws, WorldWarState, Alliance, Family } from './types';
+import { T, R, RACES, TRAITS, CIV_RACES, DEFAULT_LAWS, ITEM_DEFS, describeCond, JOBS, JOB_KEY, BUILDING_DEFS, BUILD_KINDS, CAPTURABLE, SLOT_FIELD, SLOT_ORDER, RARITY_META, BEST_BY_SLOT, CASUS_META, RACE_REL_BASE, ALLIANCE_COLORS } from './types';
 import { EVO_KIND_META, applyEmTechMods, describeVis, inventIdea, inventTech, inventTrait, invalidateVisCache, mutateVis, tupleToVis, visFromGene, visToTuple } from './emergence';
 import type { EmModKey, EmTech, EvoKind, EvoNode, IdeaDef, VisGenome } from './emergence';
 import {
@@ -71,7 +71,7 @@ function encodeRiverDir(dx: number, dy: number): number {
 }
 
 // ---------- base64 编解码（分块避免 String.fromCharCode 参数上限） ----------
-function bytesToB64(bytes: Uint8Array): string {
+function bytesToB64(bytes: Uint8Array<ArrayBuffer>): string {
   let s = '';
   const CHUNK = 0x8000;
   for (let i = 0; i < bytes.length; i += CHUNK) {
@@ -79,7 +79,7 @@ function bytesToB64(bytes: Uint8Array): string {
   }
   return btoa(s);
 }
-function b64ToBytes(b64: string, expect: number): Uint8Array {
+function b64ToBytes(b64: string, expect: number): Uint8Array<ArrayBuffer> {
   const s = atob(b64);
   if (expect > 0 && s.length !== expect) throw new Error(`存档字节数不匹配: 期望 ${expect}, 实际 ${s.length}`);
   const out = new Uint8Array(s.length);
@@ -103,7 +103,7 @@ function rleEncode(arr: Uint8Array): string {
   return bytesToB64(new Uint8Array(u16.buffer, u16.byteOffset, u16.byteLength));
 }
 /** RLE base64 → Uint8Array；expect 为解压后应有长度（校验总游程） */
-function rleDecode(b64: string, expect: number): Uint8Array {
+function rleDecode(b64: string, expect: number): Uint8Array<ArrayBuffer> {
   const raw = b64ToBytes(b64, 0); // 0 = 长度未知（校验推迟到游程累计）
   const aligned = new Uint16Array(Math.floor(raw.length / 2));
   for (let k = 0; k < aligned.length; k++) aligned[k] = raw[k * 2] | (raw[k * 2 + 1] << 8);
@@ -123,7 +123,7 @@ function rleDecode(b64: string, expect: number): Uint8Array {
 }
 
 // ---------- v2 列式单位序列化：[header 键名数组, ...行数组]（键名只存一次） ----------
-  const UNIT_FIELDS = ['id', 'race', 'civ', 'x', 'y', 'tx', 'ty', 'hp', 'maxHp', 'dmg', 'speed', 'age', 'maxAge', 'kills', 'cd', 'trait', 'job', 'infected', 'flip', 'name', 'hurt', 'breath', 'parity', 'dead', 'boat', 'boatTTL', 'caravan', 'wep', 'arm', 'hlm', 'shd', 'bts', 'rng', 'amu', 'army', 'gene', 'food', 'fam', 'fgn', 'gIds', 'gVal'] as const;
+  const UNIT_FIELDS = ['id', 'race', 'civ', 'x', 'y', 'tx', 'ty', 'hp', 'maxHp', 'dmg', 'speed', 'age', 'maxAge', 'kills', 'cd', 'trait', 'job', 'king', 'infected', 'flip', 'name', 'hurt', 'breath', 'parity', 'dead', 'boat', 'boatTTL', 'caravan', 'wep', 'arm', 'hlm', 'shd', 'bts', 'rng', 'amu', 'army', 'gene', 'food', 'fam', 'fgn', 'gIds', 'gVal'] as const;
 
 function unitsToRows(units: Unit[]): unknown[][] {
   const rows: unknown[][] = [[...UNIT_FIELDS]];
@@ -156,12 +156,12 @@ function rowsToUnits(rows: unknown[][]): Unit[] {
 
 export class GameEngine {
   seed = 1;
-  terrain = new Uint8Array(W * H);
-  variant = new Uint8Array(W * H);
-  owner = new Int16Array(W * H).fill(-1);
-  building = new Uint8Array(W * H);
-  fire = new Uint8Array(W * H);
-  radiate = new Uint8Array(W * H);
+  terrain: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
+  variant: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
+  owner: Int16Array<ArrayBuffer> = new Int16Array(W * H).fill(-1);
+  building: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
+  fire: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
+  radiate: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
 
   fireSet = new Set<number>();
   regrow = new Map<number, number>();
@@ -657,8 +657,8 @@ export class GameEngine {
   private fireDone: number[] = [];
 
   /** 气候场（生成时量化，读档时按 seed 重算——不入存档） */
-  tempMap = new Uint8Array(W * H);
-  moistMap = new Uint8Array(W * H);
+  tempMap: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
+  moistMap: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
   /** 地图覆盖模式（政治/温度/湿度）与覆盖层离屏画布 */
   overlayMode: OverlayMode = 'none';
   overlayCanvas!: HTMLCanvasElement;
@@ -1126,11 +1126,12 @@ export class GameEngine {
     }
   }
 
-  /** 记仇：目睹同族被杀 → 对凶手记账（同种 +1.0 / 同国 +1.6 / 血亲 +2.6；≤4 条 LRU 挤最弱） */
-  private addGrudge(w: Unit, killer: Unit, victim: Unit) {
+  /** 记仇：目睹同族被杀 → 对凶手记账（同种 +1.0 / 同国 +1.6 / 血亲 +2.6；≤4 条 LRU 挤最弱；弑君 ×mul） */
+  private addGrudge(w: Unit, killer: Unit, victim: Unit, mul = 1) {
     let v = 1.0;
     if (victim.civ >= 0 && w.civ === victim.civ) v = 1.6;
     if (w.fam != null && w.fam === victim.fam) v = 2.6;
+    v *= mul;
     const ids = (w.gIds ?? (w.gIds = []));
     const vals = (w.gVal ?? (w.gVal = []));
     const i = ids.indexOf(killer.id);
@@ -1152,6 +1153,21 @@ export class GameEngine {
    *  幸存者记下狼的仇 → 复仇优先索敌 + 仇恨压倒恐惧（战或逃修正）→ 世仇网络 */
   private witnessDeath(killer: Unit, victim: Unit) {
     if (!RACES[victim.race]) return;
+    // —— 弑君之仇：国仇加权（目击者血仇 ×1.8 + 两国关系重挫 + 记入战败耻辱 → 复仇战争的理由）——
+    if (victim.king && victim.civ >= 0) {
+      for (const w of this.units) {
+        if (w.dead || w.civ !== victim.civ) continue;
+        if (Math.hypot(w.x - victim.x, w.y - victim.y) > 14) continue; // 疆内闻讯（全域同悲）
+        w.panic = Math.min(1, (w.panic ?? 0) + 0.5);
+      }
+      const kc = killer.civ >= 0 ? this.civs[killer.civ] : null;
+      if (kc && kc.alive && killer.civ !== victim.civ) {
+        const key = pairKey(victim.civ, killer.civ);
+        this.rel.set(key, Math.max(-100, (this.rel.get(key) ?? 0) - 24));
+        this.tension.set(key, Math.min(100, (this.tension.get(key) ?? 0) + 30));
+        this.warShame.set(key, victim.civ); // 弑君者被记入耻辱簿（复仇宣战的种子）
+      }
+    }
     const cx = Math.min(this.bw - 1, Math.max(0, (victim.x / 4) | 0));
     const cy = Math.min(this.bh - 1, Math.max(0, (victim.y / 4) | 0));
     const fierce = Math.min(3, killer.kills / 6); // 凶手连杀威慑
@@ -1172,8 +1188,8 @@ export class GameEngine {
           if (w.army != null) inc *= 0.4;
           w.panic = Math.min(1, (w.panic ?? 0) + inc);
           WB.syncPanic(w); // WASM 镜像：目击者恐慌外源变异同步
-          // —— 血仇记账（血亲之死，永志不忘） ——
-          this.addGrudge(w, killer, victim);
+          // —— 血仇记账（血亲之死，永志不忘）——
+          this.addGrudge(w, killer, victim, victim.king ? 1.8 : 1);
         }
       }
     }
@@ -1479,7 +1495,7 @@ export class GameEngine {
    * 按在世单位实时统计，存档往返后编号自然延续；王国名也用同一机制。
    */
   uniqueName(race: number): string {
-    const base = unitName(race, this.rng);
+    const base = unitName(race as RaceId, this.rng);
     // Task 42-a：原 startsWith(base + ' ') 每个单位拼接一次临时串 → 拆为长度+首字符判定免拼接
     const bl = base.length;
     let n = 0;
@@ -1584,6 +1600,57 @@ export class GameEngine {
     return civ.id;
   }
 
+  // ---------------- 王权体系（国王实体：加冕 / 驾崩 / 继承） ----------------
+
+  /** 加冕：指定单位成为一国之君（job 'king'，hp/dmg ×1.5 —— 经 setJob 相对换算保血量比例） */
+  crownUnit(civ: Civ, u: Unit, announce: boolean) {
+    if (!civ.alive || u.dead || u.civ !== civ.id || !RACES[u.race].isCiv) return;
+    if (u.king && civ.kingId === u.id) return; // 已在位
+    u.king = true;
+    WBB.touchMeta(); // job/king 列写点收口
+    this.setJob(u, JOB_KEY.king);
+    civ.kingId = u.id;
+    civ.kingName = u.name;
+    if (announce) {
+      this.addEvent('king', `${u.name} 在「${civ.name}」的臣民拥戴下加冕为王`, { colorHex: civ.colorHex, x: u.x, y: u.y });
+      this.toast(`「${civ.name}」新王 ${u.name} 加冕`, 'good');
+    }
+  }
+
+  /** 王位空缺补冕（civsTick 每 40 tick 扫描）：建国首王 / 旧档王国自动补冕（静默）/ 继承（播报） */
+  crownVacantTick() {
+    for (const civ of this.civs) {
+      if (!civ.alive || civ.pop <= 0) continue;
+      const kid = civ.kingId;
+      if (kid != null && kid !== -1) {
+        const cur = this.unitById.get(kid);
+        if (cur && !cur.dead && cur.king && cur.civ === civ.id) continue; // 在位
+      }
+      const succession = kid === -1; // 先王驾崩过 → 这次是继承（播报）；undefined = 旧档/新国首冕（静默）
+      // 继承人遴选：贵族 > 战士/弓手 > 其他；附带少量随机（权柄与时运）
+      let best: Unit | null = null;
+      let bestScore = -1;
+      for (const u of this.units) {
+        if (u.dead || u.civ !== civ.id || u.boat) continue;
+        const job = u.job ?? 0;
+        const score = (job === 6 ? 3 : job === 2 || job === 3 ? 2 : job === 5 ? 1.5 : 1) + this.rng() * 0.9;
+        if (score > bestScore) { bestScore = score; best = u; }
+      }
+      if (best) this.crownUnit(civ, best, succession);
+    }
+  }
+
+  /** 国王驾崩：纪事「驾崩」+ 稳定度下挫 + 王位空缺（继承由 crownVacantTick 补冕） */
+  onKingDeath(u: Unit) {
+    const civ = this.civs[u.civ];
+    u.king = false;
+    if (!civ || !civ.alive) return;
+    if (civ.kingId === u.id) civ.kingId = -1;
+    civ.stability = Math.max(0, (civ.stability ?? 70) - 18);
+    this.addEvent('king', `「${civ.name}」的国王 ${civ.kingName} 驾崩了——举国缟素，王位悬而未决`, { colorHex: civ.colorHex, x: u.x, y: u.y });
+    this.toast(`「${civ.name}」国王驾崩，朝野震动`, 'danger');
+  }
+
   /** 领土播种：以 (cx,cy) 为圆心圈占 5x5 无主沃土（建国与幽灵王国自愈共用）。
    *  原地无沃土（成员困在山顶/孤地）时螺旋外扩（最远 14 格）找最近可圈之地。 */
   seedTerritory(civ: Civ, cx: number, cy: number) {
@@ -1671,9 +1738,68 @@ export class GameEngine {
     this.bHp.set(i, Math.round((BUILDING_DEFS[kind]?.hp ?? 70) * this.techModsOf(civId).bhp));
     this.damagedSet.delete(i);
     const civ = this.civs[civId];
-    if (civ) civ.houses++;
-    // 深度打磨：建筑落成即连路（村庄脉络自然生长；首都/首栋为路网根节点）
-    this.connectRoad(i, civId);
+    if (civ && kind !== BUILD_KINDS.WALL) civ.houses++; // 城墙不计入住宅（不虚增人口容量）
+    // 深度打磨：建筑落成即连路（村庄脉络自然生长；首都/首栋为路网根节点）——城墙不铺路
+    if (kind !== BUILD_KINDS.WALL) this.connectRoad(i, civId);
+  }
+
+  /** 城墙圈（城防体系）：有 fortification 科技的王国环绕首都修一圈城墙（半径 3-5 格按城市规模）。
+   *  每次 wallTick 分批补砌 ≤3 段（金库出账）；海岸/山体豁口天然留门。 */
+  wallTick() {
+    const cost = BUILDING_DEFS[BUILD_KINDS.WALL]?.cost ?? 2;
+    for (const civ of this.civs) {
+      if (!civ.alive || civ.pop < 8 || civ.capital < 0) continue;
+      if (!(civ.techs ?? []).includes('fortification')) continue;
+      if ((civ.gold ?? 0) < cost) continue;
+      const cx = this.tileX(civ.capital);
+      const cy = this.tileY(civ.capital);
+      const radius = Math.min(5, 3 + Math.floor(civ.houses / 14)); // 半径 3-5 随城市规模
+      const gaps: number[] = [];
+      for (let k = 0; k < 72; k++) {
+        const ang = (k / 72) * Math.PI * 2;
+        const xx = Math.round(cx + Math.cos(ang) * radius);
+        const yy = Math.round(cy + Math.sin(ang) * radius);
+        if (xx < 1 || yy < 1 || xx >= W - 1 || yy >= H - 1) continue;
+        const i = idx(xx, yy);
+        if (this.building[i] > 0) continue; // 已有墙/建筑占位
+        if (this.owner[i] !== civ.id) continue; // 只在己方领土砌
+        const tt = this.terrain[i];
+        if (!buildable(tt) || tt === T.FOREST) continue; // 城墙立于实土（buildable 已排除沼泽/水域）
+        gaps.push(i);
+      }
+      // 圈完整（缺口 ≤3：海岸与山体豁口留作城门）则不再砌
+      if (gaps.length === 0 || gaps.length <= 3) continue;
+      let built = 0;
+      for (const i of gaps) {
+        if (built >= 3) break;
+        if ((civ.gold ?? 0) < cost) break;
+        this.buildBuilding(i, BUILD_KINDS.WALL, civ.id);
+        civ.gold = (civ.gold ?? 0) - cost;
+        built++;
+      }
+      if (built > 0 && this.fxPrefs.ambience) {
+        const b0 = this.buildings[this.bIdx.get(gaps[0]) ?? -1];
+        if (b0) this.fx('hammer', b0.x + 0.5, b0.y + 0.5, 14);
+      }
+    }
+  }
+
+  /** 守军城墙防御加成：单位（同格或邻格）有己方城墙 → 受击减伤（castle战/围城战守方优势） */
+  wallDefenseOf(u: Unit): number {
+    if (u.civ < 0) return 1;
+    const x = Math.floor(u.x);
+    const y = Math.floor(u.y);
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+        const i = idx(xx, yy);
+        if (this.building[i] !== BUILD_KINDS.WALL) continue;
+        const b = this.buildings[this.bIdx.get(i) ?? -1];
+        if (b && b.civ === u.civ) return 0.72; // 借墙而战：伤害减免 28%
+      }
+    }
+    return 1;
   }
 
   // ---------------- 道路网络（深度打磨：村庄脉络） ----------------
@@ -1958,6 +2084,8 @@ export class GameEngine {
     if (a.race === R.SCORPION && this.isHerbivoreRace(b.race)) return true;
     // 蛇也是沙漠猎手：猎小型食草动物与蝎子（蛇吃蝎子是沙漠生态的真实关系）
     if (a.race === R.SNAKE && (this.isHerbivoreRace(b.race) || b.race === R.SCORPION)) return true;
+    // 鲨鱼：捕食鱼群（isHerbivoreRace 含鱼）与落水的游泳单位（陆行种族在水里就是猎物）
+    if (a.race === R.SHARK && (b.race === R.FISH || (!rb.aquatic && !rb.flying && isWater(this.terrain[idx(Math.floor(b.x), Math.floor(b.y))])))) return true;
     if (a.civ >= 0 && b.civ >= 0 && a.civ !== b.civ) return this.atWar(a.civ, b.civ);
     return false;
   }
@@ -1966,6 +2094,8 @@ export class GameEngine {
    *  v5：全新造物（无血统链）用 eco 角色锚裁决——explicit pred/neutral 不入猎物 */
   isHerbivoreRace(race: number): boolean {
     if (race === R.SHEEP || race === R.DEER || race === R.PENGUIN || race === R.CAMEL) return true;
+    // 八新动物：鸡/猪/兔（陆）与鱼（水）均为猎物链底层（狐猎兔鸡、鲨猎鱼）
+    if (race === R.CHICKEN || race === R.PIG || race === R.RABBIT || race === R.FISH) return true;
     const d = this.dynRaces.get(race);
     if (!d) return false;
     if (d.eco === 'herb') return true;
@@ -1983,6 +2113,15 @@ export class GameEngine {
     if (race === R.SCORPION) return 60;
     if (race === R.SNAKE) return 80;
     if (race === R.SNOWWOLF) return 70;
+    // 八新动物种群上限（鸡猪兔群居快繁；鱼群最大；鲨鱼稀缺）
+    if (race === R.CHICKEN) return 150;
+    if (race === R.PIG) return 120;
+    if (race === R.RABBIT) return 220;
+    if (race === R.FOX) return 70;
+    if (race === R.FISH) return 280;
+    if (race === R.CRAB) return 90;
+    if (race === R.TURTLE) return 90;
+    if (race === R.SHARK) return 40;
     const d = this.dynRaces.get(race);
     if (!d) return 40;
     if (d.cap) return d.cap;
@@ -1995,6 +2134,8 @@ export class GameEngine {
   /** 捕食物种判定（含动态演化后裔：狼/熊/蛇/蝎/雪狼的种化后继仍参与捕食压力；全新造物用 eco 锚） */
   isPredatorRace(race: number): boolean {
     if (race === R.WOLF || race === R.SNOWWOLF || race === R.BEAR || race === R.SCORPION || race === R.SNAKE) return true;
+    // 八新动物：狐（陆猎手）与鲨（海猎手）参与捕食压力
+    if (race === R.FOX || race === R.SHARK) return true;
     const d = this.dynRaces.get(race);
     if (!d) return false;
     if (d.eco === 'pred') return true;
@@ -2566,6 +2707,12 @@ export class GameEngine {
       u.dpx = Math.round(u.rx * 8) / 4;
       u.dpy = Math.round(u.ry * 8) / 4;
     }
+    // —— 神之手指保活：抓取悬停期间即使指针不动，被抓单位也保持 AI 暂停（逐帧刷新） ——
+    if (this.grabId != null) {
+      const g = this.unitById.get(this.grabId);
+      if (g && !g.dead && (g.thrT ?? 0) <= 0) g.grab = Math.max(g.grab ?? 0, 6);
+      else if (!g || g.dead) this.grabId = null;
+    }
     // —— 军旗插值（Task 48-B3）：军团每 5 tick 才行军一次，军旗直读坐标会以 3 次/秒跳变 ——
     // 质感工程 v3：同样吸附到整数设备像素（tile 坐标 1/8 网格）保持锐利
     for (const a of this.armies) {
@@ -3021,6 +3168,14 @@ export class GameEngine {
     for (let i = this.units.length - 1; i >= 0; i--) {
       const u = this.units[i];
       if (!u.dead) continue;
+      // —— 僵尸病毒（世界法则，旧档缺字段按 true）：瘟疫致死 35% 尸变（复用 zombify 原地转化）——
+      if (u.infected && this.laws.zombieVirus !== false && !RACES[u.race].undead && !RACES[u.race].aquatic && !RACES[u.race].flying && this.rng() < 0.35) {
+        u.infected = false;
+        this.zombify(u);
+        continue; // 原地复生为僵尸：不走死亡结算（zombify 已把 dead 置回 false）
+      }
+      // —— 王权：国王驾崩（纪事 + 稳定度下挫 + 继承加冕）——
+      if (u.king && u.civ >= 0) this.onKingDeath(u);
       // —— 凤凰：浴火重生（灰烬涅槃倒数，至多三次；第四次死亡魂飞魄散走常规收尸）——
       // 跳过骷髅/血泊/宝藏/家族吊唁全套常规死亡反馈：神鸟陨落只余一堆渐燃的灰
       if (u.race === R.PHOENIX && (u.rebirths ?? 0) < 3) {
@@ -3106,6 +3261,10 @@ export class GameEngine {
       }
       // —— 战争缴获与巨怪宝藏（Task 34 去虚务实）：装备随死者落回大地 ——
       //    战场成为武器库（胜者拾取战利品再武装），巨怪巢穴藏着宝物——物品系统自然循环，不再只靠玩家手刷宝箱
+      // —— 肉掉落：普通动物（非文明/非巨怪/非亡灵）死亡掉 1-3 块肉，拾食链的源头 ——
+      if (!RACES[u.race].isCiv && !GameEngine.MONSTER_LOOT.has(u.race) && !RACES[u.race].undead && this.rng() < 0.85) {
+        this.dropMeat(u.x, u.y, 1 + this.rng() * 2 + (u.race === R.PIG ? 1 : 0));
+      }
       if (this.items.length < 170) {
         const boss = GameEngine.MONSTER_LOOT.has(u.race);
         if (u.wep && this.rng() < 0.35) {
@@ -3127,6 +3286,8 @@ export class GameEngine {
   updateUnit(u: Unit) {
     const def = RACES[u.race];
     if (u.hurt > 0) u.hurt--;
+    // —— 神之手指：被抓起/掷飞/落地的眩晕单位暂停 AI（免疫地面伤害），由 beginGrab/moveGrab/endGrab 驱动 ——
+    if ((u.grab ?? 0) > 0) { this.grabbedTick(u); return; }
     // 殖民船：独立的航海逻辑（不参战/不覆水伤害）
     if (u.boat) {
       this.updateBoat(u);
@@ -3508,6 +3669,8 @@ export class GameEngine {
           const gD = RACES[enemy.race].isCiv ? this.gearBonus(enemy) : null;
           // 神力增益：祝福伤害 ×1.3 / 诅咒伤害 ×0.75
           let dmg = u.dmg * (0.8 + this.rng() * 0.4) * (u.bless ? 1.3 : 1) * (u.curse ? 0.75 : 1);
+          // —— 城墙防御加成：守军借墙而战（围城/城堡战中守方优势） ——
+          dmg *= this.wallDefenseOf(enemy);
           // —— 昼夜互连：夜战混乱减益 ×0.92（黑暗中的慌乱）—— 黑暗视觉种族（兽人/哥布林）不受影响
           const dPhase = this.dayPhase();
           if (dPhase > 0.5 && dPhase < 0.9 && !def.nightsight) dmg *= 0.92;
@@ -3523,7 +3686,7 @@ export class GameEngine {
           // 血溅：受击飞溅（原子级战斗反馈，可在画面设置中关闭）
           if (this.fxPrefs.blood && dmg >= 5 && this.rng() < 0.5) this.addBlood(enemy.x, enemy.y, false);
           // 蛇怪毒牙：命中后高概率使受害者中毒
-          if (u.race === R.BASILISK && this.rng() < 0.45 && !enemy.infected && !TRAITS[enemy.trait]?.immune) {
+          if (u.race === R.BASILISK && this.rng() < 0.45 && !enemy.infected && !(enemy.trait ? TRAITS[enemy.trait]?.immune : false)) {
             enemy.infected = true;
             if (this.fxPrefs.dmgNumbers) this.fx('dmg', enemy.x, enemy.y - 0.8, 26, { text: '毒' });
           }
@@ -3547,12 +3710,12 @@ export class GameEngine {
             if (u.hp <= 0) { u.dead = true; }
           }
           // 蝎子的毒刺：命中后有概率使受害者染病（可被治疗神力清除；免疫特质者不受）
-          if (u.race === R.SCORPION && this.rng() < 0.3 && !enemy.infected && !TRAITS[enemy.trait]?.immune) {
+          if (u.race === R.SCORPION && this.rng() < 0.3 && !enemy.infected && !(enemy.trait ? TRAITS[enemy.trait]?.immune : false)) {
             enemy.infected = true;
             if (this.fxPrefs.dmgNumbers) this.fx('dmg', enemy.x, enemy.y - 0.8, 26, { text: '毒' });
           }
           // 蛇的毒牙：命中后有概率使受害者中毒（可被治疗神力清除，与蝎子共用感染机制）
-          if (u.race === R.SNAKE && this.rng() < 0.3 && !enemy.infected && !TRAITS[enemy.trait]?.immune) {
+          if (u.race === R.SNAKE && this.rng() < 0.3 && !enemy.infected && !(enemy.trait ? TRAITS[enemy.trait]?.immune : false)) {
             enemy.infected = true;
             if (this.fxPrefs.dmgNumbers) this.fx('dmg', enemy.x, enemy.y - 0.8, 26, { text: '毒' });
           }
@@ -3839,6 +4002,28 @@ export class GameEngine {
           }
         }
       }
+      // —— 鱼群结队（5-10 群游）：偶尔向邻近同类鱼的重心靠拢（集体游弋的观感；浅扫 3×3 桶，开销可控） ——
+      if (u.race === R.FISH && this.rng() < 0.12) {
+        const hx = Math.min(this.bw - 1, Math.max(0, (u.x / 4) | 0));
+        const hy = Math.min(this.bh - 1, Math.max(0, (u.y / 4) | 0));
+        let ax = 0, ay = 0, n = 0;
+        for (let by = hy - 1; by <= hy + 1; by++) {
+          for (let bx = hx - 1; bx <= hx + 1; bx++) {
+            if (bx < 0 || by < 0 || bx >= this.bw || by >= this.bh) continue;
+            for (const o of this.buckets[by * this.bw + bx]) {
+              if (o === u || o.dead || o.race !== R.FISH) continue;
+              const dx2 = o.x - u.x;
+              const dy2 = o.y - u.y;
+              if (dx2 * dx2 + dy2 * dy2 > 36) continue; // 6 格内的同群鱼
+              ax += o.x; ay += o.y; n++;
+            }
+          }
+        }
+        if (n >= 2) {
+          u.tx = Math.max(1, Math.min(W - 2, ax / n + (this.rng() - 0.5) * 2));
+          u.ty = Math.max(1, Math.min(H - 2, ay / n + (this.rng() - 0.5) * 2));
+        }
+      }
       // 随机漫游触发判定（0.5² 平方距离：纯阈值比较，无需实距）
       const ndx = u.tx - u.x;
       const ndy = u.ty - u.y;
@@ -3856,6 +4041,24 @@ export class GameEngine {
             if ((tt === T.GRASS || tt === T.FOREST) && this.building[gj] === 0) { wx = gx; wy = gy; break; }
           }
         }
+        // 蟹：滩涂限定 —— 游荡目标须为水域或邻水沙滩（离岸沙丘不去；4 次重选仍不合法则
+        // 原地停留，防止 inland 沙漠安家）
+        if (u.race === R.CRAB) {
+          let ok = false;
+          for (let k = 0; k < 4 && !ok; k++) {
+            const cx2 = Math.max(0, Math.min(W - 1, Math.floor(wx)));
+            const cy2 = Math.max(0, Math.min(H - 1, Math.floor(wy)));
+            const cj = cy2 * W + cx2;
+            const ct = this.terrain[cj];
+            if (isWater(ct)) ok = true;
+            else if (ct === T.SAND) {
+              ok = (cx2 > 0 && isWater(this.terrain[cj - 1])) || (cx2 < W - 1 && isWater(this.terrain[cj + 1]))
+                || (cy2 > 0 && isWater(this.terrain[cj - W])) || (cy2 < H - 1 && isWater(this.terrain[cj + W]));
+            }
+            if (!ok) { wx = u.x + (this.rng() * 2 - 1) * r; wy = u.y + (this.rng() * 2 - 1) * r; }
+          }
+          if (!ok) { wx = u.x; wy = u.y; }
+        }
         u.tx = Math.max(1, Math.min(W - 2, wx));
         u.ty = Math.max(1, Math.min(H - 2, wy));
       }
@@ -3866,8 +4069,8 @@ export class GameEngine {
   /** 后段（Stage 2 共享）：宝物拾取 + 繁衍 —— 无敌尾与接敌追击共用 */
   private updateUnitPostJS(u: Unit) {
     const def = RACES[u.race];
-    // 宝物拾取：文明生物与强盗经过地面物品时自动装备更强的
-    if (this.items.length > 0 && (def.isCiv || u.race === R.BANDIT)) {
+    // 宝物拾取：文明生物与强盗经过地面物品时自动装备更强的；捕食者顺路捡食肉
+    if (this.items.length > 0 && (def.isCiv || u.race === R.BANDIT || (def.predator && !def.undead))) {
       this.tryPickup(u);
     }
     // reproduce — 与战斗状态无关（否则被猎物包围的捕食者永不绝育 → 种群灭绝）
@@ -3920,6 +4123,8 @@ export class GameEngine {
   }
   zombify(u: Unit) {
     WBB.touchMeta(); // Stage 3：race/装备等 meta 列 JS 写点收口
+    // 国王尸变：王位等同驾崩（纪事+稳定度+继承）
+    if (u.king && u.civ >= 0) this.onKingDeath(u);
     if (u.civ >= 0 && this.civs[u.civ]) this.civs[u.civ].pop--;
     if (!RACES[u.race].isCiv) this.bumpWild(u.race, -1); // 种族变化：旧种计数摘除
     u.race = R.ZOMBIE;
@@ -3934,6 +4139,8 @@ export class GameEngine {
     u.dead = false;
     u.boat = 0;
     u.boatTTL = 0;
+    u.king = false;
+    u.grab = 0; u.thrT = 0; // 神之手指账目清零（尸变不继承抓取状态）
     WB.syncFull(u); // WASM 镜像全行同步：原地变种族/阵营，后续扫描立即按僵尸判定
     this.bumpWild(R.ZOMBIE, 1);
     this.fx('spawn', u.x, u.y, 30);
@@ -4820,11 +5027,30 @@ export class GameEngine {
     }
   }
 
-  /** 单位经过地面物品时自动装备更强的（七槽位：武器/护甲/头盔/盾牌/靴/戒/符，同槽高阶替换） */
+  /** 单位经过地面物品时自动装备更强的（七槽位：武器/护甲/头盔/盾牌/靴/戒/符，同槽高阶替换）；
+   *  肉：捕食者饥饿捡食恢复，文明单位/强盗拾取入国库（食物储备） */
   tryPickup(u: Unit) {
+    const defR = RACES[u.race];
+    const eater = defR.isCiv || u.race === R.BANDIT || (defR.predator && !defR.undead);
     for (let i = this.items.length - 1; i >= 0; i--) {
       const it = this.items[i];
       if (Math.abs(it.x - u.x) > 0.9 || Math.abs(it.y - u.y) > 0.9) continue;
+      // —— 肉：捕食链的地面食物（拾取即食；非捕食野生动物不捡） ——
+      if (it.kind === 'meat') {
+        if (!eater || (u.grab ?? 0) > 0) continue;
+        if (defR.predator && !defR.undead) {
+          u.food = Math.min(160, (u.food ?? 0) + 45); // 饱食回充
+          if (this.fxPrefs.dmgNumbers) this.fx('dmg', u.x, u.y - 1, 22, { text: '饱' });
+        } else if (u.civ >= 0 && this.civs[u.civ]) {
+          const civ = this.civs[u.civ];
+          civ.gold = (civ.gold ?? 0) + 2; // 入国库：食物储备（集市经济口径）
+          this.fx('coin', u.x, u.y - 1, 20);
+        }
+        this.items.splice(i, 1);
+        this.fx('heart', u.x, u.y - 0.8, 18);
+        continue;
+      }
+      if (!defR.isCiv && u.race !== R.BANDIT) continue; // 野生动物不捡装备
       const def = ITEM_DEFS[it.kind];
       if (!def) continue;
       const field = SLOT_FIELD[def.slot];
@@ -4856,6 +5082,119 @@ export class GameEngine {
       }
       if (def.rarity === 4) {
         this.addEvent('loot', `${u.name}（${u.civ >= 0 ? this.civs[u.civ]?.name ?? '流浪' : RACES[u.race].name}）获得了传说之物「${def.name}」`, { x: u.x, y: u.y });
+      }
+    }
+  }
+
+  // ---------------- 神之手指（抓取投掷：渲染层按指针事件调用三步 API） ----------------
+  /** 当前被抓起的单位 id（null = 未抓取） */
+  grabId: number | null = null;
+
+  /** ① 按下：抓起 (wx,wy) 半径 2.2 内最近的单位（含飞行/水生），返回是否抓到 */
+  beginGrab(wx: number, wy: number): boolean {
+    let best: Unit | null = null;
+    let bestD = 2.2 * 2.2;
+    for (const u of this.units) {
+      if (u.dead || u.boat) continue;
+      const dx = u.x - wx;
+      const dy = u.y - wy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD) { bestD = d2; best = u; }
+    }
+    if (!best) { this.grabId = null; return false; }
+    this.grabId = best.id;
+    best.grab = 6;
+    this.fx('spawn', best.x, best.y - 0.6, 22);
+    return true;
+  }
+
+  /** ② 拖动：被抓单位脱离地面跟随指针（AI 暂停、免疫地面伤害；按帧调用保持抓取活性） */
+  moveGrab(wx: number, wy: number) {
+    if (this.grabId == null) return;
+    const u = this.unitById.get(this.grabId);
+    if (!u || u.dead) { this.grabId = null; return; }
+    if ((u.thrT ?? 0) > 0) return; // 已掷出（飞行中）不再跟随
+    u.x = Math.max(0.5, Math.min(W - 0.5, wx));
+    u.y = Math.max(0.5, Math.min(H - 0.5, wy));
+    u.tx = u.x; u.ty = u.y;
+    u.lx = u.x; u.ly = u.y; // 插值锚点同步（指针跟手，不滑行）
+    u.rx = u.x; u.ry = u.y;
+    u.grab = 6; // 刷新抓取活性（AI 暂停窗口）
+  }
+
+  /** ③ 松手：按指针速度投掷 —— 抛物线飞行，落地眩晕 + 按飞行距离伤害 + 尘土特效 */
+  endGrab(vx: number, vy: number) {
+    if (this.grabId == null) return;
+    const u = this.unitById.get(this.grabId);
+    this.grabId = null;
+    if (!u || u.dead) return;
+    const spd = Math.hypot(vx, vy);
+    if (spd < 0.35) {
+      // 轻放：原地缓降，短暂发懵
+      u.grab = 10;
+      u.thrT = 0;
+      this.fx('dust', u.x, u.y + 0.4, 14);
+      return;
+    }
+    // 抛物线：初速越快飞得越久越远（水平速度衰减模拟空气阻力；tick 数 = 速度驱动）
+    u.thrVx = vx / spd * Math.min(1.6, spd * 0.22);
+    u.thrVy = vy / spd * Math.min(1.6, spd * 0.22);
+    u.thrT = 8 + Math.min(22, Math.round(spd * 5));
+    u.thrX0 = u.x;
+    u.thrY0 = u.y;
+    u.grab = u.thrT + 26; // 飞行 + 落地眩晕全程暂停 AI
+    u.atk = 0;
+  }
+
+  /** 抓取/飞行/眩晕状态推进（updateUnit 早退分支调用；被抓单位免疫地面伤害） */
+  private grabbedTick(u: Unit) {
+    if (u.grab) u.grab -= 2;
+    if ((u.thrT ?? 0) > 0) {
+      // 抛物线飞行：水平速度衰减（空气阻力），落点即停
+      u.thrT = (u.thrT ?? 0) - 2;
+      const nx = Math.max(0.5, Math.min(W - 0.5, u.x + (u.thrVx ?? 0) * 2));
+      const ny = Math.max(0.5, Math.min(H - 0.5, u.y + (u.thrVy ?? 0) * 2));
+      // 撞山即坠（其余地形掠过）
+      const tt = this.terrain[idx(Math.floor(nx), Math.floor(ny))];
+      if (tt !== T.MOUNTAIN) { u.x = nx; u.y = ny; }
+      u.thrVx = (u.thrVx ?? 0) * 0.94;
+      u.thrVy = (u.thrVy ?? 0) * 0.94;
+      if (this.rng() < 0.3) this.fx('dust', u.x, u.y, 10);
+      if ((u.thrT ?? 0) <= 0) {
+        // 落地：眩晕 + 按飞行距离伤害 + 尘土特效
+        const dist = Math.hypot(u.x - (u.thrX0 ?? u.x), u.y - (u.thrY0 ?? u.y));
+        const dmg = Math.round(dist * 2.6);
+        u.hp -= dmg;
+        u.hurt = 24;
+        u.grab = Math.max(u.grab ?? 0, 24); // 眩晕躺地（AI 暂停）
+        u.thrT = 0;
+        for (let k = 0; k < 3; k++) this.fx('dust', u.x + (this.rng() - 0.5) * 1.6, u.y + (this.rng() - 0.5) * 1.6, 20);
+        if (this.fxPrefs.dmgNumbers && dmg > 0) this.fx('dmg', u.x, u.y - 1, 30, { text: `${dmg}` });
+        this.shake = Math.max(this.shake, Math.min(5, 1 + dist * 0.3));
+      }
+      if (u.hp <= 0) u.dead = true;
+    } else if ((u.grab ?? 0) <= 0) {
+      // 眩晕结束：清账归队
+      u.grab = 0;
+      u.thrVx = 0;
+      u.thrVy = 0;
+    }
+  }
+
+  // ---------------- 肉掉落（动物死亡 → 猎人与文明的食物来源） ----------------
+  /** 动物尸体落肉：1-3 块散落原地（捕食者饥饿捡食恢复；文明单位拾取入国库食物储备） */
+  dropMeat(wx: number, wy: number, n: number) {
+    const cnt = Math.max(1, Math.min(3, Math.round(n)));
+    for (let k = 0; k < cnt; k++) {
+      if (this.items.length >= MAX_ITEMS - 6) return; // 与宝物共享地面物品预算（留少量余量）
+      const px = Math.max(0.5, Math.min(W - 0.5, wx + (this.rng() - 0.5) * 1.6));
+      const py = Math.max(0.5, Math.min(H - 0.5, wy + (this.rng() - 0.5) * 1.6));
+      if (isWater(this.terrain[idx(Math.floor(px), Math.floor(py))])) {
+        const land = this.findLandNear(px, py, 3);
+        if (!land) continue; // 沉海喂鱼
+        this.items.push({ id: this.itemSeq++, kind: 'meat', x: land.x, y: land.y });
+      } else {
+        this.items.push({ id: this.itemSeq++, kind: 'meat', x: px, y: py });
       }
     }
   }
@@ -5267,6 +5606,17 @@ export class GameEngine {
     return walkable(t);
   }
 
+  /** 城墙阻挡判定：目标格有敌方城墙 → 陆行敌人不可通行（己方/中立/飞行放行；
+   *  与墙主交战的文明单位与天生的敌意野怪（hostile）都会被墙拦住） */
+  private wallBlocks(x: number, y: number, u: Unit): boolean {
+    const i = idx(x, y);
+    if (this.building[i] !== BUILD_KINDS.WALL) return false;
+    const b = this.buildings[this.bIdx.get(i) ?? -1];
+    if (!b || b.civ === u.civ) return false; // 己方城墙自家随便走
+    if (u.civ >= 0) return this.atWar(b.civ, u.civ); // 中立/盟友通行，交战国被拦
+    return RACES[u.race].hostile; // 无国籍野怪：天生敌意者被拦（狼/僵尸等），走兽野兽通行
+  }
+
   moveUnit(u: Unit, mul: number) {
     const def = RACES[u.race];
     const dx = u.tx - u.x;
@@ -5275,6 +5625,8 @@ export class GameEngine {
     if (d < 0.05) return;
     // 寒冻（暴风雪）：移速锐减的踱步；诅咒：紫霾缠身寸步难行
     let step = u.speed * 2 * mul * (u.chill ? 0.55 : 1) * (u.curse ? 0.75 : 1);
+    // 沼泽泥泞：陷足难行（移速 ×0.6）
+    if (this.terrain[idx(Math.floor(u.x), Math.floor(u.y))] === T.SWAMP) step *= 0.6;
     // 深度打磨：道路行军加成 — 土路上的军队/商队/平民提速 45%（路网价值）
     if (this.road[idx(Math.floor(u.x), Math.floor(u.y))] > 0) step *= 1.45;
     const nx = u.x + (dx / d) * step;
@@ -5293,9 +5645,10 @@ export class GameEngine {
     // - 沙泳巨虫（沙虫）：只能在沙/草/焦土潜行（沙海之王不洺水不登山）
     const cur = this.terrain[idx(Math.floor(u.x), Math.floor(u.y))];
     if (def.aquatic) {
-      // 水生巨怪只可在水域游动（内联判定替代闭包 —— 每次移动都分配闭包是热路径浪费）
+      // 水生巨怪只可在水域游动（内联判定替代闭包 —— 每次移动都分配闭包是热路径浪费）；
+      // 滩涂两栖（蟹）：邻水沙滩亦可爬行
       const nt = this.terrain[idx(Math.floor(nx), Math.floor(ny))];
-      if (nt === T.DEEP || nt === T.WATER) { u.x = nx; u.y = ny; }
+      if (nt === T.DEEP || nt === T.WATER || (def.beach && nt === T.SAND)) { u.x = nx; u.y = ny; }
       else {
         // 留在深水：随机改向游动
         u.tx = Math.max(1, Math.min(W - 2, u.x + (this.rng() * 2 - 1) * 8));
@@ -5317,9 +5670,10 @@ export class GameEngine {
     }
     const swimming = cur === T.DEEP || cur === T.WATER;
     const onMountain = cur === T.MOUNTAIN;
-    // 通行判定（静态方法替代每步新建的闭包；语义与原 passable 完全一致）
-    const passX = GameEngine.passTile(swimming, onMountain, this.terrain[idx(Math.floor(nx), Math.floor(u.y))]);
-    const passY = GameEngine.passTile(swimming, onMountain, this.terrain[idx(Math.floor(u.x), Math.floor(ny))]);
+    // 通行判定（静态方法替代每步新建的闭包；语义与原 passable 完全一致）+ 城墙阻挡（敌方陆行单位不可逾越）
+    const wallChk = swimming ? (_x: number, _y: number) => false : (x: number, y: number) => this.wallBlocks(x, y, u);
+    const passX = !wallChk(Math.floor(nx), Math.floor(u.y)) && GameEngine.passTile(swimming, onMountain, this.terrain[idx(Math.floor(nx), Math.floor(u.y))]);
+    const passY = !wallChk(Math.floor(u.x), Math.floor(ny)) && GameEngine.passTile(swimming, onMountain, this.terrain[idx(Math.floor(u.x), Math.floor(ny))]);
     if (passX && passY) { u.x = nx; u.y = ny; }
     else if (passX) u.x = nx;
     else if (passY) u.y = ny;
@@ -5375,6 +5729,10 @@ export class GameEngine {
 
   civsTick() {
     this.civFuseScan(); // 超级演化 v4：深盟融合扫描（内部自带 300 tick 错峰门）
+    // —— 王权：王位空缺补冕（建国首王/旧档补冕/驾崩继承；内部逐国扫描） ——
+    if (this.tickCount % 40 === 0) this.crownVacantTick();
+    // —— 城墙：有城防科技的王国环绕首都修筑城墙圈（分批砌筑） ——
+    if (this.tickCount % 20 === 0) this.wallTick();
     for (const civ of this.civs) {
       if (!civ.alive) continue;
       // 幽灵王国消亡：人口持续为 0（哪怕还有空房）超过 10 年 → 自然消亡，领土归无主
@@ -9217,7 +9575,7 @@ export class GameEngine {
   /** 次要特效类型（满员时优先逐出/丢弃） */
   static readonly FX_MINOR: ReadonlySet<Effect['kind']> = new Set(['dmg', 'hit', 'smoke', 'spawn', 'heart', 'skull', 'arrow', 'coin', 'blood', 'dust', 'bullet'] as Effect['kind'][]);
 
-  fx(kind: Effect['kind'], x: number, y: number, ttl: number, opts?: Partial<Effect>) {
+  fx(kind: Effect['kind'], x: number, y: number, ttl: number, opts?: Partial<Effect>): Effect | null {
     // 特效总量控制：同屏超出上限时先逐出最老的次要特效；全是关键特效时丢弃新的次要特效（天灾必须可见）
     const cap = GameEngine.FX_CAPS[this.fxPrefs.fxDensity ?? 1] ?? 620;
     if (this.effects.length >= cap) {
@@ -10108,6 +10466,33 @@ export class GameEngine {
     }
     if (flooded >= 4) {
       this.addEvent('geo', `持续的暴雨漫过了河岸，洼地化作一片泽国`, { x, y });
+    }
+  }
+
+  /** 神力洪水（'flood' 工具）：目标半径内洼地漫成泽国（复用自然洪水的 flood 退去账本——数秒后潮退） */
+  floodArea(x: number, y: number, r: number) {
+    const rr = Math.max(2, Math.min(12, r));
+    let flooded = 0;
+    for (let yy = Math.floor(y - rr); yy <= y + rr; yy++) {
+      for (let xx = Math.floor(x - rr); xx <= x + rr; xx++) {
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+        if (Math.hypot(xx - x, yy - y) > rr) continue;
+        const i = idx(xx, yy);
+        const t = this.terrain[i];
+        if (t !== T.GRASS && t !== T.SAND && t !== T.BURNT && t !== T.SWAMP && t !== T.HILL) continue;
+        if (this.flood.has(i)) continue;
+        this.setTerrain(i, T.WATER);
+        // 退去时刻：半径越大涨水越久（180~360 tick ≈ 12~24 秒）
+        this.flood.set(i, this.tickCount + 180 + Math.floor(this.rng() * 180));
+        if (this.building[i] > 0) this.destroyBuilding(i);
+        flooded++;
+      }
+    }
+    if (flooded > 0) {
+      this.fx('tsunami', x, y, 30, { r: rr + 1, quiet: true });
+      this.shake = Math.max(this.shake, 3);
+      this.onSound?.('tsunami');
+      this.toast(`洪水漫过了大地（${flooded} 格），数秒后将退去`, 'info');
     }
   }
 
@@ -11474,6 +11859,10 @@ export class GameEngine {
     this.preyGrid.fill(0);
     for (const u of this.units) {
       if (u.dead) continue;
+      const udef = RACES[u.race];
+      // 水生物种（鱼/蟹/龟/鲨等）不入陆地承载账本（海洋生态由 wildCapOf 封顶）；
+      // 鲨鱼计入猎物密度场导航无意义（自身即猎手），跳过
+      if (udef.aquatic) continue;
       if (this.isHerbivoreRace(u.race)) {
         herb++; herbivores.push(u);
         const gx = Math.min(31, Math.max(0, (u.x / 8) | 0));
@@ -11637,8 +12026,10 @@ export class GameEngine {
 
   meteor(x: number, y: number) {
     const e = this.fx('meteor', x, y, 34);
-    e.x0 = x + 20;
-    e.y0 = y - 34;
+    if (e) {
+      e.x0 = x + 20;
+      e.y0 = y - 34;
+    }
   }
 
   nuke(x: number, y: number, power = 1) {
@@ -11939,7 +12330,7 @@ export class GameEngine {
     for (const o of this.units) {
       if (o === u || o.infected || o.dead) continue;
       if (RACES[o.race].undead) continue;
-      if (TRAITS[o.trait]?.immune) continue; // 免疫特质者不染疫
+      if (o.trait && TRAITS[o.trait]?.immune) continue; // 免疫特质者不染疫
       if (Math.hypot(o.x - u.x, o.y - u.y) < 1.8) {
         // 医学科技：文明国民的瘟疫抗性（医士隔离染疫者）
         if (o.civ >= 0 && this.rng() < this.techModsOf(o.civ).plague) {
@@ -11952,7 +12343,7 @@ export class GameEngine {
 
   plagueArea(x: number, y: number, r: number) {
     for (const u of this.units) {
-      if (Math.hypot(u.x - x, u.y - y) < r && !RACES[u.race].undead && !TRAITS[u.trait]?.immune) u.infected = true;
+      if (Math.hypot(u.x - x, u.y - y) < r && !RACES[u.race].undead && !(u.trait ? TRAITS[u.trait]?.immune : false)) u.infected = true;
     }
   }
 
@@ -12155,7 +12546,10 @@ export class GameEngine {
     const aquatic = !!def.aquatic;
     const sandswim = !!def.sandswim;
     const bad = (i: number) => {
-      if (aquatic) return !isWater(this.terrain[i]);
+      if (aquatic) {
+        if (def.beach) { const t = this.terrain[i]; return t !== T.SAND && !isWater(t); } // 滩涂两栖（蟹）：水或沙滩
+        return !isWater(this.terrain[i]);
+      }
       if (sandswim) { const t = this.terrain[i]; return t !== T.SAND && t !== T.GRASS && t !== T.BURNT; }
       return isWater(this.terrain[i]) || this.terrain[i] === T.LAVA;
     };
@@ -12283,10 +12677,10 @@ export class GameEngine {
         }
         break;
       }
-      case 'water': case 'sand': case 'grass': case 'forest': case 'mountain': case 'snow': case 'lava': case 'ice': {
+      case 'water': case 'sand': case 'grass': case 'forest': case 'mountain': case 'snow': case 'lava': case 'ice': case 'swamp': {
         const map: Record<string, number> = {
           water: T.WATER, sand: T.SAND, grass: T.GRASS, forest: T.FOREST,
-          mountain: T.MOUNTAIN, snow: T.SNOW, lava: T.LAVA, ice: T.ICE,
+          mountain: T.MOUNTAIN, snow: T.SNOW, lava: T.LAVA, ice: T.ICE, swamp: T.SWAMP,
         };
         const target = map[toolId];
         for (let yy = Math.floor(wy - r); yy <= wy + r; yy++) {
@@ -12346,6 +12740,12 @@ export class GameEngine {
         break;
       case 'plague':
         this.plagueArea(wx, wy, Math.max(3, r));
+        break;
+      case 'flood':
+        this.floodArea(wx, wy, rP ?? 5);
+        break;
+      case 'finger':
+        this.beginGrab(wx, wy);
         break;
       case 'acidrain':
         this.acidRain(wx, wy, Math.max(4, r), durationP);
@@ -13030,10 +13430,14 @@ export class GameEngine {
         else if (y > 0 && this.terrain[i - W] !== t && SOFT_TERRAIN[this.terrain[i - W]]) nb = this.terrain[i - W];
         else if (y < H - 1 && this.terrain[i + W] !== t && SOFT_TERRAIN[this.terrain[i + W]]) nb = this.terrain[i + W];
         if (nb >= 0 && ((this.variant[i] + x + y) & 1) === 0) {
+          // 硬群系过渡（沙↔草、雪↔草）：中间色 50/50 混出更宽的渐变带；其余软地形维持 32% 轻融
+          const hardPair = (t === T.GRASS && (nb === T.SAND || nb === T.SNOW))
+            || (t === T.SAND && nb === T.GRASS) || (t === T.SNOW && nb === T.GRASS);
+          const a = hardPair ? 0.5 : 0.32;
           const bc = TERRAIN_RGB[nb];
-          r = r * 0.68 + bc[0] * 0.32;
-          g = g * 0.68 + bc[1] * 0.32;
-          b = b * 0.68 + bc[2] * 0.32;
+          r = r * (1 - a) + bc[0] * a;
+          g = g * (1 - a) + bc[1] * a;
+          b = b * (1 - a) + bc[2] * a;
         }
       }
       // —— 坡向明暗（hillshade）：西北邻高 → 本格背光压暗；东南邻高 → 本格受光提亮（烘焙零稳态开销） ——
@@ -13085,13 +13489,20 @@ export class GameEngine {
       const by = ty * 8;
       const r0 = r | 0, g0 = g | 0, b0 = b | 0;
       const hsh = (this.variant[i] * 2654435761 + i * 97) >>> 0;
-      // 8×8 平涂底色（拒绝逐像素噪点）
+      // 8×8 平涂底色：大片平涂保留「干净」基调；草地/森林/沙地叠加确定性哈希 2 值细噪点
+      // （~15% 密度、±2 亮度，按子像素位置哈希 → 同格重绘结果一致）—— 低幅大地肌理
+      const fineNoise = t === T.GRASS || t === T.FOREST || t === T.SAND;
       for (let sy = 0; sy < 8; sy++) {
         let off = ((by + sy) * WBW + bx) * 4;
         for (let sx = 0; sx < 8; sx++, off += 4) {
-          data[off] = r0;
-          data[off + 1] = g0;
-          data[off + 2] = b0;
+          let pr = r0, pg = g0, pb = b0;
+          if (fineNoise) {
+            const nz = ((hsh ^ Math.imul((sy << 3) | sx, 2246822519)) >>> 10) % 20;
+            if (nz < 3) { const d = (nz & 1) === 0 ? 2 : -2; pr += d; pg += d; pb += d; }
+          }
+          data[off] = pr;
+          data[off + 1] = pg;
+          data[off + 2] = pb;
           data[off + 3] = 255;
         }
       }
@@ -13209,6 +13620,35 @@ export class GameEngine {
         dot(cx, cy, -44, -28, -6, 3, 3);
         dot(cx + 3, cy, 56, 26, -8, 1, 2);
         dot(cx, cy + 3, 50, 22, -8, 2, 1);
+      } else if (t === T.SWAMP) {
+        // 沼泽：浑浊泥沼斑驳（暗水洼 + 浮藻亮斑）+ 芦苇深绿竖笔画 + 泥点 —— 湿地的斑驳语言
+        if ((hsh & 3) !== 3) {
+          const mx = (hsh >>> 3) & 5;
+          const my = (hsh >>> 6) & 5;
+          dot(mx, my, -14, -10, -8, 3, 2);                                              // 暗色泥沼水洼
+          if ((hsh & 1) === 0) dot((hsh >>> 9) & 6, (hsh >>> 12) & 6, 10, 8, -6, 2, 1); // 浮藻亮斑
+        }
+        // 芦苇：1×3 竖笔画（~44% 格 1-2 根，深/浅二态）
+        const reeds = (hsh % 9) < 4 ? 1 + ((hsh >>> 20) & 1) : 0;
+        for (let k = 0; k < reeds; k++) {
+          const rx = (hsh >>> (k * 4 + 2)) & 7;
+          const ry = (hsh >>> (k * 4 + 6)) & 5;
+          const lit = ((hsh >>> (k * 7)) & 1) === 1;
+          dot(rx, ry, lit ? -26 : -40, lit ? -22 : -32, lit ? -6 : -12, 1, 3);
+        }
+        // 泥点（~6% 格：棕褐泥渍）
+        if (hsh % 16 === 0) dot((hsh >>> 14) & 7, (hsh >>> 18) & 7, -6, -20, -10);
+        // 邻水过渡：邻水一侧的暗色湿泥带（潮线侵蚀痕迹；陆侧过渡由 SOFT_TERRAIN 抖动承担）
+        const xLw = tx > 0 && isWater(this.terrain[i - 1]);
+        const xRw = tx < W - 1 && isWater(this.terrain[i + 1]);
+        const yTw = ty > 0 && isWater(this.terrain[i - W]);
+        const yBw = ty < H - 1 && isWater(this.terrain[i + W]);
+        if (xLw || xRw || yTw || yBw) {
+          if (xLw) dot(0, 0, -20, -14, -10, 1, 8);
+          if (xRw) dot(7, 0, -20, -14, -10, 1, 8);
+          if (yTw) dot(0, 0, -20, -14, -10, 8, 1);
+          if (yBw) dot(0, 7, -20, -14, -10, 8, 1);
+        }
       } else if (t === T.BURNT) {
         // 焦土余烬：灰烬点 + 偶发暗火
         dot((hsh >>> 4) & 7, (hsh >>> 6) & 7, -12, -10, -6, 2, 1);
@@ -13251,7 +13691,10 @@ export class GameEngine {
         // import lazily to avoid cycle at module load
         sprites.drawTree(propsCtx, x, y, this.variant[i], this.nature.season);
       } else if (tt === T.MOUNTAIN) {
-        sprites.drawMountainProp(propsCtx, x, y, this.variant[i]);
+        // 雪帽=海拔+寒冷度：variant 伪海拔 150-199，cold=纬度极值+冬增夏减（极地全雪冠，赤道仅高峰）
+        const polar = Math.abs(y / H - 0.5) * 2;
+        const cold = Math.min(1, polar * 1.1 + (this.nature.season === 3 ? 0.25 : this.nature.season === 1 ? -0.1 : 0.05));
+        sprites.drawMountainProp(propsCtx, x, y, this.variant[i], 150 + (this.variant[i] % 50), cold);
       } else if (this.road[i] > 0) {
         // —— 土路：碎石与车辙点缀（夯实的路感） ——
         const h = (this.variant[i] * 2654435761) >>> 0;
@@ -14215,7 +14658,8 @@ export class GameEngine {
    *  兼容 v1（base64 平铺）与 v2（RLE 压缩）两种格式 */
   applySave(data: SaveData): void {
     WBB.touchMeta(); // Stage 3：读档后全部行重建
-    if (data.v !== 1 && data.v !== 2) throw new Error(`不支持的存档版本: ${data.v}`);
+    const version = data.v;
+    if (version !== 1 && version !== 2) throw new Error(`不支持的存档版本: ${version}`);
     if (!Array.isArray(data.units) || !Array.isArray(data.civs) || !Array.isArray(data.buildings)) {
       throw new Error('存档数据结构损坏');
     }
@@ -14331,6 +14775,12 @@ export class GameEngine {
     const savedUnits = data.v === 2 && Array.isArray(data.u) && data.u.length > 1 ? rowsToUnits(data.u) : data.units;
     if (!Array.isArray(savedUnits) || savedUnits.some((u) => typeof u.id !== 'number' || typeof u.race !== 'number')) throw new Error('存档单位数据损坏');
     this.units = savedUnits.map((u) => ({ ...u, boat: u.boat ?? 0, boatTTL: u.boatTTL ?? 0 }));
+    // 存档兼容护栏：丢弃未知种族单位（跨版本枚举变更 / 动态种化失联 —— 否则 RACES[id] 越界崩溃）
+    const unknownRace = this.units.filter((u) => !RACES[u.race]);
+    if (unknownRace.length > 0) {
+      console.warn(`[applySave] 丢弃 ${unknownRace.length} 个未知种族单位（id: ${[...new Set(unknownRace.map((u) => u.race))].join(',')}）—— 存档来自不同版本的种族枚举`);
+      this.units = this.units.filter((u) => !!RACES[u.race]);
+    }
     // 旧档迁移：trk 饰品槽 → bts/rng；job 缺省 0（平民）
     for (const u of this.units) this.migrateLegacyGear(u);
     this.unitById.clear();

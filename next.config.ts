@@ -26,9 +26,6 @@ const nextConfig: NextConfig = {
         ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
       }),
   /* config options here */
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   reactStrictMode: false,
   // Task 50：预览面板跨域直连开发服务器（dev.log 警告在未来版本将硬失败 —— 提前放行）
   allowedDevOrigins: ["*.space.zhipuaidemo.cn", "*.zhipuaidemo.cn"],

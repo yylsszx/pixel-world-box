@@ -13,8 +13,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
-import { Pause, Play, FastForward, ChevronsRight, Gauge, RefreshCw, CircleHelp, Map as MapIcon, Clock, Users, Swords, Flame, Save, FolderOpen, Volume2, VolumeX, Crown, ScrollText, Sailboat, SlidersHorizontal, Hash, Zap, Waves, Sparkles, Layers, Snowflake, Thermometer, Droplets, Flag, TreePine, Scale, Baby, TrendingUp, Ghost, Swords as SwordsIcon, Skull as SkullIcon, Rocket, Terminal, Bone, Heart, Leaf, Camera, Trophy, MountainSnow, CloudRain, Sun, CloudSnow, Flower2, Tornado, GitBranch, Handshake, UsersRound, BrainCircuit, Network, Activity, ImageDown, Music, Gamepad2, History, ChevronDown, House, BookOpen, Orbit, Search, LayoutGrid, Gavel } from 'lucide-react';
+import { Pause, Play, FastForward, ChevronsRight, Check, Undo2, Redo, Biohazard, Gauge, RefreshCw, CircleHelp, Map as MapIcon, Clock, Users, Swords, Flame, Save, FolderOpen, Volume2, VolumeX, Crown, ScrollText, Sailboat, SlidersHorizontal, Hash, Zap, Waves, Sparkles, Layers, Snowflake, Thermometer, Droplets, Flag, TreePine, Scale, Baby, TrendingUp, Ghost, Swords as SwordsIcon, Skull as SkullIcon, Rocket, Terminal, Bone, Heart, Leaf, Camera, Trophy, MountainSnow, CloudRain, Sun, CloudSnow, Flower2, Tornado, GitBranch, Handshake, UsersRound, BrainCircuit, Network, Activity, ImageDown, Music, Gamepad2, History, ChevronDown, House, BookOpen, Orbit, Search, LayoutGrid, Gavel } from 'lucide-react';
 import type { OverlayMode, WorldLaws } from '@/lib/game/types';
+import { RACES } from '@/lib/game/types';
+import { ICONS, RACE_DOT } from '@/lib/game/constants';
+import { undo, redo, undoDepth, redoDepth } from '@/lib/ui/undo';
+import { PixelIcon } from './PixelIcon';
 
 /** 画面效果设置行：图标 + 名称 + 说明 + 开关 */
 function FxPrefRow({
@@ -92,8 +96,10 @@ const OVERLAY_OPTS: { id: OverlayMode; label: string; desc: string; icon: typeof
   { id: 'biome', label: '生物群落', desc: '冰原/苔原/森林/草原/沙漠/雨林', icon: TreePine, dot: 'linear-gradient(135deg,#dce8f2 33%,#a8c56a 33% 66%,#3f9d4f 66%)' },
 ];
 
-/** 世界法则行：图标 + 名称 + 说明 + 开关（与画面效果行同风格） */
-const LAW_DEFS: { key: keyof WorldLaws; label: string; desc: string; icon: typeof Zap }[] = [
+/** 世界法则行：图标 + 名称 + 说明 + 开关（与画面效果行同风格）
+ *  key 放宽为 keyof WorldLaws | 'zombieVirus'：僵尸病毒为引擎侧并行新增法则（契约默认开），
+ *  引擎落地前后本表均可编译；读取侧对缺失字段按 true 显示（见法则 Popover 的 checked 取值） */
+const LAW_DEFS: { key: keyof WorldLaws | 'zombieVirus'; label: string; desc: string; icon: typeof Zap }[] = [
   { key: 'wars', label: '战争', desc: '王国接壤时可以宣战；关闭后新战争被阻止', icon: SwordsIcon },
   { key: 'cityGrowth', label: '城市扩张', desc: '王国领土逐格向外生长', icon: TrendingUp },
   { key: 'reproduction', label: '繁衍', desc: '文明与野生动物生息繁衍', icon: Baby },
@@ -101,6 +107,7 @@ const LAW_DEFS: { key: keyof WorldLaws; label: string; desc: string; icon: typeo
   { key: 'dragonSpawns', label: '巨龙降临', desc: '巨龙周期性自然降临世界（每 75 年）', icon: Flame },
   { key: 'zombieInfect', label: '僵尸感染', desc: '被僵尸咬死的生物会变成僵尸', icon: Ghost },
   { key: 'undeadRise', label: '亡者复生', desc: '死者有小概率化作骷髅复生', icon: Ghost },
+  { key: 'zombieVirus', label: '僵尸病毒', desc: '瘟疫可能异变为僵尸病毒，感染并在世界迅速蔓延', icon: Biohazard },
   { key: 'rebels', label: '叛乱', desc: '大国度可能爆发分裂独立运动', icon: Rocket },
   // —— 自然引擎法则（板块/大气/四季/天灾） ——
   { key: 'tectonics', label: '板块构造', desc: '板块漂移积累应力：地震/造山/裂谷/火山喷发', icon: MountainSnow },
@@ -167,7 +174,7 @@ function OverlayModeRow({
         <span className={`block text-[11px] font-bold ${active ? 'text-amber-200' : 'text-zinc-200'}`}>{o.label}</span>
         <span className="block text-[9px] leading-tight text-zinc-500">{o.desc}</span>
       </span>
-      {active && <span className="shrink-0 text-[10px] font-bold text-amber-300">✓</span>}
+      {active && <Check className="h-3.5 w-3.5 shrink-0 text-amber-300" aria-hidden />}
     </button>
   );
 }
@@ -376,11 +383,11 @@ function StatBit({ icon: Icon, value, cls, title }: { icon: typeof Users; value:
   );
 }
 
-/** 图标工具钮（黄铜态 + 弹簧微交互） */
+/** 图标工具钮（黄铜态 + 弹簧微交互；disabled 用于无历史的撤销/重做等条件性动作） */
 function IB({
-  label, tip, onClick, on, children, className,
+  label, tip, onClick, on, children, className, disabled,
 }: {
-  label: string; tip: string; onClick: () => void; on?: boolean; children: React.ReactNode; className?: string;
+  label: string; tip: string; onClick: () => void; on?: boolean; children: React.ReactNode; className?: string; disabled?: boolean;
 }) {
   return (
     <Tooltip>
@@ -391,7 +398,9 @@ function IB({
           aria-label={label}
           aria-pressed={on}
           data-on={on ? 'true' : 'false'}
-          className={`su-ibtn ${className ?? ''}`}
+          disabled={disabled}
+          aria-disabled={disabled || undefined}
+          className={`su-ibtn ${disabled ? 'pointer-events-none opacity-40' : ''} ${className ?? ''}`}
         >
           {children}
         </button>
@@ -410,6 +419,35 @@ export function TopBar() {
     toggleCodex, showCodex, setPaletteOpen,
   } = useGameStore();
   const stats = useGameStore((s) => s.stats);
+
+  // —— 撤销/重做：与 GameCanvas Ctrl+Z/Y 同一底层调用（lib/ui/undo），栈深轮询驱动禁用态 ——
+  const [hist, setHist] = useState({ u: undoDepth(), r: redoDepth() });
+  useEffect(() => {
+    const iv = window.setInterval(() => setHist({ u: undoDepth(), r: redoDepth() }), 500);
+    return () => window.clearInterval(iv);
+  }, []);
+  const doUndo = () => {
+    const label = undo();
+    setHist({ u: undoDepth(), r: redoDepth() });
+    useGameStore.getState().showInteractNote(label ? `已撤销：${label}` : '没有可撤销的神力操作', label ? 'good' : 'info');
+  };
+  const doRedo = () => {
+    const label = redo();
+    setHist({ u: undoDepth(), r: redoDepth() });
+    useGameStore.getState().showInteractNote(label ? `已重做：${label}` : '没有可重做的操作', label ? 'good' : 'info');
+  };
+
+  // —— 种族构成 chips：人口前 4 的文明种族（数据源与 WorldCluster 罗盘同源 stats.byRace；
+  //     经 RaceDef.isCiv 过滤 → 新增动物种族/沼泽群系自动不进入顶栏，无需随契约改动） ——
+  const raceChips = (() => {
+    if (!stats) return [];
+    const byKey = new Map(Object.values(RACES).map((r) => [r.key, r] as const));
+    return Object.entries(stats.byRace)
+      .map(([key, pop]) => ({ key, pop, def: byKey.get(key) }))
+      .filter((e) => e.def?.isCiv === true && e.pop > 0)
+      .sort((a, b) => b.pop - a.pop)
+      .slice(0, 4);
+  })();
 
   const fxPrefs = useGameStore((s) => s.fxPrefs);
   const allOff = !fxPrefs.dmgNumbers && !fxPrefs.battleFlash && !fxPrefs.riverFlow && !fxPrefs.ambience && !fxPrefs.blood && !fxPrefs.corpses && !fxPrefs.hpBars && !fxPrefs.dayNight;
@@ -479,6 +517,20 @@ export function TopBar() {
                 <StatBit icon={seasonMeta.icon} value={stats.nature.seasonName} cls={seasonMeta.cls} title={`自然引擎 · ${stats.nature.seasonName}季`} />
               )}
               <StatBit icon={Users} value={stats.totalPop} title="总人口" />
+              {raceChips.map((e) => (
+                <span key={e.key} className="flex items-center gap-1" title={`${e.def!.name}人口`}>
+                  {ICONS[e.key] ? (
+                    <PixelIcon icon={e.key} size={13} />
+                  ) : (
+                    <span
+                      className="inline-block h-2.5 w-2.5 shrink-0 rounded-[2px] border border-black/40"
+                      style={{ backgroundColor: RACE_DOT[e.key] ?? '#a2957c' }}
+                      aria-hidden
+                    />
+                  )}
+                  <span className="font-mono text-[12px] font-semibold tabular-nums text-[#f1e8d6]">{e.pop}</span>
+                </span>
+              ))}
               {stats.warsCount > 0 && <StatBit icon={Swords} value={stats.warsCount} cls="text-[#d97e55]" title="进行中的战争" />}
               {stats.fires > 0 && <StatBit icon={Flame} value={stats.fires} cls="text-[#dd8f5e]" title="燃烧中的地块" />}
               {stats.boats > 0 && <StatBit icon={Sailboat} value={stats.boats} cls="text-[#7fa9ab]" title="航行中的殖民船" />}
@@ -600,6 +652,13 @@ export function TopBar() {
             <ImageDown className="h-4 w-4" aria-hidden />
           </IB>
 
+          <IB label="撤销" tip="撤销上一步神力 / 地形操作 (Ctrl+Z)" onClick={doUndo} disabled={hist.u === 0} className="shrink-0">
+            <Undo2 className="h-4 w-4" aria-hidden />
+          </IB>
+          <IB label="重做" tip="重做 (Ctrl+Shift+Z 或 Ctrl+Y)" onClick={doRedo} disabled={hist.r === 0} className="shrink-0">
+            <Redo className="h-4 w-4" aria-hidden />
+          </IB>
+
           <IB label={soundOn ? '关闭音效' : '开启音效'} tip={`音效 ${soundOn ? '开' : '关'}`} onClick={toggleSound} on={soundOn} className="shrink-0">
             {soundOn ? <Volume2 className="h-4 w-4" aria-hidden /> : <VolumeX className="h-4 w-4" aria-hidden />}
           </IB>
@@ -646,8 +705,8 @@ export function TopBar() {
                     label={law.label}
                     desc={law.desc}
                     icon={law.icon}
-                    checked={laws[law.key]}
-                    onToggle={(v) => setLaw(law.key, v)}
+                    checked={(laws as unknown as Partial<Record<string, boolean>>)[law.key] ?? true}
+                    onToggle={(v) => setLaw(law.key as keyof WorldLaws, v)}
                   />
                 ))}
               </div>

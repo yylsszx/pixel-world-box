@@ -41,6 +41,7 @@ export const TERRAIN_RGB: [number, number, number][] = [
   [235, 90, 30], // LAVA
   [66, 58, 51], // BURNT
   [172, 210, 228], // ICE（冰面：冻结的水）
+  [88, 96, 50], // SWAMP（沼泽：浑浊的绿褐湿地）
 ];
 
 // ---------- 水深分层调色（深度打磨：近岸浅礁 → 陆架 → 深渊的色彩纵深） ----------
@@ -52,8 +53,8 @@ export const WATER_TIER_RGB: [number, number, number][] = [
 export const DEEP_TIER_RGB: [number, number, number][] = [
   [43, 87, 133], [30, 58, 102],
 ];
-/** 可融合的软土地形（群系边缘抖动过渡用：山/岩浆/冰除外） */
-export const SOFT_TERRAIN = [false, false, true, true, true, true, false, true, false, true, false];
+/** 可融合的软土地形（群系边缘抖动过渡用：山/岩浆/冰除外；末位 = 沼泽） */
+export const SOFT_TERRAIN = [false, false, true, true, true, true, false, true, false, true, false, true];
 
 export const FLAMMABLE: number[] = [T.GRASS, T.FOREST];
 
@@ -462,6 +463,52 @@ export const ICONS: Record<string, string[]> = {
     '........', '.NNNNNN.', '.NnnnnN.', '.NaaaaN.',
     '.NaNnNaN.', '.NaaaaN.', '.NNNNNN.', '..N..N..',
   ],
+  // —— 八新动物（陆地四 + 水生四）——
+  chicken: [
+    '........', '...ww...', '..wwkw..', '.wwwww..',
+    '.wwwww..', '..wwww.o', '..w.....', '...y....',
+  ],
+  pig: [
+    '........', '..nnn...', '.nnnnn..', '.nknkn..',
+    '.nnwnn..', '.nnnnnN.', '..N..N..', '........',
+  ],
+  rabbit: [
+    '..w..w..', '..w..w..', '..wwww..', '.wwkww..',
+    '.wwwww..', '..wwww..', '...w.w..', '........',
+  ],
+  fox: [
+    '...o....', '..ooo...', '..okoo..', '.ooooo..',
+    '.ooooof.', 'ooo.oo..', '..o..o..', '..O..O..',
+  ],
+  fish: [
+    '........', '........', '..bbb...', '.bbkbb.b',
+    'bbbbbbBb', '.bbbbb..', '..bbb...', '........',
+  ],
+  crab: [
+    '........', '.r...r..', '..r.r...', '.rrrrr..',
+    'rrkRkrr.', 'rrrrrrr.', '.r.r.r..', '........',
+  ],
+  turtle: [
+    '........', '..GGG...', '.GzGzG..', 'GzGGkzG.',
+    '.GGGGG..', '.G...G..', 'z.....z.', '........',
+  ],
+  shark: [
+    '........', '...m....', '..mmmm..', '.mmmkmm.',
+    'mmmmmmm.', '.mmmmmm.', 'm.mm.m..', '........',
+  ],
+  // —— 沼泽 / 洪水 / 神之手指 ——
+  swamp: [
+    'ZZ..gg..', '.ZZgG...', 'ggZZGg..', '.zZZzg..',
+    'GgZZgg..', '.zZZZg..', 'gg.zZ...', '........',
+  ],
+  flood: [
+    '........', '.b.bb.b.', 'bBbBbBb.', 'bBBBBBb.',
+    '.bBBBBb.', 'bBBbBBb.', '.bBBBb..', '..bbb...',
+  ],
+  finger: [
+    '....ww..', '...wkw..', '...www..', '...www..',
+    '..wwww..', '.ywwww..', '.yyww...', '.yy.....',
+  ],
 };
 
 // 102 件物品的 8x8 图标（模板 × 稀有度调色）：合并进 ICONS
@@ -543,6 +590,14 @@ export const TOOLS: ToolDef[] = [
   { id: 'scorpion', label: '蝎子', desc: '带毒刺的沙漠小猎手，蜇中会染病', tab: 'animals', icon: 'scorpion' },
   { id: 'snake', label: '蛇', desc: '沙漠的毒牙猎手，咬中毒发', tab: 'animals', icon: 'snake' },
   { id: 'snowwolf', label: '雪狼', desc: '极地冰原的白色猎手，追猎企鹅', tab: 'animals', icon: 'snowwolf' },
+  { id: 'chicken', label: '鸡', desc: '村落草地间的家禽，咕咕哒', tab: 'animals', icon: 'chicken' },
+  { id: 'pig', label: '猪', desc: '圈边打滚的杂食家畜，浑身是宝（掉肉）', tab: 'animals', icon: 'pig' },
+  { id: 'rabbit', label: '兔', desc: '草地与林缘的机敏小兽，繁殖飞快', tab: 'animals', icon: 'rabbit' },
+  { id: 'fox', label: '狐', desc: '林间赤色猎手，捕食兔与鸡', tab: 'animals', icon: 'fox' },
+  { id: 'fish', label: '鱼', desc: '群游的小鱼：5-10 结队巡游，鲨鱼与水岸住民的美餐', tab: 'animals', icon: 'fish' },
+  { id: 'crab', label: '蟹', desc: '横行邻水沙滩的甲壳小将', tab: 'animals', icon: 'crab' },
+  { id: 'turtle', label: '龟', desc: '海洋中缓慢游荡的长寿浮游者', tab: 'animals', icon: 'turtle' },
+  { id: 'shark', label: '鲨鱼', desc: '海洋顶级掠食者：捕食鱼群与落水的游泳者', tab: 'animals', icon: 'shark' },
   // terrain
   { id: 'raise', label: '陆地', desc: '抬升地形：水→沙滩→草地', tab: 'terrain', icon: 'raise', brush: true },
   { id: 'water', label: '海洋', desc: '淹没大地，单位会溺水', tab: 'terrain', icon: 'water', brush: true },
@@ -552,6 +607,7 @@ export const TOOLS: ToolDef[] = [
   { id: 'mountain', label: '山脉', desc: '不可通行的巍峨高山', tab: 'terrain', icon: 'mountain', brush: true },
   { id: 'snow', label: '雪地', desc: '铺上皑皑白雪', tab: 'terrain', icon: 'snow', brush: true },
   { id: 'ice', label: '冰面', desc: '冻结的水面：可行走，遇火与暖气候会消融', tab: 'terrain', icon: 'ice', brush: true },
+  { id: 'swamp', label: '沼泽', desc: '浑浊的绿褐湿地：单位迟缓，火焰不蔓延，不生草木', tab: 'terrain', icon: 'swamp', brush: true },
   { id: 'lava', label: '岩浆', desc: '滚烫的熔岩，触之即死', tab: 'terrain', icon: 'lava', brush: true },
   { id: 'river', label: '河流', desc: '开凿一条蜿蜒入海的河，沿岸化作绿洲', tab: 'terrain', icon: 'river', single: true },
   { id: 'oasis', label: '绿洲', desc: '在沙漠中点出一泓清泉与草木葱茏的环带', tab: 'terrain', icon: 'oasis', single: true },
@@ -626,6 +682,9 @@ export const TOOLS: ToolDef[] = [
     { key: 'radius', label: '引力半径', min: 4, max: 16, step: 1, def: 8 },
     { key: 'duration', label: '存续', min: 60, max: 260, step: 10, def: 130, fmt: 'sec' },
   ] },
+  { id: 'flood', label: '洪水', desc: '神力放水：目标区域漫成泽国，数秒后退去', tab: 'disasters', icon: 'flood', single: true, params: [
+    { key: 'radius', label: '泛滥半径', min: 2, max: 12, step: 1, def: 5 },
+  ] },
   // powers
   { id: 'heal', label: '治疗', desc: '治愈、灭火、复苏大地', tab: 'powers', icon: 'heal', brush: true },
   { id: 'kill', label: '死亡之指', desc: '抹除范围内的生物', tab: 'powers', icon: 'kill', brush: true },
@@ -644,6 +703,7 @@ export const TOOLS: ToolDef[] = [
     { key: 'radius', label: '雷域半径', min: 4, max: 14, step: 1, def: 5 },
     { key: 'duration', label: '持续', min: 60, max: 300, step: 10, def: 180, fmt: 'sec' },
   ] },
+  { id: 'finger', label: '神之手指', desc: '按住抓起最近的生物跟随指针，甩出掷飞（落地眩晕受伤）', tab: 'powers', icon: 'finger', single: true },
   { id: 'holystorm', label: '圣光风暴', desc: '金色圣云游荡：审判亡灵恶魔巨龙，治愈无辜生灵，浇灭火焰复苏焦土（半径可调）', tab: 'powers', icon: 'holystorm', single: true, params: [
     { key: 'radius', label: '圣域半径', min: 4, max: 14, step: 1, def: 5 },
     { key: 'duration', label: '持续', min: 60, max: 300, step: 10, def: 200, fmt: 'sec' },
@@ -683,6 +743,8 @@ export const RACE_TOOL: Record<string, number> = {
   skeleton: R.SKELETON, demon: R.DEMON, mage: R.MAGE,
   lizard: R.LIZARD, goblin: R.GOBLIN, troll: R.TROLL, ogre: R.OGRE, whitewalker: R.WHITEWALKER, vampire: R.VAMPIRE,
   kraken: R.KRAKEN, sandworm: R.SANDWORM, basilisk: R.BASILISK, angel: R.ANGEL, phoenix: R.PHOENIX, ent: R.ENT, lich: R.LICH, hydra: R.HYDRA,
+  chicken: R.CHICKEN, pig: R.PIG, rabbit: R.RABBIT, fox: R.FOX,
+  fish: R.FISH, crab: R.CRAB, turtle: R.TURTLE, shark: R.SHARK,
 };
 
 // —— 生物工具：统一挂「数量」参数（巨型异兽上限 8，普通生物上限 20）——
@@ -734,4 +796,6 @@ export const RACE_DOT: Record<string, string> = {
   skeleton: '#d9d6cf', demon: '#e0432e', mage: '#9b59d0',
   lizard: '#4f9e3a', goblin: '#7fa93c', troll: '#2c5e24', ogre: '#c98d5a', whitewalker: '#7fc4e8', vampire: '#8a2f4f',
   kraken: '#d556c0', sandworm: '#c4ad74', basilisk: '#5a7a2c',
+  chicken: '#f2ead8', pig: '#e8b4b8', rabbit: '#e6e2d8', fox: '#e07b39',
+  fish: '#5ba8e0', crab: '#cf3f2e', turtle: '#4f9e3a', shark: '#575757',
 };

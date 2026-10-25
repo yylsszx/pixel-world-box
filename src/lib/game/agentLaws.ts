@@ -41,7 +41,8 @@ const EVENT_KIND_TABLE = {
   festival: true, fireOut: true, repair: true, rain: true, sandstorm: true, typhoon: true,
   sinkhole: true, iceage: true, famine: true, blackhole: true, wrath: true, evolve: true, eco: true,
   achieve: true, worldwar: true, superweapon: true, emerge: true, geo: true, road: true, trade: true,
-  alliance: true, extinct: true, panic: true, revenge: true, lineage: true, oracle: true,
+  alliance: true, extinct: true, panic: true, revenge: true, lineage: true, oracle: true, king: true,
+  angel: true, phoenix: true, ent: true, lich: true, hydra: true, holystorm: true, season: true,
 } satisfies Record<WorldEventKind, true>;
 const EVENT_KINDS: ReadonlySet<string> = new Set(Object.keys(EVENT_KIND_TABLE));
 

@@ -29,7 +29,8 @@ export function getEngine(): GameEngine {
 export type EventFilter = 'all' | 'kingdom' | 'war' | 'disaster' | 'legend' | 'world';
 /** 事件类型 → 分类归档 */
 export const EVENT_CATEGORY: Record<WorldEventKind, Exclude<EventFilter, 'all'>> = {
-  found: 'kingdom', fall: 'kingdom', unify: 'kingdom', peace: 'kingdom',
+  found: 'kingdom', fall: 'kingdom', unify: 'kingdom', peace: 'kingdom', king: 'kingdom',
+  angel: 'legend', phoenix: 'legend', ent: 'world', lich: 'disaster', hydra: 'disaster', holystorm: 'legend',
   colonize: 'kingdom', settle: 'kingdom', shipwreck: 'kingdom',
   rebel: 'kingdom', build: 'kingdom', capital: 'kingdom', cession: 'kingdom',
   war: 'war', battle: 'war', bandit: 'war',

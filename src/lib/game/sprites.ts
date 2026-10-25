@@ -500,7 +500,7 @@ export function drawDragon(ctx: CanvasRenderingContext2D, u: Unit, frame: number
 }
 
 // ---------- buildings (houses 6x6 px, capital 8x8, tower 2x4, farm 6x4, castle 10x8 …) ----------
-export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: [number, number, number], tier = 0) {
+export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: [number, number, number], tier = 0, hpRatio = 1) {
   // —— 超细粒度建筑（4px/格基准）：所有结构细节翻倍 ——
   const px = b.x * 4 - 4;
   const py = b.y * 4 - 8;
@@ -611,6 +611,45 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       ctx.fillRect(cx + 8, cy + 12, 4, 6);
       ctx.fillStyle = '#5c3a1c';
       ctx.fillRect(cx + 9, cy + 13, 2, 5);
+      return;
+    }
+    case 11: {
+      // P2 wall：石砖砌块 + 垛口（灰阶三档随耐久变暗开裂）
+      const dmg = hpRatio < 0.3 ? 2 : hpRatio < 0.6 ? 1 : 0;
+      const cBody = dmg === 0 ? '#8d8d8d' : dmg === 1 ? '#76767a' : '#5e5e62';
+      const cDark = dmg === 0 ? '#6e6e72' : dmg === 1 ? '#58585c' : '#46464a';
+      const cLight = dmg === 0 ? '#a5a5a9' : dmg === 1 ? '#8e8e92' : '#76767a';
+      // 垛口（3 齿）
+      ctx.fillStyle = cLight;
+      ctx.fillRect(px + 3, py + 3, 2, 2);
+      ctx.fillRect(px + 6, py + 3, 2, 2);
+      ctx.fillRect(px + 9, py + 3, 2, 2);
+      // 墙体（8 宽 11 高）
+      ctx.fillStyle = cBody;
+      ctx.fillRect(px + 3, py + 5, 8, 11);
+      // 左缘受光
+      ctx.fillStyle = cLight;
+      ctx.fillRect(px + 3, py + 5, 1, 11);
+      // 砖缝（横缝 ×2 + 错缝竖 ×3）
+      ctx.fillStyle = cDark;
+      ctx.fillRect(px + 3, py + 8, 8, 1);
+      ctx.fillRect(px + 3, py + 12, 8, 1);
+      ctx.fillRect(px + 7, py + 5, 1, 3);
+      ctx.fillRect(px + 5, py + 9, 1, 3);
+      ctx.fillRect(px + 9, py + 13, 1, 3);
+      // 基座
+      ctx.fillStyle = '#44444a';
+      ctx.fillRect(px + 3, py + 15, 8, 1);
+      // 裂纹（受损：轻裂 2 段 / 重裂 4 段）
+      if (dmg > 0) {
+        ctx.fillStyle = '#14100c';
+        ctx.fillRect(px + 6, py + 6, 1, 3);
+        ctx.fillRect(px + 7, py + 9, 1, 2);
+        if (dmg > 1) {
+          ctx.fillRect(px + 4, py + 11, 1, 4);
+          ctx.fillRect(px + 9, py + 7, 1, 2);
+        }
+      }
       return;
     }
     case 7: {
@@ -1981,11 +2020,27 @@ import { ITEM_DEFS, RARITY_META } from './items';
 
 /** 地面物品：悬浮呼吸 + 稀有度辉光 + 史诗/传说星点（102 件通用渲染） */
 export function drawItem(ctx: CanvasRenderingContext2D, item: GroundItem, frame: number) {
-  const def = ITEM_DEFS[item.kind as string];
   const px = Math.round(item.x * 2);
   const py = Math.round(item.y * 2);
   const bob = Math.floor(frame / 12) % 2;
   const y = py - bob;
+  // —— P2：肉（猎杀掉落鸡腿：棕肉 + 白骨端；非装备 → 走独立绘制） ——
+  if ((item.kind as string) === 'meat') {
+    // 掉落阴影
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(px - 1, py + 2, 3, 1);
+    // 肉块（棕 2x2 + 高光）
+    ctx.fillStyle = '#9a5a2c';
+    ctx.fillRect(px - 1, y - 1, 2, 2);
+    ctx.fillStyle = '#b56f3a';
+    ctx.fillRect(px - 1, y - 1, 1, 1);
+    // 骨端（白 1x1 + 关节）
+    ctx.fillStyle = '#f2ead8';
+    ctx.fillRect(px + 1, y, 1, 1);
+    ctx.fillRect(px + 1, y - 1, 1, 1);
+    return;
+  }
+  const def = ITEM_DEFS[item.kind as string];
   if (!def) return;
   const main = RARITY_META[def.rarity].color;
   const accent = def.rarity >= 3 ? '#ffd93d' : def.rarity === 2 ? '#e8f0ff' : '#8a9098';
@@ -2171,7 +2226,9 @@ export function drawTree(ctx: CanvasRenderingContext2D, x: number, y: number, va
 }
 
 
-export function drawMountainProp(ctx: CanvasRenderingContext2D, x: number, y: number, variant: number) {
+/** P2 雪帽协调：可选 elev(0-255)/cold(0-1) —— 有 elev 时雪帽= elev>170 || (cold>0.6 && elev>150)；
+ *  无参调用（engine 旧调用侧）保持 variant>150 哈希原逻辑，调用侧稍后由主线程接线 */
+export function drawMountainProp(ctx: CanvasRenderingContext2D, x: number, y: number, variant: number, elev?: number, cold?: number) {
   // —— 超细粒度山峰（4px/格基准）：梯形峰体 + 东南受光 + 西北背光 + 雪线 ——
   const px = x * 4;
   const py = y * 4;
@@ -2198,8 +2255,11 @@ export function drawMountainProp(ctx: CanvasRenderingContext2D, x: number, y: nu
     ctx.fillRect(px + 2, py + 3, 1, 1);
     ctx.fillRect(px - 1, py + 2, 1, 1);
   }
-  // 雪线
-  if (variant > 150) {
+  // 雪线（P2：elev/cold 有值走海拔+寒冷度判定；否则保持 variant 哈希原逻辑）
+  const snowy = elev !== undefined
+    ? elev > 170 || (cold !== undefined && cold > 0.6 && elev > 150)
+    : variant > 150;
+  if (snowy) {
     ctx.fillStyle = '#f7f9fb';
     ctx.fillRect(px + 1, py - 2, 2, 1);
     ctx.fillRect(px, py - 1, 1, 1);
@@ -2279,7 +2339,7 @@ function bladeColor(w: string | null | undefined): string {
  * 分层：阴影→靴→双腿(四相步态)→腰带(扣)→躯干(受光/背阴)→双臂(反相摆)→
  * 项链/护甲→颈→头(瞳孔/种族五官)→发型(顶+背垂)→头盔→持械(攻击姿势)。
  */
-export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor: [number, number, number] | null, t = 0) {
+export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor: [number, number, number] | null, t = 0, crown = false) {
   const fx = Math.round(u.rx ?? u.x);
   const fy = Math.round(u.ry ?? u.y) + 1; // 脚底基线
   const f = u.flip ? -1 : 1;
@@ -2534,13 +2594,23 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
       }
     }
   }
+
+  // —— 12. P0-A 国王金冠（真位国王：3px 冠带 + 亮芯；压在发型/兜帽/头盔之上） ——
+  if (crown) {
+    ctx.fillStyle = '#e6ba6c';
+    ctx.fillRect(fx - 1, hy - 3, 3, 1); // 冠带
+    ctx.fillRect(fx - 1, hy - 4, 1, 1); // 左齿
+    ctx.fillRect(fx + 1, hy - 4, 1, 1); // 右齿
+    ctx.fillStyle = '#ffe9a8';
+    ctx.fillRect(fx, hy - 4, 1, 1); // 亮芯
+  }
 }
 
 /**
  * ×4 精绘四足兽（wolf/snowwolf/sheep/bear/deer）：背部受光脊线 + 腹部背阴 /
  * 四腿对角步态 / 头部（耳/眼/吻/鼻尖）/ 摆尾 / 物种质感（羊毛疙瘩/熊峰/鹿角白臀）。
  */
-export function drawQuadFine(ctx: CanvasRenderingContext2D, u: Unit, kind: 'wolf' | 'snowwolf' | 'sheep' | 'bear' | 'deer', t = 0) {
+export function drawQuadFine(ctx: CanvasRenderingContext2D, u: Unit, kind: 'wolf' | 'snowwolf' | 'sheep' | 'bear' | 'deer', t = 0, crown = false) {
   const fx = Math.round(u.rx ?? u.x);
   const fy = Math.round(u.ry ?? u.y) + 1;
   const f = u.flip ? -1 : 1;
@@ -2651,6 +2721,269 @@ export function drawQuadFine(ctx: CanvasRenderingContext2D, u: Unit, kind: 'wolf
     ctx.fillStyle = '#f2ead8';
     ctx.fillRect(f > 0 ? bx - 1 : bx + bw, by, 1, 1); // 小白尾
   }
+
+  // —— P0-A 国王金冠（头顶：压过耳/角；4 足之王罕见但语义统一） ——
+  if (crown) {
+    ctx.fillStyle = '#e6ba6c';
+    ctx.fillRect(hx, by - 3, 3, 1); // 冠带（骑在两耳之间）
+    ctx.fillRect(hx, by - 4, 1, 1); // 左齿
+    ctx.fillRect(hx + 2, by - 4, 1, 1); // 右齿
+    ctx.fillStyle = '#ffe9a8';
+    ctx.fillRect(hx + 1, by - 4, 1, 1); // 亮芯
+  }
+}
+
+// ---------------- P2：八新动物（×2 精灵坐标系；每只 fillRect ≤ 18；水生由 render 侧水面门控） ----------------
+
+/** 白褐小鸡：1.5px 级小体 + 红冠 + 偶发啄食 */
+export function drawChicken(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const hurt = u.hurt > 0;
+  const body = hurt ? '#ff6b5e' : u.infected ? '#b8e2b4' : '#f6f1e4';
+  const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  const step = ((frame >> 3) & 1) === 1;
+  // 双腿（黄；移动时一条抬起 —— 小鸡碎步）
+  ctx.fillStyle = '#d9a03c';
+  ctx.fillRect(px, py + 1, 1, 1);
+  if (!(moving && step)) ctx.fillRect(px + 1, py + 1, 1, 1);
+  // 圆身（白 3x2）
+  ctx.fillStyle = body;
+  ctx.fillRect(px - 1, py - 1, 3, 2);
+  // 褐翅斑 + 翘尾羽
+  ctx.fillStyle = '#b07a3a';
+  ctx.fillRect(px - f, py, 1, 1);
+  ctx.fillRect(px - 2 * f, py - 2, 1, 1);
+  // 头颈（啄食：偶发低头到地面）
+  const peck = ((frame >> 4) + u.id) % 7 === 0;
+  const hy = py - 2 + (peck ? 2 : 0);
+  ctx.fillStyle = body;
+  ctx.fillRect(px + f, hy, 1, 1);
+  // 红冠
+  ctx.fillStyle = '#cf3f2e';
+  ctx.fillRect(px + f, hy - 1, 1, 1);
+  // 橙喙
+  ctx.fillStyle = '#e8a33c';
+  ctx.fillRect(px + 2 * f, hy + (peck ? 1 : 0), 1, 1);
+}
+
+/** 粉猪圆身：滚圆躯干 + 猪鼻 + 卷尾 */
+export function drawPig(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const hurt = u.hurt > 0;
+  const body = hurt ? '#ff6b5e' : u.infected ? '#b8e2b4' : '#e8a8a0';
+  const step = ((frame >> 3) & 1) === 1;
+  const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  // 四腿简化两簇（暗粉；对角步态）
+  ctx.fillStyle = '#a86058';
+  ctx.fillRect(px - 1, py + 1, 1, 1);
+  if (!(moving && step)) ctx.fillRect(px + 1, py + 1, 1, 1);
+  // 圆身（3x2）+ 背部受光
+  ctx.fillStyle = body;
+  ctx.fillRect(px - 2, py - 1, 4, 2);
+  ctx.fillStyle = hurt ? '#ffc4b8' : '#f2c8c0';
+  ctx.fillRect(px - 1, py - 1, 2, 1);
+  // 头（前上 2x2）+ 垂耳
+  const hx = f > 0 ? px + 2 : px - 4;
+  ctx.fillStyle = body;
+  ctx.fillRect(hx, py - 1, 2, 2);
+  ctx.fillStyle = '#a86058';
+  ctx.fillRect(hx + (f > 0 ? 0 : 1), py - 2, 1, 1);
+  // 猪鼻（浅粉前伸）+ 鼻孔
+  ctx.fillStyle = '#d98a86';
+  ctx.fillRect(hx + (f > 0 ? 2 : -1), py, 1, 1);
+  // 眼
+  ctx.fillStyle = '#14100c';
+  ctx.fillRect(hx + (f > 0 ? 1 : 0), py - 1, 1, 1);
+  // 卷尾
+  ctx.fillStyle = '#d98a86';
+  ctx.fillRect(f > 0 ? px - 3 : px + 2, py - 1, 1, 1);
+}
+
+/** 灰兔长耳：竖直长耳 + 白尾 + 跳跃步态 */
+export function drawRabbit(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const hurt = u.hurt > 0;
+  const body = hurt ? '#ff6b5e' : u.infected ? '#b8e2b4' : '#b8b0a4';
+  const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  const hop = moving && ((frame >> 3) & 1) === 1; // 跳跃相：身体抬起
+  const y0 = py - (hop ? 1 : 0);
+  // 双腿（移动时收拢成单点 —— 蹬地）
+  ctx.fillStyle = '#6e685e';
+  if (hop) ctx.fillRect(px, py + 1, 2, 1);
+  else { ctx.fillRect(px - 1, py + 1, 1, 1); ctx.fillRect(px + 1, py + 1, 1, 1); }
+  // 身（2x2）
+  ctx.fillStyle = body;
+  ctx.fillRect(px - 1, y0 - 1, 2, 2);
+  // 白尾（身后）
+  ctx.fillStyle = '#f2ead8';
+  ctx.fillRect(f > 0 ? px - 2 : px + 1, y0, 1, 1);
+  // 头（前上 2x2）
+  const hx = f > 0 ? px : px - 2;
+  ctx.fillStyle = body;
+  ctx.fillRect(hx, y0 - 3, 2, 2);
+  // 长耳 ×2（一竖一直，内耳粉）
+  ctx.fillStyle = body;
+  ctx.fillRect(hx + (f > 0 ? 0 : 1), y0 - 5, 1, 2);
+  ctx.fillRect(hx + (f > 0 ? 1 : 0), y0 - 4, 1, 1);
+  ctx.fillStyle = '#e8a8a0';
+  ctx.fillRect(hx + (f > 0 ? 0 : 1), y0 - 4, 1, 1);
+  // 眼 + 鼻
+  ctx.fillStyle = '#14100c';
+  ctx.fillRect(hx + (f > 0 ? 1 : 0), y0 - 2, 1, 1);
+}
+
+/** 橙狐大尾：低伏身形 + 白尖大尾 + 竖耳 */
+export function drawFox(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const hurt = u.hurt > 0;
+  const body = hurt ? '#ff6b5e' : u.infected ? '#b8e2b4' : '#d97b3c';
+  const step = ((frame >> 3) & 1) === 1;
+  const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  // 四腿简化两簇（暗褐；对角步态）
+  ctx.fillStyle = '#5a2f14';
+  ctx.fillRect(px - 1, py, 1, 1);
+  if (!(moving && step)) ctx.fillRect(px + 1, py, 1, 1);
+  // 低伏身（3x1）+ 胸前白
+  ctx.fillStyle = body;
+  ctx.fillRect(px - 1, py - 1, 3, 1);
+  // 大尾（2x2 白尖，轻摆）
+  const wag = ((frame >> 4) & 1) === 1 ? -1 : 0;
+  const tx = f > 0 ? px - 4 : px + 2;
+  ctx.fillRect(tx, py - 2 + wag, 2, 2);
+  ctx.fillStyle = '#f2ead8';
+  ctx.fillRect(f > 0 ? tx : tx + 1, py - 2 + wag, 1, 1);
+  // 头（2x2）+ 双竖耳
+  const hx = f > 0 ? px + 1 : px - 3;
+  ctx.fillStyle = body;
+  ctx.fillRect(hx, py - 2, 2, 2);
+  ctx.fillStyle = '#8a4a1c';
+  ctx.fillRect(hx + (f > 0 ? 0 : 1), py - 3, 1, 1);
+  ctx.fillRect(hx + (f > 0 ? 1 : 0), py - 3, 1, 1);
+  // 白吻尖 + 眼
+  ctx.fillStyle = '#f2ead8';
+  ctx.fillRect(hx + (f > 0 ? 2 : -1), py - 1, 1, 1);
+  ctx.fillStyle = '#14100c';
+  ctx.fillRect(hx + (f > 0 ? 1 : 0), py - 2, 1, 1);
+}
+
+/** 青银小鱼：水中浅色影 + 尾摆 + 偶发跃出（溅水花） */
+export function drawFish(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const hurt = u.hurt > 0;
+  const jp = (frame + u.id * 13) % 260;
+  if (jp < 10) {
+    // —— 跃出：银亮鱼身沿抛物线跳出 + 落点水花 ——
+    const jt = jp / 10;
+    const jy = py - Math.round(Math.sin(jt * Math.PI) * 3);
+    ctx.fillStyle = hurt ? '#ff6b5e' : '#dceef2';
+    ctx.fillRect(px, jy, 2, 1);
+    ctx.fillStyle = '#9fd4d8';
+    ctx.fillRect(px - f, jy + 1, 1, 1); // 尾
+    ctx.fillStyle = '#14100c';
+    ctx.fillRect(px + (f > 0 ? 1 : 0), jy, 1, 1); // 眼
+    ctx.fillStyle = 'rgba(224,244,255,0.8)';
+    ctx.fillRect(px - 1, py, 1, 1); // 水花
+    ctx.fillRect(px + 2, py, 1, 1);
+    return;
+  }
+  // —— 水中：半透明浅色影（隔水观感）+ 两相尾摆 ——
+  const tailL = ((frame >> 3) & 1) === 1;
+  ctx.fillStyle = hurt ? 'rgba(255,107,94,0.8)' : 'rgba(200,232,240,0.55)';
+  ctx.fillRect(px - 1, py, 2, 1);
+  ctx.fillStyle = hurt ? 'rgba(207,63,46,0.7)' : 'rgba(150,205,220,0.7)';
+  ctx.fillRect(tailL ? px - 2 : px + 1, py, 1, 1); // 尾（左右摆）
+}
+
+/** 红蟹横行双钳：横宽身形 + 竖眼柄 + 开合双钳 */
+export function drawCrab(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const hurt = u.hurt > 0;
+  const body = hurt ? '#ff6b5e' : u.infected ? '#b8e2b4' : '#d94a3a';
+  // 步足 ×3（暗红；两侧交替 —— 横行步态）
+  ctx.fillStyle = '#8a2418';
+  const st = ((frame >> 3) & 1) === 1;
+  ctx.fillRect(px - 2, py + 1, 1, 1);
+  ctx.fillRect(px + 1, py + 1, 1, 1);
+  if (st) ctx.fillRect(px, py + 1, 1, 1);
+  // 横圆身（2x2）
+  ctx.fillStyle = body;
+  ctx.fillRect(px - 1, py - 1, 2, 2);
+  // 竖眼柄 ×2（白眼）
+  ctx.fillStyle = '#f2ead8';
+  ctx.fillRect(px - 1, py - 2, 1, 1);
+  ctx.fillRect(px, py - 2, 1, 1);
+  ctx.fillStyle = '#14100c';
+  ctx.fillRect(px - 1, py - 2, 1, 1); // 瞳（压在左眼上 —— 侧视单眼可读）
+  // 双钳（亮红；开合相位交替）
+  ctx.fillStyle = '#e86a4a';
+  const pinch = ((frame >> 4) & 1) === 1;
+  ctx.fillRect(px - 3, py - 1 - (pinch ? 1 : 0), 1, 1);
+  ctx.fillRect(px + 2, py - 1 + (pinch ? 1 : 0), 1, 1);
+}
+
+/** 绿壳圆龟：花纹龟壳 + 伸缩头 + 划水步态 */
+export function drawTurtle(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const hurt = u.hurt > 0;
+  const shell = hurt ? '#ff6b5e' : u.infected ? '#b8e2b4' : '#4a7a3a';
+  // 划水鳍 ×2（绿褐；交替）
+  ctx.fillStyle = '#2e5424';
+  const st = ((frame >> 4) & 1) === 1;
+  ctx.fillRect(px - 2, py + 1, 1, 1);
+  if (!st) ctx.fillRect(px, py + 1, 1, 1);
+  // 圆壳（3x2）+ 壳纹 ×2
+  ctx.fillStyle = shell;
+  ctx.fillRect(px - 2, py - 1, 3, 2);
+  ctx.fillStyle = '#2e5424';
+  ctx.fillRect(px - 1, py - 1, 1, 1);
+  ctx.fillRect(px, py, 1, 1);
+  // 壳缘受光
+  ctx.fillStyle = '#6a9a54';
+  ctx.fillRect(px - 1, py - 1, 2, 1);
+  // 头（前伸 2x1；慢速伸缩）
+  const poke = ((frame >> 5) & 3) !== 3; // 偶发缩头
+  const hx = f > 0 ? px + 1 : px - 3;
+  ctx.fillStyle = hurt ? '#ff6b5e' : '#8aa860';
+  if (poke) {
+    ctx.fillRect(hx, py - 1, 2, 1);
+    ctx.fillStyle = '#14100c';
+    ctx.fillRect(hx + (f > 0 ? 1 : 0), py - 1, 1, 1); // 眼
+  }
+}
+
+/** 灰鲨：背鳍露水三角 + 水面波迹 + 水下体影（鲨鱼只露冰山一角） */
+export function drawShark(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const hurt = u.hurt > 0;
+  const fin = hurt ? '#ff6b5e' : '#5a6a78';
+  // 背鳍（露出水面的三角：鳍柱 + 后坡）
+  ctx.fillStyle = fin;
+  ctx.fillRect(px, py - 3, 1, 2);
+  ctx.fillRect(px + 1, py - 2, 1, 1);
+  // 水面波迹（航行 V 波：两帧错位）
+  ctx.fillStyle = 'rgba(224,244,255,0.5)';
+  const wv = ((frame >> 3) & 1) === 1;
+  ctx.fillRect(px - 2, py - 1, 2, 1);
+  if (wv) ctx.fillRect(px + 2, py - 1, 2, 1);
+  // 水下体影（深色半透明长影 + 摆尾）
+  ctx.fillStyle = hurt ? 'rgba(255,107,94,0.4)' : 'rgba(30,52,70,0.45)';
+  ctx.fillRect(px - 1, py, 4, 1);
+  const tailL = ((frame >> 3) & 1) === 1;
+  ctx.fillRect(tailL ? px - 3 : px + 3, py, 1, 1); // 尾鳍影（左右摆）
 }
 
 /**

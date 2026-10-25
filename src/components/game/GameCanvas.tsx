@@ -47,6 +47,9 @@ function throttleFor(tool: string): number {
   if (!t) return 0;
   if (t.single) return -1; // never on drag
   if (t.brush) return 0; // continuous
+  // —— P3：新工具显式节流（swamp 笔刷连刷 / flood·finger 单发；与 def.brush/single 双保险） ——
+  if (tool === 'swamp') return 0;
+  if (tool === 'flood' || tool === 'finger') return -1;
   if (tool === 'lightning') return LIGHTNING_THROTTLE;
   if (tool === 'boom') return BOOM_THROTTLE;
   if (tool === 'plague') return PLAGUE_THROTTLE;
@@ -90,7 +93,8 @@ export function GameCanvas() {
   // 群组传送挂起时 = copy（提示「点这里落位」）
   const tool = useGameStore((s) => s.tool);
   const pendingGroupAction = useGameStore((s) => s.pendingGroupAction);
-  const cursor = pendingGroupAction === 'teleport' ? 'copy' : tool === 'select' ? 'grab' : 'crosshair';
+  // P3：神之手指 = grab 光标（抓取中由事件侧直写 grabbing，见 onPointerDown/Up）
+  const cursor = pendingGroupAction === 'teleport' ? 'copy' : tool === 'finger' || tool === 'select' ? 'grab' : 'crosshair';
   // 框选门控 ref：主 effect 依赖数组为 []（闭包不重建）——
   // 真实的「已拖出矩形」判定必须走 ref（DOM 矩形节点只负责视觉渲染）
   const selRectRef = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
@@ -229,6 +233,28 @@ export function GameCanvas() {
     const stopFollowGroup = () => {
       const st = useGameStore.getState();
       if (st.groupFollow) st.setGroupFollow(false);
+    };
+
+    // —— P3 神之手指：抓取/跟随/甩出状态（engine.beginGrab/moveGrab/endGrab 三步 API） ——
+    // 速度采样环形缓冲（预分配 6 槽，拖动热路径零分配）：记录最近指针世界坐标/时刻
+    let fingerActive = false;
+    let fingerTrailN = 0;
+    const fingerTrail: { x: number; y: number; t: number }[] = Array.from({ length: 6 }, () => ({ x: 0, y: 0, t: 0 }));
+    const fingerPush = (wx: number, wy: number) => {
+      const s = fingerTrail[fingerTrailN % 6];
+      s.x = wx;
+      s.y = wy;
+      s.t = performance.now();
+      fingerTrailN++;
+    };
+    const fingerRelease = (vx: number, vy: number) => {
+      fingerActive = false;
+      canvas.style.cursor = useGameStore.getState().tool === 'finger' ? 'grab' : '';
+      try {
+        engine.endGrab(vx, vy);
+      } catch {
+        /* 旧引擎无 endGrab：静默（不影响主循环） */
+      }
     };
 
     // ------- 触屏手势状态（长按菜单 / 双击缩放 / 双指平移） -------
@@ -437,6 +463,8 @@ export function GameCanvas() {
         const pts = [...pointers.values()];
         pinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
         pinchCenter = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+        // 第二指落下 = 捏合意图：神之手指轻放收尾（防抓着单位捏合缩放）
+        if (fingerActive) fingerRelease(0, 0);
         return;
       }
       if (e.button === 1 || e.button === 2) {
@@ -453,6 +481,23 @@ export function GameCanvas() {
         return;
       }
       if (e.button === 0) {
+        // —— P3 神之手指：按住抓起最近生物（最高优先级：跳过框选/群组清除/工具施放） ——
+        {
+          const stF = useGameStore.getState();
+          if (stF.tool === 'finger' && !stF.picking && stF.pendingGroupAction == null) {
+            const { wx, wy } = worldAt(e);
+            fingerTrailN = 0;
+            fingerPush(wx, wy);
+            fingerActive = true;
+            canvas.style.cursor = 'grabbing';
+            try {
+              engine.beginGrab(wx, wy);
+            } catch {
+              /* 旧引擎无 beginGrab：静默 */
+            }
+            return;
+          }
+        }
         // —— Shift + 左键拖拽 = 框选单位（交互 2.0；原 Shift 平移由右键/中键承担） ——
         // —— 触屏 + 观察工具：单指拖动 = 框选（RTS 手游惯例；触屏无 Shift 键的等价入口） ——
         // 【75 门控】框选属复杂交互：简洁模式下 Shift 拖动 / 触屏拖动走普通语义
@@ -565,6 +610,17 @@ export function GameCanvas() {
         return;
       }
 
+      // —— P3 神之手指拖动：被抓单位跟随指针 + 速度采样（不施放/不平移/不框选） ——
+      if (fingerActive) {
+        fingerPush(wx, wy);
+        try {
+          engine.moveGrab(wx, wy);
+        } catch {
+          /* 旧引擎无 moveGrab：静默 */
+        }
+        return;
+      }
+
       if (panning) {
         const now = performance.now();
         const dtm = Math.max(1, now - lastMoveT);
@@ -630,6 +686,23 @@ export function GameCanvas() {
       if (pointers.size < 2) {
         pinchDist = 0;
         pinchCenter = null;
+      }
+      // —— P3 神之手指收尾：最近 ~120ms 位移 → 甩出速度（世界格/帧；轻放阈值 0.35 由引擎判定） ——
+      if (fingerActive) {
+        const nowU = performance.now();
+        const lastS = fingerTrail[Math.max(0, fingerTrailN - 1) % 6];
+        let oldX = lastS.x;
+        let oldY = lastS.y;
+        let oldT = lastS.t;
+        for (let k = 2; k <= 6 && k <= fingerTrailN; k++) {
+          const s = fingerTrail[(fingerTrailN - k) % 6];
+          if (nowU - s.t > 120) break; // 只取最近 120ms 窗口（防旧样本拖慢速度）
+          oldX = s.x;
+          oldY = s.y;
+          oldT = s.t;
+        }
+        const dtm = Math.max(16, nowU - oldT);
+        fingerRelease(((lastS.x - oldX) / dtm) * 16, ((lastS.y - oldY) / dtm) * 16);
       }
       // —— Shift 框选收尾 ——
       if (selecting && selAnchor) {

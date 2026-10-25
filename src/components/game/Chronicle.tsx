@@ -6,12 +6,19 @@ import { useGameStore, EVENT_CATEGORY, type EventFilter } from '@/store/gameStor
 import type { WorldEvent, WorldEventKind } from '@/lib/game/types';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { ScrollText, X, Flag, Swords, Handshake, Skull, Crown, Flame, Award, Biohazard, Radiation, Sparkles, Star, Ship, Home, Waves, Castle, CloudLightning, Trophy, Mountain, Droplets, Sword, Ghost, Flame as FlameIcon, Zap as ZapIcon, Hammer, Landmark, Coins, Gem, CloudRain, Snowflake, Bug, Sun, MountainSnow, Cloudy, Sparkle, PersonStanding, Eye, FlagTriangleRight, Swords as SwordsIcon, TrendingDown, Map, Landmark as LandmarkIcon, Scroll, BadgeCheck, BadgeX, Lightbulb, TriangleAlert, PartyPopper, Megaphone, CloudDrizzle, Dna, Orbit, Wind, Tornado, CircleDot, Snowflake as SnowIcon, Wheat, Leaf, FlaskConical, Route, Users, HeartCrack, Network, Wand2 } from 'lucide-react';
+import { ScrollText, X, Flag, Swords, Handshake, Skull, Crown, Flame, Award, Biohazard, Radiation, Sparkles, Star, Ship, Home, Waves, Castle, CloudLightning, Trophy, Mountain, Droplets, Sword, Ghost, Flame as FlameIcon, Zap as ZapIcon, Hammer, Landmark, Coins, Gem, CloudRain, Snowflake, Bug, Sun, MountainSnow, Cloudy, Sparkle, PersonStanding, Eye, FlagTriangleRight, Swords as SwordsIcon, TrendingDown, Map, Landmark as LandmarkIcon, Scroll, BadgeCheck, BadgeX, Lightbulb, TriangleAlert, PartyPopper, Megaphone, CloudDrizzle, Dna, Orbit, Wind, Tornado, CircleDot, Snowflake as SnowIcon, Wheat, Leaf, FlaskConical, Route, Users, HeartCrack, Network, Wand2, TreePine } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 /** 事件类型的图标与主题色 */
 export const KIND_META: Record<WorldEventKind, { icon: LucideIcon; color: string }> = {
   found: { icon: Flag, color: 'text-amber-300' },
+  king: { icon: Crown, color: 'text-amber-300' },
+  angel: { icon: Sparkle, color: 'text-sky-200' },
+  phoenix: { icon: FlameIcon, color: 'text-orange-400' },
+  ent: { icon: TreePine, color: 'text-emerald-300' },
+  lich: { icon: Ghost, color: 'text-violet-300' },
+  hydra: { icon: Bug, color: 'text-lime-400' },
+  holystorm: { icon: Sun, color: 'text-amber-200' },
   war: { icon: Swords, color: 'text-red-400' },
   peace: { icon: Handshake, color: 'text-emerald-400' },
   fall: { icon: Skull, color: 'text-orange-400' },

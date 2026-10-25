@@ -103,7 +103,9 @@ export function SpeedDialContent({ onSet }: { onSet?: (v: number) => void }) {
           <span className="text-[11px] font-bold tracking-widest text-[#e6ba6c]">时间流速</span>
         </span>
         <span className="flex items-center gap-2">
-          <span className="font-mono text-base font-black tabular-nums text-[#efc377]">{fmtSpeed(speed)}</span>
+          <span className="font-mono text-base font-black tabular-nums text-[#efc377]">
+            {speed <= 0 ? <Pause className="h-4 w-4" aria-label="已暂停" /> : fmtSpeed(speed)}
+          </span>
           <SpeedInput onCommit={apply} />
         </span>
       </div>
@@ -143,7 +145,7 @@ export function SpeedDialContent({ onSet }: { onSet?: (v: number) => void }) {
                   : 'border-[rgba(214,178,120,0.2)] bg-[rgba(50,42,31,0.5)] text-[#a2957c] hover:border-[rgba(214,178,120,0.4)] hover:text-[#f1e8d6]'
               }`}
             >
-              {v === 0 ? '⏸' : `${v}×`}
+              {v === 0 ? <Pause className="h-3 w-3" aria-hidden /> : `${v}×`}
             </button>
           );
         })}

@@ -4,10 +4,10 @@ import { W, H } from './constants';
 import { fbm, mulberry32, hash2 } from './noise';
 
 export interface WorldGenResult {
-  terrain: Uint8Array;
-  variant: Uint8Array; // per-tile color variation hash 0..255
-  temp: Uint8Array; // 0-255 气温场（纬度 + 噪声，地图覆盖模式用）
-  moist: Uint8Array; // 0-255 湿度场（fBm，地图覆盖模式用）
+  terrain: Uint8Array<ArrayBuffer>;
+  variant: Uint8Array<ArrayBuffer>; // per-tile color variation hash 0..255
+  temp: Uint8Array<ArrayBuffer>; // 0-255 气温场（纬度 + 噪声，地图覆盖模式用）
+  moist: Uint8Array<ArrayBuffer>; // 0-255 湿度场（fBm，地图覆盖模式用）
   spawnAnimals: { race: number; x: number; y: number }[];
 }
 
@@ -105,16 +105,44 @@ export function generateWorld(seed: number, params?: WorldGenParams): WorldGenRe
     }
   }
 
+  // —— 沼泽斑片：高湿度 + 低海拔 + 邻水洼地（湖畔/河畔/海岸湿地；斑块状噪声成形）——
+  const nearWater = (x: number, y: number, r: number): boolean => {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+        const t = terrain[yy * W + xx];
+        if (t === T.WATER || t === T.DEEP) return true;
+      }
+    }
+    return false;
+  };
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      const i = y * W + x;
+      if (terrain[i] !== T.GRASS) continue;
+      const h = heightAt(x, y, seed, warp, falloff) - seaBias;
+      if (h >= 0.56) continue; // 只落在低海拔洼地
+      const m = Math.min(1, Math.max(0, fbm(x / 36 + 8, y / 36 + 3, seed + 321, 4) + moistBias));
+      if (m < 0.60) continue; // 高湿度
+      // 斑块噪声：只有噪声峰区成沼（避免满图烂泥；种子确定性 → 读档重放一致）
+      const patch = fbm(x / 13 + 41, y / 13 + 23, seed + 777, 3);
+      if (patch < 0.55) continue;
+      if (!nearWater(x, y, 2)) continue; // 邻水洼地
+      terrain[i] = T.SWAMP;
+    }
+  }
+
   // wildlife
   const spawnAnimals: { race: number; x: number; y: number }[] = [];
-  const trySpawn = (race: number, count: number, group: [number, number], need: number) => {
+  const trySpawn = (race: number, count: number, group: [number, number], need: number, nearWaterR = 0) => {
     let placed = 0;
     let guard = 0;
     while (placed < count && guard++ < count * 60) {
       const x = rand() * W;
       const y = rand() * H;
       const i = Math.floor(y) * W + Math.floor(x);
-      if (terrain[i] === need) {
+      if (terrain[i] === need && (nearWaterR <= 0 || nearWater(Math.floor(x), Math.floor(y), nearWaterR))) {
         spawnAnimals.push({ race, x, y });
         placed++;
         // pack mates
@@ -139,6 +167,17 @@ export function generateWorld(seed: number, params?: WorldGenParams): WorldGenRe
   trySpawn(R.SCORPION, 8, [2, 3], T.SAND); // 蝎子：沙漠穴居猎手
   trySpawn(R.SNAKE, 7, [2, 3], T.SAND); // 蛇：沙漠猎手（毒牙）
   trySpawn(R.SNOWWOLF, 8, [2, 4], T.SNOW); // 雪狼：极地冰原的白色猎手，成群追猎企鹅与驯鹿
+  // —— 八新动物播撒 ——
+  trySpawn(R.CHICKEN, 10, [3, 5], T.GRASS); // 鸡：村落式小群（草地）
+  trySpawn(R.PIG, 8, [3, 5], T.GRASS);      // 猪：草地小群（掉肉大户）
+  trySpawn(R.RABBIT, 12, [3, 6], T.GRASS);  // 兔：草地群穴（狐的猎物）
+  trySpawn(R.RABBIT, 5, [2, 4], T.FOREST);  // 兔：林缘亦有
+  trySpawn(R.FOX, 6, [1, 2], T.FOREST);     // 狐：森林猎手
+  trySpawn(R.FISH, 14, [5, 10], T.WATER);   // 鱼：5-10 只结群的鱼群
+  trySpawn(R.FISH, 5, [4, 7], T.DEEP);      // 深海亦有鱼群
+  trySpawn(R.CRAB, 10, [2, 4], T.SAND, 2);  // 蟹：限邻水沙滩（2 格内有水）
+  trySpawn(R.TURTLE, 9, [2, 4], T.DEEP);    // 龟：海洋游荡
+  trySpawn(R.SHARK, 6, [1, 2], T.DEEP);     // 鲨鱼：深海独行猎手
 
   // sanity: ensure at least some land
   let land = 0;

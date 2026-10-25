@@ -447,6 +447,23 @@ export function Toolbar() {
     };
   }, []);
 
+  // —— 数字键 4-9 快速切换六大分类：1/2/3 已被速度控制占用（keymap.ts:43 注册 + GameCanvas 实现），
+  //     冲突回避取空闲数字段 4-9（Shift/Alt+数字为镜头书签，带修饰键一律跳过）；统一键位注册表
+  //     src/lib/ui/keymap.ts 仅为文档展示层（无功能分发器），故分发在本地实现、展示待其补充 ——
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      const m = /^Digit([4-9])$/.exec(e.code); // e.code 识别不受输入法影响
+      if (!m) return;
+      const meta = TAB_META[Number(m[1]) - 4];
+      if (meta) setTab(meta.id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setTab]);
+
   return (
     <TooltipProvider delayDuration={250}>
       <div
@@ -512,7 +529,7 @@ export function Toolbar() {
           <span className="su-vline" aria-hidden />
 
           {/* 分类段（六页签，macOS 分段胶囊形态） */}
-          {TAB_META.map((t) => {
+          {TAB_META.map((t, i) => {
             const active = tab === t.id;
             return (
               <Tooltip key={t.id}>
@@ -529,7 +546,7 @@ export function Toolbar() {
                     <span className={`hidden text-[11px] font-semibold sm:inline ${active ? '' : 'opacity-80'}`}>{t.label}</span>
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs text-[#f1e8d6]">{t.label}</TooltipContent>
+                <TooltipContent side="top" className="text-xs text-[#f1e8d6]">{t.label} · 数字键 {i + 4}</TooltipContent>
               </Tooltip>
             );
           })}

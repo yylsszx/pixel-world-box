@@ -10,19 +10,25 @@ import { PixelIcon } from './PixelIcon';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import { X, Crosshair, Skull, Flag, Sailboat, Coins, BookOpen, Swords, Lightbulb, Landmark, Sparkles, Eraser, BookMarked } from 'lucide-react';
+import { X, Crosshair, Skull, Flag, Sailboat, Coins, BookOpen, Swords, Lightbulb, Landmark, Sparkles, Eraser, BookMarked, Crown } from 'lucide-react';
 
 const raceIcon: Record<string, string> = {
   human: 'human', elf: 'elf', dwarf: 'dwarf', orc: 'orc', bandit: 'bandit',
   zombie: 'zombie', sheep: 'sheep', wolf: 'wolf', bear: 'bear', dragon: 'dragon',
   deer: 'deer', penguin: 'penguin', camel: 'camel', scorpion: 'scorpion',
   snake: 'snake', snowwolf: 'snowwolf', skeleton: 'skeleton', demon: 'demon', mage: 'mage',
+  lizard: 'lizard', goblin: 'goblin',
+  // 契约新增动物种族（像素图标已入 ICONS 表）：单位头像不再误回退 human
+  chicken: 'chicken', pig: 'pig', rabbit: 'rabbit', fox: 'fox',
+  fish: 'fish', crab: 'crab', turtle: 'turtle', shark: 'shark',
 };
 
 interface UnitInfo {
   id: number; name: string; raceName: string; civName: string | null; civColor: string | null;
   hp: number; maxHp: number; kills: number; ageYears: number; infected: boolean;
   traitName: string | null; traitDesc: string | null; isCiv: boolean; race: number;
+  /** 契约：在位国王旗标（引擎并行新增；缺省 undefined 视为非君主） */
+  king?: boolean;
   trait?: string | null;
   jobName: string | null; jobDesc: string | null;
   boat?: number; boatTTL?: number;
@@ -89,6 +95,11 @@ export function Inspector() {
   const showCiv = !showUnit && selCiv != null && civ != null && civ.id === selCiv;
   if (!showUnit && !showCiv) return null;
 
+  // —— 职业徽标解析：king 职业为引擎并行新增（JOBS 表可能尚未收录），
+  //    按职业 key 或常见中文职称兜底判金，未收录时不崩溃 ——
+  const jobDef = unit?.jobName ? JOBS.find((j) => j.name === unit.jobName) : undefined;
+  const kingJob = !!unit && (jobDef?.key === 'king' || unit.jobName === '国王' || unit.jobName === '君主');
+
   return (
     <div
       className={`pointer-events-auto absolute right-2 top-[60px] z-20 flex w-56 flex-col rounded-sm border-2 border-zinc-700/90 bg-zinc-900/95 shadow-[0_4px_0_rgba(0,0,0,0.6)] su-panel ${
@@ -113,7 +124,19 @@ export function Inspector() {
               <PixelIcon icon={raceIcon[RACES[unit.race].key] ?? 'human'} size={34} />
             </div>
             <div className="min-w-0">
-              <p className="truncate text-sm font-bold text-zinc-100">{unit.name}</p>
+              <p className="flex items-center gap-1.5">
+                <span className="truncate text-sm font-bold text-zinc-100">{unit.name}</span>
+                {unit.king && (
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 gap-0.5 border-amber-500/70 bg-amber-400/10 px-1 py-0 text-[9px] font-bold text-amber-300"
+                    title="在位君主：此单位是所属王国的现任国王"
+                  >
+                    <Crown className="h-2.5 w-2.5" aria-hidden />
+                    在位君主
+                  </Badge>
+                )}
+              </p>
               <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{unit.raceName}</p>
             </div>
           </div>
@@ -138,10 +161,15 @@ export function Inspector() {
             <span>击杀 <b className="text-zinc-200">{unit.kills}</b></span>
           </div>
 
-          {/* 职业徽标 */}
+          {/* 职业徽标（king 职业着金色 + 金冠；其余按 JOBS 表职业色） */}
           {unit.jobName && (
             <div>
-              <Badge variant="outline" className="text-[10px] font-bold" style={{ borderColor: JOBS.find((j) => j.name === unit.jobName)?.color, color: JOBS.find((j) => j.name === unit.jobName)?.color }}>
+              <Badge
+                variant="outline"
+                className={`gap-1 text-[10px] font-bold ${kingJob ? 'border-[#e6ba6c] bg-[#e6ba6c]/10 text-[#efc377]' : ''}`}
+                style={kingJob ? undefined : { borderColor: jobDef?.color, color: jobDef?.color }}
+              >
+                {kingJob && <Crown className="h-3 w-3" aria-hidden />}
                 {unit.jobName}
               </Badge>
               {unit.jobDesc && <p className="mt-0.5 text-[10px] text-zinc-500">{unit.jobDesc}</p>}
@@ -174,6 +202,12 @@ export function Inspector() {
             {(unit.panic ?? 0) >= 0.3 && (
               <Badge variant="outline" className="border-amber-600/60 bg-amber-400/10 text-[10px] font-bold text-amber-300" title="恐慌值（≥ 72% 即溃逃）">
                 恐慌 {Math.round((unit.panic ?? 0) * 100)}%
+              </Badge>
+            )}
+            {/* 状态徽章并入同一徽章区（与家族/血仇/恐慌对齐，避免散点布局） */}
+            {unit.infected && (
+              <Badge variant="outline" className="border-emerald-600 bg-emerald-400/10 text-[10px] font-bold text-emerald-400">
+                感染瘟疫
               </Badge>
             )}
           </div>
@@ -270,12 +304,6 @@ export function Inspector() {
                 );
               })}
             </div>
-          )}
-
-          {unit.infected && (
-            <Badge variant="outline" className="border-emerald-600 bg-emerald-400/10 text-[10px] font-bold text-emerald-400">
-              感染瘟疫
-            </Badge>
           )}
 
           {unit.boat ? (

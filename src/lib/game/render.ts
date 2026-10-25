@@ -1,7 +1,7 @@
 // ============ WorldBox Replica — Rendering pipeline ============
 import type { Army, Effect, Unit } from './types';
 import { T, R, RACES } from './types';
-import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawHydra, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster } from './sprites';
+import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawHydra, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster, drawPersonFine, drawQuadFine, drawChicken, drawPig, drawRabbit, drawFox, drawFish, drawCrab, drawTurtle, drawShark } from './sprites';
 import { visCacheFor } from './emergence';
 import { BUILDING_DEFS } from './types';
 import { GameEngine } from './engine';
@@ -92,6 +92,118 @@ function dmgFontOf(fs: number): string {
     dmgFontCache.str = `bold ${fs}px ui-monospace, "SF Mono", Menlo, Consolas, monospace`;
   }
   return dmgFontCache.str;
+}
+
+/** —— P0-B：像素粒子池（世界坐标 · 对象复用 · 零热路径分配）——
+ *  爆炸火花 / 血溅 / 沙尘 / 命中白闪共用一个数组对象池：死亡粒子回收到 free 表，
+ *  上限硬裁（fxDensity 缩放），逐帧 update+draw 各 1-2px fillRect。字段即全部状态。 */
+interface FxParticle { x: number; y: number; vx: number; vy: number; life: number; ttl: number; size: number; grav: number; col: string }
+const FX_POOL: FxParticle[] = []; // 活跃粒子（swap-pop 删除）
+const FX_FREE: FxParticle[] = []; // 死亡粒子回收池
+const FX_CAPS_P = [120, 210, 300]; // 粒子硬上限（fxDensity 低/标准/华丽）
+const FX_MUL = [0.5, 0.75, 1]; // 生成量缩放（同上三档）
+/** 预置颜色常量（热路径零字符串拼接） */
+const FX_SPARK_COLS = ['#ffd93d', '#ff9b2d', '#ff7b2d', '#cf3f2e', '#8d8d8d'];
+const FX_BLOOD_COLS = ['#c81e16', '#8c140f', '#a01a12'];
+const FX_DUST_COLS = ['#decb8d', '#cbb478', '#e8dcaa'];
+const FX_HIT_COLS = ['#fff3c4', '#ffd93d'];
+
+/** 生成粒子（池满/关闭时静默丢弃；count 已按密度档缩放） */
+function fxSpawn(x: number, y: number, vx: number, vy: number, ttl: number, size: number, grav: number, col: string) {
+  if (FX_POOL.length >= FX_CAPS_P[engineFxTier]) return;
+  const p = FX_FREE.pop() ?? ({} as FxParticle);
+  p.x = x; p.y = y; p.vx = vx; p.vy = vy;
+  p.life = ttl; p.ttl = ttl; p.size = size; p.grav = grav; p.col = col;
+  FX_POOL.push(p);
+}
+/** 引擎特效密度档位（render 开头同步一次，热路径只读数字） */
+let engineFxTier = 1;
+
+/** 粒子步进 + 绘制（动态层 B 每帧一次；swap-pop 删除零分配） */
+function stepFxParticles(wc: CanvasRenderingContext2D) {
+  for (let i = FX_POOL.length - 1; i >= 0; i--) {
+    const p = FX_POOL[i];
+    p.life--;
+    if (p.life <= 0) {
+      const last = FX_POOL.pop()!;
+      if (i < FX_POOL.length) FX_POOL[i] = last;
+      FX_FREE.push(p);
+      continue;
+    }
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += p.grav;
+    wc.globalAlpha = p.life < p.ttl * 0.5 ? p.life / (p.ttl * 0.5) : 1;
+    wc.fillStyle = p.col;
+    wc.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+  }
+  wc.globalAlpha = 1;
+}
+
+/** 爆炸火花（12-24 颗，橙红灰三系，带重力；n 已按密度档缩放） */
+function fxSparks(px: number, py: number, n: number, seed: number) {
+  for (let k = 0; k < n; k++) {
+    const h = ((seed * 2654435761 + k * 2246822519) >>> 0);
+    const ang = (h % 628) / 100;
+    const spd = 0.18 + ((h >> 9) % 30) / 100;
+    fxSpawn(
+      px, py,
+      Math.cos(ang) * spd, Math.sin(ang) * spd - 0.12,
+      16 + (h % 18), (h & 3) === 0 ? 2 : 1, 0.014,
+      FX_SPARK_COLS[h % 5],
+    );
+  }
+}
+
+/** —— P0-B：3×5 点阵数字字模（0-9 与负号；每行 3 位，高位在左）—— */
+const DIGIT_FONT: number[][] = [
+  [7, 5, 5, 5, 7], // 0
+  [2, 6, 2, 2, 7], // 1
+  [7, 1, 7, 4, 7], // 2
+  [7, 1, 3, 1, 7], // 3
+  [5, 5, 7, 1, 1], // 4
+  [7, 4, 7, 1, 7], // 5
+  [7, 4, 7, 5, 7], // 6
+  [7, 1, 2, 2, 2], // 7
+  [7, 5, 7, 5, 7], // 8
+  [7, 5, 7, 1, 7], // 9
+];
+
+/** 点阵数字绘制（cx 水平居中，cy 为字模顶；只绘 0-9 与 '-'，其他字符跳过占零宽） */
+function drawPixelDigits(ctx: CanvasRenderingContext2D, cx: number, cy: number, text: string, s: number, fill: string) {
+  let n = 0;
+  for (let k = 0; k < text.length; k++) {
+    const c = text.charCodeAt(k);
+    if ((c >= 48 && c <= 57) || c === 45) n++;
+  }
+  if (n === 0) return;
+  ctx.fillStyle = fill;
+  let x0 = Math.round(cx - (n * 4 * s - s) / 2);
+  for (let k = 0; k < text.length; k++) {
+    const c = text.charCodeAt(k);
+    if (c === 45) { ctx.fillRect(x0, cy + 2 * s, s, s); x0 += 4 * s; continue; } // '-'
+    const d = c - 48;
+    if (d < 0 || d > 9) continue;
+    const g = DIGIT_FONT[d];
+    for (let row = 0; row < 5; row++) {
+      const bits = g[row];
+      const yy = cy + row * s;
+      if (bits & 4) ctx.fillRect(x0, yy, s, s);
+      if (bits & 2) ctx.fillRect(x0 + s, yy, s, s);
+      if (bits & 1) ctx.fillRect(x0 + 2 * s, yy, s, s);
+    }
+    x0 += 4 * s;
+  }
+}
+
+/** —— P0-A：国王金冠（3px 宽：#e6ba6c 主 + 亮芯；各 LOD 档位头顶通用，层 B 坐标）—— */
+function drawCrown(wc: CanvasRenderingContext2D, cx: number, baseY: number) {
+  wc.fillStyle = '#e6ba6c';
+  wc.fillRect(cx - 1, baseY, 3, 1); // 冠带
+  wc.fillRect(cx - 1, baseY - 1, 1, 1); // 左齿
+  wc.fillRect(cx + 1, baseY - 1, 1, 1); // 右齿
+  wc.fillStyle = '#ffe9a8';
+  wc.fillRect(cx, baseY - 1, 1, 1); // 亮芯
 }
 
 /** 河道八方向（与 engine RIVER_DIRS 同序） */
@@ -259,6 +371,37 @@ function drawAmbience(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numb
       // 深海微澜：稀疏的暗青色短横线（风掠过洋面）
       wc.fillStyle = 'rgba(90,130,175,0.4)';
       wc.fillRect(px + (h & 1), py + ((h >> 4) & 1), 2, 1);
+    }
+  }
+  // —— P1：深海滚动波带（沿风向推进的斜向微光，与上方微澜融合）——
+  drawDeepWaves(engine, wc, tx0, tx1, ty0, ty1);
+}
+
+/** 滚动波带亮度查表（6 档加性淡白 —— 热路径零字符串拼接；上限压低避免「棋盘感」） */
+const DEEP_WAVE_ALPHA = Array.from({ length: 6 }, (_, k) => `rgba(224,244,255,${(0.03 + k * 0.018).toFixed(3)})`);
+
+/** P1 深海滚动波带：沿风向移动的斜向微光（周期 ~6s；stride 7 步进采样；只画深海格）
+ *  实现：每带一条固定斜率的斜线（错开基线），只画行进波波峰尖（sin>0.8）——稀疏点缀而非连续亮带 */
+function drawDeepWaves(engine: GameEngine, wc: CanvasRenderingContext2D, tx0: number, tx1: number, ty0: number, ty1: number) {
+  const fc = engine.frameCount;
+  const terrain = engine.terrain;
+  // 风向：视口中心自然网格单元（整带同向 —— 波带是大尺度洋面特征）
+  const [wu] = engine.nature.windAt((((tx0 + tx1) / 2) / CELL) | 0, ((((ty0 + ty1) / 2) / CELL) | 0));
+  const dir = wu >= 0 ? 1 : -1;
+  for (let band = 0; band < 2; band++) {
+    // 带基线：视口纵向均布 + 慢速正弦漂移（洋面缓摆）
+    const yBase = ty0 + ((band + 1) * (ty1 - ty0 + 1)) / 3 + Math.sin(fc * 0.003 + band * 2.1) * 6;
+    const phaseDrift = fc * 0.045 * dir + band * 2.4; // 行进波相位（~360 帧 = 6s 一循环）
+    for (let x = tx0 + band * 3; x <= tx1; x += 7) { // stride 7 步进（性能红线）
+      const yy = yBase + (x - tx0) * 0.42; // 斜向坡度（与微澜短横线取向区分）
+      const ty = yy | 0;
+      if (ty < ty0 || ty > ty1) continue;
+      if (terrain[ty * 256 + x] !== T.DEEP) continue; // 只画深海
+      // 行进波：沿 x 的正弦，只取波峰尖（>0.8）画短促微光（加性淡白）
+      const wave = Math.sin(x * 0.24 - phaseDrift);
+      if (wave <= 0.8) continue;
+      wc.fillStyle = DEEP_WAVE_ALPHA[Math.min(5, ((wave - 0.8) * 22) | 0)];
+      wc.fillRect(x * 2, ty * 2, 5, 1);
     }
   }
 }
@@ -852,6 +995,9 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
   engine.flushDirty();
   engine.flushProps();
 
+  // P0-B：特效密度档位帧首同步（粒子池上限/生成量缩放读数字，免热路径取对象）
+  engineFxTier = engine.fxPrefs.fxDensity ?? 1;
+
   // Task 48-B2：视口尺寸回写（闪电屏闪/鸟群生成的可见性判定；一帧延迟可忽略）
   engine.viewW = cw;
   engine.viewH = ch;
@@ -969,12 +1115,14 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
       wc.fillStyle = sunBldShadowStyle; // 帧级常量字符串（仅随太阳高度变化）
       wc.fillRect(b.x * 4 + 4 + sox, b.y * 4 - 4 + soy, 6, 4);
     }
-    drawBuilding(wc, b, civ.color, engine.houseTierOf(civ));
-    // —— 原子级：受损建筑冒烟（耐久 <60% 轻烟，<30% 浓烟 + 火点）——
+    // —— 耐久比率先算（P2 城墙受损变暗 + 冒烟共用；缺省 = 满血） ——
     const bhp = engine.bHp.get(b.i);
+    const bMax = BUILDING_DEFS[b.kind]?.hp ?? 70;
+    const bRatio = bhp != null ? bhp / bMax : 1;
+    drawBuilding(wc, b, civ.color, engine.houseTierOf(civ), bRatio);
+    // —— 原子级：受损建筑冒烟（耐久 <60% 轻烟，<30% 浓烟 + 火点）——
     if (bhp != null) {
-      const max = BUILDING_DEFS[b.kind]?.hp ?? 70;
-      const ratio = bhp / max;
+      const ratio = bRatio;
       if (ratio < 0.6) {
         const heavy = ratio < 0.3;
         const flick = ((frameCount >> 2) + b.i) & 3;
@@ -1197,6 +1345,9 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
     if (++eDrawn >= 160) break;
   }
 
+  // —— P0-B：像素粒子池步进+绘制（爆炸火花/血溅/沙尘；上限随 fxDensity 分档）——
+  stepFxParticles(wc);
+
   // —— 天幕粒子层（质感工程 v3：512² 低分辨率 —— 云/雨/雪/气旋/闪电）
   // 画在世界层之上、昼夜光影之下（屏幕侧紧随 worldCanvas 合成；闪电在雨幕之上）
   ensureFx();
@@ -1235,20 +1386,34 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
   const scale = zoom / 8; // 质感工程 v3：超采样画布（2048²）—— 每格屏幕尺寸不变（zoom CSS px），取景零变化
   const ox = cw / 2 - cam.x * zoom + sx;
   const oy = ch / 2 - cam.y * zoom + sy;
+  // —— P1 性能：worldCanvas/staticCanvas blit 视口裁剪 ——
+  // 旧版每帧全幅 drawImage 两次（2048×1280 ≈ 2.6M 像素 ×2）；改为 9 参形式，
+  // 源矩形 = 当前视口 ∩ 画布。默认 zoom 4.5 视口仅占画布 ~15% → 光栅量降 ~85%。
+  // k = 8/zoom：画布设备像素 / CSS px（画布 8 设备像素每 tile，zoom CSS px 每 tile）
+  const kInv = 8 / zoom;
+  const blitX0 = Math.max(0, Math.floor(-ox * kInv));
+  const blitY0 = Math.max(0, Math.floor(-oy * kInv));
+  const blitX1 = Math.min(W2 * 2, Math.ceil((cw - ox) * kInv));
+  const blitY1 = Math.min(H2 * 2, Math.ceil((ch - oy) * kInv));
+  const blitClipped = blitX1 > blitX0 && blitY1 > blitY0;
   // 缩放动画期间临时双线性：推拉镜头平滑无摩尔纹；静止回最近邻保持像素锐利
   const zoomSmoothing = engine.zoomAnim != null;
   ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
   ctx.imageSmoothingEnabled = zoomSmoothing;
-  // Task 71 性能：地形+道具预合成 staticCanvas（syncStatic 增量维护）→ 单次 blit
-  ctx.drawImage(staticCanvas!, 0, 0);
+  // Task 71 性能：地形+道具预合成 staticCanvas（syncStatic 增量维护）→ 单次裁剪 blit
+  if (blitClipped) {
+    ctx.drawImage(staticCanvas!, blitX0, blitY0, blitX1 - blitX0, blitY1 - blitY0, blitX0, blitY0, blitX1 - blitX0, blitY1 - blitY0);
+  }
   // 地幕粒子层（浪花/飘雪/云影/湿沙：地形之上、建筑单位之下；全关时跳过）
   if (groundUsed) {
     ctx.setTransform(dpr * zoom / 2, 0, 0, dpr * zoom / 2, dpr * ox, dpr * oy);
     ctx.drawImage(groundCanvas!, 0, 0);
   }
-  // 世界层（建筑/单位/特效：超采样主合成）
+  // 世界层（建筑/单位/特效：超采样主合成，同样视口裁剪）
   ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
-  ctx.drawImage(engine.worldCanvas, 0, 0);
+  if (blitClipped) {
+    ctx.drawImage(engine.worldCanvas, blitX0, blitY0, blitX1 - blitX0, blitY1 - blitY0, blitX0, blitY0, blitX1 - blitX0, blitY1 - blitY0);
+  }
   // 天幕粒子层（云/雨/雪/闪电：世界层之上、昼夜色调之下；空幕跳过省一次全屏 blit）
   if (skyUsed) {
     ctx.setTransform(dpr * zoom / 2, 0, 0, dpr * zoom / 2, dpr * ox, dpr * oy);
@@ -1346,19 +1511,49 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
       const rise = t < 0.3 ? 0 : (t - 0.3) / 0.7 * 26;
       const alpha = t < 0.75 ? 1 : Math.max(0, 1 - (t - 0.75) / 0.25);
       const dpx = e.x * zoom + wox;
-      const dpy = e.y * zoom + woy;
-      const fs = Math.max(9, Math.min(15, Math.round(zoom * 1.6)));
-      ctx.font = dmgFontOf(fs);
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      // 黑色描边保证浅色地形上可读
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = `rgba(20,16,12,${alpha})`;
-      ctx.strokeText(e.text, dpx, dpy - 10 - rise);
-      // 毒素标记用绿色，普通伤害用橙色
-      const poison = e.text.includes('毒');
-      ctx.fillStyle = poison ? `rgba(120,220,80,${alpha})` : `rgba(255,170,60,${alpha})`;
-      ctx.fillText(e.text, dpx, dpy - 10 - rise);
+      const dpy = e.y * zoom + woy - 10 - rise;
+      const crit = e.text.indexOf('暴') >= 0;
+      const poison = e.text.indexOf('毒') >= 0;
+      // —— P0-B：像素点阵数字（3×5 字模 fillRect；暴击 ×1.5 放大 + 金色）——
+      // 纯中文文本（吞噬/石化/装备名等点阵无法表达）回退系统字体
+      const s0 = Math.max(1, Math.min(3, Math.round(zoom / 4)));
+      const s = crit ? Math.round(s0 * 1.5) : s0;
+      const col = poison ? `rgba(120,220,80,${alpha})` : crit ? `rgba(255,217,61,${alpha})` : `rgba(255,170,60,${alpha})`;
+      let hasDigit = false;
+      for (let k = 0; k < e.text.length; k++) {
+        const c = e.text.charCodeAt(k);
+        if ((c >= 48 && c <= 57) || c === 45) { hasDigit = true; break; }
+      }
+      if (hasDigit) {
+        // 像素风可读性底衬：1 块深色底板替代逐字描边（点阵数字 ×5 向描边成本过高）
+        ctx.globalAlpha = alpha * 0.42;
+        ctx.fillStyle = '#14100c';
+        let n = 0;
+        for (let k = 0; k < e.text.length; k++) {
+          const c = e.text.charCodeAt(k);
+          if ((c >= 48 && c <= 57) || c === 45) n++;
+        }
+        ctx.fillRect(dpx - (n * 4 * s - s) / 2 - 2, dpy - 2, n * 4 * s + 2, 5 * s + 3);
+        ctx.globalAlpha = alpha;
+        drawPixelDigits(ctx, dpx, dpy, e.text, s, col);
+        // 暴击标记：数字左侧 2×2 金色闪块（『暴』字点阵无法表达 → 像素记号）
+        if (crit && engine.frameCount % 14 < 9) {
+          ctx.fillStyle = `rgba(255,238,170,${alpha})`;
+          ctx.fillRect(dpx - (n * 4 * s - s) / 2 - 6, dpy, 2, 2);
+        }
+        ctx.globalAlpha = 1;
+      } else {
+        const fs = Math.max(9, Math.min(15, Math.round(zoom * 1.6)));
+        ctx.font = dmgFontOf(fs);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        // 黑色描边保证浅色地形上可读
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = `rgba(20,16,12,${alpha})`;
+        ctx.strokeText(e.text, dpx, dpy);
+        ctx.fillStyle = poison ? `rgba(120,220,80,${alpha})` : `rgba(255,170,60,${alpha})`;
+        ctx.fillText(e.text, dpx, dpy);
+      }
     }
   }
 
@@ -1464,6 +1659,7 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
   }
 
   // ---- 4. brush cursor preview ----
+  // P3：像素风短弧段圆环 —— 黑色描边打底（对比）+ 白 60% 虚线感短弧段（两遍同相位叠画）
   if (engine.cursor.on && engine.brushPreview) {
     const bpx = engine.cursor.wx * zoom + wox;
     const bpy = engine.cursor.wy * zoom + woy;
@@ -1472,11 +1668,26 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
     ctx.arc(bpx, bpy, r, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(255,255,255,0.07)';
     ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-    ctx.setLineDash([4, 3]);
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.setLineDash([]);
+    const SEG = 8; // 短弧段数：虚线感（占空比 0.55）
+    const span = (Math.PI * 2) / SEG;
+    // 第一遍：深色描边（线宽加倍 → 勾边效果，浅色地形上不消失）
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(20,16,12,0.5)';
+    for (let k = 0; k < SEG; k++) {
+      const a0 = k * span;
+      ctx.beginPath();
+      ctx.arc(bpx, bpy, r, a0, a0 + span * 0.55);
+      ctx.stroke();
+    }
+    // 第二遍：白 60% 短弧段（同相位 —— 骑在黑描边上）
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    for (let k = 0; k < SEG; k++) {
+      const a0 = k * span;
+      ctx.beginPath();
+      ctx.arc(bpx, bpy, r, a0, a0 + span * 0.55);
+      ctx.stroke();
+    }
   }
 }
 
@@ -1657,7 +1868,7 @@ function drawUnitSprite(engine: GameEngine, u: Unit, wc: CanvasRenderingContext2
   drawUnitBody(engine, u, def, wc);
 }
 
-/** 质感工程 v3（Task 49）：动物远距 LOD 色表 —— zoom < 5.6 时 2-3 rect 简绘
+/** 质感工程 v3（Task 49）：动物远距 LOD 色表 —— zoom < 5.6 时简绘
  *  （全图视图 600+ 单位的完整精灵 ~30 rect/只 → 简绘 ~1/10 成本；远距肉眼等价）
  *  [body, dark, w, h]：主体系列色取自各族精灵本体，尺寸近似真实占地（512 空间） */
 const ANIMAL_LOD: Record<string, [string, string, number, number]> = {
@@ -1681,65 +1892,191 @@ const ANIMAL_LOD: Record<string, [string, string, number, number]> = {
   kraken: ['#6a4a8a', '#46305e', 4, 3],
   sandworm: ['#c8ad6e', '#a08a52', 4, 2],
   basilisk: ['#6a8848', '#46602e', 4, 3],
+  // —— P2：八新动物（中档 LOD 同样吃这套表：头/身/四肢步态）——
+  chicken: ['#f6f1e4', '#b07a3a', 2, 2],
+  pig: ['#e8a8a0', '#a86058', 3, 2],
+  rabbit: ['#b8b0a4', '#6e685e', 2, 2],
+  fox: ['#d97b3c', '#8a4a1c', 3, 2],
+  fish: ['#9fd4d8', '#5a9aa8', 2, 1],
+  crab: ['#d94a3a', '#8a2418', 3, 2],
+  turtle: ['#4a7a3a', '#2e5424', 3, 2],
+  shark: ['#5a6a78', '#2e3a46', 4, 2],
 };
 
-/** 单位本体分发（LOD：远缩到 zoom < 2.2 时人形简绘为 2 色小点，节省开销并保持辨识度） */
+/** P0-A：精绘四足档位表（zoom≥8 走 ×4 精细像素精灵 drawQuadFine） */
+const QUAD_FINE: Record<string, 'wolf' | 'snowwolf' | 'sheep' | 'bear' | 'deer'> = {
+  wolf: 'wolf', snowwolf: 'snowwolf', sheep: 'sheep', bear: 'bear', deer: 'deer',
+};
+
+/** P2：水生精灵水面门控（离水不画；crab 凭 beach 特质可上滩） */
+function onWaterTile(engine: GameEngine, u: Unit, beachOk: boolean): boolean {
+  const t = engine.terrain[(u.y | 0) * 256 + (u.x | 0)];
+  if (t === T.WATER || t === T.DEEP) return true;
+  return beachOk && t === T.SAND;
+}
+
+/** P0-A：精绘档分发（zoom≥8）：人形 → drawPersonFine / 四足 → drawQuadFine。
+ *  ×4 精细像素 = 0.25 tile = 1 用户像素：层 B(2px/tile) 内 scale(0.5) 回到 4px/tile
+ *  精细网格，脚底 (fx,fy) 锚定到插值位置（吸附 1 用户像素 → 设备像素恒整，零 AA 糊边） */
+function tryDrawFine(engine: GameEngine, u: Unit, def: (typeof RACES)[number], wc: CanvasRenderingContext2D, px: number, py: number, king: boolean): boolean {
+  const fx = Math.round(u.rx ?? u.x);
+  const fy = Math.round(u.ry ?? u.y) + 1;
+  const tx = Math.round(px * 2) - fx;
+  const ty = Math.round(py * 2) - fy;
+  if (def.sprite === 'person') {
+    if (u.trait === 'giant') return false; // 巨人走 ×2 专属巨躯
+    const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
+    wc.save();
+    wc.scale(0.5, 0.5);
+    wc.translate(tx, ty);
+    drawPersonFine(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount, king);
+    wc.restore();
+    return true;
+  }
+  const quad = QUAD_FINE[def.sprite];
+  if (quad && !def.vis) {
+    wc.save();
+    wc.scale(0.5, 0.5);
+    wc.translate(tx, ty);
+    drawQuadFine(wc, u, quad, engine.frameCount, king);
+    wc.restore();
+    return true;
+  }
+  return false;
+}
+
+/** 单位本体分发（LOD 四档：zoom<2.5 色点 / 2.5–5.6 中档迷你形态 / 5.6–8 全精灵 / ≥8 ×4 精绘） */
 function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], wc: CanvasRenderingContext2D) {
   const zoom = engine.cam.zoom;
-  // 质感工程 v3：人形 LOD 阈值 4.4 → 5.6（与动物 LOD 统一；默认视角 4.5 即简绘，
-  // 5.6 以下人形仅 ~3×5 CSS px，国色身体+肤色头与完整精灵肉眼等价）
-  if (zoom < 5.6 && def.sprite === 'person') {
-    // LOD 简绘：国色身体 + 肤色头（1 像素单位级）
-    const px = u.dpx ?? (u.rx ?? u.x) * 2;
-    const py = u.dpy ?? (u.ry ?? u.y) * 2;
-    const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-    if (civ && civ.alive) {
-      // colorHex 与 rgb(r,g,b) 同色（建国时同源生成）—— 零拼接直用预生成串
-      wc.fillStyle = civ.colorHex;
-    } else {
-      wc.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#9a8460';
-    }
-    wc.fillRect(px, py - 2, 2, 3);
-    wc.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#d9a066';
-    wc.fillRect(px, py - 4, 2, 2);
+  const fc = engine.frameCount;
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const king = !!u.king;
+
+  // —— P2：水生精灵水面门控（离水不画 —— 防御性：正常情况下引擎保证栖息地） ——
+  if (def.sprite === 'fish' || def.sprite === 'turtle' || def.sprite === 'shark') {
+    if (!onWaterTile(engine, u, false)) return;
+  } else if (def.sprite === 'crab' && !onWaterTile(engine, u, true)) {
     return;
   }
-  // —— 质感工程 v3：动物远距 LOD（zoom < 5.6，默认视角 4.5 即生效）——
-  // 涌现物种（def.vis）保留完整程序化形态（进化展示是核心玩法，且数量稀少）
-  if (zoom < 5.6 && !def.vis) {
-    const lod = ANIMAL_LOD[def.sprite];
-    if (lod) {
-      const px = u.dpx ?? (u.rx ?? u.x) * 2;
-      const py = u.dpy ?? (u.ry ?? u.y) * 2;
-      const hurt = u.hurt > 0;
-      const w = lod[2], h = lod[3];
-      const hw = w >> 1;
-      wc.fillStyle = hurt ? '#ff6b5e' : lod[0];
-      wc.fillRect(px - hw, py - h, w, h);
-      // 头部暗点（朝向感知：跟随 flip）
-      wc.fillStyle = hurt ? '#cf3f2e' : lod[1];
-      wc.fillRect(px + (u.flip ? -hw - 1 : hw), py - h + (h > 2 ? 1 : 0), 1, 1);
+
+  // —— P0-A 精绘档（zoom≥8）：×4 精细像素精灵 ——
+  if (zoom >= 8 && tryDrawFine(engine, u, def, wc, px, py, king)) return;
+
+  // —— P0-A 色点档（zoom<2.5）：单 rect 国色/族色（超大视野性能保底） ——
+  if (zoom < 2.5) {
+    if (def.sprite === 'person') {
+      const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
+      wc.fillStyle = civ && civ.alive ? civ.colorHex : u.hurt > 0 ? '#ff6b5e' : '#9a8460';
+      wc.fillRect(px - 1, py - 2, 2, 2);
+      if (king) { wc.fillStyle = '#e6ba6c'; wc.fillRect(px - 1, py - 3, 2, 1); }
       return;
     }
+    if (!def.vis) {
+      const lod = ANIMAL_LOD[def.sprite];
+      if (lod) {
+        wc.fillStyle = u.hurt > 0 ? '#ff6b5e' : lod[0];
+        wc.fillRect(px - (lod[2] >> 1), py - lod[3], lod[2], lod[3]);
+        return;
+      }
+    }
+    // 无表条目（涌现物种等）→ 落入下方全绘（数量稀少，成本可接受）
+  } else if (zoom < 5.6) {
+    // —— P0-A 中档 LOD（2.5–5.6）：可读迷你形态 ——
+    if (def.sprite === 'person') {
+      const f = u.flip ? -1 : 1;
+      const hurt = u.hurt > 0;
+      const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
+      const bx0 = f > 0 ? px : px - 1; // 身体左缘（朝向对齐）
+      const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+      const g = moving ? (fc >> 3) & 1 : -1;
+      // 双腿（两相步态；暗色裤装 —— 免国色系暗化字符串拼接）
+      wc.fillStyle = '#3a342c';
+      if (g === 0) {
+        wc.fillRect(bx0, py, 1, 2);
+        wc.fillRect(bx0 + 1, py + 1, 1, 1);
+      } else if (g === 1) {
+        wc.fillRect(bx0, py + 1, 1, 1);
+        wc.fillRect(bx0 + 1, py, 1, 2);
+      } else {
+        wc.fillRect(bx0, py, 1, 2);
+        wc.fillRect(bx0 + 1, py, 1, 2);
+      }
+      // 躯干（国色 2 宽）
+      wc.fillStyle = hurt ? '#ff6b5e' : civ && civ.alive ? civ.colorHex : '#9a8460';
+      wc.fillRect(bx0, py - 2, 2, 2);
+      // 头（肤色 1×1，朝向前缘）
+      wc.fillStyle = hurt ? '#ff6b5e' : '#d9a066';
+      wc.fillRect(bx0 + (f > 0 ? 1 : 0), py - 3, 1, 1);
+      // 武器像素（攻击时高举；火器深色近战钢色）
+      if (u.wep) {
+        wc.fillStyle = u.wep === 'musket' || u.wep === 'rifle' || u.wep === 'laser_rifle' ? '#4a4038' : '#d9d9d9';
+        wc.fillRect(bx0 + (f > 0 ? 2 : -1), (u.atk ?? 0) > 0 ? py - 4 : py - 2, 1, 1);
+      }
+      // P4 脚底暗描边（森林/湿地背景可读性）
+      wc.fillStyle = 'rgba(20,16,12,0.4)';
+      wc.fillRect(bx0, py + 2, 2, 1);
+      // 国王金冠（头顶 3px）
+      if (king) drawCrown(wc, bx0 + (f > 0 ? 1 : 0), py - 4);
+      return;
+    }
+    if (!def.vis) {
+      const lod = ANIMAL_LOD[def.sprite];
+      if (lod) {
+        const hurt = u.hurt > 0;
+        const w = lod[2], h = lod[3];
+        const hw = w >> 1;
+        const bx = px - hw;
+        const by = py - h;
+        const f = u.flip ? -1 : 1;
+        const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+        const g = moving ? (fc >> 3) & 1 : -1;
+        // 四肢步态：前后腿常驻；中腿按对角相位起落（提起的腿藏进躯干不画）
+        wc.fillStyle = hurt ? '#cf3f2e' : lod[1];
+        wc.fillRect(bx, py, 1, 1);
+        wc.fillRect(bx + w - 1, py, 1, 1);
+        if (g !== 1) wc.fillRect(bx + 1, py, 1, 1);
+        if (w >= 4 && g !== 0) wc.fillRect(bx + w - 2, py, 1, 1);
+        // 躯干
+        wc.fillStyle = hurt ? '#ff6b5e' : lod[0];
+        wc.fillRect(bx, by, w, h);
+        // P4 背部 1px 受光高光
+        if (w >= 3) {
+          wc.fillStyle = 'rgba(255,255,240,0.3)';
+          wc.fillRect(bx + 1, by, 1, 1);
+        }
+        // 头部暗点（朝向感知：跟随 flip）
+        const headX = px + (u.flip ? -hw - 1 : hw);
+        wc.fillStyle = hurt ? '#cf3f2e' : lod[1];
+        wc.fillRect(headX, by + (h > 2 ? 1 : 0), 1, 1);
+        // P4 脚底暗描边
+        wc.fillStyle = 'rgba(20,16,12,0.35)';
+        wc.fillRect(bx, py + 1, w, 1);
+        // 国王金冠（头顶）
+        if (king) drawCrown(wc, headX, by - 1);
+        return;
+      }
+    }
   }
+
   // v3 涌现物种（视觉基因组）：动态种化的非人形物种走程序化生物绘制 —— 外观随进化真实变化
   // Task 33：水生/沙泳/蛇形族系走专属巨怪形态（不再退化为四足兽形）
   if (def.vis && def.sprite !== 'person') {
     const mShape = def.aquatic ? 'aquatic' : def.sandswim ? 'worm' : def.sprite === 'basilisk' || def.sprite === 'snake' || def.sprite === 'dragon' ? 'serpent' : null;
     const vc = visCacheFor(u.race, def.vis, def.sprite);
     if (mShape && vc) {
-      drawEmergentMonster(wc, u, vc, mShape, engine.frameCount);
+      drawEmergentMonster(wc, u, vc, mShape, fc);
       return;
     }
     if (vc) {
-      drawEmergentCreature(wc, u, vc, engine.frameCount);
+      drawEmergentCreature(wc, u, vc, fc);
       return;
     }
   }
   switch (def.sprite) {
     case 'person': {
       const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-      drawPerson(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount);
+      drawPerson(wc, u, civ && civ.alive ? civ.color : null, fc);
       break;
     }
     case 'sheep': drawSheep(wc, u); break;
@@ -1747,35 +2084,57 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
     case 'snowwolf': drawSnowWolf(wc, u); break;
     case 'bear': drawBear(wc, u); break;
     case 'deer': drawDeer(wc, u); break;
-    case 'penguin': drawPenguin(wc, u, engine.frameCount); break;
-    case 'camel': drawCamel(wc, u, engine.frameCount); break;
-    case 'scorpion': drawScorpion(wc, u, engine.frameCount); break;
-    case 'snake': drawSnake(wc, u, engine.frameCount); break;
-    case 'dragon': drawDragon(wc, u, engine.frameCount); break;
-    case 'skeleton': drawSkeleton(wc, u, engine.frameCount); break;
-    case 'demon': drawDemon(wc, u, engine.frameCount); break;
-    case 'angel': drawAngel(wc, u, engine.frameCount); break;
-    case 'phoenix': drawPhoenix(wc, u, engine.frameCount); break;
-    case 'ent': drawEnt(wc, u, engine.frameCount); break;
-    case 'lich': drawLich(wc, u, engine.frameCount); break;
-    case 'hydra': drawHydra(wc, u, engine.frameCount); break;
-    case 'mage': drawMage(wc, u, engine.frameCount); break;
-    case 'troll': drawTroll(wc, u, engine.frameCount); break;
-    case 'ogre': drawOgre(wc, u, engine.frameCount); break;
-    case 'whitewalker': drawWhiteWalker(wc, u, engine.frameCount); break;
-    case 'vampire': drawVampire(wc, u, engine.frameCount); break;
-    case 'kraken': drawKraken(wc, u, engine.frameCount); break;
-    case 'sandworm': drawSandworm(wc, u, engine.frameCount); break;
-    case 'basilisk': drawBasilisk(wc, u, engine.frameCount); break;
+    case 'penguin': drawPenguin(wc, u, fc); break;
+    case 'camel': drawCamel(wc, u, fc); break;
+    case 'scorpion': drawScorpion(wc, u, fc); break;
+    case 'snake': drawSnake(wc, u, fc); break;
+    case 'dragon': drawDragon(wc, u, fc); break;
+    case 'skeleton': drawSkeleton(wc, u, fc); break;
+    case 'demon': drawDemon(wc, u, fc); break;
+    // —— 神话种族（仓库线：光明/浴火/守护/死灵/九头）——
+    case 'angel': drawAngel(wc, u, fc); break;
+    case 'phoenix': drawPhoenix(wc, u, fc); break;
+    case 'ent': drawEnt(wc, u, fc); break;
+    case 'lich': drawLich(wc, u, fc); break;
+    case 'hydra': drawHydra(wc, u, fc); break;
+    case 'mage': drawMage(wc, u, fc); break;
+    case 'troll': drawTroll(wc, u, fc); break;
+    case 'ogre': drawOgre(wc, u, fc); break;
+    case 'whitewalker': drawWhiteWalker(wc, u, fc); break;
+    case 'vampire': drawVampire(wc, u, fc); break;
+    case 'kraken': drawKraken(wc, u, fc); break;
+    case 'sandworm': drawSandworm(wc, u, fc); break;
+    case 'basilisk': drawBasilisk(wc, u, fc); break;
+    // —— P2：八新动物（完整档；水生已在函数头顶门控） ——
+    case 'chicken': drawChicken(wc, u, fc); break;
+    case 'pig': drawPig(wc, u, fc); break;
+    case 'rabbit': drawRabbit(wc, u, fc); break;
+    case 'fox': drawFox(wc, u, fc); break;
+    case 'fish': drawFish(wc, u, fc); break;
+    case 'crab': drawCrab(wc, u, fc); break;
+    case 'turtle': drawTurtle(wc, u, fc); break;
+    case 'shark': drawShark(wc, u, fc); break;
+    // —— P2：未知精灵安全回退 —— 走 ANIMAL_LOD 色块（新种族接线遗漏时单位不消失、不崩溃） ——
+    default: {
+      const lod = ANIMAL_LOD[def.sprite];
+      const lw = lod ? lod[2] : 2;
+      const lh = lod ? lod[3] : 2;
+      wc.fillStyle = u.hurt > 0 ? '#ff6b5e' : lod ? lod[0] : '#9a8460';
+      wc.fillRect(px - (lw >> 1), py - lh, lw, lh);
+      break;
+    }
   }
+  // P0-A：全绘档国王金冠（人形头顶；×2 精灵头顶 = 发际线上一行）
+  if (king && def.sprite === 'person') drawCrown(wc, px, py - 4);
   // 涌现物种标记：动态种化诞生的新物种头顶 1px 突变色点（一眼辨识演化后裔）
   if (def.dynTint) {
-    const px = u.dpx ?? (u.rx ?? u.x) * 2;
-    const py = u.dpy ?? (u.ry ?? u.y) * 2;
     wc.fillStyle = u.hurt > 0 ? '#ff6b5e' : def.dynTint;
     wc.fillRect(px, py - 4, 1, 1);
   }
 }
+
+/** P0-B：特效粒子「首帧一次性」发射标记（fx() 每次 new 对象 → WeakSet 随特效 GC，零泄漏） */
+const fxSparked = new WeakSet<Effect>();
 
 function drawWorldEffect(engine: GameEngine, e: Effect, wc: CanvasRenderingContext2D) {
   // 质感工程 v3：吸附到 1/4 精灵格 —— hit/心/髅/出生等 1px 级图元保持锐利
@@ -1785,16 +2144,45 @@ function drawWorldEffect(engine: GameEngine, e: Effect, wc: CanvasRenderingConte
   const t = e.age / e.ttl;
   switch (e.kind) {
     case 'explosion': {
+      // —— P0-B 像素爆炸：扫描线块状圆（白心→橙→红→灰四段，半径扩张）+ 火花粒子 + 块状冲击波环 ——
+      const ex = Math.round(px);
+      const ey = Math.round(py);
       const r = e.r * 2 * (0.3 + t * 1.1);
-      wc.fillStyle = t < 0.3 ? '#fff3c4' : t < 0.6 ? '#ff9b2d' : t < 0.85 ? '#cf3f2e' : '#575757';
-      wc.beginPath();
-      wc.arc(px, py, Math.max(1, r), 0, Math.PI * 2);
-      wc.fill();
-      if (t < 0.5) {
-        wc.fillStyle = '#ffd93d';
-        wc.beginPath();
-        wc.arc(px, py, Math.max(1, r * 0.5), 0, Math.PI * 2);
-        wc.fill();
+      const R = Math.max(1, Math.round(r));
+      const hw2 = R * R;
+      // 外圈（橙→红→灰冷却）
+      wc.fillStyle = t < 0.25 ? '#ff9b2d' : t < 0.55 ? '#cf3f2e' : '#575757';
+      for (let dy = -R; dy <= R; dy += 2) {
+        const hw = Math.floor(Math.sqrt(hw2 - dy * dy));
+        if (hw <= 0) continue;
+        wc.fillRect(ex - hw, ey + dy, hw * 2, 2);
+      }
+      // 内芯（白心→橙黄余温）
+      const R2 = Math.max(1, (R * 0.52) | 0);
+      wc.fillStyle = t < 0.3 ? '#fff3c4' : t < 0.6 ? '#ffd93d' : '#8d8d8d';
+      const hw3 = R2 * R2;
+      for (let dy = -R2; dy <= R2; dy += 2) {
+        const hw = Math.floor(Math.sqrt(hw3 - dy * dy));
+        if (hw <= 0) continue;
+        wc.fillRect(ex - hw, ey + dy, hw * 2, 2);
+      }
+      // 首帧：12-24 颗火花粒子（橙红灰三系，重力下坠）——WeakSet 防重复发射
+      if (!fxSparked.has(e)) {
+        fxSparked.add(e);
+        const n = Math.ceil((12 + (e.seed % 13)) * FX_MUL[engineFxTier]);
+        fxSparks(ex, ey, n, e.seed);
+      }
+      // 块状冲击波环：1px 快速扩张淡出（t<0.45；4 段矩形拼环 —— 比逐扫描线便宜一个量级）
+      if (t < 0.45) {
+        const rr = Math.round(r * 0.9 + t * 30);
+        const wq = Math.max(1, Math.round(rr * 0.62));
+        wc.globalAlpha = Math.max(0, 1 - t / 0.45) * 0.7;
+        wc.fillStyle = '#fff3c4';
+        wc.fillRect(ex - wq, ey - rr, wq * 2, 1);
+        wc.fillRect(ex - wq, ey + rr, wq * 2, 1);
+        wc.fillRect(ex - rr, ey - wq + 1, 1, wq * 2 - 1);
+        wc.fillRect(ex + rr, ey - wq + 1, 1, wq * 2 - 1);
+        wc.globalAlpha = 1;
       }
       break;
     }
@@ -1825,12 +2213,31 @@ function drawWorldEffect(engine: GameEngine, e: Effect, wc: CanvasRenderingConte
       break;
     }
     case 'hit': {
+      // P0-B：命中白闪接入粒子（量少 —— 2-3 颗溅射 + 原十字闪光）
+      if (!fxSparked.has(e)) {
+        fxSparked.add(e);
+        const n = Math.ceil(3 * FX_MUL[engineFxTier]);
+        for (let k = 0; k < n; k++) {
+          const h = ((e.seed * 2654435761 + k * 97) >>> 0);
+          fxSpawn(px, py, ((h % 9) - 4) * 0.05, -0.06 - (h % 5) * 0.02, 10 + (h % 8), 1, 0.012, FX_HIT_COLS[h & 1]);
+        }
+      }
       wc.fillStyle = t < 0.5 ? '#ffffff' : '#ffd93d';
       wc.fillRect(px - 1, py, 3, 1);
       wc.fillRect(px, py - 1, 1, 3);
       break;
     }
     case 'blood': {
+      // P0-B：血雾接入粒子池（首帧 5 颗，红系，重力坠落；保留原 7 点放射爆裂）
+      if (!fxSparked.has(e)) {
+        fxSparked.add(e);
+        const n = Math.ceil(5 * FX_MUL[engineFxTier]);
+        for (let k = 0; k < n; k++) {
+          const h = ((e.seed * 2654435761 + k * 2246822519) >>> 0);
+          const ang = ((h % 628) / 100);
+          fxSpawn(px, py, Math.cos(ang) * 0.14, Math.sin(ang) * 0.1 - 0.1, 14 + (h % 10), 1, 0.02, FX_BLOOD_COLS[h % 3]);
+        }
+      }
       // 血雾飞溅（吞噬/重击瞬间的红色粒子爆裂）
       const s = e.seed;
       for (let k = 0; k < 7; k++) {
@@ -1844,6 +2251,15 @@ function drawWorldEffect(engine: GameEngine, e: Effect, wc: CanvasRenderingConte
       break;
     }
     case 'dust': {
+      // P0-B：沙尘接入粒子池（首帧 4 颗，沙色，弱重力；保留原 4 点扬尘）
+      if (!fxSparked.has(e)) {
+        fxSparked.add(e);
+        const n = Math.ceil(4 * FX_MUL[engineFxTier]);
+        for (let k = 0; k < n; k++) {
+          const h = ((e.seed * 2654435761 + k * 131) >>> 0);
+          fxSpawn(px, py, ((h % 7) - 3) * 0.045, -0.05 - (h % 4) * 0.015, 12 + (h % 9), 1, 0.008, FX_DUST_COLS[h % 3]);
+        }
+      }
       // 沙尘扬起（沙虫潜行/重物落地的粒子）
       const s = e.seed;
       for (let k = 0; k < 4; k++) {
@@ -2855,6 +3271,19 @@ export function renderMinimap(engine: GameEngine, ctx: CanvasRenderingContext2D,
     // 殖民船在小地图上画稍大的 2x2 点，更易追踪
     if (u.boat) ctx.fillRect((u.x / 256) * mw - 1, (u.y / 160) * mh - 1, 2, 2);
     else ctx.fillRect((u.x / 256) * mw, (u.y / 160) * mh, 1, 1);
+  }
+  // —— P1：小地图战略层 —— 建筑（金点）/ 燃烧格（橙点）/ 活跃战线（红点）
+  ctx.fillStyle = '#ffd93d';
+  for (const b of engine.buildings) {
+    ctx.fillRect((b.x / 256) * mw, (b.y / 160) * mh, 1, 1);
+  }
+  ctx.fillStyle = '#ff9b2d';
+  for (const fi of engine.fireSet) {
+    ctx.fillRect(((fi % 256) / 256) * mw, (((fi / 256) | 0) / 160) * mh, 1, 1);
+  }
+  ctx.fillStyle = '#ff4030';
+  for (const bi of engine.activeBattles.keys()) {
+    ctx.fillRect(((bi % 256) / 256) * mw, (((bi / 256) | 0) / 160) * mh, 1, 1);
   }
   // viewport rect
   const zx = (engine.cam.x / 256) * mw;
