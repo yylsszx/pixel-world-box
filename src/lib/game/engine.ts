@@ -10532,6 +10532,19 @@ export class GameEngine {
 
   // ---------------- 自然引擎宿主方法（板块/大气/风暴结算入口） ----------------
 
+  /** 自然雷暴闪电（nature 大气步暴雨云触发；区别于神力天雷 lightning）：
+   *  弱伤害（26 而非 95×pw——环境危险而非神怒秒杀）、不点燃（湿雨浇灭火种，野火留给旱季），
+   *  视觉复用 bolt 锯齿天枝、声音走 distantThunder 远雷滚动（音乐通道，与神力天雷的近劈瞬响区分） */
+  natureLightning(x: number, y: number) {
+    this.onSound?.('distantThunder');
+    this.fx('bolt', x, y, 10);
+    for (const u of this.units) {
+      if (u.dead) continue;
+      const d = Math.hypot(u.x - x, u.y - y);
+      if (d < 1.6) { u.hp -= 26; u.hurt = 22; if (u.hp <= 0) u.dead = true; }
+    }
+  }
+
   /** 板块地震（里氏震级驱动）：塌毁/伤亡/地裂随震级缩放，取代神力地震的固定参数 */
   natureQuake(x: number, y: number, m: number) {
     this.onSound?.('quake');

@@ -1492,7 +1492,7 @@ export interface ToastMsg {
 }
 
 /** 音效事件类型 — 引擎通过回调上报，由 WebAudio 模块合成（爆炸/雷击/放置/UI 等） */
-export type SoundKind = 'boom' | 'nuke' | 'thunder' | 'place' | 'quake' | 'heal' | 'volcano' | 'blizzard' | 'tsunami' | 'horn' | 'achieve' | 'era' | 'dragon' | 'shield' | 'coin' | 'hydra' | 'phoenix' | 'ent';
+export type SoundKind = 'boom' | 'nuke' | 'thunder' | 'distantThunder' | 'place' | 'quake' | 'heal' | 'volcano' | 'blizzard' | 'tsunami' | 'horn' | 'achieve' | 'era' | 'dragon' | 'shield' | 'coin' | 'hydra' | 'phoenix' | 'ent';
 
 /** 地图覆盖模式（顶栏切换）：无 / 政治（王国版图） / 温度 / 湿度 / 人口密度 / 生物群落 */
 export type OverlayMode = 'none' | 'political' | 'temperature' | 'moisture' | 'density' | 'biome' | 'alliance';

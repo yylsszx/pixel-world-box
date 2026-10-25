@@ -177,6 +177,11 @@ export class NatureSystem {
   thawChronDone = false;
   /** 冬季雪人纪事防重标记（瞬态：本冬已播过「堆雪人」；离冬即复位，不入档） */
   snowmanChronDone = false;
+  /** 自然雷暴闪电冷却 tick（瞬态：冷却期内不再落雷，不入档）；本局首场雷暴纪事防重 */
+  boltCool = 0;
+  boltChronDone = false;
+  /** 自然闪电累计（QA 可观测：eng.nature.lightningN；瞬态不入档） */
+  lightningN = 0;
   seasonCheck() {
     const s = this.season;
     if (s !== this.lastSeason) {
@@ -387,6 +392,7 @@ export class NatureSystem {
   atmTick() {
     const eng = this.eng;
     if (!eng.laws.atmosphere) return;
+    if (this.boltCool > 0) this.boltCool -= 10; // 闪电冷却（atmTick 每 10 tick 一步）
     this.windPhase += 0.012;
     const s = this.season;
     // —— 气压系统生命周期（风场的发动机：生成/引导气流漂移/衰减） ——
@@ -487,6 +493,18 @@ export class NatureSystem {
         if (this.floodAcc[i] > 1 && this.eng.laws.naturalDisasters) {
           this.floodAcc[i] = 0;
           this.eng.natureFlood(cx * CELL + 4, cy * CELL + 4);
+        }
+        // 雷暴：强对流暴雨云（r≥190）中的自然闪电——冷却门控稀疏化（3-7s 一道），
+        // 弱伤害不点燃（natureLightning）；首道雷播报「雷暴降临」
+        if (r >= 190 && this.boltCool <= 0 && eng.laws.naturalDisasters && eng.rng() < 0.05) {
+          this.boltCool = 180 + Math.floor(eng.rng() * 240); // 180-420 tick 冷却
+          this.lightningN++;
+          this.eng.natureLightning(cx * CELL + 4, cy * CELL + 4);
+          if (!this.boltChronDone) {
+            this.boltChronDone = true;
+            this.eng.toast('雷暴降临——暴雨云中电光乍裂，惊雷滚过大地', 'danger');
+            this.eng.addEvent('geo', '雷暴降临：强对流暴雨中的闪电开始叩击大地（雷击对暴露的单位有危险）');
+          }
         }
       }
     }

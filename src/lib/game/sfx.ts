@@ -30,6 +30,7 @@ const DEFAULT_VOLUMES: VolumeSettings = { master: 0.5, sfx: 0.8, music: 0.5 };
 
 /** 同类音效节流间隔（毫秒），默认 90ms；成段的音乐性事件加长，防止快速重复叠成一团 */
 const PLAY_THROTTLE: Partial<Record<SoundKind, number>> = {
+  distantThunder: 2200,
   horn: 500,
   achieve: 300,
   era: 700,
@@ -243,6 +244,7 @@ export class SfxEngine {
       case 'boom': this.boom(false); break;
       case 'nuke': this.boom(true); break;
       case 'thunder': this.thunder(); break;
+      case 'distantThunder': this.distantThunder(); break;
       case 'place': this.place(); break;
       case 'quake': this.quake(); break;
       case 'heal': this.heal(); break;
@@ -316,6 +318,58 @@ export class SfxEngine {
     this.musicOn = true;
     this.ensureInit();
     this.startScheduler();
+  }
+
+  /** 自然雷暴远雷计数（QA 可观测：__wbSfx.dtCount） */
+  dtCount = 0;
+
+  /** 远雷：低频滚动隆隆（自然雷暴专用——与神力天雷 thunder 的近劈瞬响区分）。
+   *  走 musicGain 通道（天气环境声族，与雨声同门）：环境音乐关 = 远雷歇；
+   *  随机延迟 0.25-1.1s 模拟声速距离感；三层错峰包络（主体/滚动纹理/回响隆隆） */
+  private distantThunder(): void {
+    if (!this.musicOn || !this.ctx || !this.musicGain) return;
+    this.dtCount++;
+    const ctx = this.ctx;
+    const t = ctx.currentTime + 0.25 + Math.random() * 0.85;
+    // 主体：低频正弦扫频（95→46Hz，2.4s 滚动）
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(95, t);
+    osc.frequency.exponentialRampToValueAtTime(46, t + 2.4);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.0001, t);
+    og.gain.exponentialRampToValueAtTime(0.13, t + 0.18);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 2.4);
+    osc.connect(og).connect(this.musicGain);
+    osc.start(t);
+    osc.stop(t + 2.5);
+    // 滚动纹理：带通白噪声（160Hz Q0.7 慢起缓收 2.8s —— 雷声的「翻滚」质感）
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuffer();
+    src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 160;
+    bp.Q.value = 0.7;
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.0001, t + 0.05);
+    ng.gain.exponentialRampToValueAtTime(0.085, t + 0.45);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 2.8);
+    src.connect(bp).connect(ng).connect(this.musicGain);
+    src.start(t);
+    src.stop(t + 2.9);
+    // 回响隆隆：二次低频（64→38Hz，延迟 0.6s，更弱——山谷回声的远度感）
+    const osc2 = ctx.createOscillator();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(64, t + 0.6);
+    osc2.frequency.exponentialRampToValueAtTime(38, t + 2.6);
+    const og2 = ctx.createGain();
+    og2.gain.setValueAtTime(0.0001, t + 0.6);
+    og2.gain.exponentialRampToValueAtTime(0.07, t + 0.85);
+    og2.gain.exponentialRampToValueAtTime(0.0001, t + 2.6);
+    osc2.connect(og2).connect(this.musicGain);
+    osc2.start(t + 0.6);
+    osc2.stop(t + 2.7);
   }
 
   /** 停止环境音乐：清 interval + 已排音符快速淡出释放 */
