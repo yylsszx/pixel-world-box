@@ -1,4 +1,4 @@
-// gen-units-civtick.mjs — M-U3b civsTick 领土与建造核 黄金向量生成器
+// gen-units-civtick.mjs — M-U3b/M-U3c civsTick 黄金向量生成器（M-U3b 领土与建造核 + M-U3c 王权/城墙/殖民船/叛乱/融合/总动员/宣战）
 // 真实现 = src/lib/game/engine.ts GameEngine 直跑（civs 层不在 wasm —— TS 宿主是唯一蓝本，纪律②零同源复制）
 // 蓝本段：engine.ts civsTick L5933-6040 / claimTile L1719 / seedTerritory L1681 / popCapOf L2004 /
 //         pickBuildingKind L5893 / tryBuildBuilding L1958 / buildBuilding L1756 / destroyBuilding L1936 /
@@ -69,6 +69,34 @@ function dumpEffect(e) {
 function dumpEvent(ev) {
   return { id: ev.id, year: ev.year, kind: ev.kind, text: ev.text, colorHex: ev.colorHex ?? null, x: ev.x === undefined ? null : f64hex(ev.x), y: ev.y === undefined ? null : f64hex(ev.y) };
 }
+function dumpUnit(u) {
+  // M-U3c：crown/setJob/殖民船/分裂/融合 均改写单位态 —— trace 全量下发（f64 hex 逐位）
+  return {
+    id: u.id, name: u.name, race: u.race, civ: u.civ,
+    x: f64hex(u.x), y: f64hex(u.y), tx: f64hex(u.tx), ty: f64hex(u.ty),
+    hp: f64hex(u.hp), maxHp: f64hex(u.maxHp), dmg: f64hex(u.dmg), speed: f64hex(u.speed),
+    job: u.job ?? 0, king: u.king ? 1 : 0, boat: u.boat ?? 0, boatTTL: u.boatTTL ?? 0, dead: u.dead ?? 0,
+  };
+}
+function dumpWar(wd) {
+  return { key: wd.key, a: wd.a, b: wd.b, startTick: wd.startTick, startYear: wd.startYear, total: wd.total,
+    aggressor: wd.aggressor, reason: wd.reason, reasonText: wd.reasonText, goal: wd.goal,
+    giveUpAt: wd.giveUpAt, popA0: wd.popA0, popB0: wd.popB0, lastActiveTick: wd.lastActiveTick };
+}
+function dumpAlliance(al) {
+  return { id: al.id, name: al.name, members: [...al.members], leader: al.leader, cohesion: al.cohesion,
+    formedTick: al.formedTick, formedYear: al.formedYear ?? null, warsTogether: al.warsTogether ?? 0, colorHex: al.colorHex };
+}
+function dumpDirective(d) {
+  return { id: d.id, civ: d.civ, kind: d.kind, target: d.target === undefined ? null : d.target,
+    param: d.param ?? null, status: d.status, startTick: d.startTick ?? null, deadlineTick: d.deadlineTick ?? null,
+    text: d.text ?? null, endTick: d.endTick === undefined ? null : d.endTick, endText: d.endText === undefined ? null : d.endText,
+    killCount: d.killCount === undefined ? null : d.killCount };
+}
+function dumpEvo(n) {
+  return { id: n.id, kind: n.kind, name: n.name, parent: n.parent === undefined || n.parent === null ? null : n.parent,
+    year: n.year, colorHex: n.colorHex, detail: n.detail, stat: n.stat === undefined ? null : n.stat };
+}
 function dumpCiv(c) {
   return {
     id: c.id, name: c.name, race: c.race, pop: c.pop, houses: c.houses, capital: c.capital,
@@ -116,6 +144,8 @@ function mkCiv(eng, o) {
   };
   eng.civs.push(civ);
   eng.civs[civ.id] = civ;
+  // createCiv 的 id = civSeq++（engine L1564）—— 夹具绕过 createCiv 时须同步游标，否则叛乱/融合建新国 id 撞车
+  eng.civSeq = Math.max(eng.civSeq ?? 0, (o.id ?? 0) + 1);
   // 夹具语义：tiles 是已持有领土 → owner 数组同步（蓝本 claimTile/tryBuildBuilding/seedTerritory 均以 owner 为真态）
   for (const i of civ.tiles) eng.owner[i] = civ.id;
   return civ;
@@ -136,6 +166,26 @@ function mkUnit(eng, o) {
 function paintRect(eng, x0, y0, x1, y1, t) {
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) eng.terrain[idx(x, y)] = t;
 }
+function ringRect(x0, y0, x1, y1) {
+  // 矩形全量 tile 列表（声明式夹具用：mkCiv 同步 owner）
+  const out = [];
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) out.push(idx(x, y));
+  return out;
+}
+function wallRingCells(cx, cy, radius) {
+  // 与 wallTick 同公式扫环（Math.cos/sin 与蓝本同源）—— 返回去重后的 ring cell 列表（k 序）
+  const seen = new Set();
+  const out = [];
+  for (let k = 0; k < 72; k++) {
+    const ang = (k / 72) * Math.PI * 2;
+    const xx = Math.round(cx + Math.cos(ang) * radius);
+    const yy = Math.round(cy + Math.sin(ang) * radius);
+    if (xx < 1 || yy < 1 || xx >= W - 1 || yy >= H - 1) continue;
+    const i = idx(xx, yy);
+    if (!seen.has(i)) { seen.add(i); out.push(i); }
+  }
+  return out;
+}
 function mkBuilding0(eng, i, kind, civId) {
   // 测试夹具：直接构造 Building 并登记（不经 buildBuilding 以免 rng/连路扰动 —— 黄金基线由夹具定）
   const b = { i, x: i % W, y: (i / W) | 0, kind, civ: civId };
@@ -146,6 +196,34 @@ function mkBuilding0(eng, i, kind, civId) {
   const civ = eng.civs[civId];
   if (civ && kind !== BUILD_KINDS.WALL) civ.houses++;
   return b;
+}
+function mkDirective(eng, o) {
+  // engine issueDirective 产物形状（M-U3c 只消费：status/civ/kind/target/param + 结算字段）
+  const d = { id: o.id ?? eng.directives.length, civ: o.civ, kind: o.kind, target: o.target,
+    param: o.param ?? 0, status: o.status ?? 'active', startTick: o.startTick ?? 0,
+    deadlineTick: o.deadlineTick ?? 0, text: o.text ?? '', killCount: o.killCount };
+  eng.directives.push(d);
+  return d;
+}
+function mkAlliance(eng, o) {
+  // engine formAlliance 产物形状（M-U3c 消费全字段）
+  const al = { id: o.id, name: o.name ?? `A${o.id}`, members: [...o.members], leader: o.leader ?? o.members[0],
+    cohesion: o.cohesion ?? 55, formedTick: o.formedTick ?? 0, formedYear: o.formedYear ?? 0,
+    warsTogether: o.warsTogether ?? 0, colorHex: o.colorHex ?? '#14b8a6' };
+  eng.alliances.push(al);
+  for (const m of al.members) eng.allianceOf.set(m, al.id);
+  return al;
+}
+function mkWar(eng, o) {
+  // engine ensureWarData 产物形状（声明式战争档案夹具 —— eliminateCiv 清理路径用）
+  eng.warData.set(o.key, {
+    key: o.key, a: o.a, b: o.b, startTick: o.startTick ?? 0, startYear: o.startYear ?? 0,
+    total: o.total ?? false, scoreA: 0, scoreB: 0, exA: 0, exB: 0, casA: 0, casB: 0,
+    razedA: 0, razedB: 0, battles: 0, giveUpAt: o.giveUpAt ?? 0,
+    reason: o.reason ?? 'border', reasonText: o.reasonText ?? '', aggressor: o.aggressor ?? 0,
+    goal: o.goal ?? 0, goalNow: 0, occA: 0, occB: 0, popA0: o.popA0 ?? 0, popB0: o.popB0 ?? 0,
+    lastActiveTick: o.lastActiveTick ?? 0,
+  });
 }
 
 // ---------------- trace 快照 ----------------
@@ -181,6 +259,17 @@ function buildTrace(eng, prevSnap, toasts, tickNo) {
     rel: mapEntries(eng.rel),
     met: [...eng.met],
     statCivsFallen: eng.statCivsFallen,
+    // —— M-U3c 扩展段 ——
+    units: eng.units.map(dumpUnit),
+    warData: mapEntries(eng.warData).map(([, wd]) => dumpWar(wd)),
+    raceRel: mapEntries(eng.raceRel),
+    totalWars: [...(eng.totalWars ?? [])].sort(),
+    warHistory: [...(eng.warHistory ?? [])],
+    statWars: eng.statWars ?? null,
+    civSeq: eng.civSeq ?? null,
+    alliances: eng.alliances.map(dumpAlliance),
+    directives: eng.directives.map(dumpDirective),
+    evoNodes: eng.evoNodes.map(dumpEvo),
   };
   eng.__lastEventId = eng.eventSeq;
   return [tr, s2];
@@ -219,18 +308,24 @@ function runScenario(sc) {
   // M-U3b C# 桩零消耗，黄金场景必须让蓝本也走 continue（在位王：!dead && king && civ===id）零 rng。
   // 只补 pop>0 的活国（pop<=0 蓝本首门直接 continue）；id 从 1000 起；置于场景 units 之后
   // （流亡自愈 units.find 取首个活国民 —— 场景 member 必须在前，王殿后不干扰）。
-  let kingSeq = 1000;
-  for (const c of eng.civs) {
-    if (!c || !c.alive || c.pop <= 0) continue;
-    if (c.kingId != null && c.kingId !== -1) continue;
-    const wid = kingSeq++;
-    mkUnit(eng, { id: wid, civ: c.id, x: (c.tiles[0] ?? 0) % 256 + 0.5, y: ((c.tiles[0] ?? 0) / 256 | 0) + 0.5, king: 1 });
-    c.kingId = wid;
+  // M-U3c：noAutoKing 场景跳过整段（王位继承/首冕场景需无王国态）。
+  if (!sc.noAutoKing) {
+    let kingSeq = 1000;
+    for (const c of eng.civs) {
+      if (!c || !c.alive || c.pop <= 0) continue;
+      if (c.kingId != null && c.kingId !== -1) continue;
+      const wid = kingSeq++;
+      mkUnit(eng, { id: wid, civ: c.id, x: (c.tiles[0] ?? 0) % 256 + 0.5, y: ((c.tiles[0] ?? 0) / 256 | 0) + 0.5, king: 1 });
+      c.kingId = wid;
+    }
   }
   for (const [a, b, v] of sc.rel ?? []) eng.rel.set(a < b ? `${a}-${b}` : `${b}-${a}`, v);
   for (const [a, b, v] of sc.tension ?? []) eng.tension.set(a < b ? `${a}-${b}` : `${b}-${a}`, v);
   for (const [i, kind, civ] of sc.buildings ?? []) mkBuilding0(eng, i, kind, civ);
   for (const mk of sc.met ?? []) eng.met.add(mk); // 声明式 met 预注入（diplomacyMeet 早退路径）
+  for (const d of sc.directives ?? []) mkDirective(eng, d); // M-U3c：旨意夹具（finishDirective 结算路径）
+  for (const al of sc.alliances ?? []) mkAlliance(eng, al); // M-U3c：联盟夹具（融合/除名/解散路径）
+  for (const wd of sc.wars ?? []) mkWar(eng, wd); // M-U3c：战争档案夹具（eliminateCiv 清理路径）
   if (sc.setup) sc.setup(eng);
   eng.tickCount = sc.startTick ?? 0;
   // 夹具后清 generate 残留（generate 的 fx/dirty/纪事是 C# 夹具无法复现的噪声 —— 黄金基线只含夹具+tick 产物）
@@ -238,6 +333,7 @@ function runScenario(sc) {
   eng.dirty.clear();
   eng.propsDirty.clear();
   eng.worldEvents.length = 0;
+  eng.evoNodes.length = 0; eng.evoSeq = 0; eng.evoIndex.clear(); // generate 物种残留（C# 夹具不可复现，同 fx/dirty 批次清理）
   eng.__lastEventId = eng.eventSeq;
   // 基线快照
   let prev = snapState(eng);
@@ -256,7 +352,7 @@ function runScenario(sc) {
   }
   return { name: sc.name, seed, startTick: sc.startTick ?? 0, ticks: sc.ticks, laws: eng.laws, rngA0,
     eventSeq0, toastSeq0, terrainRle,
-    fixture: { paint: sc.paint ?? null, civs: sc.civs ?? null, rel: sc.rel ?? null, tension: sc.tension ?? null, units: sc.units ?? null, buildings: sc.buildings ?? null, met: sc.met ?? null },
+    fixture: { paint: sc.paint ?? null, civs: sc.civs ?? null, rel: sc.rel ?? null, tension: sc.tension ?? null, units: sc.units ?? null, buildings: sc.buildings ?? null, met: sc.met ?? null, directives: sc.directives ?? null, alliances: sc.alliances ?? null, wars: sc.wars ?? null, noAutoKing: sc.noAutoKing ?? null },
     traces };
 }
 
@@ -340,6 +436,112 @@ const scenarios = [
   // CVT16 houseTier/popCapOf 面板：无 counts 表 → houses*(HOUSE_CAP+tier) 纯路径（civBuildCounts 空时段）
   { name: 'CVT16-popcap-no-counts', seed: 0x5c10, ticks: 1, startTick: 1,
     civs: [{ id: 0, pop: 2, houses: 3, capital: idx(40, 40), tiles: [idx(40, 40)] }] },
+  // ==================== M-U3c 桩域销案场景 ====================
+  // CVT17 王位继承：kingId=-1（先王驾崩）→ %40 crownVacantTick 遴选（贵族3/战士2/平民1 权重+rng*0.9
+  //   → 贵族 [3,3.9] 恒压战士 [2,2.9]，胜负与 rng 无关）→ crownUnit 播报继承 + setJob(king) 属性换算。
+  //   dead/boat 候选在 rng 前被 continue 剔除（零消耗）；%20 wallTick pop<8 早退零 rng。
+  { name: 'CVT17-crown-succession', seed: 0x5c11, ticks: 1, startTick: 40, noAutoKing: true,
+    civs: [{ id: 0, pop: 3, kingId: -1, kingName: 'OldK', capital: idx(40, 40), tiles: [idx(40, 40)] }],
+    units: [
+      { id: 1, civ: 0, x: 40.5, y: 40.5, job: 6 },
+      { id: 2, civ: 0, x: 41.5, y: 40.5, job: 2 },
+      { id: 3, civ: 0, x: 42.5, y: 40.5, job: 0 },
+      { id: 4, civ: 0, x: 43.5, y: 40.5, dead: 1 },
+      { id: 5, civ: 0, x: 44.5, y: 40.5, boat: 1 },
+    ] },
+  // CVT18 首王静默加冕：kingId=undefined（新国/旧档）→ succession=false → crownUnit 静默（零事件零 toast）
+  { name: 'CVT18-crown-first-silent', seed: 0x5c12, ticks: 1, startTick: 40, noAutoKing: true,
+    civs: [{ id: 0, pop: 2, capital: idx(40, 40), tiles: [idx(40, 40)] }],
+    units: [
+      { id: 1, civ: 0, x: 40.5, y: 40.5, job: 0 },
+      { id: 2, civ: 0, x: 41.5, y: 40.5, job: 2 },
+    ] },
+  // CVT19 城墙砌筑：fortification+pop=10+gold=100+首都 ring 半径3 → 首批 3 段（gold -2×3）+ fx hammer（rng×2）
+  { name: 'CVT19-wall-build', seed: 0x5c13, ticks: 1, startTick: 40,
+    paint: [[40, 34, 52, 46, GRASS]],
+    civs: [{ id: 0, pop: 10, gold: 100, houses: 5, techs: ['fortification'], capital: idx(46, 40), tiles: ringRect(43, 37, 49, 43) }],
+    buildings: [[idx(46, 40), 2, 0]] },
+  // CVT19b 城墙圈完整：缺口 ≤3 → 不再砌（gaps.length<=3 continue，零 rng 零 fx）
+  { name: 'CVT19b-wall-complete', seed: 0x5c14, ticks: 1, startTick: 40,
+    paint: [[40, 34, 52, 46, GRASS]],
+    civs: [{ id: 0, pop: 10, gold: 100, houses: 5, techs: ['fortification'], capital: idx(46, 40), tiles: ringRect(43, 37, 49, 43) }],
+    // 预砌全环（声明式——setup 动态夹具不可回放）：gaps.length===0 → wallTick continue（零 build 零 fx）。
+    // 注：wallTick gaps 按采样序含重复（72 采样→28 去重格），留缺口会被重复采样撑爆，完整圈才是「不再砌」分支。
+    buildings: [[idx(46, 40), 2, 0], ...wallRingCells(46, 40, 3).map((i) => [i, BUILD_KINDS.WALL, 0])] },
+  // CVT20 殖民船启航：pop=10+houses=2+cand=6（含 wild/boat 过滤样本）+ 8 邻水域 waterN>=5 + 远方 25-85 采样落点
+  //   → boat=1/boatTTL=1200/坐标重置/hp+20/fx spawn/纪事 toast/colonizeCd 冷却（无论成败先入冷却）
+  { name: 'CVT20-colony-launch', seed: 0xc1a2a, ticks: 1, startTick: 1,
+    paint: [[8, 8, 240, 150, GRASS], [42, 42, 58, 58, DEEP]],
+    civs: [{ id: 0, pop: 10, houses: 2, capital: idx(30, 30), tiles: [idx(50, 50)] }],
+    units: [
+      { id: 1, civ: 0, x: 50.5, y: 50.5 },
+      { id: 2, civ: 0, x: 50.5, y: 50.5 },
+      { id: 3, civ: 0, x: 50.5, y: 50.5 },
+      { id: 4, civ: 0, x: 50.5, y: 50.5 },
+      { id: 5, civ: 0, x: 50.5, y: 50.5 },
+      { id: 6, civ: 0, x: 50.5, y: 50.5 },
+      { id: 7, civ: -1, x: 51.5, y: 51.5 },
+      { id: 8, civ: 0, x: 52.5, y: 52.5, boat: 1 },
+    ] },
+  // CVT21 叛乱分裂：pop=40+tiles 572+stab=20（<30 → 0.16）+%300 门 → 距首都最远建筑（>14）为策源地
+  //   → createCiv（名池/色板/首都扫描/播种/播报）+ 半径9 领土易帜 + 建筑转移 + 国民转移 + declareWar rebel force 全链
+  { name: 'CVT21-rebel-split', seed: 0x68a3c, ticks: 1, startTick: 600,
+    paint: [[28, 34, 82, 44, GRASS]],
+    civs: [{ id: 0, pop: 40, gold: 100, houses: 4, stability: 20, capital: idx(30, 39), tiles: ringRect(28, 34, 79, 44) }],
+    units: [
+      { id: 1, civ: 0, x: 75.5, y: 39.5 },
+      { id: 2, civ: 0, x: 75.5, y: 39.5 },
+      { id: 3, civ: 0, x: 75.5, y: 39.5 },
+    ],
+    buildings: [[idx(30, 39), 2, 0], [idx(75, 39), 1, 0]] },
+  // CVT22 深盟融合：%300===5 + cohesion 80 + 成立≥1440 tick + 均非交战 + rng<=0.1
+  //   → power 对比 → keep/gone → 领土/建筑/国民/金库/知识/科技并集/rel/met 继承 remap → 旨意双路结算（failed+success）
+  //   → leaveAlliance fallen → 成员<2 → dissolveAlliance → alive=false+mergedInto → 联合王朝命名 + recordEvo
+  { name: 'CVT22-merge-fuse', seed: 0xc1a2c, ticks: 1, startTick: 1505,
+    paint: [[36, 36, 64, 44, GRASS]],
+    civs: [
+      { id: 0, pop: 25, gold: 50, houses: 2, capital: idx(40, 40), tiles: [idx(40, 40), idx(41, 40)] },
+      { id: 1, pop: 22, gold: 30, knowledge: 7, houses: 1, techs: ['masonry'], capital: idx(50, 40), tiles: [idx(50, 40)] },
+      { id: 2, pop: 5, capital: idx(60, 40), tiles: [idx(60, 40)] },
+    ],
+    units: [{ id: 10, civ: 1, x: 50.5, y: 40.5 }],
+    rel: [[1, 2, -30]],
+    met: ['1-2'],
+    directives: [
+      { id: 0, civ: 1, kind: 'wealth', param: 300 },
+      { id: 1, civ: 0, kind: 'annihilate', target: 1 },
+    ],
+    alliances: [{ id: 0, name: 'A0', members: [0, 1], leader: 0, cohesion: 80, formedTick: 65 }] },
+  // CVT23 总动员武装化：mobilizeUntil 窗口内 %25 门 → 前 2 名武装（peasant/farmer→warrior 属性比例换算）
+  //   商人（第3位）在 n>=2 break 后不转换 —— 迭代序位精确
+  { name: 'CVT23-mobilize-setjob', seed: 0x5c18, ticks: 1, startTick: 175,
+    civs: [{ id: 0, pop: 5, mobilizeUntil: 200, capital: idx(40, 40), tiles: [idx(40, 40)] }],
+    units: [
+      { id: 1, civ: 0, x: 40.5, y: 40.5, job: 0, hp: 10 },
+      { id: 2, civ: 0, x: 41.5, y: 40.5, job: 1, hp: 10 },
+      { id: 3, civ: 0, x: 42.5, y: 40.5, job: 5, hp: 10 },
+      { id: 4, civ: 0, x: 43.5, y: 40.5, job: 2, hp: 10 },
+    ] },
+  // CVT24 外交宣战：laws.wars=true + 扩张接触 → diplomacyMeet rng<warChance(0.335) → pickCasus border
+  //   → declareWar 全链（rel-45/goal 6/warData/gold 战争开销/casus 纪事/种族关系 25-2.5=22.5）
+  { name: 'CVT24-diplomacy-war', seed: 0x5ec08, ticks: 3, startTick: 7,
+    paint: [[30, 38, 50, 42, GRASS]],
+    civs: [
+      { id: 0, pop: 3, capital: idx(35, 40), tiles: [idx(35, 40)], frontier: [idx(36, 40), idx(37, 40)] },
+      { id: 1, pop: 3, race: 1, capital: idx(44, 40), tiles: [idx(44, 40), idx(43, 40)], frontier: [idx(38, 40)] },
+    ] },
+  // CVT25 灭国+联盟除名+旨意成功：幽灵消亡 → EliminateCiv 全链（alFall 凝聚力-18 → leaveAlliance fallen
+  //   → 成员<2 dissolveAlliance 星散 + warData 档案清理 + annihilate 目标令 success（civ1 gold+120 decreeOk））
+  { name: 'CVT25-eliminate-alliance', seed: 0x5c1a, ticks: 1, startTick: 500,
+    civs: [
+      { id: 0, pop: 0, popZeroTick: 99, tiles: [idx(60, 60)] },
+      { id: 1, pop: 4, gold: 10, houses: 1, capital: idx(70, 70), tiles: [idx(70, 70)] },
+    ],
+    buildings: [[idx(60, 60), 1, 0], [idx(70, 70), 1, 1]],
+    rel: [[0, 1, -21]],
+    directives: [{ id: 0, civ: 1, kind: 'annihilate', target: 0 }],
+    alliances: [{ id: 0, name: 'A0', members: [0, 1], leader: 0, cohesion: 60, formedTick: 10 }],
+    wars: [{ key: '0-1', a: 0, b: 1, startTick: 400, startYear: 0, total: true, aggressor: 1, reason: 'rebel', reasonText: 'war', goal: 0, giveUpAt: 4000, popA0: 3, popB0: 4, lastActiveTick: 450 }] },
 ];
 
 // ---------------- 主流程 ----------------
@@ -436,8 +638,102 @@ function sanity(results) {
   A('CVT14 eliminated', r14.traces[0].civs[0].alive === false, '消亡');
   A('CVT14 fallen count', r14.traces[0].statCivsFallen === 1, `fallen=${r14.traces[0].statCivsFallen}`);
 
+  // —— M-U3c 断言 ——
+  const r17 = by['CVT17-crown-succession'];
+  const c17 = r17.traces[0].civs[0];
+  A('CVT17 noble crowned', c17.kingId === 1 && c17.kingName === 'u1', `kingId=${c17.kingId} kingName=${c17.kingName}`);
+  const u17 = r17.traces[0].units.find((u) => u.id === 1);
+  A('CVT17 job king + hp round', u17.job === 7 && u17.king === 1 && u17.hp === f64hex(12) && u17.maxHp === f64hex(12), `job=${u17.job} hp=${u17.hp}`);
+  A('CVT17 dmg f64 ratio', u17.dmg === f64hex(1 * 1.5 / 1.1), `dmg=${u17.dmg}`);
+  A('CVT17 succession announced', r17.traces[0].newEvents.some((e) => e.kind === 'king' && e.text.includes('加冕')), JSON.stringify(r17.traces[0].newEvents));
+  A('CVT17 toast 新王', r17.traces[0].toasts.some((t) => t.text.includes('新王')), JSON.stringify(r17.traces[0].toasts));
+
+  const r18 = by['CVT18-crown-first-silent'];
+  const c18 = r18.traces[0].civs[0];
+  // CVT18 无贵族 → 战士恒胜（job 2 权重 2 > 平民 1；评分区间不相交）
+  A('CVT18 crowned silently', c18.kingId === 2 && c18.kingName === 'u2' && r18.traces[0].newEvents.length === 0 && r18.traces[0].toasts.length === 0, `kingId=${c18.kingId} ev=${r18.traces[0].newEvents.length} toast=${r18.traces[0].toasts.length}`);
+
+  const r19 = by['CVT19-wall-build'];
+  const wallDiffs = r19.traces[0].buildingDiff.filter(([, v]) => v === BUILD_KINDS.WALL);
+  // 环采样重复怪癖：72 采样含同格重复（k=0/1 同落 (49,40)）→ 第 3 次建造对已砌格早退，
+  //   但 gold 照扣 built 照计（蓝本 L1800-1803 原样）→ 独立墙体 2 面、支出 3 段 —— 黄金如实捕捉
+  A('CVT19 2 unique walls (dup-sample quirk)', wallDiffs.length === 2, `walls=${wallDiffs.length}`);
+  const c19 = r19.traces[0].civs[0];
+  A('CVT19 gold paid', c19.gold === 94, `gold=${c19.gold}`);
+  A('CVT19 hammer fx', r19.traces[0].effects.some((e) => e.kind === 'hammer'), `fx=${r19.traces[0].effects.map((e) => e.kind)}`);
+
+  const r19b = by['CVT19b-wall-complete'];
+  A('CVT19b no build', r19b.traces[0].buildingDiff.length === 0, `diff=${JSON.stringify(r19b.traces[0].buildingDiff)}`);
+  A('CVT19b gold kept', r19b.traces[0].civs[0].gold === 100, `gold=${r19b.traces[0].civs[0].gold}`);
+  A('CVT19b no fx', r19b.traces[0].effects.length === 0, `fx=${r19b.traces[0].effects.length}`);
+
+  const r20 = by['CVT20-colony-launch'];
+  const boater = r20.traces[0].units.find((u) => u.boat === 1 && u.boatTTL === 1200);
+  A('CVT20 launched', !!boater, `boats=${r20.traces[0].units.filter((u) => u.boat === 1).length}`);
+  A('CVT20 moved to water', boater && boater.x === f64hex(49.5) && boater.y === f64hex(49.5), boater ? `x=${boater.x}` : 'no boater');
+  A('CVT20 target set', boater && boater.tx !== f64hex(50.5), boater ? `tx=${boater.tx}` : 'no boater');
+  A('CVT20 colonize event', r20.traces[0].newEvents.some((e) => e.kind === 'colonize'), JSON.stringify(r20.traces[0].newEvents.map((e) => e.kind)));
+  A('CVT20 cd set', r20.traces[0].civs[0].colonizeCd > 0, `cd=${r20.traces[0].civs[0].colonizeCd}`);
+
+  const r21 = by['CVT21-rebel-split'];
+  const last21 = r21.traces[0];
+  A('CVT21 rebel created', last21.civs.length === 2 && last21.civs[1] && last21.civs[1].alive === true, `civs=${last21.civs.length}`);
+  A('CVT21 rebel war', last21.warData.length === 1 && last21.warData[0].reason === 'rebel' && last21.warData[0].total === true, JSON.stringify(last21.warData.map((w) => [w.reason, w.total])));
+  A('CVT21 rel -80', last21.rel.some(([k, v]) => k === '0-1' && v === -80), JSON.stringify(last21.rel));
+  A('CVT21 totalWars', last21.totalWars.includes('0-1'), JSON.stringify(last21.totalWars));
+  A('CVT21 pop moved', last21.civs[0].pop === 37 && last21.civs[1].pop === 3, `pop=${last21.civs[0].pop}/${last21.civs[1].pop}`);
+  A('CVT21 units transferred', last21.units.filter((u) => u.civ === 1).length === 3, `civ1=${last21.units.filter((u) => u.civ === 1).length}`);
+  A('CVT21 warHistory', last21.warHistory.includes(600), JSON.stringify(last21.warHistory));
+  // 同种族 shiftRaceRel 早退（a===b return）—— 叛军与宗主同种族 → raceRel 零条目
+  A('CVT21 raceRel early-return', last21.raceRel.length === 0, JSON.stringify(last21.raceRel));
+  A('CVT21 found+casus events', last21.newEvents.some((e) => e.kind === 'found') && last21.newEvents.some((e) => e.kind === 'casus'), JSON.stringify(last21.newEvents.map((e) => e.kind)));
+
+  const r22 = by['CVT22-merge-fuse'];
+  const last22 = r22.traces[0];
+  const c22 = last22.civs.find((c) => c.id === 0);
+  const g22 = last22.civs.find((c) => c.id === 1);
+  A('CVT22 merged flag', g22.alive === false && g22.mergedInto === 0, `alive=${g22.alive} mergedInto=${g22.mergedInto}`);
+  A('CVT22 union name', c22.name === 'C0·C1联合王朝', `name=${c22.name}`);
+  A('CVT22 gold 200', c22.gold === 200, `gold=${c22.gold}`);
+  A('CVT22 pop 47', c22.pop === 47, `pop=${c22.pop}`);
+  A('CVT22 techs union', JSON.stringify(c22.techs) === JSON.stringify(['masonry']), `techs=${JSON.stringify(c22.techs)}`);
+  A('CVT22 rel remap', last22.rel.some(([k, v]) => k === '0-2' && v === -30) && !last22.rel.some(([k]) => k === '1-2'), JSON.stringify(last22.rel));
+  A('CVT22 met remap', last22.met.includes('0-2') && !last22.met.includes('1-2'), JSON.stringify(last22.met));
+  A('CVT22 directives settled', last22.directives.every((d) => d.status !== 'active') && last22.directives.find((d) => d.id === 0).status === 'failed' && last22.directives.find((d) => d.id === 1).status === 'success', JSON.stringify(last22.directives.map((d) => [d.id, d.status])));
+  A('CVT22 alliance dissolved', last22.alliances.length === 0, `al=${last22.alliances.length}`);
+  A('CVT22 evo society', last22.evoNodes.some((n) => n.kind === 'society'), JSON.stringify(last22.evoNodes.map((n) => n.kind).filter((k) => k !== 'species')));
+  A('CVT22 unit transferred', last22.units.find((u) => u.id === 10).civ === 0, `u10.civ=${last22.units.find((u) => u.id === 10).civ}`);
+
+  const r23 = by['CVT23-mobilize-setjob'];
+  const us23 = r23.traces[0].units;
+  A('CVT23 peasant armed', us23[0].job === 2 && us23[0].hp === f64hex(13), `job=${us23[0].job} hp=${us23[0].hp}`);
+  A('CVT23 farmer armed', us23[1].job === 2 && us23[1].hp === f64hex(Math.round(10 * 1.3 / 0.95)), `hp=${us23[1].hp}`);
+  A('CVT23 merchant untouched', us23[2].job === 5, `job=${us23[2].job}`);
+  A('CVT23 dmg f64', us23[1].dmg === f64hex(1 * 1.35 / 0.9), `dmg=${us23[1].dmg}`);
+
+  const r24 = by['CVT24-diplomacy-war'];
+  const last24 = r24.traces[r24.traces.length - 1];
+  A('CVT24 war declared', last24.warData.length === 1 && last24.warData[0].reason === 'border' && last24.warData[0].goal === 6, JSON.stringify(last24.warData.map((w) => [w.reason, w.goal])));
+  A('CVT24 rel -45', last24.rel.some(([k, v]) => k === '0-1' && v === -45), JSON.stringify(last24.rel));
+  A('CVT24 raceRel 22.5', last24.raceRel.some(([k, v]) => k === '0-1' && v === 22.5), JSON.stringify(last24.raceRel));
+  A('CVT24 statWars 1', last24.statWars === 1, `statWars=${last24.statWars}`);
+  A('CVT24 casus event', r24.traces.some((t) => t.newEvents.some((e) => e.kind === 'casus')), JSON.stringify(r24.traces.map((t) => t.newEvents.map((e) => e.kind))));
+
+  const r25 = by['CVT25-eliminate-alliance'];
+  const last25 = r25.traces[0];
+  A('CVT25 eliminated', last25.civs.find((c) => c.id === 0).alive === false, 'civ0 消亡');
+  A('CVT25 warData cleaned', last25.warData.length === 0, `warData=${JSON.stringify(last25.warData)}`);
+  A('CVT25 alliance dissolved', last25.alliances.length === 0, `al=${last25.alliances.length}`);
+  A('CVT25 decree gold', last25.civs.find((c) => c.id === 1).gold === 130, `gold=${last25.civs.find((c) => c.id === 1).gold}`);
+  A('CVT25 decree success', last25.directives.find((d) => d.id === 0).status === 'success', JSON.stringify(last25.directives.map((d) => d.status)));
+  A('CVT25 decreeOk event', last25.newEvents.some((e) => e.kind === 'decreeOk'), JSON.stringify(last25.newEvents.map((e) => e.kind)));
+  A('CVT25 dissolve event', last25.newEvents.some((e) => e.kind === 'alliance' && e.text.includes('星散')), JSON.stringify(last25.newEvents.map((e) => [e.kind, e.text.slice(0, 20)])));
+
   return asserts;
 }
+
+// 导出（种子猎取探针复用 —— 零同源复制；isMain 守卫保证 import 无副作用）
+export { runScenario, scenarios };
 
 // ---------------- main ----------------
 const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
@@ -458,6 +754,10 @@ if (isMain) {
       buildingDefs: BUILDING_DEFS.map((d) => ({ key: d.key, hp: d.hp, popCap: d.popCap ?? null, cost: d.cost ?? null, needKnowledge: d.needKnowledge ?? null })),
       neutralMods: NEUTRAL_MODS,
       jobsHpMul: JOBS.map((j) => j.hpMul ?? null),
+      jobsDmgMul: JOBS.map((j) => j.dmgMul ?? null),
+      jobsSpeedMul: JOBS.map((j) => j.speedMul ?? null),
+      racesIsCiv: Object.keys(RACES).sort((a, b) => a - b).map((k) => !!RACES[k].isCiv),
+      racesName: Object.keys(RACES).sort((a, b) => a - b).map((k) => RACES[k].name),
     },
     scenarios: out,
   };

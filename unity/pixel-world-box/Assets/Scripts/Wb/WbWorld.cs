@@ -24,14 +24,16 @@ namespace PixelWorldBox.Wb
         public int houses;
         public int capital;
         public string kingName;
-        public int kingId = -1;          // undefined/-1 → C# 统一 -1（黄金 dump null↔undefined 合并语义：gen 端 kingId===undefined?null:kingId）
+        public int? kingId;             // undefined = 未定（首冕/旧档）/ -1 = 先王驾崩（继承播报）—— M-U3c 语义分离
         public bool alive = true;
         public string banner;
         public int colonizeCd;
         public int? popZeroTick;         // undefined = 有人
-        public int armyCd;
+        public int? armyCd;              // undefined ?? 0 语义（createCiv 不初始化 → dump null）
         public int? mobilizeUntil;
         public int? mergedInto;
+        public int? gold;                // engine civ.gold（undefined ?? 0 语义 → int?）
+        public int? knowledge;
         public List<string> techs = new List<string>();
         public string research;          // null = 无
         public int researchP;
@@ -39,10 +41,11 @@ namespace PixelWorldBox.Wb
         public int govYear;
         public int stability = 70;
         public int culture;
-        public int militarism = 30;
+        public int? militarism = 30;     // engine (civ.militarism ?? 30) 语义 → int?
         public int income;
         public int expense;
         public int festivalCd;
+        public List<string> history = new List<string>();   // engine civ.history（M-U3c 建国初始化空表）
     }
 
     /// Building POCO —— engine.ts buildBuilding L1758 { i, x, y, kind, civ }
@@ -110,8 +113,99 @@ namespace PixelWorldBox.Wb
     }
 
     /// Alliance/Directive/Army 空转结构（M-U3c 域 —— 黄金场景恒空，结构保留）
-    public class WbAlliance { public List<int> members = new List<int>(); public int cohesion; public long formedTick; public string name; public string colorHex; }
-    public class WbDirective { public string status; public int civ; public string kind; public int target; }
+    public class WbAlliance
+    {
+        public int id;
+        public string name;
+        public List<int> members = new List<int>();
+        public int leader;
+        public int cohesion;
+        public long formedTick;
+        public int formedYear;
+        public int warsTogether;
+        public string colorHex;
+    }
+    public class WbDirective
+    {
+        public int id;
+        public int civ;
+        public string kind;
+        public int? target;              // undefined = 无目标
+        public int param;
+        public string status;            // 'active' | 'success' | 'failed'
+        public int startTick;
+        public int deadlineTick;         // 0 = 无限期
+        public string text;
+        public int? endTick;
+        public string endText;
+        public int? killCount;           // mobilize 用
+    }
+
+    /// WarInfo —— types.ts L701 战争档案（M-U3c declareWar/ensureWarData 消费域）
+    public class WbWarData
+    {
+        public string key;
+        public int a, b;
+        public int startTick, startYear;
+        public bool total;
+        public double scoreA, scoreB;    // 战争分数（JS number f64）
+        public double exA, exB;
+        public double? wearA, wearB;     // 厌战度 0-100
+        public double casA, casB;
+        public double razedA, razedB;
+        public int battles;
+        public int giveUpAt;
+        public string reason;            // CasusKind
+        public string reasonText;
+        public int aggressor;
+        public int goal, goalNow;
+        public int occA, occB;
+        public int popA0, popB0;
+        public int lastActiveTick;
+    }
+
+    /// Army 最小 POCO —— M-U3c mergeCivs/disbandArmy/finishDirective 可达子集（黄金场景恒空，结构保留）
+    public class WbArmy
+    {
+        public int id;
+        public int civ;
+        public string name;
+        public List<int> members = new List<int>();
+        public double morale;
+        public double kills, losses;
+        public bool tactical;
+        public double x, y;
+        public int? clashWith;
+        public string state;             // 'march' | 'battle' | ...
+    }
+
+    /// 终极世界大战最小态（M-U3c eliminateCiv/mergeCivs 读端；phase 恒 idle —— 大战域 M-U 后续切片）
+    public class WbWorldWar
+    {
+        public string phase = "idle";
+        public int startTick, startYear, endTick;
+        public List<int> belligerents = new List<int>();
+        public int kills, truces;
+        public List<WbWwFallen> fallen = new List<WbWwFallen>();
+        public int? winner;
+        public string endText = "";
+    }
+    public class WbWwFallen { public int id; public string name; public string colorHex; }
+
+    /// 演化图谱节点 —— engine recordEvo L8753（mergeCivs society 节点消费）
+    public class WbEvoNode
+    {
+        public int id;
+        public string kind;
+        public string name;
+        public int? parent;              // null = 根
+        public int year;
+        public string colorHex;
+        public string detail;
+        public string stat;
+        public bool alive = true;
+        public Dictionary<string, object> meta;   // engine recordEvo meta（trace 不下发，M-U6 存档域复核）
+    }
 
     /// WorldLaws —— types.ts DEFAULT_LAWS（夹具可覆写）
     public class WbLaws
@@ -201,6 +295,25 @@ namespace PixelWorldBox.Wb
         public List<WbToast> toasts = new List<WbToast>();  // onToast 回调收集（toast 本体不存储）
         public int eventSeq;
         public int toastSeq;
+
+        // ---------------- 集合层（M-U3c 战争/联盟/图谱域） ----------------
+        public Dictionary<string, WbWarData> warData = new Dictionary<string, WbWarData>();  // key 'a-b'（a<b）
+        public HashSet<string> totalWars = new HashSet<string>();
+        public Dictionary<string, int> warShame = new Dictionary<string, int>();            // 耻辱簿（复仇宣战种子）
+        public List<int> warHistory = new List<int>();                                       // 宣战流水（cap 24）
+        public Dictionary<string, double> raceRel = new Dictionary<string, double>();       // 种族关系 f64（shiftRaceRel 写入）
+        public int statWars;                                                                 // 新战争建档计数
+        public List<WbArmy> armies = new List<WbArmy>();
+        public WbWorldWar worldWar = new WbWorldWar();
+        public Dictionary<int, int> allianceOf = new Dictionary<int, int>();                // civId → allianceId
+        public Dictionary<int, long> allianceWarCd = new Dictionary<int, long>();
+        public int allianceSeq;
+        public int civSeq;
+        public string overlayMode = "none";                                                  // 渲染 overlay（M-U4 域；黄金恒 none）
+        public bool overlayDirty = true;
+        public List<WbEvoNode> evoNodes = new List<WbEvoNode>();
+        public int evoSeq;
+        public Dictionary<string, int> evoIndex = new Dictionary<string, int>();
 
         // ---------------- 空转结构（M-U3c 域） ----------------
         public List<WbAlliance> alliances = new List<WbAlliance>();
@@ -313,15 +426,31 @@ namespace PixelWorldBox.Wb
             if (y < H - 1) dirty.Add(i + W);
         }
 
-        /// engine.ts raceRelOf L8054-8057 —— raceRel Map 恒空（M-U3b 无种族关系变更点）+ RACE_REL_BASE 表
-        public int RaceRelOf(int a, int b)
+        /// engine.ts raceRelOf L8054-8057 —— raceRel Map（f64）优先 → RACE_REL_BASE 表 → 0
+        /// 注意：raceRel 值是 f64（shiftRaceRel 可写入小数），返回 double 保 rr/3 位精确（20+rr/3 小数语义）
+        public double RaceRelOf(int a, int b)
         {
             if (a == b) return 45;
             string key = PairKey(a, b);
-            // raceRel Map：M-U3b 无写入点（写入在 M-U3c 外交域）→ 恒 miss
-            int v;
-            if (RaceRelBase.TryGetValue(key, out v)) return v;
+            double v;
+            if (raceRel.TryGetValue(key, out v)) return v;
+            int bv;
+            if (RaceRelBase.TryGetValue(key, out bv)) return bv;
             return 0;
+        }
+
+        /// engine.ts shiftRaceRel L8061-8067 —— 种族关系漂移（clamp -80..80）
+        public void ShiftRaceRel(int a, int b, double dv)
+        {
+            if (a == b) return;
+            string key = PairKey(a, b);
+            double cur;
+            if (!raceRel.TryGetValue(key, out cur))
+            {
+                int bv;
+                cur = RaceRelBase.TryGetValue(key, out bv) ? bv : 0;
+            }
+            raceRel[key] = System.Math.Max(-80, System.Math.Min(80, cur + dv));
         }
 
         /// RACE_REL_BASE（types.ts L208-219）—— 种族对底色（key 形如 "0-1"，未列对 ?? 0）

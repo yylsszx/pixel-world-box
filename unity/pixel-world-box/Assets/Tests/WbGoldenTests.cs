@@ -10,6 +10,7 @@
 // ============================================================
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -1777,13 +1778,14 @@ namespace PixelWorldBox.Tests
             Assert.AreEqual(160, meta["H"].Value<int>(), "meta H");
             Assert.AreEqual(4, meta["houseCap"].Value<int>(), "meta HOUSE_CAP");
             var scenarios = (JArray)golden["scenarios"];
-            Assert.AreEqual(16, scenarios.Count, "scenario count");
+            Assert.AreEqual(26, scenarios.Count, "scenario count");
             foreach (var sc in scenarios) RunScenario(sc);
         }
 
         private void RunScenario(JObject sc)
         {
             string name = sc["name"].ToString();
+            WbCivSim.ClearTechModCache(); // 静态科技缓存跨场景污染防护（transcript techModCache.clear 同构）
             var w = new WbWorld();
 
             // —— rngA0 / 序列初值（generate 残留对齐）——
@@ -1823,7 +1825,8 @@ namespace PixelWorldBox.Tests
                     alive = c["alive"] == null || c["alive"].Value<bool>(),
                     gold = c["gold"]?.Value<int>() ?? 0,
                     knowledge = c["knowledge"]?.Value<int>() ?? 0,
-                    kingId = c["kingId"] == null ? -1 : c["kingId"].Value<int>(),
+                    kingId = (c["kingId"] == null || c["kingId"].Type == JTokenType.Null) ? (int?)null : c["kingId"].Value<int>(),
+                    armyCd = (c["armyCd"] == null || c["armyCd"].Type == JTokenType.Null) ? (int?)null : c["armyCd"].Value<int>(),
                     kingName = c["kingName"]?.ToString() ?? "K",
                     banner = c["banner"]?.ToString() ?? "B",
                     colonizeCd = c["colonizeCd"]?.Value<int>() ?? 0,
@@ -1840,6 +1843,7 @@ namespace PixelWorldBox.Tests
                 w.civs.Add(civ);
                 while (w.civs.Count <= civ.id) w.civs.Add(null); // dense 补洞
                 if (w.civs[civ.id] == null) w.civs[civ.id] = civ; // dense 直索引（engine L1595 同构）
+                w.civSeq = System.Math.Max(w.civSeq, civ.id + 1); // gen mkCiv civSeq 游标同步（createCiv id 不撞车）
                 // owner 同步（gen mkCiv 夹具语义）
                 foreach (int i in civ.tiles) w.owner[i] = (short)civ.id;
             }
@@ -1848,12 +1852,14 @@ namespace PixelWorldBox.Tests
             var units = (JArray)sc["fixture"]["units"];
             foreach (var u in units) PutWorldUnit(w, u);
 
-            // —— 在位王补夹具（gen runScenario 同构：pop>0 alive 且无王 → id 1000+ 殿后）——
+            // —— 在位王补夹具（gen runScenario 同构：pop>0 alive 且无王 → id 1000+ 殿后；noAutoKing 场景跳过）——
+            if (sc["fixture"]["noAutoKing"] == null || sc["fixture"]["noAutoKing"].Type == JTokenType.Null || !sc["fixture"]["noAutoKing"].Value<bool>())
+            {
             int kingSeq = 1000;
             foreach (var civ in w.civs)
             {
                 if (civ == null || !civ.alive || civ.pop <= 0) continue;
-                if (civ.kingId != -1) continue;
+                if (civ.kingId != null && civ.kingId != -1) continue;
                 int wid = kingSeq++;
                 int t0 = civ.tiles.Count > 0 ? civ.tiles[0] : 0;
                 PutWorldUnit(w, new JObject
@@ -1866,6 +1872,59 @@ namespace PixelWorldBox.Tests
                 });
                 civ.kingId = wid;
             }
+            }
+
+            // —— directives/alliances/wars 夹具（M-U3c）——
+            if (sc["fixture"]["directives"] != null)
+                foreach (var d in (JArray)sc["fixture"]["directives"])
+                    w.directives.Add(new WbDirective
+                    {
+                        id = d["id"]?.Value<int>() ?? w.directives.Count,
+                        civ = d["civ"].Value<int>(),
+                        kind = d["kind"].ToString(),
+                        target = (d["target"] == null || d["target"].Type == JTokenType.Null) ? (int?)null : d["target"].Value<int>(),
+                        param = d["param"]?.Value<int>() ?? 0,
+                        status = d["status"]?.ToString() ?? "active",
+                        startTick = d["startTick"]?.Value<int>() ?? 0,
+                        deadlineTick = d["deadlineTick"]?.Value<int>() ?? 0,
+                        text = d["text"]?.ToString() ?? "",
+                    });
+            if (sc["fixture"]["alliances"] != null)
+                foreach (var al in (JArray)sc["fixture"]["alliances"])
+                {
+                    var a2 = new WbAlliance
+                    {
+                        id = al["id"].Value<int>(),
+                        name = al["name"]?.ToString() ?? $"A{al["id"].Value<int>()}",
+                        leader = al["leader"]?.Value<int>() ?? al["members"][0].Value<int>(),
+                        cohesion = al["cohesion"]?.Value<int>() ?? 55,
+                        formedTick = al["formedTick"]?.Value<long>() ?? 0,
+                        formedYear = al["formedYear"]?.Value<int>() ?? 0,
+                        warsTogether = al["warsTogether"]?.Value<int>() ?? 0,
+                        colorHex = al["colorHex"]?.ToString() ?? "#14b8a6",
+                    };
+                    foreach (var m in (JArray)al["members"]) a2.members.Add(m.Value<int>());
+                    w.alliances.Add(a2);
+                    foreach (int m in a2.members) w.allianceOf[m] = a2.id;
+                }
+            if (sc["fixture"]["wars"] != null)
+                foreach (var wd in (JArray)sc["fixture"]["wars"])
+                    w.warData[wd["key"].ToString()] = new WbWarData
+                    {
+                        key = wd["key"].ToString(),
+                        a = wd["a"].Value<int>(), b = wd["b"].Value<int>(),
+                        startTick = wd["startTick"]?.Value<int>() ?? 0,
+                        startYear = wd["startYear"]?.Value<int>() ?? 0,
+                        total = wd["total"]?.Value<bool>() ?? false,
+                        giveUpAt = wd["giveUpAt"]?.Value<int>() ?? 0,
+                        reason = wd["reason"]?.ToString() ?? "border",
+                        reasonText = wd["reasonText"]?.ToString() ?? "",
+                        aggressor = wd["aggressor"]?.Value<int>() ?? 0,
+                        goal = wd["goal"]?.Value<int>() ?? 0,
+                        popA0 = wd["popA0"]?.Value<int>() ?? 0,
+                        popB0 = wd["popB0"]?.Value<int>() ?? 0,
+                        lastActiveTick = wd["lastActiveTick"]?.Value<int>() ?? 0,
+                    };
 
             // —— rel/tension/met/buildings 夹具 ——
             if (sc["fixture"]["rel"] != null)
@@ -1920,7 +1979,8 @@ namespace PixelWorldBox.Tests
                 y = o["y"].Value<double>(),
                 tx = o["x"].Value<double>(),
                 ty = o["y"].Value<double>(),
-                hp = 10, maxHp = 10,
+                hp = o["hp"]?.Value<double>() ?? 10,
+                maxHp = o["hp"]?.Value<double>() ?? 10,
                 job = o["job"]?.Value<int>() ?? 0,
                 king = o["king"]?.Value<int>() ?? 0,
                 dead = o["dead"]?.Value<int>() ?? 0,
@@ -1962,7 +2022,7 @@ namespace PixelWorldBox.Tests
                 else Assert.AreEqual(wc["mobilizeUntil"].Value<int>(), gc.mobilizeUntil.Value, $"{cid} mobilizeUntil");
                 Assert.AreEqual(wc["stability"].Type == JTokenType.Null ? 70 : wc["stability"].Value<int>(), gc.stability, $"{cid} stability");
                 Assert.AreEqual(wc["militarism"].Type == JTokenType.Null ? 30 : wc["militarism"].Value<int>(), gc.militarism, $"{cid} militarism");
-                Assert.AreEqual(wc["kingId"].Type == JTokenType.Null ? -1 : wc["kingId"].Value<int>(), gc.kingId, $"{cid} kingId");
+                // kingId undefined/-1 语义分离断言移至 M-U3c 段（下方 null→false / 值→相等）
                 Assert.AreEqual(wc["name"].ToString(), gc.name, $"{cid} name");
                 // tiles / frontier 逐元素
                 var wt = (JArray)wc["tiles"];
@@ -2066,6 +2126,153 @@ namespace PixelWorldBox.Tests
             }
             var wantMet = (JArray)want["met"];
             Assert.AreEqual(wantMet.Count, w.met.Count, $"{ctx} met count");
+
+            // —— M-U3c 扩展段 ——
+            // civ 追加字段：kingId undefined/-1 语义分离 + armyCd
+            for (int c = 0; c < wantCivs.Count; c++)
+            {
+                var wc = (JObject)wantCivs[c];
+                var gc = liveCivs[c];
+                string cid = $"{ctx} civ{gc.id}";
+                if (wc["kingId"].Type == JTokenType.Null) Assert.IsFalse(gc.kingId.HasValue, $"{cid} kingId null(undefined)");
+                else Assert.AreEqual(wc["kingId"].Value<int>(), gc.kingId.Value, $"{cid} kingId");
+                if (wc["armyCd"] != null && wc["armyCd"].Type != JTokenType.Null)
+                    Assert.AreEqual(wc["armyCd"].Value<int>(), gc.armyCd ?? 0, $"{cid} armyCd");
+                if (wc["mergedInto"] != null && wc["mergedInto"].Type != JTokenType.Null)
+                    Assert.AreEqual(wc["mergedInto"].Value<int>(), gc.mergedInto ?? -999, $"{cid} mergedInto");
+            }
+
+            // units 全字段（f64 hex 逐位）
+            var wantUnits = (JArray)want["units"];
+            Assert.AreEqual(wantUnits.Count, w.units.Count, $"{ctx} units count");
+            for (int u = 0; u < wantUnits.Count; u++)
+            {
+                var wu = (JObject)wantUnits[u];
+                var gu = w.units[u];
+                string uid = $"{ctx} unit[{u}]";
+                Assert.AreEqual(wu["id"].Value<int>(), gu.id, $"{uid} id");
+                Assert.AreEqual(wu["name"].ToString(), gu.name, $"{uid} name");
+                Assert.AreEqual(wu["race"].Value<int>(), gu.race, $"{uid} race");
+                Assert.AreEqual(wu["civ"].Value<int>(), gu.civ, $"{uid} civ");
+                Assert.AreEqual(JHex(wu["x"]), F64Hex(gu.x), $"{uid} x bits");
+                Assert.AreEqual(JHex(wu["y"]), F64Hex(gu.y), $"{uid} y bits");
+                Assert.AreEqual(JHex(wu["tx"]), F64Hex(gu.tx), $"{uid} tx bits");
+                Assert.AreEqual(JHex(wu["ty"]), F64Hex(gu.ty), $"{uid} ty bits");
+                Assert.AreEqual(JHex(wu["hp"]), F64Hex(gu.hp), $"{uid} hp bits");
+                Assert.AreEqual(JHex(wu["maxHp"]), F64Hex(gu.maxHp), $"{uid} maxHp bits");
+                Assert.AreEqual(JHex(wu["dmg"]), F64Hex(gu.dmg), $"{uid} dmg bits");
+                Assert.AreEqual(JHex(wu["speed"]), F64Hex(gu.speed), $"{uid} speed bits");
+                Assert.AreEqual(wu["job"].Value<int>(), gu.job, $"{uid} job");
+                Assert.AreEqual(wu["king"].Value<int>(), gu.king, $"{uid} king");
+                Assert.AreEqual(wu["boat"].Value<int>(), gu.boat, $"{uid} boat");
+                Assert.AreEqual(wu["boatTTL"].Value<int>(), gu.boatTTL, $"{uid} boatTTL");
+                Assert.AreEqual(wu["dead"].Value<int>(), gu.dead, $"{uid} dead");
+            }
+
+            // warData（键序对账——JS Map 插入序 vs C# Dict 无序）
+            var wantWars = (JArray)want["warData"];
+            Assert.AreEqual(wantWars.Count, w.warData.Count, $"{ctx} warData count");
+            var warKeys = new List<string>(w.warData.Keys);
+            warKeys.Sort(string.CompareOrdinal);
+            for (int k = 0; k < wantWars.Count; k++)
+            {
+                var wwd = (JObject)wantWars[k];
+                var gwd = w.warData[warKeys[k]];
+                string wid = $"{ctx} war[{warKeys[k]}]";
+                Assert.AreEqual(wwd["a"].Value<int>(), gwd.a, $"{wid} a");
+                Assert.AreEqual(wwd["b"].Value<int>(), gwd.b, $"{wid} b");
+                Assert.AreEqual(wwd["startTick"].Value<int>(), gwd.startTick, $"{wid} startTick");
+                Assert.AreEqual(wwd["total"].Value<bool>(), gwd.total, $"{wid} total");
+                Assert.AreEqual(wwd["aggressor"].Value<int>(), gwd.aggressor, $"{wid} aggressor");
+                Assert.AreEqual(wwd["reason"].ToString(), gwd.reason, $"{wid} reason");
+                Assert.AreEqual(wwd["reasonText"].ToString(), gwd.reasonText, $"{wid} reasonText");
+                Assert.AreEqual(wwd["goal"].Value<int>(), gwd.goal, $"{wid} goal");
+                Assert.AreEqual(wwd["giveUpAt"].Value<int>(), gwd.giveUpAt, $"{wid} giveUpAt");
+                Assert.AreEqual(wwd["popA0"].Value<int>(), gwd.popA0, $"{wid} popA0");
+                Assert.AreEqual(wwd["popB0"].Value<int>(), gwd.popB0, $"{wid} popB0");
+                Assert.AreEqual(wwd["lastActiveTick"].Value<int>(), gwd.lastActiveTick, $"{wid} lastActiveTick");
+            }
+
+            // raceRel（f64 逐位；键序对账）
+            var wantRaceRel = (JArray)want["raceRel"];
+            Assert.AreEqual(wantRaceRel.Count, w.raceRel.Count, $"{ctx} raceRel count");
+            var rrKeys = new List<string>(w.raceRel.Keys);
+            rrKeys.Sort(string.CompareOrdinal);
+            for (int k = 0; k < wantRaceRel.Count; k++)
+            {
+                var rr = wantRaceRel[k];
+                Assert.AreEqual(rr[0].ToString(), rrKeys[k], $"{ctx} raceRel[{k}] key");
+                Assert.AreEqual(rr[1].Value<double>(), w.raceRel[rrKeys[k]], 1e-12, $"{ctx} raceRel[{rrKeys[k]}] value");
+            }
+
+            // totalWars/warHistory/statWars/civSeq
+            var wantTotal = ((JArray)want["totalWars"]).Select(x => x.ToString()).OrderBy(x => x, string.CompareOrdinal).ToList();
+            var gotTotal = w.totalWars.OrderBy(x => x, string.CompareOrdinal).ToList();
+            Assert.AreEqual(wantTotal.Count, gotTotal.Count, $"{ctx} totalWars count");
+            for (int k = 0; k < wantTotal.Count; k++) Assert.AreEqual(wantTotal[k], gotTotal[k], $"{ctx} totalWars[{k}]");
+            var wantHist = (JArray)want["warHistory"];
+            Assert.AreEqual(wantHist.Count, w.warHistory.Count, $"{ctx} warHistory count");
+            for (int k = 0; k < wantHist.Count; k++) Assert.AreEqual(wantHist[k].Value<int>(), w.warHistory[k], $"{ctx} warHistory[{k}]");
+            Assert.AreEqual(want["statWars"].Value<int>(), w.statWars, $"{ctx} statWars");
+            Assert.AreEqual(want["civSeq"].Value<int>(), w.civSeq, $"{ctx} civSeq");
+
+            // alliances 全字段
+            var wantAl = (JArray)want["alliances"];
+            Assert.AreEqual(wantAl.Count, w.alliances.Count, $"{ctx} alliances count");
+            var alOrder = w.alliances.OrderBy((a) => a.id).ToList();
+            for (int k = 0; k < wantAl.Count; k++)
+            {
+                var wal = (JObject)wantAl[k];
+                var gal = alOrder[k];
+                string aid = $"{ctx} alliance[{gal.id}]";
+                Assert.AreEqual(wal["name"].ToString(), gal.name, $"{aid} name");
+                Assert.AreEqual(wal["leader"].Value<int>(), gal.leader, $"{aid} leader");
+                Assert.AreEqual(wal["cohesion"].Value<int>(), gal.cohesion, $"{aid} cohesion");
+                Assert.AreEqual(wal["formedTick"].Value<long>(), gal.formedTick, $"{aid} formedTick");
+                Assert.AreEqual(wal["warsTogether"].Value<int>(), gal.warsTogether, $"{aid} warsTogether");
+                Assert.AreEqual(((JArray)wal["members"]).Count, gal.members.Count, $"{aid} members count");
+                for (int m = 0; m < gal.members.Count; m++)
+                    Assert.AreEqual(((JArray)wal["members"])[m].Value<int>(), gal.members[m], $"{aid} members[{m}]");
+            }
+
+            // directives 全字段（含 finishDirective 结算态）
+            var wantDir = (JArray)want["directives"];
+            Assert.AreEqual(wantDir.Count, w.directives.Count, $"{ctx} directives count");
+            var dirOrder = w.directives.OrderBy((d) => d.id).ToList();
+            for (int k = 0; k < wantDir.Count; k++)
+            {
+                var wdd = (JObject)wantDir[k];
+                var gdd = dirOrder[k];
+                string did = $"{ctx} directive[{gdd.id}]";
+                Assert.AreEqual(wdd["civ"].Value<int>(), gdd.civ, $"{did} civ");
+                Assert.AreEqual(wdd["kind"].ToString(), gdd.kind, $"{did} kind");
+                if (wdd["target"].Type == JTokenType.Null) Assert.IsFalse(gdd.target.HasValue, $"{did} target null");
+                else Assert.AreEqual(wdd["target"].Value<int>(), gdd.target.Value, $"{did} target");
+                Assert.AreEqual(wdd["status"].ToString(), gdd.status, $"{did} status");
+                if (wdd["endTick"].Type == JTokenType.Null) Assert.IsFalse(gdd.endTick.HasValue, $"{did} endTick null");
+                else Assert.AreEqual(wdd["endTick"].Value<int>(), gdd.endTick.Value, $"{did} endTick");
+                if (wdd["endText"].Type == JTokenType.Null) Assert.IsTrue(string.IsNullOrEmpty(gdd.endText), $"{did} endText null");
+                else Assert.AreEqual(wdd["endText"].ToString(), gdd.endText, $"{did} endText");
+            }
+
+            // evoNodes（society/物种图谱——id 序对账）
+            var wantEvo = (JArray)want["evoNodes"];
+            Assert.AreEqual(wantEvo.Count, w.evoNodes.Count, $"{ctx} evoNodes count");
+            var evoOrder = w.evoNodes.OrderBy((n) => n.id).ToList();
+            for (int k = 0; k < wantEvo.Count; k++)
+            {
+                var wen = (JObject)wantEvo[k];
+                var gen = evoOrder[k];
+                string eid = $"{ctx} evo[{gen.id}]";
+                Assert.AreEqual(wen["kind"].ToString(), gen.kind, $"{eid} kind");
+                Assert.AreEqual(wen["name"].ToString(), gen.name, $"{eid} name");
+                if (wen["parent"].Type == JTokenType.Null) Assert.IsFalse(gen.parent.HasValue, $"{eid} parent null");
+                else Assert.AreEqual(wen["parent"].Value<int>(), gen.parent.Value, $"{eid} parent");
+                Assert.AreEqual(wen["year"].Value<int>(), gen.year, $"{eid} year");
+                Assert.AreEqual(wen["detail"].ToString(), gen.detail, $"{eid} detail");
+                if (wen["stat"].Type == JTokenType.Null) Assert.IsTrue(string.IsNullOrEmpty(gen.stat), $"{eid} stat null");
+                else Assert.AreEqual(wen["stat"].ToString(), gen.stat, $"{eid} stat");
+            }
         }
 
         private static Dictionary<string, JArray> WantCountsDict(JObject want)
