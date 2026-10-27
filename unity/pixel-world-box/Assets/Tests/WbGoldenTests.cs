@@ -1051,4 +1051,402 @@ namespace PixelWorldBox.Tests
             }
         }
     }
+
+    // ============================================================
+    // Test7 — M-U2d spawn/繁衍/拾取/家族黄金回放（26 场景全字段逐位）
+    // 驱动协议：USEQ 差值追踪 live + 宿主重排含新 slot + PackEnd(liveN)
+    // 引导表：boot 复用 units_combat meta.boot；TRAITS/FIRST/NEUTRAL_MODS 随本黄金 meta 分发
+    // ============================================================
+    public class WbSpawnGoldenTests
+    {
+        private JObject _golden;
+        private WbGoldenFixture _fx;
+
+        [OneTimeSetUp]
+        public void Load()
+        {
+            string path = FindGolden();
+            Assert.IsTrue(File.Exists(path), $"spawn golden json not found: {path}");
+            _golden = JObject.Parse(File.ReadAllText(path));
+        }
+
+        private static string FindGolden()
+        {
+            string[] candidates =
+            {
+                "Assets/StreamingAssets/WbGolden/units_spawn.json",
+                Path.Combine(TestContext.CurrentContext.TestDirectory, "Assets/StreamingAssets/WbGolden/units_spawn.json"),
+            };
+            foreach (var c in candidates) if (File.Exists(c)) return c;
+            return candidates[0];
+        }
+
+        [SetUp]
+        public void Setup() => _fx = new WbGoldenFixture();
+
+        private static double BitsOf(string hex) => BitConverter.Int64BitsToDouble(unchecked((long)Convert.ToUInt64(hex.Replace("0x", ""), 16)));
+
+        private void ApplyTraits(JObject meta)
+        {
+            var A = _fx.Arena;
+            // TRAITS 真表键序（meta.traits = [[dmg,hp,spd]×n]；fill(1) 后覆写 = wbspatial L977-994）
+            for (int i = 0; i < 32; i++) { A.SetF64(WbConstants.OFF_TRDMG, i, 1); A.SetF64(WbConstants.OFF_TRHP, i, 1); A.SetF64(WbConstants.OFF_TRSPD, i, 1); }
+            var traits = (JArray)meta["traits"];
+            for (int i = 0; i < traits.Count; i++)
+            {
+                A.SetF64(WbConstants.OFF_TRDMG, i, traits[i][0].Value<double>());
+                A.SetF64(WbConstants.OFF_TRHP, i, traits[i][1].Value<double>());
+                A.SetF64(WbConstants.OFF_TRSPD, i, traits[i][2].Value<double>());
+            }
+            A.SetI32(WbConstants.OFF_TRN, 0, traits.Count);
+        }
+
+        private void ApplyFirstPool(JObject meta)
+        {
+            var A = _fx.Arena;
+            // FIRST 名池 24B 定长条目 [len u8][bytes ×23]（wbspatial L726-750 宿主协议）
+            var enc = System.Text.Encoding.UTF8;
+            int cur = 0;
+            var pool = (JObject)meta["firstPool"];
+            foreach (var prop in pool.Properties())
+            {
+                int race = int.Parse(prop.Name);
+                var names = (JArray)prop.Value;
+                if (names.Count == 0) continue;
+                if (cur + names.Count * 24 > 16384) continue;
+                A.SetU32(WbConstants.OFF_FRSTOFF, race, (uint)cur);
+                A.SetU32(WbConstants.OFF_FRSTN, race, (uint)names.Count);
+                foreach (var nm in names)
+                {
+                    byte[] b = enc.GetBytes(nm.Value<string>());
+                    int n = Math.Min(b.Length, 23);
+                    A.SetU8(WbConstants.OFF_FRSTP, cur, (byte)n);
+                    for (int i = 0; i < n; i++) A.SetU8(WbConstants.OFF_FRSTP, cur + 1 + i, b[i]);
+                    cur += 24;
+                }
+            }
+        }
+
+        private void SetupWorld(JObject inp)
+        {
+            var A = _fx.Arena;
+            var meta = (JObject)_golden["meta"];
+            _fx.InitWorld(inp["seed"].Value<int>(), inp["fxp"]?.Value<int>() ?? 0);
+            _fx.SetEps(meta["eps"].ToObject<List<double>>());
+            A.SetI32(WbConstants.OFF_MISC, 0, 4096);
+            A.SetI32(WbConstants.OFF_MISC, 1, 4096); // wild 预算（gen initWorldSp 同款）
+            for (int r = 0; r < 512; r++) A.SetI32(WbConstants.OFF_WILDCAP, r, 4096); // cap 放开（测试基建）
+            A.SetU8(WbConstants.OFF_LAWS, 0, (byte)(inp["laws"]?.Value<int>() ?? 0));
+            if (inp["dayph"] != null) A.SetF64(WbConstants.OFF_DAYPH, 0, inp["dayph"].Value<double>());
+            if (inp["reprm"] != null) A.SetF64(WbConstants.OFF_REPRM, 0, inp["reprm"].Value<double>());
+            if (inp["terrain"] != null)
+            {
+                var tr = new GoldenTerrain { @base = inp["terrain"]["base"].Value<int>() };
+                if (inp["terrain"]["rects"] != null)
+                    tr.rects = inp["terrain"]["rects"].ToObject<List<GoldenRect>>();
+                if (inp["terrain"]["fire"] != null) tr.fire = inp["terrain"]["fire"].ToObject<List<int[]>>();
+                if (inp["terrain"]["road"] != null) tr.road = inp["terrain"]["road"].ToObject<List<int[]>>();
+                _fx.FillTerrain(tr);
+            }
+            // boot 表复用 units_combat（TBR/RACE_FLAGS/TBF/TBJ/TBI 全槽真值——C# 无法 import TS）
+            string combatPath = Path.Combine(Path.GetDirectoryName(FindGolden()), "units_combat.json");
+            var combat = JObject.Parse(File.ReadAllText(combatPath));
+            var boot = combat["meta"]["boot"];
+            foreach (var kv in (JObject)boot["tbr"])
+                for (int c = 0; c < 12; c++)
+                    A.SetF64(WbConstants.OFF_TBR, int.Parse(kv.Key) * 12 + c, kv.Value[c].Value<double>());
+            foreach (var kv in (JObject)boot["raceFlags"]) A.SetU8(WbConstants.OFF_RACE_FLAGS, int.Parse(kv.Key), (byte)kv.Value.Value<int>());
+            foreach (var kv in (JObject)boot["tbf0"]) A.SetU8(WbConstants.OFF_TBF, int.Parse(kv.Key) * 2, (byte)kv.Value.Value<int>());
+            foreach (var kv in (JObject)boot["tbf1"]) A.SetU8(WbConstants.OFF_TBF, int.Parse(kv.Key) * 2 + 1, (byte)kv.Value.Value<int>());
+            var tbj = (JArray)boot["tbj"];
+            for (int c = 0; c < tbj.Count; c++) A.SetF64(WbConstants.OFF_TBJ, c, tbj[c].Value<double>());
+            foreach (var kv in (JObject)boot["tbi"])
+                for (int c = 0; c < 12; c++)
+                    A.SetF64(WbConstants.OFF_TBI, int.Parse(kv.Key) * 12 + c, kv.Value[c].Value<double>());
+            A.SetI32(WbConstants.OFF_TBIN, 0, boot["tbin"].Value<int>());
+            for (int w = 0; w < 4; w++)
+            {
+                A.SetU32(WbConstants.OFF_GUNBM, w, boot["gunbm"][w].Value<uint>());
+                A.SetU32(WbConstants.OFF_BEAMBM, w, boot["beambm"][w].Value<uint>());
+            }
+            ApplyTraits(meta);
+            ApplyFirstPool(meta);
+            if (inp["civs"] != null)
+            {
+                var nm = meta["neutralMods"];
+                A.SetI32(WbConstants.OFF_CIVN, 0, inp["civs"].Count());
+                int ci = 0;
+                foreach (var c in inp["civs"])
+                {
+                    A.SetU8(WbConstants.OFF_CVAL, ci, 1);
+                    // CVTECH = NEUTRAL_MODS 中性基线（gen 同款；TC_REPRO=0 乘零链防线）
+                    A.SetF64(WbConstants.OFF_CVTECH, ci * 24 + 0, c["techDmg"]?.Value<double>() ?? nm["dmg"].Value<double>());
+                    A.SetF64(WbConstants.OFF_CVTECH, ci * 24 + 1, c["techHp"]?.Value<double>() ?? nm["hp"].Value<double>());
+                    A.SetF64(WbConstants.OFF_CVTECH, ci * 24 + 2, nm["bhp"].Value<double>());
+                    A.SetF64(WbConstants.OFF_CVTECH, ci * 24 + 5, c["techRepro"]?.Value<double>() ?? nm["repro"].Value<double>());
+                    A.SetF64(WbConstants.OFF_CVTECH, ci * 24 + 9, nm["repair"].Value<double>());
+                    A.SetF64(WbConstants.OFF_CVTECH, ci * 24 + 13, nm["archer"].Value<double>());
+                    A.SetF64(WbConstants.OFF_CVTECH, ci * 24 + 14, nm["plague"].Value<double>());
+                    A.SetF64(WbConstants.OFF_CVTECH, ci * 24 + 15, nm["range"].Value<double>());
+                    A.SetF64(WbConstants.OFF_CVTECH, ci * 24 + 18, c["techIdea"]?.Value<double>() ?? 0);
+                    if (c["pop"] != null) A.SetF64(WbConstants.OFF_CVPOP, ci, c["pop"].Value<double>());
+                    if (c["pc"] != null) A.SetF64(WbConstants.OFF_CVPC, ci, c["pc"].Value<double>());
+                    if (c["gov"] != null) A.SetI32(WbConstants.OFF_CVGOV, ci, c["gov"].Value<int>());
+                    if (c["dir"] != null) A.SetU8(WbConstants.OFF_CVDIR, ci, (byte)c["dir"].Value<int>());
+                    if (c["mkt"] != null) A.SetI32(WbConstants.OFF_CVMKT, ci, c["mkt"].Value<int>());
+                    ci++;
+                }
+            }
+            if (inp["atwar"] != null)
+                foreach (var ab in inp["atwar"])
+                {
+                    A.SetU8(WbConstants.OFF_ATWAR, ab[0].Value<int>() * 64 + ab[1].Value<int>(), 1);
+                    A.SetU8(WbConstants.OFF_ATWAR, ab[1].Value<int>() * 64 + ab[0].Value<int>(), 1);
+                }
+            if (inp["fams"] != null)
+            {
+                int fi = 0;
+                foreach (var f in inp["fams"])
+                {
+                    A.SetI32(WbConstants.OFF_FMID, fi, f["id"].Value<int>());
+                    A.SetI32(WbConstants.OFF_FMRACE, fi, f["race"]?.Value<int>() ?? 0);
+                    for (int k = 0; k < 6; k++) A.SetF64(WbConstants.OFF_FMNUM, fi * 6 + k, f["num"] != null && k < f["num"].Count() ? f["num"][k].Value<double>() : 0);
+                    if (f["pre"] != null) A.SetU16(WbConstants.OFF_FMNAME, fi * 2, (ushort)f["pre"].Value<int>());
+                    if (f["post"] != null) A.SetU16(WbConstants.OFF_FMNAME, fi * 2 + 1, (ushort)f["post"].Value<int>());
+                    fi++;
+                }
+                A.SetI32(WbConstants.OFF_FAMN, 0, inp["fams"].Count());
+            }
+            if (inp["wilds"] != null) foreach (var w in inp["wilds"]) A.SetI32(WbConstants.OFF_WILD, w[0].Value<int>(), w[1].Value<int>());
+            if (inp["wildcaps"] != null) foreach (var w in inp["wildcaps"]) A.SetI32(WbConstants.OFF_WILDCAP, w[0].Value<int>(), w[1].Value<int>());
+            if (inp["moncaps"] != null) foreach (var w in inp["moncaps"]) A.SetI32(WbConstants.OFF_MONCAP, w[0].Value<int>(), w[1].Value<int>());
+            if (inp["spb"] != null)
+                foreach (var sp in inp["spb"])
+                {
+                    for (int k = 0; k < 4; k++) A.SetF64(WbConstants.OFF_SPB, sp[0].Value<int>() * 4 + k, sp[1][k].Value<double>());
+                    A.SetU8(WbConstants.OFF_SPBH, sp[0].Value<int>(), 1);
+                }
+            if (inp["cnt5"] != null) A.SetF64(WbConstants.OFF_CNT, 5, inp["cnt5"].Value<double>());
+            if (inp["items"] != null)
+            {
+                int ii = 0;
+                foreach (var it in inp["items"])
+                {
+                    A.SetI32(WbConstants.OFF_ITMK, ii, it["k"].Value<int>());
+                    A.SetF64(WbConstants.OFF_ITMXY, ii * 2, it["x"].Value<double>());
+                    A.SetF64(WbConstants.OFF_ITMXY, ii * 2 + 1, it["y"].Value<double>());
+                    ii++;
+                }
+                A.SetI32(WbConstants.OFF_ITMN, 0, inp["items"].Count());
+            }
+            foreach (var u in inp["units"]) PutUnitSpawn(u);
+            A.PackEnd((uint)inp["units"].Count());
+        }
+
+        private void PutUnitSpawn(JToken u)
+        {
+            var A = _fx.Arena;
+            int slot = u["slot"].Value<int>();
+            A.SetU32(WbConstants.OFF_UID, slot, unchecked((uint)(u["id"]?.Value<int>() ?? slot)));
+            A.SetU32(WbConstants.OFF_URACE, slot, (uint)u["race"].Value<int>());
+            A.SetU32(WbConstants.OFF_UCELL, slot, (uint)((int)Math.Floor(u["y"].Value<double>() / 4.0) * WbConstants.W + (int)Math.Floor(u["x"].Value<double>() / 4.0)));
+            A.SetF64(WbConstants.OFF_UX, slot, u["x"].Value<double>());
+            A.SetF64(WbConstants.OFF_UY, slot, u["y"].Value<double>());
+            A.SetF64(WbConstants.OFF_UTX, slot, u["tx"]?.Value<double>() ?? u["x"].Value<double>());
+            A.SetF64(WbConstants.OFF_UTY, slot, u["ty"]?.Value<double>() ?? u["y"].Value<double>());
+            A.SetF64(WbConstants.OFF_USPEED, slot, u["speed"]?.Value<double>() ?? 0.08);
+            A.SetF64(WbConstants.OFF_UHP, slot, u["hp"]?.Value<double>() ?? 100);
+            A.SetF64(WbConstants.OFF_UMAXHP, slot, u["maxhp"]?.Value<double>() ?? 100);
+            A.SetF64(WbConstants.OFF_UMAXAGE, slot, u["maxage"]?.Value<double>() ?? 9999);
+            A.SetF64(WbConstants.OFF_UAGE, slot, 0);
+            A.SetF64(WbConstants.OFF_UDMG, slot, u["dmg"]?.Value<double>() ?? 5);
+            A.SetF64(WbConstants.OFF_UKILLS, slot, u["kills"]?.Value<double>() ?? 0);
+            A.SetF64(WbConstants.OFF_UCHILL, slot, 0);
+            A.SetF64(WbConstants.OFF_UCURSE, slot, u["curse"]?.Value<double>() ?? 0);
+            A.SetF64(WbConstants.OFF_UBLESS, slot, 0);
+            A.SetF64(WbConstants.OFF_UFERT, slot, u["fert"]?.Value<double>() ?? 0);
+            A.SetF64(WbConstants.OFF_UDETOUR, slot, 0);
+            A.SetF64(WbConstants.OFF_UHURT, slot, 0);
+            A.SetF64(WbConstants.OFF_UATK, slot, 0);
+            A.SetF64(WbConstants.OFF_UCD, slot, u["cd"]?.Value<double>() ?? 0);
+            A.SetF64(WbConstants.OFF_UBREATH, slot, u["breath"]?.Value<double>() ?? 0);
+            A.SetF64(WbConstants.OFF_UFD, slot, u["food"] != null ? u["food"].Value<double>() : double.NaN);
+            A.SetF64(WbConstants.OFF_UCVN, slot, u["cvn"]?.Value<double>() ?? 0);
+            A.SetF64(WbConstants.OFF_UFLEET, slot, u["fleet"]?.Value<double>() ?? 0);
+            A.SetI32(WbConstants.OFF_UCIV, slot, u["civ"]?.Value<int>() ?? -1);
+            A.SetI32(WbConstants.OFF_UJOB, slot, u["job"]?.Value<int>() ?? -1);
+            A.SetI32(WbConstants.OFF_UARMY, slot, -1);
+            A.SetI32(WbConstants.OFF_USTK, slot, 0);
+            A.SetI32(WbConstants.OFF_UTRAIT, slot, u["trait"]?.Value<int>() ?? -1);
+            A.SetU8(WbConstants.OFF_UDEAD, slot, 0);
+            A.SetU8(WbConstants.OFF_UHASPANIC, slot, (byte)(u["panic"] != null ? 1 : 0));
+            if (u["panic"] != null) A.SetF64(WbConstants.OFF_UPANIC, slot, u["panic"].Value<double>());
+            A.SetU8(WbConstants.OFF_UINF, slot, (byte)(u["inf"] == true ? 1 : 0));
+            A.SetU8(WbConstants.OFF_UBOAT, slot, (byte)(u["boat"] == true ? 1 : 0));
+            A.SetU8(WbConstants.OFF_UFLIP, slot, 0);
+            A.SetF64(WbConstants.OFF_ULX, slot, double.NaN);
+            A.SetF64(WbConstants.OFF_ULY, slot, double.NaN);
+            if (u["gene"] != null) { for (int g = 0; g < 4; g++) A.SetF64(WbConstants.OFF_UGENE, slot * 4 + g, u["gene"][g].Value<double>()); }
+            else { for (int g = 0; g < 4; g++) A.SetF64(WbConstants.OFF_UGENE, slot * 4 + g, 1); }
+            for (int g = 0; g < 7; g++) A.SetI32(WbConstants.OFF_UGEAR, slot * 7 + g, u["gear"] != null && g < u["gear"].Count() ? u["gear"][g].Value<int>() : -1);
+            if (u["name"] != null)
+            {
+                byte[] b = System.Text.Encoding.UTF8.GetBytes(u["name"].Value<string>());
+                int n = Math.Min(b.Length, 31);
+                for (int i = 0; i < 32; i++) A.SetU8(WbConstants.OFF_UNAME, slot * 32 + i, i < n ? b[i] : (byte)0);
+                A.SetU8(WbConstants.OFF_UNAME, slot * 32 + 31, (byte)n);
+            }
+            for (int g = 0; g < 8; g++) { A.SetI32(WbConstants.OFF_UGIDS, slot * 8 + g, -1); A.SetF64(WbConstants.OFF_UGVAL, slot * 8 + g, 0); }
+            if (u["grudges"] != null)
+            {
+                for (int g = 0; g < ((JArray)u["grudges"]).Count && g < 8; g++)
+                {
+                    A.SetI32(WbConstants.OFF_UGIDS, slot * 8 + g, u["grudges"][g]["oid"].Value<int>());
+                    A.SetF64(WbConstants.OFF_UGVAL, slot * 8 + g, u["grudges"][g]["gv"].Value<double>());
+                }
+                A.SetI32(WbConstants.OFF_UGLN, slot, Math.Min(((JArray)u["grudges"]).Count, 8));
+            }
+            else A.SetI32(WbConstants.OFF_UGLN, slot, -1);
+            A.SetI32(WbConstants.OFF_UFAM, slot, u["fam"]?.Value<int>() ?? -1);
+            A.SetI32(WbConstants.OFF_UFGN, slot, u["fgn"]?.Value<int>() ?? -1);
+        }
+
+        private static string NameOf(byte[] arena, int baseOff, int slot)
+        {
+            int len = arena[baseOff + slot * 32 + 31];
+            var chars = new char[len];
+            for (int i = 0; i < len; i++) chars[i] = (char)arena[baseOff + slot * 32 + i];
+            return new string(chars);
+        }
+
+        [TestCase(0)]  [TestCase(1)]  [TestCase(2)]  [TestCase(3)]  [TestCase(4)]
+        [TestCase(5)]  [TestCase(6)]  [TestCase(7)]  [TestCase(8)]  [TestCase(9)]
+        [TestCase(10)] [TestCase(11)] [TestCase(12)] [TestCase(13)] [TestCase(14)]
+        [TestCase(15)] [TestCase(16)] [TestCase(17)] [TestCase(18)] [TestCase(19)]
+        [TestCase(20)] [TestCase(21)] [TestCase(22)] [TestCase(23)] [TestCase(24)] [TestCase(25)]
+        public void Spawn_Replay_BitExactParity(int index)
+        {
+            var sc = (JObject)_golden["scenarios"][index];
+            var inp = (JObject)sc["input"];
+            var name = sc["name"].Value<string>();
+            int n0 = inp["units"].Count();
+            SetupWorld(inp);
+            var A = _fx.Arena;
+            uint useq0 = A.U32At(WbConstants.OFF_USEQ, 0);
+            int liveN = n0;
+            A.PackEnd((uint)liveN);
+            var ticks = (JArray)sc["output"];
+            for (int t = 0; t < ticks.Count; t++)
+            {
+                var want = (JObject)ticks[t];
+                int rc = WbUnits.UnitsBatch(0, 0);
+                uint spawnedU = A.U32At(WbConstants.OFF_USEQ, 0) - useq0;
+                int spawned = (int)spawnedU;
+                liveN = n0 + spawned;
+                Assert.AreEqual(want["rc"].Value<int>(), rc, $"{name} tick{t} rc");
+                Assert.AreEqual(want["spawned"].Value<int>(), spawned, $"{name} tick{t} spawned(USEQ 差值)");
+                Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 0), $"{name} tick{t} RNG");
+                Assert.AreEqual((ulong)want["tick"].Value<uint>(), A.U64At(WbConstants.OFF_TICK, 0), $"{name} tick{t} TICK");
+                Assert.AreEqual((ulong)want["useq"].Value<uint>(), A.U64At(WbConstants.OFF_USEQ, 0), $"{name} tick{t} USEQ");
+                Assert.AreEqual((int)want["actN"], A.I32At(WbConstants.OFF_ACTN, 0), $"{name} tick{t} ACTN");
+                Assert.AreEqual((int)want["dlistN"], A.I32At(WbConstants.OFF_DLISTN, 0), $"{name} tick{t} DLISTN");
+                Assert.AreEqual(want["batchR"].Value<uint>(), A.U32At(WbConstants.OFF_BATCHR, 0), $"{name} tick{t} BATCHR");
+                Assert.AreEqual(want["bailK"].Value<uint>(), A.U32At(WbConstants.OFF_BAILK, 0), $"{name} tick{t} BAILK");
+                for (int k = 0; k < 5; k++)
+                    Assert.AreEqual(BitsOf(want["bailP"][k].ToString()), A.U64At(WbConstants.OFF_BAILP, k), $"{name} tick{t} BAILP[{k}]");
+                Assert.AreEqual(want["famn"].Value<int>(), A.I32At(WbConstants.OFF_FAMN, 0), $"{name} tick{t} FAMN");
+                Assert.AreEqual(want["famseq"].Value<int>(), A.I32At(WbConstants.OFF_FMSEQ, 0), $"{name} tick{t} FMSEQ");
+                Assert.AreEqual(want["itmn"].Value<int>(), A.I32At(WbConstants.OFF_ITMN, 0), $"{name} tick{t} ITMN");
+                Assert.AreEqual(BitsOf(want["cvpop0"].ToString()), A.U64At(WbConstants.OFF_CVPOP, 0), $"{name} tick{t} CVPOP[0]");
+                Assert.AreEqual(BitsOf(want["cnt4"].ToString()), A.U64At(WbConstants.OFF_CNT, 4), $"{name} tick{t} CNT[4]");
+                Assert.AreEqual(BitsOf(want["cnt5"].ToString()), A.U64At(WbConstants.OFF_CNT, 5), $"{name} tick{t} CNT[5]");
+                Assert.AreEqual(BitsOf(want["grass"].ToString()), A.U64At(WbConstants.OFF_GRASS, 0), $"{name} tick{t} GRASS");
+                Assert.AreEqual(want["wildSheep"].Value<int>(), A.I32At(WbConstants.OFF_WILD, 6), $"{name} tick{t} WILD[sheep]");
+                Assert.AreEqual(want["wildZombie"].Value<int>(), A.I32At(WbConstants.OFF_WILD, 5), $"{name} tick{t} WILD[zombie]");
+                Assert.AreEqual(want["wildSkeleton"].Value<int>(), A.I32At(WbConstants.OFF_WILD, 16), $"{name} tick{t} WILD[skeleton]");
+                // 家族表逐位
+                var wantFams = (JArray)want["fams"];
+                for (int r = 0; r < wantFams.Count; r++)
+                {
+                    var wf = (JObject)wantFams[r];
+                    Assert.AreEqual(wf["id"].Value<int>(), A.I32At(WbConstants.OFF_FMID, r), $"{name} tick{t} FM[{r}] id");
+                    Assert.AreEqual(wf["race"].Value<int>(), A.I32At(WbConstants.OFF_FMRACE, r), $"{name} tick{t} FM[{r}] race");
+                    for (int k = 0; k < 6; k++)
+                        Assert.AreEqual(BitsOf(wf["num"][k].ToString()), A.U64At(WbConstants.OFF_FMNUM, r * 6 + k), $"{name} tick{t} FM[{r}] num[{k}]");
+                    Assert.AreEqual((ushort)wf["name"][0].Value<int>(), A.U16At(WbConstants.OFF_FMNAME, r * 2), $"{name} tick{t} FM[{r}] pre");
+                    Assert.AreEqual((ushort)wf["name"][1].Value<int>(), A.U16At(WbConstants.OFF_FMNAME, r * 2 + 1), $"{name} tick{t} FM[{r}] post");
+                }
+                // 物品表逐位
+                var wantItems = (JArray)want["items"];
+                for (int i = 0; i < wantItems.Count; i++)
+                {
+                    var wi = (JObject)wantItems[i];
+                    Assert.AreEqual(wi["k"].Value<int>(), A.I32At(WbConstants.OFF_ITMK, i), $"{name} tick{t} ITM[{i}] k");
+                    Assert.AreEqual(BitsOf(wi["x"].ToString()), A.U64At(WbConstants.OFF_ITMXY, i * 2), $"{name} tick{t} ITM[{i}] x");
+                    Assert.AreEqual(BitsOf(wi["y"].ToString()), A.U64At(WbConstants.OFF_ITMXY, i * 2 + 1), $"{name} tick{t} ITM[{i}] y");
+                }
+                // ACT 缓冲
+                var actBase = A.Offs[WbConstants.OFF_ACT];
+                int actLen = Math.Min((int)want["actN"], 1024);
+                Assert.AreEqual(want["actHex"]?.Value<string>() ?? "", WbGoldenFixture.Hex(A.Arena, actBase, actLen), $"{name} tick{t} ACT bytes");
+                // 单位全字段逐位（初始 + 新 spawn slot）
+                var wantUnits = (JArray)want["units"];
+                foreach (var eu in wantUnits)
+                {
+                    int s = eu["slot"].Value<int>();
+                    Assert.AreEqual(eu["race"].Value<uint>(), A.U32At(WbConstants.OFF_URACE, s), $"{name} tick{t} u{s} race");
+                    Assert.AreEqual(eu["uid"].Value<uint>(), A.U32At(WbConstants.OFF_UID, s), $"{name} tick{t} u{s} uid");
+                    Assert.AreEqual(eu["dead"].Value<int>(), A.U8At(WbConstants.OFF_UDEAD, s), $"{name} tick{t} u{s} dead");
+                    Assert.AreEqual(eu["hasPanic"].Value<int>(), A.U8At(WbConstants.OFF_UHASPANIC, s), $"{name} tick{t} u{s} hasPanic");
+                    Assert.AreEqual(eu["inf"].Value<int>(), A.U8At(WbConstants.OFF_UINF, s), $"{name} tick{t} u{s} inf");
+                    Assert.AreEqual(eu["boat"].Value<int>(), A.U8At(WbConstants.OFF_UBOAT, s), $"{name} tick{t} u{s} boat");
+                    Assert.AreEqual(eu["flip"].Value<int>(), A.U8At(WbConstants.OFF_UFLIP, s), $"{name} tick{t} u{s} flip");
+                    Assert.AreEqual(eu["par"].Value<int>(), A.U8At(WbConstants.OFF_UPAR, s), $"{name} tick{t} u{s} par");
+                    Assert.AreEqual(eu["civ"].Value<int>(), A.I32At(WbConstants.OFF_UCIV, s), $"{name} tick{t} u{s} civ");
+                    Assert.AreEqual(eu["job"].Value<int>(), A.I32At(WbConstants.OFF_UJOB, s), $"{name} tick{t} u{s} job");
+                    Assert.AreEqual(eu["trait"].Value<int>(), A.I32At(WbConstants.OFF_UTRAIT, s), $"{name} tick{t} u{s} trait");
+                    Assert.AreEqual(eu["fam"].Value<int>(), A.I32At(WbConstants.OFF_UFAM, s), $"{name} tick{t} u{s} fam");
+                    Assert.AreEqual(eu["fgn"].Value<int>(), A.I32At(WbConstants.OFF_UFGN, s), $"{name} tick{t} u{s} fgn");
+                    Assert.AreEqual(eu["gln"].Value<int>(), A.I32At(WbConstants.OFF_UGLN, s), $"{name} tick{t} u{s} gln");
+                    Assert.AreEqual(eu["army"].Value<int>(), A.I32At(WbConstants.OFF_UARMY, s), $"{name} tick{t} u{s} army");
+                    Assert.AreEqual(eu["cell"].Value<uint>(), A.U32At(WbConstants.OFF_UCELL, s), $"{name} tick{t} u{s} cell");
+                    Assert.AreEqual(eu["stx"].Value<int>(), A.I32At(WbConstants.OFF_USTK, s), $"{name} tick{t} u{s} stx");
+                    foreach (var fld in new[]
+                    {
+                        new[] { "x", WbConstants.OFF_UX }, new[] { "y", WbConstants.OFF_UY },
+                        new[] { "tx", WbConstants.OFF_UTX }, new[] { "ty", WbConstants.OFF_UTY },
+                        new[] { "lx", WbConstants.OFF_ULX }, new[] { "ly", WbConstants.OFF_ULY },
+                        new[] { "hp", WbConstants.OFF_UHP }, new[] { "maxhp", WbConstants.OFF_UMAXHP },
+                        new[] { "dmg", WbConstants.OFF_UDMG }, new[] { "speed", WbConstants.OFF_USPEED },
+                        new[] { "age", WbConstants.OFF_UAGE }, new[] { "maxage", WbConstants.OFF_UMAXAGE },
+                        new[] { "kills", WbConstants.OFF_UKILLS }, new[] { "cd", WbConstants.OFF_UCD },
+                        new[] { "breath", WbConstants.OFF_UBREATH }, new[] { "hurt", WbConstants.OFF_UHURT },
+                        new[] { "food", WbConstants.OFF_UFD }, new[] { "cvn", WbConstants.OFF_UCVN },
+                        new[] { "fleet", WbConstants.OFF_UFLEET }, new[] { "bless", WbConstants.OFF_UBLESS },
+                        new[] { "curse", WbConstants.OFF_UCURSE }, new[] { "fert", WbConstants.OFF_UFERT },
+                        new[] { "detour", WbConstants.OFF_UDETOUR }, new[] { "atk", WbConstants.OFF_UATK },
+                        new[] { "chill", WbConstants.OFF_UCHILL },
+                    })
+                        Assert.AreEqual(BitsOf(eu[fld[0]].ToString()), A.U64At(fld[1], s), $"{name} tick{t} u{s} {fld[0]}");
+                    for (int g = 0; g < 4; g++)
+                        Assert.AreEqual(BitsOf(eu["gene"][g].ToString()), A.U64At(WbConstants.OFF_UGENE, s * 4 + g), $"{name} tick{t} u{s} gene[{g}]");
+                    for (int g = 0; g < 32; g++)
+                        Assert.AreEqual(eu["name"][g].Value<int>(), A.U8At(WbConstants.OFF_UNAME, s * 32 + g), $"{name} tick{t} u{s} name[{g}]");
+                    for (int g = 0; g < 7; g++)
+                        Assert.AreEqual(eu["gear"][g].Value<int>(), A.I32At(WbConstants.OFF_UGEAR, s * 7 + g), $"{name} tick{t} u{s} gear[{g}]");
+                }
+                // 宿主协议步进（parity 翻转 + 活单位 UCELL/UPAR 重排含新 slot + PackEnd(liveN)）
+                A.SetU8(WbConstants.OFF_PAR, 0, (byte)(A.U8At(WbConstants.OFF_PAR, 0) ^ 1));
+                for (int s = 0; s < liveN; s++)
+                {
+                    if (A.U8At(WbConstants.OFF_UDEAD, s) != 0) continue;
+                    double x = A.F64At(WbConstants.OFF_UX, s);
+                    double y = A.F64At(WbConstants.OFF_UY, s);
+                    A.SetU32(WbConstants.OFF_UCELL, s, (uint)((int)Math.Floor(y / 4.0) * WbConstants.W + (int)Math.Floor(x / 4.0)));
+                    A.SetU8(WbConstants.OFF_UPAR, s, A.U8At(WbConstants.OFF_PAR, 0));
+                }
+                A.PackEnd((uint)liveN);
+            }
+        }
+    }
 }

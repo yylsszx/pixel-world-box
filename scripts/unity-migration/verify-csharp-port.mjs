@@ -701,6 +701,129 @@ import { R as gR } from '../../src/lib/game/types.ts';
   var combatVerifyFail = cgFail + fzFail;
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0;
+// ============================================================
+// 6) M-U2d：spawn/繁衍/拾取/家族黄金回放（combat-transcript 升级版 unitsBatch
+//    含 SpawnUnit/繁衍段/TryPickup/RiseSkeleton 转写）vs units_spawn.json 26 场景逐位
+//    驱动协议：USEQ 差值追踪 live + 宿主重排含新 slot + pack_end(liveN)
+// ============================================================
+import { sampleTick as spSampleTick, traitsPool as spTraits, firstPool as spFirst, putUnitSp as spPutUnit, itemIdx as spItemIdx } from './gen-units-spawn.mjs';
+import { NEUTRAL_MODS as spNeutral } from '../../src/lib/game/tech.ts';
+import { FIRST as spFirstTable } from '../../src/lib/game/names.ts';
+
+{
+  const spawnGolden = JSON.parse(readFileSync(path.join(ROOT, 'scripts/unity-migration/golden/units_spawn.json'), 'utf8'));
+  const spR = {
+    MISC: 148, WILDCAP: 146, MONCAP: 147, WILD: 106, REPRM: 109, SPB: 111, SPBH: 112,
+    TRN: 113, TRDMG: 114, TRHP: 115, TRSPD: 116, CNT: 119, BAILP: 125, USEQ: 99,
+    CIVN: 67, CVPOP: 68, CVAL: 72, CVGOV: 73, CVTECH: 74, CVDIR: 75, CVPC: 76, CVMKT: 77,
+    FAMN: 78, FMID: 79, FMRACE: 80, FMNUM: 81, FMSEQ: 82, FMNAME: 83,
+    ITMK: 91, ITMXY: 92, ITMN: 90, TBI: 133, TBIN: 134,
+    FRSTOFF: 135, FRSTN: 136, FRSTP: 137, ATWAR: 13, UPAR: 47, UNAME: 56, UGEAR: 52, UTRAIT: 44,
+    DAYPH: 108, LAWS: 101,
+  };
+  const TC_DMG = 0, TC_HP = 1, TC_REPRO = 5, TC_IDEA_REPRO = 18;
+
+  function setupWorldSp(sc) {
+    gInitWorld(sc.seed, sc.fxp ?? 0);
+    gSetI32(spR.MISC, 1, 4096); // wild 预算（gen initWorldSp 同款）
+    new Int32Array(gex.memory.buffer, gex.wb_arena_ptr() + gex.wb_off(spR.WILDCAP), 512).fill(4096);
+    gSetU8(spR.LAWS, 0, sc.laws ?? 0);
+    if (sc.dayph !== undefined) gSetF64(spR.DAYPH, 0, sc.dayph);
+    if (sc.reprm !== undefined) gSetF64(spR.REPRM, 0, sc.reprm);
+    cbFill(sc.terrain ?? {});
+    cbBoot();
+    spTraits({}); // TRAITS 真表键序灌入（gen 同源）
+    spFirst({}); // FIRST 名池 24B 条目灌入（gen 同源）
+    if (sc.civs) {
+      gSetI32(spR.CIVN, 0, sc.civs.length);
+      sc.civs.forEach((c, i) => {
+        gSetU8(spR.CVAL, i, 1);
+        // CVTECH = NEUTRAL_MODS 中性基线（gen 同款；TC_REPRO=0 乘零链防线）
+        gSetF64(spR.CVTECH, i * 24 + TC_DMG, c.techDmg ?? spNeutral.dmg);
+        gSetF64(spR.CVTECH, i * 24 + TC_HP, c.techHp ?? spNeutral.hp);
+        gSetF64(spR.CVTECH, i * 24 + 2, spNeutral.bhp);
+        gSetF64(spR.CVTECH, i * 24 + TC_REPRO, c.techRepro ?? spNeutral.repro);
+        gSetF64(spR.CVTECH, i * 24 + 9, spNeutral.repair);
+        gSetF64(spR.CVTECH, i * 24 + 13, spNeutral.archer);
+        gSetF64(spR.CVTECH, i * 24 + 14, spNeutral.plague);
+        gSetF64(spR.CVTECH, i * 24 + 15, spNeutral.range);
+        gSetF64(spR.CVTECH, i * 24 + TC_IDEA_REPRO, c.techIdea ?? 0);
+        if (c.pop !== undefined) gSetF64(spR.CVPOP, i, c.pop);
+        if (c.pc !== undefined) gSetF64(spR.CVPC, i, c.pc);
+        if (c.gov !== undefined) gSetI32(spR.CVGOV, i, c.gov);
+        if (c.dir !== undefined) gSetU8(spR.CVDIR, i, c.dir);
+        if (c.mkt !== undefined) gSetI32(spR.CVMKT, i, c.mkt);
+      });
+    }
+    if (sc.atwar) for (const [a, b] of sc.atwar) { gSetU8(spR.ATWAR, a * 64 + b, 1); gSetU8(spR.ATWAR, b * 64 + a, 1); }
+    if (sc.fams) {
+      sc.fams.forEach((f, i) => {
+        gSetI32(spR.FMID, i, f.id);
+        gSetI32(spR.FMRACE, i, f.race ?? 0);
+        for (let k = 0; k < 6; k++) gSetF64(spR.FMNUM, i * 6 + k, f.num?.[k] ?? 0);
+        if (f.pre !== undefined) gSetI32(spR.FMNAME, i * 2, f.pre);
+        if (f.post !== undefined) gSetI32(spR.FMNAME, i * 2 + 1, f.post);
+      });
+      gSetI32(spR.FAMN, 0, sc.fams.length);
+    }
+    if (sc.wilds) for (const [r, n] of sc.wilds) gSetI32(spR.WILD, r, n);
+    if (sc.wildcaps) for (const [r, n] of sc.wildcaps) gSetI32(spR.WILDCAP, r, n);
+    if (sc.moncaps) for (const [r, n] of sc.moncaps) gSetI32(spR.MONCAP, r, n);
+    if (sc.spb) for (const [r, gene] of sc.spb) { for (let k = 0; k < 4; k++) gSetF64(spR.SPB, r * 4 + k, gene[k]); gSetU8(spR.SPBH, r, 1); }
+    if (sc.cnt5 !== undefined) gSetF64(spR.CNT, 5, sc.cnt5);
+    if (sc.items) {
+      sc.items.forEach((it, i) => {
+        gSetI32(spR.ITMK, i, typeof it.k === 'string' ? spItemIdx(it.k) : it.k);
+        gSetF64(spR.ITMXY, i * 2, it.x);
+        gSetF64(spR.ITMXY, i * 2 + 1, it.y);
+      });
+      gSetI32(spR.ITMN, 0, sc.items.length);
+    }
+    for (const u of sc.units) spPutUnit(u.slot, u);
+  }
+  function hostStepSp(sc, liveN) {
+    gSetU8(98, 0, gU8(98, 0) ^ 1);
+    for (let s = 0; s < liveN; s++) {
+      if (gU8(14, s)) continue;
+      const x = gGetF64(0, s), y = gGetF64(1, s);
+      gSetI32(7, s, Math.floor(y / 4) * 256 + Math.floor(x / 4));
+      gSetU8(spR.UPAR, s, gU8(98, 0));
+    }
+    gex.wb_pack_end(liveN);
+  }
+  let spFail = 0;
+  for (const gs of spawnGolden.scenarios) {
+    const sc = gs.input;
+    setupWorldSp(sc);
+    const useq0 = gGetU32(spR.USEQ, 0);
+    let liveN = sc.units.length;
+    gex.wb_pack_end(liveN);
+    for (let t = 0; t < sc.ticks; t++) {
+      const rcT = transcriptBatch(0, 0, liveN);
+      const spawned = gGetU32(spR.USEQ, 0) - useq0;
+      liveN = sc.units.length + spawned;
+      const slots = [...sc.units.map((u) => u.slot), ...Array.from({ length: spawned }, (_, k) => sc.units.length + k)];
+      const got = { rc: rcT, spawned, ...spSampleTick(slots, sc) };
+      const want = gs.output[t];
+      const jw = JSON.stringify(want);
+      const jg = JSON.stringify(got);
+      if (jw !== jg) {
+        spFail++;
+        if (spFail < 4) {
+          console.error(`  spawn golden mismatch ${sc.name} tick${t}`);
+          for (const k of Object.keys(want)) {
+            if (JSON.stringify(want[k]) !== JSON.stringify(got[k])) console.error(`    field ${k}: want=${JSON.stringify(want[k]).slice(0, 140)} got=${JSON.stringify(got[k]).slice(0, 140)}`);
+          }
+        }
+      }
+      hostStepSp(sc, liveN);
+    }
+  }
+  console.log(`spawn 黄金回放 (转写 unitsBatch+SpawnUnit vs units_spawn.json): ${spFail === 0 ? 'PASS' : `FAIL(${spFail})`} (${spawnGolden.scenarios.length} 场景 × 全字段逐位)`);
+  var spawnVerifyFail = spFail;
+  void spFirstTable; // FIRST 表经 spFirst 内部 import 消费（此引用防 lint 未用）
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);

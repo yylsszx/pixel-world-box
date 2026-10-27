@@ -713,7 +713,7 @@ function civDelta(ctxUnused, field, civ, d) {
   if (p !== null) { actU8(p, ACT_CIV); actU8(p + 1, field); actI32(p + 4, civ); actF64(p + 8, d); }
 }
 function bumpWild(race, d) { const n = i32at(106 /* OFF_WILD */, race) + d; setI32at(106, race, n > 0 ? n : 0); }
-function familyFind(id) {
+function familyFindSp(id) {
   const n = i32at(78 /* OFF_FAMN */, 0);
   for (let i = 0; i < Math.max(n, 0); i++) {
     if (i >= MAX_FAM) break;
@@ -833,7 +833,474 @@ function zombify(ctxUnused, s) {
   fx(null, FX_SPAWN, f64at(0, s), f64at(1, s), 30.0, 1.0, 0.0, 0.0, 0.0, -1, false, TXT_NONE, 0, false);
   dirty(s);
 }
-const riseSkeleton = (ctxUnused, x, y) => { void x; void y; /* TODO(M-U2d) spawn_unit */ };
+// ---------------- M-U2d 转写：spawn 辅助 + spawnUnit（WbUnits.cs M-U2d 段镜像） ----------------
+const TC_HP = 1, TC_DMG = 0, TC_REPRO = 5, TC_IDEA_REPRO = 18;
+const JB_HP = 0, JB_DMG = 1, JB_SPD = 2, JB_W = 3;
+const RB_HP = 0, RB_DMG = 1, RB_MAXAGE = 3, RB_REPRO = 4, RB_GROWTH = 6;
+const IT_SLOT = 11, IT_RANK = 9, IT_DMG = 7, IT_HP = 8, IT_RARITY = 10; // IT_SPDMUL=6 沿用 M-U2c 头部定义
+const ACT_SPAWN = 13, ACT_FAM_NEW = 14, ACT_FAM_MILE = 15, ACT_ITEM_DEL = 19;
+const EVT_LINEAGE_FLORISH = 6, EVT_SKELETON = 10, EVT_LOOT_PICKUP = 11;
+const EP_REPRO = 0, EP_MUT = 8;
+const BAIL_EMERGENT = 2;
+const OFF_UBREATH = 29, OFF_USEQ = 99, OFF_REPRM = 109, OFF_SPB = 111, OFF_SPBH = 112;
+const OFF_TRN = 113, OFF_TRDMG = 114, OFF_TRHP = 115, OFF_TRSPD = 116;
+const OFF_CNT = 119, OFF_BAILP = 125, OFF_UNAME = 56, OFF_UGEAR = 52, OFF_UTRAIT = 44;
+const OFF_CVGOV = 73, OFF_CVPOP = 68, OFF_CVPC = 76, OFF_CVAL2 = 72, OFF_CVDIR = 75, OFF_CIVN2 = 67;
+const OFF_FAMN = 78, OFF_FMID = 79, OFF_FMRACE = 80, OFF_FMNUM = 81, OFF_FMSEQ = 82, OFF_FMNAME = 83;
+const OFF_ITMK = 91, OFF_ITMXY = 92, OFF_TBIN = 134, OFF_TBI = 133;
+const OFF_FRSTOFF = 135, OFF_FRSTN = 136, OFF_FRSTP = 137;
+const OFF_WILDCAP = 146, OFF_MONCAP = 147, OFF_MISC = 148, OFF_WILD2 = 106, OFF_GRASS2 = 107;
+const MAX_ITEMS = 256; // MAX_FAM 沿用头部定义
+const MAX_FAM_ROWS = MAX_FAM;
+
+const wildAlive = () => { let n = 0; for (let r = 0; r < 512; r++) n += i32at(OFF_WILD2, r); return n; };
+const calcCell = (x, y, bw, bh) => {
+  const cx = jsMin(bw - 1.0, jsMax(0.0, Math.floor(x / 4.0))) | 0;
+  const cy = jsMin(bh - 1.0, jsMax(0.0, Math.floor(y / 4.0))) | 0;
+  return ((cy * bw + cx) >>> 0);
+};
+function arenaAppend() {
+  const slot = LIVE_LEN;
+  if (slot >= MAX_UNITS) return -1;
+  LIVE_LEN = slot + 1;
+  return slot;
+}
+function romanBytes(n, outBuf) {
+  if (n < 1 || n > 40) return writeDec(n, outBuf);
+  let v = n, len = 0;
+  const table = [[40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
+  for (const [val, sym] of table) {
+    while (v >= val) {
+      for (const b of sym.split('').map((c) => c.charCodeAt(0))) { outBuf[len] = b; len += 1; }
+      v -= val;
+    }
+  }
+  return len;
+}
+function writeDec(n, outBuf) {
+  const b = String(n).split('').map((c) => c.charCodeAt(0));
+  const l = Math.min(b.length, outBuf.length);
+  for (let i = 0; i < l; i++) outBuf[i] = b[i];
+  return l;
+}
+const nameLen = (s) => u8at(OFF_UNAME, s * 32 + 31);
+const nameByte = (s, i) => u8at(OFF_UNAME, s * 32 + i);
+function uniqueName(race) {
+  const off = u32at(OFF_FRSTOFF, race);
+  const cnt = u32at(OFF_FRSTN, race);
+  const pick = Math.min(Math.floor(rngNext() * cnt), Math.max(cnt, 1) - 1);
+  const base = new Uint8Array(32);
+  let bl = 0;
+  if (cnt > 0 && off + pick * 24 + 24 <= 16384) {
+    const entryLen = u8at(OFF_FRSTP, off + pick * 24);
+    const copyN = Math.min(entryLen, 23);
+    for (let i = 0; i < copyN; i++) base[i] = u8at(OFF_FRSTP, off + pick * 24 + 1 + i);
+    bl = copyN;
+  }
+  // 重名统计：nm === base || (nm.length > bl && nm[bl] == 32 && startsWith(base))
+  const liveN = LIVE_LEN;
+  let n = 0;
+  for (let o = 0; o < liveN; o++) {
+    if (u8at(14, o) !== 0) continue;
+    const nlen = nameLen(o);
+    let same = nlen === bl;
+    if (same) {
+      for (let i = 0; i < bl; i++) { if (nameByte(o, i) !== base[i]) { same = false; break; } }
+    } else if (nlen > bl && nameByte(o, bl) === 32) {
+      let pre = true;
+      for (let i = 0; i < bl; i++) { if (nameByte(o, i) !== base[i]) { pre = false; break; } }
+      same = pre;
+    }
+    if (same) n += 1;
+  }
+  const out = new Uint8Array(32);
+  let len = bl;
+  for (let i = 0; i < bl; i++) out[i] = base[i];
+  if (n > 0) {
+    if (len < 31) { out[len] = 32; len += 1; }
+    const tmp = new Uint8Array(16);
+    const rl = romanBytes(n + 1, tmp);
+    for (let i = 0; i < rl; i++) { if (len < 32) { out[len] = tmp[i]; len += 1; } }
+  }
+  return { name: out, len };
+}
+function familyFindM2d(id) {
+  const n = i32at(OFF_FAMN, 0);
+  for (let i = 0; i < Math.max(n, 0); i++) {
+    if (i >= MAX_FAM) break;
+    if (i32at(OFF_FMID, i) === id) return i;
+  }
+  return -1;
+}
+function pruneFamilies() {
+  const n = i32at(OFF_FAMN, 0);
+  if (n <= 240) return;
+  const dead = [];
+  for (let i = 0; i < Math.max(n, 0); i++) {
+    if (i >= MAX_FAM) break;
+    const m = f64at(OFF_FMNUM, i * 6);
+    const k = f64at(OFF_FMNUM, i * 5 + 1); // 蓝本 stride 混用原样保真
+    if (m <= 0.0 && k < 10.0) dead.push({ id: i32at(OFF_FMID, i), row: i });
+  }
+  dead.sort((a, b) => a.id - b.id);
+  let del = 0;
+  for (const { row } of dead) {
+    if (del >= 20) break;
+    setI32at(OFF_FMID, row, -1);
+    del += 1;
+  }
+  let w = 0;
+  for (let r = 0; r < Math.min(Math.max(n, 0), MAX_FAM); r++) {
+    if (i32at(OFF_FMID, r) !== -1) {
+      if (w !== r) {
+        for (let k = 0; k < 6; k++) setF64at(OFF_FMNUM, w * 6 + k, f64at(OFF_FMNUM, r * 6 + k));
+        setI32at(OFF_FMID, w, i32at(OFF_FMID, r));
+        setI32at(OFF_FMRACE, w, i32at(OFF_FMRACE, r));
+        setI32at(OFF_FMNAME, w, i32at(OFF_FMNAME, r)); // FMNAME u16×2/行：一次 i32 搬运整行（字节 r*4..r*4+3）
+      }
+      w += 1;
+    }
+  }
+  setI32at(OFF_FAMN, 0, w);
+}
+function newFamily(ctxUnused, race, founderSlot) {
+  const preI = Math.floor(rngNext() * 16.0) & 15;
+  const postI = Math.floor(rngNext() * 12.0) % 12;
+  const id = i32at(OFF_FMSEQ, 0);
+  setI32at(OFF_FMSEQ, 0, id + 1);
+  const row = i32at(OFF_FAMN, 0);
+  if (row >= MAX_FAM) return -1;
+  const founded = Math.floor(f64at(OFF_CNT, 5)); // CNT[5] = yearF
+  setI32at(OFF_FMID, row, id);
+  setI32at(OFF_FMRACE, row, race);
+  for (let k = 0; k < 6; k++) setF64at(OFF_FMNUM, row * 6 + k, 0.0);
+  setF64at(OFF_FMNUM, row * 6, 1.0);
+  setF64at(OFF_FMNUM, row * 6 + 3, 1.0);
+  setF64at(OFF_FMNUM, row * 6 + 5, founded);
+  setI32at(OFF_FMNAME, row, (preI & 0xffff) | ((postI & 0xffff) << 16)); // FMNAME u16×2/行：LE 打包（蓝本 set_u16_at(row*2)/(row*2+1) 同字节）
+  setI32at(OFF_FAMN, 0, row + 1);
+  pruneFamilies();
+  const p = actReserve(32);
+  if (p !== null) {
+    actU8(p, ACT_FAM_NEW); actI32(p + 4, id); actI32(p + 8, race);
+    actU8(p + 12, preI); actU8(p + 13, postI); actF64(p + 16, founded); actI32(p + 24, founderSlot);
+  }
+  return id;
+}
+function familyMilestone(ctxUnused, row) {
+  // 蓝本读*5写*6 stride 混用原样保真
+  const members = f64at(OFF_FMNUM, row * 6);
+  const peak = f64at(OFF_FMNUM, row * 5 + 2);
+  if (members > peak) setF64at(OFF_FMNUM, row * 6 + 2, members);
+  const marks = [12.0, 24.0, 40.0];
+  let ms = f64at(OFF_FMNUM, row * 5 + 3);
+  const fired = [];
+  while (ms < marks.length && members >= marks[ms]) { fired.push(marks[ms]); ms += 1.0; }
+  setF64at(OFF_FMNUM, row * 6 + 4, ms);
+  for (const m of fired) {
+    const p = actReserve(48);
+    if (p !== null) {
+      actU8(p, ACT_EVT); actU8(p + 1, EVT_LINEAGE_FLORISH);
+      actI32(p + 4, i32at(OFF_FMID, row)); actF64(p + 16, m);
+    }
+  }
+}
+/// spawn_unit（units.rs L1813-2041；WbUnits.SpawnUnit 镜像）——返回新 slot 或 -1
+function spawnUnit(race, x, y, civ, gene, infected, job, traitIdIn, fam, fgn) {
+  // —— 预算 ——
+  if (isCiv(race) && LIVE_LEN >= Math.max(i32at(OFF_MISC, 0), 0)) return -1;
+  if (!isCiv(race) && wildAlive() >= Math.max(i32at(OFF_MISC, 1), 0)) return -1;
+  const monCap = i32at(OFF_MONCAP, race);
+  if (monCap > 0 && i32at(OFF_WILD2, race) >= monCap) return -1;
+  x = jsMax(0.5, jsMin(W - 0.5, x));
+  y = jsMax(0.5, jsMin(H - 0.5, y));
+  // trait：未指定 → 15% 掷骰
+  let traitId = traitIdIn;
+  if (traitId >= -1) {
+    if (traitId === -1) {
+      if (rngNext() < 0.15) {
+        const n = Math.max(i32at(OFF_TRN, 0), 0);
+        if (n > 0) {
+          const pick = Math.floor(rngNext() * n);
+          traitId = Math.min(pick, n - 1);
+        } else traitId = -2;
+      } else traitId = -2;
+    } else traitId = -2;
+  }
+  const tdDmg = traitId >= 0 ? f64at(OFF_TRDMG, traitId) : 1.0;
+  const tdHp = traitId >= 0 ? f64at(OFF_TRHP, traitId) : 1.0;
+  const tdSpd = traitId >= 0 ? f64at(OFF_TRSPD, traitId) : 1.0;
+  // gene：未指定 → baseGene（speciesBase 有则 4 rng）
+  let g;
+  if (gene !== null && gene !== undefined) {
+    g = gene;
+  } else if (u8at(OFF_SPBH, race) !== 0) {
+    const j = (b) => jsMax(0.5, jsMin(2.0, b * (1.0 + (rngNext() - 0.5) * 0.1)));
+    g = [j(f64at(OFF_SPB, race * 4)), j(f64at(OFF_SPB, race * 4 + 1)), j(f64at(OFF_SPB, race * 4 + 2)), j(f64at(OFF_SPB, race * 4 + 3))];
+  } else {
+    g = [1.0, 1.0, 1.0, 1.0];
+  }
+  // job：civ → rollJob
+  let jobV = job;
+  if (isCiv(race) && civ >= 0) {
+    if (jobV >= 0) {
+      // 保持
+    } else {
+      let total = 0;
+      for (let i = 0; i < 7; i++) total += f64at(132, i * 5 + JB_W);
+      let r = rngNext() * total;
+      let picked = 0;
+      for (let i = 0; i < 7; i++) {
+        r -= f64at(132, i * 5 + JB_W);
+        if (r <= 0.0) { picked = i; break; }
+      }
+      jobV = picked;
+    }
+  } else jobV = -1;
+  const jdHp = isCiv(race) ? f64at(132, Math.max(jobV, 0) * 5 + JB_HP) : 1.0;
+  const jdDmg = isCiv(race) ? f64at(132, Math.max(jobV, 0) * 5 + JB_DMG) : 1.0;
+  const jdSpd = isCiv(race) ? f64at(132, Math.max(jobV, 0) * 5 + JB_SPD) : 1.0;
+  // 科技快照
+  let tHp, tDmg;
+  if (isCiv(race) && civ >= 0) {
+    tHp = f64at(74, civ * 24 + TC_HP);
+    tDmg = f64at(74, civ * 24 + TC_DMG);
+  } else { tHp = 1.0; tDmg = 1.0; }
+  const gov15 = civ >= 0 && i32at(OFF_CVGOV, civ) === 4 ? 1.15 : 1.0;
+  const maxHp = jsRound(f64at(130, race * 12 + RB_HP) * tdHp * jdHp * tHp * g[2]);
+  const dmg = f64at(130, race * 12 + RB_DMG) * tdDmg * jdDmg * tDmg * gov15 * g[1];
+  const speed = f64at(130, race * 12 + RB_SPEED) * tdSpd * jdSpd * g[0];
+  const id = u32at(OFF_USEQ, 0);
+  setU32at(OFF_USEQ, 0, id + 1);
+  const maxAge = f64at(130, race * 12 + RB_MAXAGE) * (0.8 + rngNext() * 0.4);
+  const flip = rngNext() < 0.5;
+  const { name, len: nameLenV } = uniqueName(race);
+  const breath = 120.0 + Math.floor(rngNext() * 160.0);
+  const slot = arenaAppend();
+  if (slot === -1) return -1;
+  const s = slot;
+  setU32at(6, s, id);
+  setU32at(5, s, race);
+  setI32at(4, s, civ);
+  setF64at(0, s, x); setF64at(1, s, y);
+  setF64at(30, s, x); setF64at(31, s, y);   // ULX/ULY
+  setF64at(18, s, x); setF64at(19, s, y);
+  setF64at(20, s, maxHp); setF64at(21, s, maxHp);
+  setF64at(22, s, dmg); setF64at(23, s, speed);
+  setF64at(24, s, 0.0); setF64at(25, s, maxAge);
+  setF64at(26, s, 0.0); setF64at(27, s, 0.0);
+  setI32at(OFF_UTRAIT, s, traitId);
+  setI32at(43, s, isCiv(race) ? jobV : -1);
+  setU8at(45, s, infected ? 1 : 0);
+  setU8at(46, s, flip ? 1 : 0);
+  setF64at(OFF_UBREATH, s, breath);
+  setU8at(47, s, (id + 1) % 2); // JS: parity = unitSeq%2（id 为自增前值）
+  setU8at(14, s, 0);
+  setF64at(42, s, 0.0);
+  for (let k = 0; k < 4; k++) setF64at(53, s * 4 + k, g[k]);
+  for (let k = 0; k < 32; k++) setU8at(OFF_UNAME, s * 32 + k, name[k]);
+  setU8at(OFF_UNAME, s * 32 + 31, nameLenV);
+  for (let k = 0; k < 7; k++) setI32at(OFF_UGEAR, s * 7 + k, -1);
+  setI32at(57, s, -1);
+  setI32at(54, s, -1); setI32at(55, s, -1);
+  setF64at(28, s, NaN); setF64at(50, s, NaN);
+  setI32at(51, s, -1);
+  setU8at(15, s, 0);
+  setU8at(48, s, 0);
+  setI32at(49, s, 0);
+  setU32at(7, s, calcCell(x, y, ctxBw, ctxBh));
+  // 瞬态字段清零
+  setI32at(34, s, -2147483648); // undefined 哨兵
+  setF64at(35, s, NaN); setF64at(36, s, NaN); setF64at(37, s, NaN); setF64at(38, s, NaN);
+  setF64at(39, s, NaN); setF64at(40, s, NaN); setF64at(41, s, NaN);
+  setF64at(32, s, NaN); setF64at(33, s, NaN); // USXK/USYK
+  if (civ >= 0 && civ < Math.max(i32at(OFF_CIVN2, 0), 0)) civDelta(null, 0, civ, 1.0);
+  if (!isCiv(race)) bumpWild(race, 1);
+  // —— 家族 ——
+  let famFinal = fam;
+  if (fam >= 0) {
+    setI32at(54, s, fam);
+    setI32at(55, s, fgn >= 0 ? fgn : 1);
+    const row = familyFindM2d(fam);
+    if (row >= 0) {
+      const m = f64at(OFF_FMNUM, row * 6) + 1.0;
+      setF64at(OFF_FMNUM, row * 6, m);
+      familyMilestone(null, row);
+      const p = actReserve(16);
+      if (p !== null) { actU8(p, ACT_FAM_MILE); actI32(p + 4, fam); }
+    }
+  } else if (!isUndead(race) && rngNext() < 0.06) {
+    const nid = newFamily(null, race, s);
+    if (nid >= 0) {
+      famFinal = nid;
+      setI32at(54, s, nid);
+      setI32at(55, s, 1);
+    }
+  }
+  dirty(s);
+  // —— SPAWN 动作 ——
+  const p = actReserve(256);
+  if (p !== null) {
+    actU8(p, ACT_SPAWN);
+    actU32raw(p + 4, id);
+    actU32raw(p + 8, race);
+    actI32(p + 12, civ);
+    actF64(p + 16, x); actF64(p + 24, y);
+    actF64(p + 32, maxHp); actF64(p + 40, dmg); actF64(p + 48, speed);
+    actF64(p + 56, maxAge); actF64(p + 64, breath);
+    actI32(p + 72, traitId);
+    actI32(p + 76, isCiv(race) ? jobV : -1);
+    actU8(p + 80, flip ? 1 : 0);
+    actU8(p + 81, (id + 1) % 2);
+    actU8(p + 82, infected ? 1 : 0);
+    actI32(p + 84, famFinal);
+    actI32(p + 88, i32at(55, s));
+    actF64(p + 96, tDmg); actF64(p + 104, tHp);
+    actF64(p + 112, g[0]); actF64(p + 120, g[1]); actF64(p + 128, g[2]); actF64(p + 136, g[3]);
+    actU8(p + 144, nameLenV);
+    for (let k = 0; k < 32; k++) actU8(p + 145 + k, name[k]);
+  }
+  return s;
+}
+function riseSkeleton(ctxUnused, x, y) {
+  const spawned = spawnUnit(R_SKELETON, x, y, -1, null, false, -1, -1, -1, -1);
+  if (spawned !== -1) {
+    fx(null, FX_SPAWN, x, y, 30.0, 1.0, 0.0, 0.0, 0.0, -1, false, TXT_NONE, 0, false);
+    if (rngNext() < 0.12) {
+      const p = actReserve(48);
+      if (p !== null) { actU8(p, ACT_EVT); actU8(p + 1, EVT_SKELETON); actF64(p + 32, x); actF64(p + 40, y); }
+    }
+  }
+}
+function famForChild(s, race) {
+  const fam = i32at(54, s);
+  if (fam >= 0) {
+    const fgn0 = i32at(55, s);
+    return [fam, fgn0 < 0 ? 2 : fgn0 + 1];
+  }
+  if (rngNext() < 0.25) {
+    const nid = newFamily(null, race, s);
+    if (nid >= 0) {
+      const fgn0 = i32at(55, s);
+      return [nid, fgn0 < 0 ? 2 : fgn0 + 1];
+    }
+  }
+  return [-1, -1];
+}
+function childGene(s) {
+  const g = [f64at(53, s * 4), f64at(53, s * 4 + 1), f64at(53, s * 4 + 2), f64at(53, s * 4 + 3)];
+  const mr = ep(EP_MUT);
+  const gene = [0, 0, 0, 0];
+  for (let k = 0; k < 4; k++) {
+    const v = Number.isNaN(g[k]) ? 1.0 : g[k];
+    gene[k] = jsMax(0.5, jsMin(2.0, v * (1.0 + (rngNext() - 0.5) * mr)));
+  }
+  const gx = Math.floor(jsMax(0.0, jsMin(W - 1.0, f64at(0, s))));
+  const gy = Math.floor(jsMax(0.0, jsMin(H - 1.0, f64at(1, s))));
+  const t = u8at(60, gy * W + gx);
+  if (t === T_SNOW || t === T_ICE) gene[2] = jsMin(2.0, gene[2] * (1.0 + rngNext() * 0.05));
+  else if (t === T_SAND) gene[0] = jsMin(2.0, gene[0] * (1.0 + rngNext() * 0.05));
+  else if (t === T_FOREST) gene[1] = jsMin(2.0, gene[1] * (1.0 + rngNext() * 0.05));
+  else if (t === T_GRASS) gene[3] = jsMin(2.0, gene[3] * (1.0 + rngNext() * 0.04));
+  return gene;
+}
+function emergentGate(cg) {
+  const extreme = cg[1] >= 1.5 || cg[2] >= 1.5 || cg[0] >= 1.5;
+  if (!extreme) return false;
+  if (i32at(OFF_MISC, 2) >= 24) return false;
+  return !(rngNext() > 0.06);
+}
+function tryPickup(s) {
+  const fxp = u8at(102, 0);
+  const n = i32at(90, 0);
+  let i = n - 1;
+  while (i >= 0) {
+    const it = i;
+    if (it >= MAX_ITEMS) { i -= 1; continue; }
+    const kind = i32at(OFF_ITMK, it);
+    if (kind < 0 || kind >= i32at(OFF_TBIN, 0)) { i -= 1; continue; }
+    const ix = f64at(OFF_ITMXY, it * 2);
+    const iy = f64at(OFF_ITMXY, it * 2 + 1);
+    if (Math.abs(ix - f64at(0, s)) > 0.9 || Math.abs(iy - f64at(1, s)) > 0.9) { i -= 1; continue; }
+    const d = kind;
+    const slot = f64at(OFF_TBI, d * 12 + IT_SLOT) | 0;
+    if (slot > 6) { i -= 1; continue; }
+    const cur = i32at(OFF_UGEAR, s * 7 + slot);
+    const curRank = cur >= 0 ? f64at(OFF_TBI, cur * 12 + IT_RANK) : -1.0;
+    const rank = f64at(OFF_TBI, d * 12 + IT_RANK);
+    if (curRank >= rank) { i -= 1; continue; }
+    if (cur >= 0) {
+      const old = cur;
+      const odmg = f64at(OFF_TBI, old * 12 + IT_DMG);
+      const ohp = f64at(OFF_TBI, old * 12 + IT_HP);
+      const ospd = f64at(OFF_TBI, old * 12 + IT_SPDMUL);
+      if (odmg !== 0.0) setF64at(22, s, jsMax(1.0, f64at(22, s) - odmg));
+      if (ohp !== 0.0) setF64at(21, s, jsMax(1.0, f64at(21, s) - ohp));
+      if (ospd !== 0.0) setF64at(23, s, f64at(23, s) / ospd);
+    }
+    setI32at(OFF_UGEAR, s * 7 + slot, kind);
+    const ndmg = f64at(OFF_TBI, d * 12 + IT_DMG);
+    const nhp = f64at(OFF_TBI, d * 12 + IT_HP);
+    const nspd = f64at(OFF_TBI, d * 12 + IT_SPDMUL);
+    if (ndmg !== 0.0) setF64at(22, s, f64at(22, s) + ndmg);
+    if (nhp !== 0.0) {
+      setF64at(21, s, f64at(21, s) + nhp);
+      setF64at(20, s, jsMin(f64at(21, s), f64at(20, s) + nhp));
+    }
+    if (nspd !== 0.0) setF64at(23, s, f64at(23, s) * nspd);
+    const total = i32at(90, 0);
+    let k2 = i;
+    while (k2 + 1 < total) {
+      setI32at(OFF_ITMK, k2, i32at(OFF_ITMK, k2 + 1));
+      setF64at(OFF_ITMXY, k2 * 2, f64at(OFF_ITMXY, (k2 + 1) * 2));
+      setF64at(OFF_ITMXY, k2 * 2 + 1, f64at(OFF_ITMXY, (k2 + 1) * 2 + 1));
+      k2 += 1;
+    }
+    setI32at(90, 0, total - 1);
+    const p = actReserve(16);
+    if (p !== null) { actU8(p, ACT_ITEM_DEL); actI32(p + 4, i); }
+    fx(null, FX_SPAWN, f64at(0, s), f64at(1, s), 26.0, 1.0, 0.0, 0.0, 0.0, -1, false, TXT_NONE, 0, false);
+    const p2 = actReserve(8);
+    if (p2 !== null) { actU8(p2, ACT_SND); actU8(p2 + 1, 2 /* SND_COIN */); }
+    if ((fxp & FXP_DMGNUM) !== 0) fx(null, FX_DMG, f64at(0, s), f64at(1, s) - 1.2, 34.0, 1.0, 0.0, 0.0, 0.0, -1, false, TXT_ITEM, kind >>> 0, false);
+    const rarity = f64at(OFF_TBI, d * 12 + IT_RARITY);
+    if (rarity >= 3.0) {
+      const p3 = actReserve(16);
+      if (p3 !== null) { actU8(p3, ACT_TOAST); actU8(p3 + 1, 2); actI32(p3 + 4, u32at(6, s) | 0); actI32(p3 + 8, kind); }
+    }
+    if (rarity === 4.0) {
+      const p4 = actReserve(48);
+      if (p4 !== null) {
+        actU8(p4, ACT_EVT); actU8(p4 + 1, EVT_LOOT_PICKUP);
+        actI32(p4 + 4, u32at(6, s) | 0); actI32(p4 + 8, kind);
+        actF64(p4 + 32, f64at(0, s)); actF64(p4 + 40, f64at(1, s));
+      }
+    }
+    dirty(s);
+    i -= 1;
+  }
+}
+// —— 和平尾 civ 段建筑辅助骨架（与 C# M-U2d 同构；SP 黄金场景门控外）——
+function warTargetSp(civ) {
+  const n = Math.max(i32at(84 /* OFF_BLDN */, 0), 0);
+  const enemies = [];
+  for (let r = 0; r < Math.min(n, 1024); r++) {
+    const bc = i32at(87 /* OFF_BLDC */, r);
+    if (bc !== civ && atWar(civ, bc)) enemies.push(r);
+  }
+  if (enemies.length === 0) return -1;
+  const pick = Math.floor(rngNext() * enemies.length);
+  return enemies[Math.min(pick, enemies.length - 1)];
+}
+const fireNearSp = (_s, _r) => -1;            // TODO(M-U3) 全量（units.rs L1187-1233）
+const extinguishFireSp = (_c, _i, _b) => {};  // TODO(M-U3) 全量（L1234-1258）
+const damagedNearSp = (_s, _r) => -1;         // TODO(M-U3) 全量（L1259-1291）
+const enemyBuildingNearSp = (_s, _r) => -1;   // TODO(M-U3) 全量（L1292-1342）
+const nearestEnemyBuildingSp = (_s) => -1;    // TODO(M-U3) 全量（L1343-1368）
+const nearestBuildingOfSp = (_s, _k) => -1;   // TODO(M-U3) 全量（L1369-1394）
+const repairBuildingSp = (_c, _i, _a) => true;  // TODO(M-U3) 全量（L1411-1457）
+const attackBuildingSp = (_c, _i, _d) => true;  // TODO(M-U3) 全量（L1491-1517）
+const maybeBoardForWarSp = (_c, _s) => false;   // TODO(M-U3) 全量（L1577-1672；SP 场景门控外）
 function dragonBreath(ctxUnused, s) {
   const tx = jsMax(1.0, jsMin(W - 2.0, f64at(0, s) + (rngNext() * 2.0 - 1.0) * 8.0));
   const ty = jsMax(1.0, jsMin(H - 2.0, f64at(1, s) + (rngNext() * 2.0 - 1.0) * 8.0));
@@ -908,7 +1375,7 @@ function updateUnit(s) {
   let age = f64at(24, s) + 2.0 / 40.0;
   setF64at(24, s, age);
   if (age > f64at(25, s)) {
-    if ((laws & LAW_UNDEAD_RISE) !== 0 && isCiv(race) && rngNext() < 0.08) riseSkeleton(null, 0, 0);
+    if ((laws & LAW_UNDEAD_RISE) !== 0 && isCiv(race) && rngNext() < 0.08) riseSkeleton(null, f64at(0, s), f64at(1, s));
     setU8at(14, s, 1);
     return 0;
   }
@@ -1396,7 +1863,153 @@ function updateUnit(s) {
     }
     const ucivT = i32at(4, s);
     if (isCiv(race) && ucivT >= 0) {
-      // TODO(M-U3) 和平尾 civ 段——与 C# 同桩
+      // 和平尾 civ 段（units.rs L2976-3141 骨架；与 C# M-U2d 同构）
+      const job = (() => { const j = i32at(43, s); return j < 0 ? 0 : j; })(); // u_job0
+      const warring = civAtWar(ucivT);
+      const firen = i32at(145 /* OFF_FIREN */, 0);
+      const bigFire = firen > 8;
+      const hasArmy = i32at(51 /* OFF_UARMY */, s) >= 0;
+      if (!hasArmy && firen > 0 && rngNext() < (bigFire ? 0.5 : 0.3)) {
+        const radius = job === 4 ? (bigFire ? 7.0 : 4.5) : bigFire ? 5.0 : 3.0;
+        const fi = fireNearSp(s, radius); // TODO(M-U3) 全量 → -1
+        if (fi >= 0) {
+          const fxp2 = (fi % W) + 0.5;
+          const fyp = (fi / W) + 0.5;
+          const cdx = fxp2 - f64at(0, s);
+          const cdy = fyp - f64at(1, s);
+          if (cdx * cdx + cdy * cdy < 2.89) {
+            extinguishFireSp(null, fi, s); // TODO(M-U3) 全量
+            setF64at(27, s, jsMax(f64at(27, s), 10.0));
+          } else {
+            setF64at(18, s, fxp2);
+            setF64at(19, s, fyp);
+            moveUnit(null, s, 1.2);
+            return 0;
+          }
+        }
+      }
+      if (!hasArmy && job === 4 && f64at(27, s) <= 0.0 && rngNext() < 0.2) {
+        const di = damagedNearSp(s, 14.0); // TODO(M-U3) 全量 → -1
+        if (di >= 0) {
+          const row = i32at(66 /* OFF_BIDX */, di);
+          if (row >= 0) {
+            const bx = i32at(86 /* OFF_BLDXY */, row * 2) + 0.5;
+            const by = i32at(86, row * 2 + 1) + 0.5;
+            const bdx = bx - f64at(0, s);
+            const bdy = by - f64at(1, s);
+            if (bdx * bdx + bdy * bdy < 3.24) {
+              setF64at(27, s, 16.0);
+              setF64at(35, s, 10.0);
+              repairBuildingSp(null, di, 12.0 * f64at(74, ucivT * 24 + TC_REPRO * 0 + 9 /* TC_REPAIR */)); // TODO(M-U3) 全量
+            } else {
+              setF64at(18, s, bx);
+              setF64at(19, s, by);
+              moveUnit(null, s, 1.15);
+              return 0;
+            }
+          }
+        }
+      }
+      if (!hasArmy && job !== 2 && job !== 3 && f64at(27, s) <= 0.0 && i32at(144 /* OFF_DMGN */, 0) > 0 && rngNext() < 0.12) {
+        const di = damagedNearSp(s, 1.9); // TODO(M-U3) 全量 → -1
+        if (di >= 0) {
+          setF64at(27, s, 22.0);
+          repairBuildingSp(null, di, 3.0);
+        }
+      }
+      if (warring && (job === 2 || job === 3)) {
+        const inArmy = hasArmy;
+        if (f64at(27, s) <= 0.0) {
+          const bi = enemyBuildingNearSp(s, 1.6); // TODO(M-U3) 全量 → -1
+          if (bi >= 0) {
+            setF64at(27, s, 14.0);
+            setF64at(35, s, 12.0);
+            if (!attackBuildingSp(null, bi, f64at(22, s) * 1.6)) {
+              setF64at(125, 0, bi);
+              setF64at(125, 1, ucivT);
+              return 3 /* BAIL_ATTACK_DEST */;
+            }
+          }
+        }
+        if (job === 3 && f64at(27, s) <= 0.0 && rngNext() < 0.1) {
+          const bi = enemyBuildingNearSp(s, f64at(132, 3 * 5 + 4 /* JB_RNG */));
+          if (bi >= 0) {
+            setF64at(27, s, 18.0);
+            fx(null, FX_ARROW, (bi % W) + 0.5, (bi / W) + 0.5, 12.0, 1.0, f64at(0, s), f64at(1, s), f64at(22, s), ucivT, false, TXT_NONE, 0, true);
+          }
+        }
+        if (!inArmy) {
+          if (rngNext() < 0.05 && maybeBoardForWarSp(null, s)) {
+            dirty(s);
+            return 0;
+          }
+          const tdx = f64at(18, s) - f64at(0, s);
+          const tdy = f64at(19, s) - f64at(1, s);
+          if (tdx * tdx + tdy * tdy < 1.44 || rngNext() < 0.03) {
+            const tgt = nearestEnemyBuildingSp(s); // TODO(M-U3) 全量 → -1
+            if (tgt >= 0) {
+              setF64at(18, s, i32at(86, tgt * 2) + rngNext() * 2.0 - 1.0);
+              setF64at(19, s, i32at(86, tgt * 2 + 1) + rngNext() * 2.0 - 1.0);
+            }
+          }
+        }
+      } else if (job === 1 && rngNext() < 0.06) {
+        const f = nearestBuildingOfSp(s, 4); // FARM；TODO(M-U3) 全量 → -1
+        if (f >= 0) {
+          setF64at(18, s, jsMax(1.0, jsMin(W - 2.0, i32at(86, f * 2) + rngNext() * 5.0 - 2.5)));
+          setF64at(19, s, jsMax(1.0, jsMin(H - 2.0, i32at(86, f * 2 + 1) + rngNext() * 5.0 - 2.5)));
+        }
+      } else if (job === 5) {
+        const civOk = ucivT >= 0 && ucivT < Math.max(i32at(67, 0), 0);
+        const tdx = f64at(18, s) - f64at(0, s);
+        const tdy = f64at(19, s) - f64at(1, s);
+        if (civOk && (tdx * tdx + tdy * tdy < 1.44 || rngNext() < 0.03)) {
+          const kindPick = rngNext() < 0.6 ? 9 : 2;
+          const m = nearestBuildingOfSp(s, kindPick); // TODO(M-U3) 全量 → -1
+          if (m >= 0) {
+            const mx = i32at(86, m * 2);
+            const my = i32at(86, m * 2 + 1);
+            setF64at(18, s, mx + rngNext() * 2.0 - 1.0);
+            setF64at(19, s, my + rngNext() * 2.0 - 1.0);
+            const mdx = f64at(0, s) - mx;
+            const mdy = f64at(1, s) - my;
+            if (mdx * mdx + mdy * mdy < 2.25) {
+              civDelta(null, 2, ucivT, 2.0);
+              fx(null, FX_COIN, f64at(0, s), f64at(1, s) - 1.0, 24.0, 1.0, 0.0, 0.0, 0.0, -1, false, TXT_NONE, 0, false);
+            }
+          }
+        }
+      } else if (job === 6 && rngNext() < 0.06) {
+        const cap = i32at(71 /* OFF_CVCAP */, ucivT);
+        if (cap >= 0) {
+          setF64at(18, s, jsMax(1.0, jsMin(W - 2.0, (cap % W) + rngNext() * 6.0 - 3.0)));
+          setF64at(19, s, jsMax(1.0, jsMin(H - 2.0, Math.floor(cap / W) + rngNext() * 6.0 - 3.0)));
+        }
+      } else if (rngNext() < 0.02) {
+        const tgt = warTargetSp(ucivT); // march to war（全量：无建筑 → -1）
+        if (tgt >= 0) {
+          setF64at(18, s, i32at(86, tgt * 2) + rngNext() * 4.0 - 2.0);
+          setF64at(19, s, i32at(86, tgt * 2 + 1) + rngNext() * 4.0 - 2.0);
+        }
+      }
+      // 商队（L3122-3140）
+      if (uCaravan0(s) > 0.0) {
+        const pc = uCaravan0(s) | 0;
+        const mi = i32at(77 /* OFF_CVMKT */, pc);
+        const pcAlive = pc >= 0 && pc < 64 && u8at(72, pc) !== 0;
+        if (!pcAlive || mi < 0) {
+          setF64at(50, s, 0.0);
+        } else {
+          setF64at(18, s, (mi % W) + 0.5);
+          setF64at(19, s, Math.floor(mi / W) + 0.5);
+          const cdx = f64at(0, s) - f64at(18, s);
+          const cdy = f64at(1, s) - f64at(19, s);
+          if (cdx * cdx + cdy * cdy < 3.24) {
+            setF64at(125, 0, 1.0);
+            return 4 /* BAIL_CARAVAN */;
+          }
+        }
+      }
     }
     // 捕食者索敌
     if (isPredator(race) && !isUndead(race) && uFood0(s) < 70.0 && rngNext() < 0.4) {
@@ -1472,8 +2085,60 @@ function updateUnit(s) {
       moveUnit(null, s, 1.0);
     }
   }
-  // 拾取（M-U2d 桩）
-  // 繁衍（M-U2d 桩）
+  // 拾取（M-U2d 全量）
+  if (i32at(90 /* OFF_ITMN */, 0) > 0 && (isCiv(race) || race === R_BANDIT)) tryPickup(s);
+  // 繁衍（M-U2d 全量；L3267-3340）
+  if ((laws & LAW_REPRO) !== 0) {
+    const repro = f64at(130, race * 12 + RB_REPRO);
+    if (repro > 0.0 && rngNext() < repro) {
+      const uciv2 = i32at(4, s);
+      let boost = 1.0;
+      if (isCiv(race) && uciv2 >= 0 && (u8at(OFF_CVDIR, uciv2) & 1) !== 0) boost *= 1.8;
+      if (isCiv(race) && uciv2 >= 0) boost *= f64at(74, uciv2 * 24 + TC_REPRO) * (1.0 + f64at(74, uciv2 * 24 + TC_IDEA_REPRO));
+      if (truthyF(f64at(40, s))) boost *= 2.5;
+      const gr = f64at(53, s * 4 + 3);
+      boost *= Number.isNaN(gr) ? 1.0 : gr;
+      if (uPanic0(s) >= 0.5) boost *= 0.3;
+      if (isCiv(race)) boost *= 0.85 + f64at(130, race * 12 + RB_GROWTH) * 0.3;
+      boost *= f64at(OFF_REPRM, 0);
+      if (isCiv(race) && uciv2 >= 0 && civAtWar(uciv2)) boost *= 0.55;
+      if (!isCiv(race) && !isPredator(race)) boost *= 0.75 + jsMin(0.75, f64at(OFF_GRASS2, 0) / 16000.0);
+      if (isPredator(race)) boost *= 1.6 + jsMin(1.4, jsMax(0.0, (uFood0(s) - 40.0) / 85.0));
+      boost *= ep(EP_REPRO);
+      const foodOk = !isPredator(race) || uFood0(s) > 40.0;
+      if (foodOk && rngNext() < boost) {
+        if (isCiv(race)) {
+          const civAlive = uciv2 >= 0 && uciv2 < 64 && u8at(OFF_CVAL2, uciv2) !== 0;
+          const popOk = civAlive && f64at(OFF_CVPOP, uciv2) < f64at(OFF_CVPC, uciv2) + 6.0;
+          if (popOk && LIVE_LEN < Math.max(i32at(OFF_MISC, 0), 0)) {
+            const cg = childGene(s);
+            if (emergentGate(cg)) {
+              for (let k = 0; k < 4; k++) setF64at(OFF_BAILP, k, cg[k]);
+              setF64at(OFF_BAILP, 4, 1.0);
+              return BAIL_EMERGENT;
+            }
+            const [fam2, fgn2] = famForChild(s, race);
+            spawnUnit(race, f64at(0, s) + rngNext() - 0.5, f64at(1, s) + rngNext() - 0.5, uciv2, cg, false, -1, -1, fam2, fgn2);
+            fx(null, FX_HEART, f64at(0, s), f64at(1, s) - 1.0, 40.0, 1.0, 0.0, 0.0, 0.0, -1, false, TXT_NONE, 0, false);
+          }
+        } else {
+          const cap = i32at(OFF_WILDCAP, race);
+          const same = i32at(OFF_WILD2, race);
+          if (same < cap) {
+            const cg = childGene(s);
+            if (emergentGate(cg)) {
+              for (let k = 0; k < 4; k++) setF64at(OFF_BAILP, k, cg[k]);
+              setF64at(OFF_BAILP, 4, 0.0);
+              return BAIL_EMERGENT;
+            }
+            const [fam2, fgn2] = famForChild(s, race);
+            spawnUnit(race, f64at(0, s) + rngNext() - 0.5, f64at(1, s) + rngNext() - 0.5, -1, cg, false, -1, -1, fam2, fgn2);
+            fx(null, FX_HEART, f64at(0, s), f64at(1, s) - 1.0, 40.0, 1.0, 0.0, 0.0, 0.0, -1, false, TXT_NONE, 0, false);
+          }
+        }
+      }
+    }
+  }
   return 0;
 }
 
@@ -1494,7 +2159,7 @@ function unitsBatch(from, limit, liveLen) {
       setU32at(129 /* OFF_BATCHR */, 0, 5);
       return 5;
     }
-    if (i >= liveLen || from + processed >= lim) break;
+    if (i >= liveLenOf() || from + processed >= lim) break;
     if (u8at(47 /* OFF_UPAR */, i) === parity && u8at(14, i) === 0) {
       processed += 1;
       const bail = updateUnit(i);

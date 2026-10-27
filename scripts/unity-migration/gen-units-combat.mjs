@@ -39,6 +39,7 @@ const TC_REPAIR = 9, TC_ARCHER = 13, TC_PLAGUE = 14, TC_RANGE = 15;
 const RB_REACH = 5, RB_RNG_RANGE = 7;
 const JB_RNG = 4;
 const IT_ARMOR = 0, IT_CRIT = 1, IT_LIFE = 2, IT_THORNS = 3, IT_REGEN = 4, IT_RNG = 5, IT_SPDMUL = 6;
+const IT_DMG = 7, IT_HP = 8, IT_RANK = 9, IT_RARITY = 10, IT_SLOT = 11; // M-U2d 拾取路径槽（初版漏灌——rank 全零致换装 0>=0 恒 skip）
 // 神经（units.rs L451-454）
 const NW_FRL = 768;
 // TL/SND/TOAST（units.rs L83-93）
@@ -93,6 +94,11 @@ function bootTables() {
     dv.setFloat64(base + IT_REGEN * 8, d.regen ?? 0, true);
     dv.setFloat64(base + IT_RNG * 8, d.ranged ?? 0, true);
     dv.setFloat64(base + IT_SPDMUL * 8, d.speedMul ?? 1, true);
+    dv.setFloat64(base + IT_DMG * 8, d.dmg ?? 0, true);
+    dv.setFloat64(base + IT_HP * 8, d.hp ?? 0, true);
+    dv.setFloat64(base + IT_RANK * 8, d.rank ?? 0, true);
+    dv.setFloat64(base + IT_RARITY * 8, d.rarity ?? 0, true);
+    dv.setFloat64(base + IT_SLOT * 8, SLOT_ORDER.indexOf((d.slot ?? 'wep')), true);
   }
   for (const k of ['musket', 'rifle']) { const i = itemIdx(k); setU32(R_GUNBM, i >> 5, getU32(R_GUNBM, i >> 5) | (1 << (i & 31))); }
   { const i = itemIdx('laser_rifle'); setU32(R_BEAMBM, i >> 5, getU32(R_BEAMBM, i >> 5) | (1 << (i & 31))); }
@@ -470,7 +476,7 @@ function actHasTxt(hex, txtOp) {
 }
 
 // ============ 执行（直接执行或经 run-node-ts runner 时运行；export 供调试脚本 import）============
-if (import.meta.main || process.env.WB_GEN_MAIN === '1') {
+if (import.meta.main || (process.env.WB_GEN_MAIN === '1' && process.env.WB_GEN_TARGET === 'gen-units-combat.mjs')) {
 main();
 }
 

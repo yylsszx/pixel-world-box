@@ -347,6 +347,16 @@ namespace PixelWorldBox.Wb
         public const byte RF2_NIGHTSIGHT = 2;
 
         // ---------------- M-U2c 索引组（units.rs L83-167 机械翻译） ----------------
+        // CVTECH 列索引（units.rs L123-131；宿主 pack wbspatial L904-907 灌 NEUTRAL_MODS 语义）
+        public const int TC_DMG = 0;
+        public const int TC_HP = 1;
+        public const int TC_BHP = 2;
+        public const int TC_REPRO = 5;
+        public const int TC_REPAIR = 9;
+        public const int TC_ARCHER = 13;
+        public const int TC_PLAGUE = 14;
+        public const int TC_RANGE = 15;
+        public const int TC_IDEA_REPRO = 18;
         // TBR 行索引（units.rs L134-143）
         public const int RB_HP = 0;
         public const int RB_DMG = 1;

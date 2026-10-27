@@ -579,6 +579,34 @@ namespace PixelWorldBox.Wb
             A.SetI32(WbConstants.OFF_WILD, race, n > 0 ? n : 0);
         }
 
+        // ---------------- M-U2d：和平尾 civ 段建筑辅助骨架（units.rs L1183/L1395-1410 等） ----------------
+        // SP 黄金场景门控外（firen=0/DMGN=0/无战争/无建筑）——M-U3 文明切片随建筑态黄金向量全量翻译。
+        private static int BldgRowOfTile(int i) => A.I32At(WbConstants.OFF_BIDX, i);           // L1183-1185
+
+        private static int WarTarget(int civ)                                                   // L1395-1410（全量：无建筑 → -1 稳定）
+        {
+            int n = System.Math.Max(A.I32At(WbConstants.OFF_BLDN, 0), 0);
+            var enemies = new System.Collections.Generic.List<int>();
+            for (int r = 0; r < System.Math.Min(n, 1024); r++)
+            {
+                int bc = A.I32At(WbConstants.OFF_BLDC, r);
+                if (bc != civ && AtWar(civ, bc)) enemies.Add(r);
+            }
+            if (enemies.Count == 0) return -1;
+            int pick = (int)System.Math.Floor(RngNext() * enemies.Count);
+            return enemies[System.Math.Min(pick, enemies.Count - 1)];
+        }
+
+        private static int FireNear(int s, double r) => -1;                                     // TODO(M-U3) 全量（units.rs L1187-1233）
+        private static void ExtinguishFire(WbCtx ctx, int i, int bySlot) { _ = ctx; _ = i; _ = bySlot; }   // TODO(M-U3) 全量（L1234-1258）
+        private static int DamagedNear(int s, double r) => -1;                                  // TODO(M-U3) 全量（L1259-1291）
+        private static int EnemyBuildingNear(int s, double r) => -1;                            // TODO(M-U3) 全量（L1292-1342）
+        private static int NearestEnemyBuilding(int s) => -1;                                   // TODO(M-U3) 全量（L1343-1368）
+        private static int NearestBuildingOf(int s, int kind) => -1;                            // TODO(M-U3) 全量（L1369-1394）
+        private static bool RepairBuilding(WbCtx ctx, int i, double amount) { _ = ctx; _ = i; _ = amount; return true; }   // TODO(M-U3) 全量（L1411-1457）
+        private static bool AttackBuilding(WbCtx ctx, int i, double dmg) { _ = ctx; _ = i; _ = dmg; return true; }         // TODO(M-U3) 全量（L1491-1517）
+
+
         private static int WildAlive()                                                          // L441-447
         {
             int n = 0;
@@ -907,10 +935,506 @@ namespace PixelWorldBox.Wb
             Dirty(s);
         }
 
-        // rise_skeleton（units.rs L1795-1808）→ 依赖 spawn_unit（M-U2d 全量翻译）
+        // ---------------- M-U2d：rise_skeleton（units.rs L1795-1808 全量） ----------------
         private static void RiseSkeleton(WbCtx ctx, double x, double y)
         {
-            // TODO(M-U2d): spawn_unit(...) + FX_SPAWN + 0.12 EVT_SKELETON——场景不触发（M-U2c 击杀结算白行者/亡者复生支）
+            int spawned = SpawnUnit(ctx, WbConstants.R_SKELETON, x, y, -1, null, false, -1, -1, -1, -1);
+            if (spawned != -1)
+            {
+                Fx(ctx, WbConstants.FX_SPAWN, x, y, 30.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, false);
+                if (RngNext() < 0.12)
+                {
+                    int? p = ctx.ActReserve(48);
+                    if (p.HasValue)
+                    {
+                        ctx.ActU8(p.Value, WbConstants.ACT_EVT);
+                        ctx.ActU8(p.Value + 1, WbConstants.EVT_SKELETON);
+                        ctx.ActF64(p.Value + 32, x);
+                        ctx.ActF64(p.Value + 40, y);
+                    }
+                }
+            }
+        }
+
+        // ---------------- M-U2d：spawn_unit（units.rs L1813-2041 全量机械翻译） ----------------
+        /// 返回新 slot 或 -1（失败）（Rust usize::MAX 语义）
+        private static int SpawnUnit(WbCtx ctx, int race, double x, double y, int civ, double[] gene, bool infected, int job, int traitId, int fam, int fgn)
+        {
+            // —— 预算（civ→MAX_UNITS；wild→MAX_WILDLIFE + 巨怪上限）——                     // L1814-1825
+            int live = (int)A.LiveLen;
+            if (IsCiv(race) && live >= System.Math.Max(A.I32At(WbConstants.OFF_MISC, 0), 0)) return -1;
+            if (!IsCiv(race) && WildAlive() >= System.Math.Max(A.I32At(WbConstants.OFF_MISC, 1), 0)) return -1;
+            int monCap = A.I32At(WbConstants.OFF_MONCAP, race);
+            if (monCap > 0 && A.I32At(WbConstants.OFF_WILD, race) >= monCap) return -1;
+            x = WbMath.JsMax(0.5, WbMath.JsMin(WbConstants.W - 0.5, x));                        // L1826
+            y = WbMath.JsMax(0.5, WbMath.JsMin(WbConstants.H - 0.5, y));                        // L1827
+
+            // trait：未指定 → 15% 掷骰 + rollTrait                                        // L1829-1849
+            if (traitId >= -1)
+            {
+                // -1 = 未指定（JS undefined）；-2 = 显式 null
+                if (traitId == -1)
+                {
+                    if (RngNext() < 0.15)
+                    {
+                        int n = System.Math.Max(A.I32At(WbConstants.OFF_TRN, 0), 0);
+                        if (n > 0)
+                        {
+                            int pick = (int)System.Math.Floor(RngNext() * n);
+                            traitId = System.Math.Min(pick, n - 1);
+                        }
+                        else
+                        {
+                            traitId = -2;
+                        }
+                    }
+                    else
+                    {
+                        traitId = -2;
+                    }
+                }
+                else
+                {
+                    traitId = -2;
+                }
+            }
+            double tdDmg = traitId >= 0 ? A.F64At(WbConstants.OFF_TRDMG, traitId) : 1.0;        // L1850
+            double tdHp = traitId >= 0 ? A.F64At(WbConstants.OFF_TRHP, traitId) : 1.0;          // L1851
+            double tdSpd = traitId >= 0 ? A.F64At(WbConstants.OFF_TRSPD, traitId) : 1.0;        // L1852
+
+            // gene：未指定 → baseGene（speciesBase 有则 4 rng）                           // L1854-1865
+            double[] g;
+            if (gene != null)
+            {
+                g = gene;
+            }
+            else if (A.U8At(WbConstants.OFF_SPBH, race) != 0)
+            {
+                double J(double b) => WbMath.JsMax(0.5, WbMath.JsMin(2.0, b * (1.0 + (RngNext() - 0.5) * 0.1)));
+                g = new double[4];
+                g[0] = J(A.F64At(WbConstants.OFF_SPB, race * 4));
+                g[1] = J(A.F64At(WbConstants.OFF_SPB, race * 4 + 1));
+                g[2] = J(A.F64At(WbConstants.OFF_SPB, race * 4 + 2));
+                g[3] = J(A.F64At(WbConstants.OFF_SPB, race * 4 + 3));
+            }
+            else
+            {
+                g = new double[4] { 1.0, 1.0, 1.0, 1.0 };
+            }
+
+            // job：civ → rollJob                                                          // L1867-1889
+            if (IsCiv(race) && civ >= 0)
+            {
+                if (job >= 0)
+                {
+                    // job 保持
+                }
+                else
+                {
+                    double total = 0;
+                    for (int i = 0; i < 7; i++) total += A.F64At(WbConstants.OFF_TBJ, i * 5 + WbConstants.JB_W);
+                    double r = RngNext() * total;
+                    int picked = 0;
+                    for (int i = 0; i < 7; i++)
+                    {
+                        r -= A.F64At(WbConstants.OFF_TBJ, i * 5 + WbConstants.JB_W);
+                        if (r <= 0.0) { picked = i; break; }
+                    }
+                    job = picked;
+                }
+            }
+            else
+            {
+                job = -1;
+            }
+            double jdHp = IsCiv(race) ? A.F64At(WbConstants.OFF_TBJ, System.Math.Max(job, 0) * 5 + WbConstants.JB_HP) : 1.0;    // L1890
+            double jdDmg = IsCiv(race) ? A.F64At(WbConstants.OFF_TBJ, System.Math.Max(job, 0) * 5 + WbConstants.JB_DMG) : 1.0;  // L1891
+            double jdSpd = IsCiv(race) ? A.F64At(WbConstants.OFF_TBJ, System.Math.Max(job, 0) * 5 + WbConstants.JB_SPD) : 1.0;  // L1892
+
+            // 科技快照                                                                     // L1894-1900
+            double tHp, tDmg;
+            if (IsCiv(race) && civ >= 0)
+            {
+                tHp = A.F64At(WbConstants.OFF_CVTECH, civ * 24 + WbConstants.TC_HP);
+                tDmg = A.F64At(WbConstants.OFF_CVTECH, civ * 24 + WbConstants.TC_DMG);
+            }
+            else
+            {
+                tHp = 1.0; tDmg = 1.0;
+            }
+            double gov15 = civ >= 0 && A.I32At(WbConstants.OFF_CVGOV, civ) == 4 ? 1.15 : 1.0;
+
+            double maxHp = WbMath.JsRound(A.F64At(WbConstants.OFF_TBR, race * 12 + WbConstants.RB_HP) * tdHp * jdHp * tHp * g[2]);   // L1902
+            double dmg = A.F64At(WbConstants.OFF_TBR, race * 12 + WbConstants.RB_DMG) * tdDmg * jdDmg * tDmg * gov15 * g[1];          // L1903
+            double speed = A.F64At(WbConstants.OFF_TBR, race * 12 + WbConstants.RB_SPEED) * tdSpd * jdSpd * g[0];                     // L1904
+            uint id = A.U32At(WbConstants.OFF_USEQ, 0);                                              // L1905
+            A.SetU32(WbConstants.OFF_USEQ, 0, id + 1);                                               // L1906
+            double maxAge = A.F64At(WbConstants.OFF_TBR, race * 12 + WbConstants.RB_MAXAGE) * (0.8 + RngNext() * 0.4);                // L1907
+            bool flip = RngNext() < 0.5;                                                             // L1908
+            var (name, nameLen, _) = UniqueName(race);                                               // L1909
+            double breath = 120.0 + System.Math.Floor(RngNext() * 160.0);                            // L1910
+
+            int slot = ArenaAppend();                                                                // L1912
+            if (slot == -1) return -1;
+            int s = slot;
+            A.SetU32(WbConstants.OFF_UID, s, id);                                                    // L1917
+            A.SetU32(WbConstants.OFF_URACE, s, (uint)race);
+            A.SetI32(WbConstants.OFF_UCIV, s, civ);
+            A.SetF64(WbConstants.OFF_UX, s, x);
+            A.SetF64(WbConstants.OFF_UY, s, y);
+            A.SetF64(WbConstants.OFF_ULX, s, x);
+            A.SetF64(WbConstants.OFF_ULY, s, y);
+            A.SetF64(WbConstants.OFF_UTX, s, x);
+            A.SetF64(WbConstants.OFF_UTY, s, y);
+            A.SetF64(WbConstants.OFF_UHP, s, maxHp);
+            A.SetF64(WbConstants.OFF_UMAXHP, s, maxHp);
+            A.SetF64(WbConstants.OFF_UDMG, s, dmg);
+            A.SetF64(WbConstants.OFF_USPEED, s, speed);
+            A.SetF64(WbConstants.OFF_UAGE, s, 0.0);
+            A.SetF64(WbConstants.OFF_UMAXAGE, s, maxAge);
+            A.SetF64(WbConstants.OFF_UKILLS, s, 0.0);
+            A.SetF64(WbConstants.OFF_UCD, s, 0.0);
+            A.SetI32(WbConstants.OFF_UTRAIT, s, traitId);
+            A.SetI32(WbConstants.OFF_UJOB, s, IsCiv(race) ? job : -1);
+            A.SetU8(WbConstants.OFF_UINF, s, infected ? (byte)1 : (byte)0);
+            A.SetU8(WbConstants.OFF_UFLIP, s, flip ? (byte)1 : (byte)0);
+            A.SetF64(WbConstants.OFF_UBREATH, s, breath);
+            A.SetU8(WbConstants.OFF_UPAR, s, (byte)((id + 1) % 2)); // JS: parity = unitSeq%2（id 为自增前值）   // L1939
+            A.SetU8(WbConstants.OFF_UDEAD, s, 0);
+            A.SetF64(WbConstants.OFF_UHURT, s, 0.0);
+            for (int k = 0; k < 4; k++) A.SetF64(WbConstants.OFF_UGENE, s * 4 + k, g[k]);            // L1942
+            for (int k = 0; k < 32; k++) A.SetU8(WbConstants.OFF_UNAME, s * 32 + k, name[k]);        // L1945
+            A.SetU8(WbConstants.OFF_UNAME, s * 32 + 31, nameLen);
+            for (int k = 0; k < 7; k++) A.SetI32(WbConstants.OFF_UGEAR, s * 7 + k, -1);              // L1949
+            A.SetI32(WbConstants.OFF_UGLN, s, -1);
+            A.SetI32(WbConstants.OFF_UFAM, s, -1);
+            A.SetI32(WbConstants.OFF_UFGN, s, -1);
+            A.SetF64(WbConstants.OFF_UFD, s, double.NaN);
+            A.SetF64(WbConstants.OFF_UCVN, s, double.NaN);
+            A.SetI32(WbConstants.OFF_UARMY, s, -1);
+            A.SetU8(WbConstants.OFF_UHASPANIC, s, 0);
+            A.SetU8(WbConstants.OFF_UBOAT, s, 0);
+            A.SetI32(WbConstants.OFF_UBTL, s, 0);
+            A.SetU32(WbConstants.OFF_UCELL, s, CalcCell(x, y, ctx.Bw, ctx.Bh));                      // L1961
+            // 瞬态字段清零（行可能残留上一世界数据）                                        // L1962-1972
+            A.SetI32(WbConstants.OFF_USTK, s, int.MinValue); // undefined 哨兵
+            A.SetF64(WbConstants.OFF_UATK, s, double.NaN);
+            A.SetF64(WbConstants.OFF_UCHILL, s, double.NaN);
+            A.SetF64(WbConstants.OFF_UFLEET, s, double.NaN);
+            A.SetF64(WbConstants.OFF_UBLESS, s, double.NaN);
+            A.SetF64(WbConstants.OFF_UCURSE, s, double.NaN);
+            A.SetF64(WbConstants.OFF_UFERT, s, double.NaN);
+            A.SetF64(WbConstants.OFF_UDETOUR, s, double.NaN);
+            A.SetF64(WbConstants.OFF_USXK, s, double.NaN);
+            A.SetF64(WbConstants.OFF_USYK, s, double.NaN);
+
+            if (civ >= 0 && civ < System.Math.Max(A.I32At(WbConstants.OFF_CIVN, 0), 0))              // L1976
+            {
+                CivDelta(ctx, 0, civ, 1.0);
+            }
+            if (!IsCiv(race))
+            {
+                BumpWild(race, 1);
+            }
+
+            // —— 家族 ——                                                                  // L1983-2005
+            int famFinal = fam;
+            if (fam >= 0)
+            {
+                A.SetI32(WbConstants.OFF_UFAM, s, fam);
+                A.SetI32(WbConstants.OFF_UFGN, s, fgn >= 0 ? fgn : 1);
+                int row = FamilyFind(fam);
+                if (row >= 0)
+                {
+                    double m = A.F64At(WbConstants.OFF_FMNUM, row * 6) + 1.0;
+                    A.SetF64(WbConstants.OFF_FMNUM, row * 6, m);
+                    FamilyMilestone(ctx, row);
+                    int? p = ctx.ActReserve(16);
+                    if (p.HasValue)
+                    {
+                        ctx.ActU8(p.Value, WbConstants.ACT_FAM_MILE);
+                        ctx.ActI32(p.Value + 4, fam);
+                    }
+                }
+            }
+            else if (!IsUndead(race) && RngNext() < 0.06)
+            {
+                int nid = NewFamily(ctx, race, s);
+                if (nid >= 0)
+                {
+                    famFinal = nid;
+                    A.SetI32(WbConstants.OFF_UFAM, s, nid);
+                    A.SetI32(WbConstants.OFF_UFGN, s, 1);
+                }
+            }
+
+            Dirty(s);                                                                                // L2007
+
+            // —— SPAWN 动作（TS 构造 JS Unit 对象；全字段预计算，0 rng）——                  // L2009-2039
+            int? ap = ctx.ActReserve(256);
+            if (ap.HasValue)
+            {
+                int p = ap.Value;
+                ctx.ActU8(p, WbConstants.ACT_SPAWN);
+                ctx.ActU32(p + 4, id);
+                ctx.ActU32(p + 8, (uint)race);
+                ctx.ActI32(p + 12, civ);
+                ctx.ActF64(p + 16, x);
+                ctx.ActF64(p + 24, y);
+                ctx.ActF64(p + 32, maxHp);
+                ctx.ActF64(p + 40, dmg);
+                ctx.ActF64(p + 48, speed);
+                ctx.ActF64(p + 56, maxAge);
+                ctx.ActF64(p + 64, breath);
+                ctx.ActI32(p + 72, traitId);
+                ctx.ActI32(p + 76, IsCiv(race) ? job : -1);
+                ctx.ActU8(p + 80, flip ? (byte)1 : (byte)0);
+                ctx.ActU8(p + 81, (byte)((id + 1) % 2));
+                ctx.ActU8(p + 82, infected ? (byte)1 : (byte)0);
+                ctx.ActI32(p + 84, famFinal);
+                ctx.ActI32(p + 88, A.I32At(WbConstants.OFF_UFGN, s));
+                ctx.ActF64(p + 96, tDmg);
+                ctx.ActF64(p + 104, tHp);
+                ctx.ActF64(p + 112, g[0]);
+                ctx.ActF64(p + 120, g[1]);
+                ctx.ActF64(p + 128, g[2]);
+                ctx.ActF64(p + 136, g[3]);
+                ctx.ActU8(p + 144, nameLen);
+                for (int k = 0; k < 32; k++) ctx.ActU8(p + 145 + k, name[k]);
+            }
+            return s;
+        }
+
+        // ---------------- M-U2d：spawn 辅助函数群（units.rs L441/L737-983 机械翻译） ----------------
+        // WildAlive/FamilyFind 沿用 M-U2c 既有定义（BumpWild 后）——不重复声明
+
+        private static uint CalcCell(double x, double y, int bw, int bh)                            // L752-756
+        {
+            int cx = (int)WbMath.JsMin(bw - 1.0, WbMath.JsMax(0.0, System.Math.Floor(x / 4.0)));
+            int cy = (int)WbMath.JsMin(bh - 1.0, WbMath.JsMax(0.0, System.Math.Floor(y / 4.0)));
+            return unchecked((uint)(cy * bw + cx));
+        }
+
+        private static int ArenaAppend()                                                            // L737-748
+        {
+            uint slot = A.LiveLen;
+            if (slot >= WbConstants.MAX_UNITS) return -1;
+            A.LiveLen = slot + 1;
+            if (slot >= A.N) A.N = slot + 1;
+            return (int)slot;
+        }
+
+        /// 罗马数字（names.ts roman 位精确；n<1||n>40 → 十进制）                              // L759-785
+        private static int RomanBytes(int n, byte[] outBuf)
+        {
+            if (n < 1 || n > 40) return WriteDec(n, outBuf);
+            int v = n, len = 0;
+            var table = new (int val, string sym)[6] { (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I") };
+            foreach (var (val, sym) in table)
+            {
+                while (v >= val)
+                {
+                    foreach (byte b in System.Text.Encoding.ASCII.GetBytes(sym))
+                    {
+                        outBuf[len] = b;
+                        len += 1;
+                    }
+                    v -= val;
+                }
+            }
+            return len;
+        }
+
+        private static int WriteDec(int n, byte[] outBuf)
+        {
+            byte[] b = System.Text.Encoding.ASCII.GetBytes(n.ToString());
+            int l = System.Math.Min(b.Length, outBuf.Length);
+            Array.Copy(b, outBuf, l);
+            return l;
+        }
+
+        /// 名字生成（uniqueName 位精确）：FIRST 名池 pick + 重名统计 + 罗马后缀            // L788-852
+        private static (byte[] name, byte len, bool ok) UniqueName(int race)
+        {
+            uint off = A.U32At(WbConstants.OFF_FRSTOFF, race);
+            uint cnt = A.U32At(WbConstants.OFF_FRSTN, race);
+            int pick = System.Math.Min((int)System.Math.Floor(RngNext() * cnt), (int)System.Math.Max(cnt, 1) - 1);
+            var baseName = new byte[32];
+            int bl = 0;
+            if (cnt > 0 && off + (uint)pick * 24 + 24 <= 16384)
+            {
+                // 定长 24B 条目：[len u8][bytes ×23]
+                int entryLen = A.U8At(WbConstants.OFF_FRSTP, (int)(off + pick * 24));
+                int copyN = System.Math.Min(entryLen, 23);
+                for (int i = 0; i < copyN; i++)
+                {
+                    baseName[i] = A.U8At(WbConstants.OFF_FRSTP, (int)(off + pick * 24 + 1 + i));
+                }
+                bl = copyN;
+            }
+            // 重名统计：nm === base || (nm.length > bl && nm[bl] == 32 && startsWith(base))
+            int liveN = (int)A.LiveLen;
+            int n2 = 0;
+            for (int o = 0; o < liveN; o++)
+            {
+                if (A.U8At(WbConstants.OFF_UDEAD, o) != 0) continue;
+                int nlen = NameLen(o);
+                bool same = nlen == bl;
+                if (same)
+                {
+                    for (int i = 0; i < bl; i++)
+                    {
+                        if (NameByte(o, i) != baseName[i]) { same = false; break; }
+                    }
+                }
+                else if (nlen > bl && NameByte(o, bl) == 32)
+                {
+                    bool pre = true;
+                    for (int i = 0; i < bl; i++)
+                    {
+                        if (NameByte(o, i) != baseName[i]) { pre = false; break; }
+                    }
+                    same = pre;
+                }
+                if (same) n2 += 1;
+            }
+            var outName = new byte[32];
+            int len = bl;
+            Array.Copy(baseName, outName, bl);
+            if (n2 > 0)
+            {
+                if (len < 31)
+                {
+                    outName[len] = (byte)' ';
+                    len += 1;
+                }
+                var tmp = new byte[16];
+                int rl = RomanBytes(n2 + 1, tmp);
+                for (int i = 0; i < rl; i++)
+                {
+                    if (len < 32)
+                    {
+                        outName[len] = tmp[i];
+                        len += 1;
+                    }
+                }
+            }
+            return (outName, (byte)len, true);
+        }
+
+        private static int NameLen(int s) => A.U8At(WbConstants.OFF_UNAME, s * 32 + 31);            // L855-857
+        private static int NameByte(int s, int i) => A.U8At(WbConstants.OFF_UNAME, s * 32 + i);     // L859-861
+
+        private static int PruneFamilies()                                                         // L877-923
+        {
+            int n = A.I32At(WbConstants.OFF_FAMN, 0);
+            if (n <= 240) return;
+            var dead = new System.Collections.Generic.List<int>(); // row 序（sort by id 稳定键）
+            var deadIds = new System.Collections.Generic.List<int>();
+            for (int i = 0; i < System.Math.Max(n, 0); i++)
+            {
+                if (i >= WbConstants.MAX_FAM) break;
+                double m = A.F64At(WbConstants.OFF_FMNUM, i * 6);
+                double k = A.F64At(WbConstants.OFF_FMNUM, i * 5 + 1); // 蓝本 stride 混用原样保真（kills 读*5）
+                if (m <= 0.0 && k < 10.0)
+                {
+                    deadIds.Add(A.I32At(WbConstants.OFF_FMID, i));
+                    dead.Add(i);
+                }
+            }
+            // dead.sort_by_key(id) —— (id,row) 对排序
+            var pairs = new int[dead.Count][];
+            for (int i = 0; i < dead.Count; i++) pairs[i] = new int[2] { deadIds[i], dead[i] };
+            Array.Sort(pairs, (a, b) => a[0].CompareTo(b[0]));
+            int del = 0;
+            foreach (var pr in pairs)
+            {
+                if (del >= 20) break;
+                A.SetI32(WbConstants.OFF_FMID, pr[1], -1); // 标记删除（TS 侧动作删除）
+                del += 1;
+            }
+            // 压缩（保持顺序）
+            int w = 0;
+            for (int r = 0; r < System.Math.Min(System.Math.Max(n, 0), WbConstants.MAX_FAM); r++)
+            {
+                if (A.I32At(WbConstants.OFF_FMID, r) != -1)
+                {
+                    if (w != r)
+                    {
+                        for (int k = 0; k < 6; k++) A.SetF64(WbConstants.OFF_FMNUM, w * 6 + k, A.F64At(WbConstants.OFF_FMNUM, r * 6 + k));
+                        A.SetI32(WbConstants.OFF_FMID, w, A.I32At(WbConstants.OFF_FMID, r));
+                        A.SetI32(WbConstants.OFF_FMRACE, w, A.I32At(WbConstants.OFF_FMRACE, r));
+                        A.SetU16(WbConstants.OFF_FMNAME, w * 2, A.U16At(WbConstants.OFF_FMNAME, r * 2));
+                        A.SetU16(WbConstants.OFF_FMNAME, w * 2 + 1, A.U16At(WbConstants.OFF_FMNAME, r * 2 + 1));
+                    }
+                    w += 1;
+                }
+            }
+            A.SetI32(WbConstants.OFF_FAMN, 0, w);
+        }
+
+        private static int NewFamily(WbCtx ctx, int race, int founderSlot)                          // L925-958
+        {
+            int preI = (int)System.Math.Floor(RngNext() * 16.0) & 15;
+            int postI = (int)System.Math.Floor(RngNext() * 12.0) % 12;
+            int id = A.I32At(WbConstants.OFF_FMSEQ, 0);
+            A.SetI32(WbConstants.OFF_FMSEQ, 0, id + 1);
+            int row = A.I32At(WbConstants.OFF_FAMN, 0);
+            if (row >= WbConstants.MAX_FAM) return -1;
+            double founded = System.Math.Floor(A.F64At(WbConstants.OFF_CNT, 5)); // CNT[5] = yearF
+            A.SetI32(WbConstants.OFF_FMID, row, id);
+            A.SetI32(WbConstants.OFF_FMRACE, row, race);
+            for (int k = 0; k < 6; k++) A.SetF64(WbConstants.OFF_FMNUM, row * 6 + k, 0.0);
+            A.SetF64(WbConstants.OFF_FMNUM, row * 6, 1.0);      // members
+            A.SetF64(WbConstants.OFF_FMNUM, row * 6 + 3, 1.0);  // peak（蓝本写位）
+            A.SetF64(WbConstants.OFF_FMNUM, row * 6 + 5, founded);
+            A.SetU16(WbConstants.OFF_FMNAME, row * 2, (ushort)preI);
+            A.SetU16(WbConstants.OFF_FMNAME, row * 2 + 1, (ushort)postI);
+            A.SetI32(WbConstants.OFF_FAMN, 0, row + 1);
+            PruneFamilies();
+            int? p = ctx.ActReserve(32);
+            if (p.HasValue)
+            {
+                ctx.ActU8(p.Value, WbConstants.ACT_FAM_NEW);
+                ctx.ActI32(p.Value + 4, id);
+                ctx.ActI32(p.Value + 8, race);
+                ctx.ActU8(p.Value + 12, (byte)preI);
+                ctx.ActU8(p.Value + 13, (byte)postI);
+                ctx.ActF64(p.Value + 16, founded);
+                ctx.ActI32(p.Value + 24, founderSlot);
+            }
+            return id;
+        }
+
+        private static void FamilyMilestone(WbCtx ctx, int row)                                     // L960-983
+        {
+            // members 已 ++；peak 更新 + 12/24/40 一次性播报（蓝本读*5写*6 stride 混用原样保真）
+            double members = A.F64At(WbConstants.OFF_FMNUM, row * 6);
+            double peak = A.F64At(WbConstants.OFF_FMNUM, row * 5 + 2);
+            if (members > peak)
+            {
+                A.SetF64(WbConstants.OFF_FMNUM, row * 6 + 2, members);
+            }
+            double[] marks = new double[3] { 12.0, 24.0, 40.0 };
+            double ms = A.F64At(WbConstants.OFF_FMNUM, row * 5 + 3);
+            var fired = new System.Collections.Generic.List<double>();
+            while ((int)ms < marks.Length && members >= marks[(int)ms])
+            {
+                fired.Add(marks[(int)ms]);
+                ms += 1.0;
+            }
+            A.SetF64(WbConstants.OFF_FMNUM, row * 6 + 4, ms);
+            foreach (double m in fired)
+            {
+                int? p = ctx.ActReserve(48);
+                if (p.HasValue)
+                {
+                    ctx.ActU8(p.Value, WbConstants.ACT_EVT);
+                    ctx.ActU8(p.Value + 1, WbConstants.EVT_LINEAGE_FLORISH);
+                    ctx.ActI32(p.Value + 4, A.I32At(WbConstants.OFF_FMID, row));
+                    ctx.ActF64(p.Value + 16, m);
+                }
+            }
         }
 
         // ---------------- 桶扫描（M-U2b 全量；units.rs L633-734 机械翻译） ----------------
@@ -1196,7 +1720,7 @@ namespace PixelWorldBox.Wb
             {
                 if ((laws & WbConstants.LAW_UNDEAD_RISE) != 0 && IsCiv(race) && RngNext() < 0.08)
                 {
-                    // TODO(M-U2d): rise_skeleton（units.rs L1795-1808）——场景 laws=0 不触发
+                    RiseSkeleton(ctx, A.F64At(WbConstants.OFF_UX, s), A.F64At(WbConstants.OFF_UY, s));   // L2224
                 }
                 A.SetU8(WbConstants.OFF_UDEAD, s, 1);
                 return 0;
@@ -2041,12 +2565,204 @@ namespace PixelWorldBox.Wb
                 int ucivT = A.I32At(WbConstants.OFF_UCIV, s);
                 if (IsCiv(race) && ucivT >= 0)
                 {
-                    // 和平尾 civ 段（L2976-3141）：防灾/建筑师修缮/路过修缮/战争AI/农民/商人/贵族/
-                    // march-to-war/商队（BAIL_CARAVAN）——TODO(M-U3)：依赖建筑查询辅助族
-                    // （fire_near/extinguish_fire/damaged_near/bldg_row_of_tile/repair_building/
-                    //   enemy_building_near/attack_building/nearest_enemy_building/nearest_building_of/
-                    //   war_target）与建筑态黄金向量，随 M-U3 文明切片全量翻译。
-                    // 战斗黄金集无 civ 单独无敌形态（无建筑/火灾/军队态），行为位等价。
+                    // 和平尾 civ 段（L2976-3141 骨架翻译：门结构完整 + 掷序位精确；
+                    // 建筑查询辅助族（fire_near/damaged_near/enemy_building_near/
+                    // nearest_enemy_building/nearest_building_of/repair_building/attack_building/
+                    // extinguish_fire/maybe_board_for_war）在 SP 黄金场景门控外（firen=0/DMGN=0/
+                    // 无战争/无建筑/COLEN=0）——M-U3 文明切片全量翻译。）
+                    int job = UJob0(s);                                                                 // L2975
+                    bool warring = CivAtWar(ucivT);                                                     // L2977
+                    int firen = A.I32At(WbConstants.OFF_FIREN, 0);                                      // L2979
+                    bool bigFire = firen > 8;
+                    bool hasArmy = A.I32At(WbConstants.OFF_UARMY, s) >= 0;                              // L2981
+                    if (!hasArmy && firen > 0 && RngNext() < (bigFire ? 0.5 : 0.3))                     // L2982
+                    {
+                        double radius = job == 4 ? (bigFire ? 7.0 : 4.5) : bigFire ? 5.0 : 3.0;
+                        int fi = FireNear(s, radius);                                                   // TODO(M-U3) 全量
+                        if (fi >= 0)
+                        {
+                            double fxp2 = (fi % WbConstants.W) + 0.5;
+                            double fyp = (fi / WbConstants.W) + 0.5;
+                            double cdx = fxp2 - A.F64At(WbConstants.OFF_UX, s);
+                            double cdy = fyp - A.F64At(WbConstants.OFF_UY, s);
+                            if (cdx * cdx + cdy * cdy < 2.89)
+                            {
+                                ExtinguishFire(ctx, fi, s);                                             // TODO(M-U3) 全量
+                                A.SetF64(WbConstants.OFF_UCD, s, WbMath.JsMax(A.F64At(WbConstants.OFF_UCD, s), 10.0));
+                            }
+                            else
+                            {
+                                A.SetF64(WbConstants.OFF_UTX, s, fxp2);
+                                A.SetF64(WbConstants.OFF_UTY, s, fyp);
+                                MoveUnit(ctx, s, 1.2);
+                                return 0;
+                            }
+                        }
+                    }
+                    if (!hasArmy && job == 4 && A.F64At(WbConstants.OFF_UCD, s) <= 0.0 && RngNext() < 0.2)   // L3002
+                    {
+                        int di = DamagedNear(s, 14.0);                                                  // TODO(M-U3) 全量
+                        if (di >= 0)
+                        {
+                            int row = A.I32At(WbConstants.OFF_BIDX, di);                                // bldg_row_of_tile
+                            if (row >= 0)
+                            {
+                                double bx = A.I32At(WbConstants.OFF_BLDXY, row * 2) + 0.5;
+                                double by = A.I32At(WbConstants.OFF_BLDXY, row * 2 + 1) + 0.5;
+                                double bdx = bx - A.F64At(WbConstants.OFF_UX, s);
+                                double bdy = by - A.F64At(WbConstants.OFF_UY, s);
+                                if (bdx * bdx + bdy * bdy < 3.24)
+                                {
+                                    A.SetF64(WbConstants.OFF_UCD, s, 16.0);
+                                    A.SetF64(WbConstants.OFF_UATK, s, 10.0);
+                                    double amount = 12.0 * A.F64At(WbConstants.OFF_CVTECH, ucivT * 24 + WbConstants.TC_REPAIR);
+                                    RepairBuilding(ctx, di, amount);                                    // TODO(M-U3) 全量
+                                }
+                                else
+                                {
+                                    A.SetF64(WbConstants.OFF_UTX, s, bx);
+                                    A.SetF64(WbConstants.OFF_UTY, s, by);
+                                    MoveUnit(ctx, s, 1.15);
+                                    return 0;
+                                }
+                            }
+                        }
+                    }
+                    if (!hasArmy && job != 2 && job != 3 && A.F64At(WbConstants.OFF_UCD, s) <= 0.0 && A.I32At(WbConstants.OFF_DMGN, 0) > 0 && RngNext() < 0.12)   // L3026
+                    {
+                        int di = DamagedNear(s, 1.9);                                                   // TODO(M-U3) 全量
+                        if (di >= 0)
+                        {
+                            A.SetF64(WbConstants.OFF_UCD, s, 22.0);
+                            RepairBuilding(ctx, di, 3.0);
+                        }
+                    }
+                    if (warring && (job == 2 || job == 3))                                              // L3034
+                    {
+                        bool inArmy = hasArmy;
+                        if (A.F64At(WbConstants.OFF_UCD, s) <= 0.0)
+                        {
+                            int bi = EnemyBuildingNear(s, 1.6);                                         // TODO(M-U3) 全量
+                            if (bi >= 0)
+                            {
+                                A.SetF64(WbConstants.OFF_UCD, s, 14.0);
+                                A.SetF64(WbConstants.OFF_UATK, s, 12.0);
+                                if (!AttackBuilding(ctx, bi, A.F64At(WbConstants.OFF_UDMG, s) * 1.6))
+                                {
+                                    A.SetF64(WbConstants.OFF_BAILP, 0, bi);
+                                    A.SetF64(WbConstants.OFF_BAILP, 1, ucivT);
+                                    return (int)WbConstants.BAIL_ATTACK_DEST;
+                                }
+                            }
+                        }
+                        if (job == 3 && A.F64At(WbConstants.OFF_UCD, s) <= 0.0 && RngNext() < 0.1)      // L3049
+                        {
+                            int bi = EnemyBuildingNear(s, A.F64At(WbConstants.OFF_TBJ, 3 * 5 + WbConstants.JB_RNG));
+                            if (bi >= 0)
+                            {
+                                A.SetF64(WbConstants.OFF_UCD, s, 18.0);
+                                double tx = (bi % WbConstants.W) + 0.5;
+                                double ty = (bi / WbConstants.W) + 0.5;
+                                Fx(ctx, WbConstants.FX_ARROW, tx, ty, 12.0, 1.0, A.F64At(WbConstants.OFF_UX, s), A.F64At(WbConstants.OFF_UY, s), A.F64At(WbConstants.OFF_UDMG, s), ucivT, false, WbConstants.TXT_NONE, 0, true);
+                            }
+                        }
+                        if (!inArmy)                                                                     // L3058
+                        {
+                            if (RngNext() < 0.05 && MaybeBoardForWar(ctx, s))
+                            {
+                                Dirty(s);
+                                return 0;
+                            }
+                            double tdx = A.F64At(WbConstants.OFF_UTX, s) - A.F64At(WbConstants.OFF_UX, s);
+                            double tdy = A.F64At(WbConstants.OFF_UTY, s) - A.F64At(WbConstants.OFF_UY, s);
+                            if (tdx * tdx + tdy * tdy < 1.44 || RngNext() < 0.03)
+                            {
+                                int tgt = NearestEnemyBuilding(s);                                      // TODO(M-U3) 全量
+                                if (tgt >= 0)
+                                {
+                                    A.SetF64(WbConstants.OFF_UTX, s, A.I32At(WbConstants.OFF_BLDXY, tgt * 2) + RngNext() * 2.0 - 1.0);
+                                    A.SetF64(WbConstants.OFF_UTY, s, A.I32At(WbConstants.OFF_BLDXY, tgt * 2 + 1) + RngNext() * 2.0 - 1.0);
+                                }
+                            }
+                        }
+                    }
+                    else if (job == 1 && RngNext() < 0.06)                                               // L3075
+                    {
+                        int f = NearestBuildingOf(s, 4); // BUILD_KINDS.FARM                             // TODO(M-U3) 全量
+                        if (f >= 0)
+                        {
+                            A.SetF64(WbConstants.OFF_UTX, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.W - 2.0, A.I32At(WbConstants.OFF_BLDXY, f * 2) + RngNext() * 5.0 - 2.5)));
+                            A.SetF64(WbConstants.OFF_UTY, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.H - 2.0, A.I32At(WbConstants.OFF_BLDXY, f * 2 + 1) + RngNext() * 5.0 - 2.5)));
+                        }
+                    }
+                    else if (job == 5)                                                                   // L3082
+                    {
+                        bool civOk = ucivT >= 0 && ucivT < System.Math.Max(A.I32At(WbConstants.OFF_CIVN, 0), 0);
+                        double tdx = A.F64At(WbConstants.OFF_UTX, s) - A.F64At(WbConstants.OFF_UX, s);
+                        double tdy = A.F64At(WbConstants.OFF_UTY, s) - A.F64At(WbConstants.OFF_UY, s);
+                        if (civOk && (tdx * tdx + tdy * tdy < 1.44 || RngNext() < 0.03))
+                        {
+                            int kindPick = RngNext() < 0.6 ? 9 : 2; // MARKET / CAPITAL
+                            int m = NearestBuildingOf(s, kindPick);                                     // TODO(M-U3) 全量
+                            if (m >= 0)
+                            {
+                                double mx = A.I32At(WbConstants.OFF_BLDXY, m * 2);
+                                double my = A.I32At(WbConstants.OFF_BLDXY, m * 2 + 1);
+                                A.SetF64(WbConstants.OFF_UTX, s, mx + RngNext() * 2.0 - 1.0);
+                                A.SetF64(WbConstants.OFF_UTY, s, my + RngNext() * 2.0 - 1.0);
+                                double mdx = A.F64At(WbConstants.OFF_UX, s) - mx;
+                                double mdy = A.F64At(WbConstants.OFF_UY, s) - my;
+                                if (mdx * mdx + mdy * mdy < 2.25)
+                                {
+                                    CivDelta(ctx, 2, ucivT, 2.0);
+                                    Fx(ctx, WbConstants.FX_COIN, A.F64At(WbConstants.OFF_UX, s), A.F64At(WbConstants.OFF_UY, s) - 1.0, 24.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, false);
+                                }
+                            }
+                        }
+                    }
+                    else if (job == 6 && RngNext() < 0.06)                                               // L3105
+                    {
+                        int cap = A.I32At(WbConstants.OFF_CVCAP, ucivT);
+                        if (cap >= 0)
+                        {
+                            double cx2 = cap % WbConstants.W;
+                            double cy2 = cap / WbConstants.W;
+                            A.SetF64(WbConstants.OFF_UTX, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.W - 2.0, cx2 + RngNext() * 6.0 - 3.0)));
+                            A.SetF64(WbConstants.OFF_UTY, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.H - 2.0, cy2 + RngNext() * 6.0 - 3.0)));
+                        }
+                    }
+                    else if (RngNext() < 0.02)                                                           // L3114
+                    {
+                        int tgt = WarTarget(ucivT);                                                      // march to war
+                        if (tgt >= 0)
+                        {
+                            A.SetF64(WbConstants.OFF_UTX, s, A.I32At(WbConstants.OFF_BLDXY, tgt * 2) + RngNext() * 4.0 - 2.0);
+                            A.SetF64(WbConstants.OFF_UTY, s, A.I32At(WbConstants.OFF_BLDXY, tgt * 2 + 1) + RngNext() * 4.0 - 2.0);
+                        }
+                    }
+                    // 商队（L3122-3140）
+                    if (UCaravan0(s) > 0.0)
+                    {
+                        int pc = (int)UCaravan0(s);
+                        int mi = A.I32At(WbConstants.OFF_CVMKT, pc);
+                        bool pcAlive = pc >= 0 && pc < WbConstants.MAX_CIVS && A.U8At(WbConstants.OFF_CVAL, pc) != 0;
+                        if (!pcAlive || mi < 0)
+                        {
+                            A.SetF64(WbConstants.OFF_UCVN, s, 0.0);
+                        }
+                        else
+                        {
+                            A.SetF64(WbConstants.OFF_UTX, s, (mi % WbConstants.W) + 0.5);
+                            A.SetF64(WbConstants.OFF_UTY, s, (mi / WbConstants.W) + 0.5);
+                            double cdx = A.F64At(WbConstants.OFF_UX, s) - A.F64At(WbConstants.OFF_UTX, s);
+                            double cdy = A.F64At(WbConstants.OFF_UY, s) - A.F64At(WbConstants.OFF_UTY, s);
+                            if (cdx * cdx + cdy * cdy < 3.24)
+                            {
+                                A.SetF64(WbConstants.OFF_BAILP, 0, 1.0);
+                                return (int)WbConstants.BAIL_CARAVAN;
+                            }
+                        }
+                    }
                 }
 
             // 捕食者索敌（L3142-3234）
@@ -2164,14 +2880,295 @@ namespace PixelWorldBox.Wb
             // 拾取（L3263-3266）
             if (A.I32At(WbConstants.OFF_ITMN, 0) > 0 && (IsCiv(race) || race == WbConstants.R_BANDIT))
             {
-                // TODO(M-U2d): try_pickup——场景 ITMN=0 不触发
+                TryPickup(ctx, s);
             }
-            // 繁衍（L3267-3340）：laws & LAW_REPRO 全关 → 整块短路（体内 M-U2d 全量翻译）
+            // 繁衍（L3267-3340）
             if ((laws & WbConstants.LAW_REPRO) != 0)
             {
-                // TODO(M-U2d): 繁衍全分支（repro 掷/budget/家族/涌现 BAIL）
+                double repro = A.F64At(WbConstants.OFF_TBR, race * 12 + WbConstants.RB_REPRO);
+                if (repro > 0.0 && RngNext() < repro)
+                {
+                    int uciv2 = A.I32At(WbConstants.OFF_UCIV, s);   // 蓝本 uciv（L3272）
+                    double boost = 1.0;
+                    if (IsCiv(race) && uciv2 >= 0 && (A.U8At(WbConstants.OFF_CVDIR, uciv2) & 1) != 0)
+                    {
+                        boost *= 1.8;
+                    }
+                    if (IsCiv(race) && uciv2 >= 0)
+                    {
+                        boost *= A.F64At(WbConstants.OFF_CVTECH, uciv2 * 24 + WbConstants.TC_REPRO) * (1.0 + A.F64At(WbConstants.OFF_CVTECH, uciv2 * 24 + WbConstants.TC_IDEA_REPRO));
+                    }
+                    if (WbMath.TruthyF(A.F64At(WbConstants.OFF_UFERT, s)))
+                    {
+                        boost *= 2.5;
+                    }
+                    double gr = A.F64At(WbConstants.OFF_UGENE, s * 4 + 3);
+                    boost *= double.IsNaN(gr) ? 1.0 : gr;
+                    if (UPanic0(s) >= 0.5)
+                    {
+                        boost *= 0.3;
+                    }
+                    if (IsCiv(race))
+                    {
+                        boost *= 0.85 + A.F64At(WbConstants.OFF_TBR, race * 12 + WbConstants.RB_GROWTH) * 0.3;
+                    }
+                    boost *= A.F64At(WbConstants.OFF_REPRM, 0);
+                    if (IsCiv(race) && uciv2 >= 0 && CivAtWar(uciv2))
+                    {
+                        boost *= 0.55;
+                    }
+                    if (!IsCiv(race) && !IsPredator(race))
+                    {
+                        boost *= 0.75 + WbMath.JsMin(0.75, A.F64At(WbConstants.OFF_GRASS, 0) / 16000.0);
+                    }
+                    if (IsPredator(race))
+                    {
+                        boost *= 1.6 + WbMath.JsMin(1.4, WbMath.JsMax(0.0, (UFood0(s) - 40.0) / 85.0));
+                    }
+                    boost *= Ep(WbConstants.EP_REPRO);
+                    bool foodOk = !IsPredator(race) || UFood0(s) > 40.0;
+                    if (foodOk && RngNext() < boost)
+                    {
+                        if (IsCiv(race))
+                        {
+                            bool civAlive = uciv2 >= 0 && uciv2 < WbConstants.MAX_CIVS && A.U8At(WbConstants.OFF_CVAL, uciv2) != 0;
+                            bool popOk = civAlive && A.F64At(WbConstants.OFF_CVPOP, uciv2) < A.F64At(WbConstants.OFF_CVPC, uciv2) + 6.0;
+                            int liveN = (int)A.LiveLen;
+                            if (popOk && liveN < System.Math.Max(A.I32At(WbConstants.OFF_MISC, 0), 0))
+                            {
+                                double[] cg = ChildGene(s);
+                                // 涌现特质门（tryEmergentTrait）——极端基因才进入
+                                if (EmergentGate(s, cg))
+                                {
+                                    // BAIL：TS 接管涌现特质 + 后续
+                                    for (int k = 0; k < 4; k++)
+                                    {
+                                        A.SetF64(WbConstants.OFF_BAILP, k, cg[k]);
+                                    }
+                                    A.SetF64(WbConstants.OFF_BAILP, 4, 1.0);
+                                    return (int)WbConstants.BAIL_EMERGENT;
+                                }
+                                var (fam2, fgn2) = FamForChild(ctx, s, race);
+                                SpawnUnit(ctx, race, A.F64At(WbConstants.OFF_UX, s) + RngNext() - 0.5, A.F64At(WbConstants.OFF_UY, s) + RngNext() - 0.5, uciv2, cg, false, -1, -1, fam2, fgn2);
+                                Fx(ctx, WbConstants.FX_HEART, A.F64At(WbConstants.OFF_UX, s), A.F64At(WbConstants.OFF_UY, s) - 1.0, 40.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, false);
+                            }
+                        }
+                        else
+                        {
+                            double cap = A.I32At(WbConstants.OFF_WILDCAP, race);
+                            double same = A.I32At(WbConstants.OFF_WILD, race);
+                            if (same < cap)
+                            {
+                                double[] cg = ChildGene(s);
+                                if (EmergentGate(s, cg))
+                                {
+                                    for (int k = 0; k < 4; k++)
+                                    {
+                                        A.SetF64(WbConstants.OFF_BAILP, k, cg[k]);
+                                    }
+                                    A.SetF64(WbConstants.OFF_BAILP, 4, 0.0);
+                                    return (int)WbConstants.BAIL_EMERGENT;
+                                }
+                                var (fam2, fgn2) = FamForChild(ctx, s, race);
+                                SpawnUnit(ctx, race, A.F64At(WbConstants.OFF_UX, s) + RngNext() - 0.5, A.F64At(WbConstants.OFF_UY, s) + RngNext() - 0.5, -1, cg, false, -1, -1, fam2, fgn2);
+                                Fx(ctx, WbConstants.FX_HEART, A.F64At(WbConstants.OFF_UX, s), A.F64At(WbConstants.OFF_UY, s) - 1.0, 40.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, false);
+                            }
+                        }
+                    }
+                }
             }
             return 0;
+        }
+
+        // ---------------- M-U2d：繁衍辅助 + 拾取（units.rs L3371-3539 机械翻译） ----------------
+        /// 繁衍家族预掷：u.fam 有 → 继承（fgn+1）；无 → 25% 开宗（newFamily 2 rng）；否则 (-1,-1)   // L3370-3385
+        private static (int fam, int fgn) FamForChild(WbCtx ctx, int s, int race)
+        {
+            int fam = A.I32At(WbConstants.OFF_UFAM, s);
+            if (fam >= 0)
+            {
+                int fgn0 = A.I32At(WbConstants.OFF_UFGN, s);
+                return (fam, fgn0 < 0 ? 2 : fgn0 + 1); // JS: (u.fgn ?? 1) + 1
+            }
+            if (RngNext() < 0.25)
+            {
+                int nid = NewFamily(ctx, race, s);
+                if (nid >= 0)
+                {
+                    int fgn0 = A.I32At(WbConstants.OFF_UFGN, s);
+                    return (nid, fgn0 < 0 ? 2 : fgn0 + 1); // JS: (u.fgn ?? 1) + 1 —— 与继承分支同式
+                }
+            }
+            return (-1, -1);
+        }
+
+        private static double[] ChildGene(int s)                                                    // L3387-3413
+        {
+            double[] g = new double[4]
+            {
+                A.F64At(WbConstants.OFF_UGENE, s * 4),
+                A.F64At(WbConstants.OFF_UGENE, s * 4 + 1),
+                A.F64At(WbConstants.OFF_UGENE, s * 4 + 2),
+                A.F64At(WbConstants.OFF_UGENE, s * 4 + 3),
+            };
+            double mr = Ep(WbConstants.EP_MUT);
+            var gene = new double[4];
+            for (int k = 0; k < 4; k++)
+            {
+                double v = double.IsNaN(g[k]) ? 1.0 : g[k];
+                gene[k] = WbMath.JsMax(0.5, WbMath.JsMin(2.0, v * (1.0 + (RngNext() - 0.5) * mr)));
+            }
+            int gx = (int)System.Math.Floor(WbMath.JsMax(0.0, WbMath.JsMin(WbConstants.W - 1.0, A.F64At(WbConstants.OFF_UX, s))));
+            int gy = (int)System.Math.Floor(WbMath.JsMax(0.0, WbMath.JsMin(WbConstants.H - 1.0, A.F64At(WbConstants.OFF_UY, s))));
+            byte t = A.U8At(WbConstants.OFF_TERR, gy * WbConstants.W + gx);
+            if (t == WbConstants.T_SNOW || t == WbConstants.T_ICE)
+            {
+                gene[2] = WbMath.JsMin(2.0, gene[2] * (1.0 + RngNext() * 0.05));
+            }
+            else if (t == WbConstants.T_SAND)
+            {
+                gene[0] = WbMath.JsMin(2.0, gene[0] * (1.0 + RngNext() * 0.05));
+            }
+            else if (t == WbConstants.T_FOREST)
+            {
+                gene[1] = WbMath.JsMin(2.0, gene[1] * (1.0 + RngNext() * 0.05));
+            }
+            else if (t == WbConstants.T_GRASS)
+            {
+                gene[3] = WbMath.JsMin(2.0, gene[3] * (1.0 + RngNext() * 0.04));
+            }
+            return gene;
+        }
+
+        /// tryEmergentTrait 前置门：cg.d/h/s ≥ 1.5 → 掷 0.06（命中 → true=需 BAIL）          // L3415-3427
+        private static bool EmergentGate(int s, double[] cg)
+        {
+            // rng 仅在 extreme && size<24 时消耗（短路求值）
+            bool extreme = cg[1] >= 1.5 || cg[2] >= 1.5 || cg[0] >= 1.5;
+            if (!extreme) return false;
+            if (A.I32At(WbConstants.OFF_MISC, 2) >= 24) return false;
+            return !(RngNext() > 0.06);
+        }
+
+        private static void TryPickup(WbCtx ctx, int s)                                             // L3429-3539
+        {
+            byte fxp = A.U8At(WbConstants.OFF_FXP, 0);
+            int n = A.I32At(WbConstants.OFF_ITMN, 0);
+            int i = n - 1;
+            while (i >= 0)
+            {
+                int it = i;
+                if (it >= WbConstants.MAX_ITEMS) { i -= 1; continue; }
+                int kind = A.I32At(WbConstants.OFF_ITMK, it);
+                if (kind < 0 || kind >= A.I32At(WbConstants.OFF_TBIN, 0)) { i -= 1; continue; }
+                double ix = A.F64At(WbConstants.OFF_ITMXY, it * 2);
+                double iy = A.F64At(WbConstants.OFF_ITMXY, it * 2 + 1);
+                if (System.Math.Abs(ix - A.F64At(WbConstants.OFF_UX, s)) > 0.9 || System.Math.Abs(iy - A.F64At(WbConstants.OFF_UY, s)) > 0.9)
+                {
+                    i -= 1;
+                    continue;
+                }
+                int d = kind;
+                int slot = (int)A.F64At(WbConstants.OFF_TBI, d * 12 + WbConstants.IT_SLOT);
+                if (slot > 6) { i -= 1; continue; }
+                int cur = A.I32At(WbConstants.OFF_UGEAR, s * 7 + slot);
+                double curRank = cur >= 0 ? A.F64At(WbConstants.OFF_TBI, cur * 12 + WbConstants.IT_RANK) : -1.0;
+                double rank = A.F64At(WbConstants.OFF_TBI, d * 12 + WbConstants.IT_RANK);
+                if (curRank >= rank) { i -= 1; continue; }
+                // 换装：卸旧
+                if (cur >= 0)
+                {
+                    int old = cur;
+                    double odmg = A.F64At(WbConstants.OFF_TBI, old * 12 + WbConstants.IT_DMG);
+                    double ohp = A.F64At(WbConstants.OFF_TBI, old * 12 + WbConstants.IT_HP);
+                    double ospd = A.F64At(WbConstants.OFF_TBI, old * 12 + WbConstants.IT_SPDMUL);
+                    if (odmg != 0.0)
+                    {
+                        A.SetF64(WbConstants.OFF_UDMG, s, WbMath.JsMax(1.0, A.F64At(WbConstants.OFF_UDMG, s) - odmg));
+                    }
+                    if (ohp != 0.0)
+                    {
+                        A.SetF64(WbConstants.OFF_UMAXHP, s, WbMath.JsMax(1.0, A.F64At(WbConstants.OFF_UMAXHP, s) - ohp));
+                    }
+                    if (ospd != 0.0)
+                    {
+                        A.SetF64(WbConstants.OFF_USPEED, s, A.F64At(WbConstants.OFF_USPEED, s) / ospd);
+                    }
+                }
+                A.SetI32(WbConstants.OFF_UGEAR, s * 7 + slot, kind);
+                double ndmg = A.F64At(WbConstants.OFF_TBI, d * 12 + WbConstants.IT_DMG);
+                double nhp = A.F64At(WbConstants.OFF_TBI, d * 12 + WbConstants.IT_HP);
+                double nspd = A.F64At(WbConstants.OFF_TBI, d * 12 + WbConstants.IT_SPDMUL);
+                if (ndmg != 0.0)
+                {
+                    A.SetF64(WbConstants.OFF_UDMG, s, A.F64At(WbConstants.OFF_UDMG, s) + ndmg);
+                }
+                if (nhp != 0.0)
+                {
+                    A.SetF64(WbConstants.OFF_UMAXHP, s, A.F64At(WbConstants.OFF_UMAXHP, s) + nhp);
+                    A.SetF64(WbConstants.OFF_UHP, s, WbMath.JsMin(A.F64At(WbConstants.OFF_UMAXHP, s), A.F64At(WbConstants.OFF_UHP, s) + nhp));
+                }
+                if (nspd != 0.0)
+                {
+                    A.SetF64(WbConstants.OFF_USPEED, s, A.F64At(WbConstants.OFF_USPEED, s) * nspd);
+                }
+                // items.splice(i, 1)（倒序 splice —— 直接标记删除并前移）
+                int m = i;
+                int total = A.I32At(WbConstants.OFF_ITMN, 0);
+                int k2 = m;
+                while (k2 + 1 < total)
+                {
+                    A.SetI32(WbConstants.OFF_ITMK, k2, A.I32At(WbConstants.OFF_ITMK, k2 + 1));
+                    A.SetF64(WbConstants.OFF_ITMXY, k2 * 2, A.F64At(WbConstants.OFF_ITMXY, (k2 + 1) * 2));
+                    A.SetF64(WbConstants.OFF_ITMXY, k2 * 2 + 1, A.F64At(WbConstants.OFF_ITMXY, (k2 + 1) * 2 + 1));
+                    k2 += 1;
+                }
+                A.SetI32(WbConstants.OFF_ITMN, 0, total - 1);
+                int? p = ctx.ActReserve(16);
+                if (p.HasValue)
+                {
+                    ctx.ActU8(p.Value, WbConstants.ACT_ITEM_DEL);
+                    ctx.ActI32(p.Value + 4, i);
+                }
+                Fx(ctx, WbConstants.FX_SPAWN, A.F64At(WbConstants.OFF_UX, s), A.F64At(WbConstants.OFF_UY, s), 26.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, false);
+                int? p2 = ctx.ActReserve(8);
+                if (p2.HasValue)
+                {
+                    ctx.ActU8(p2.Value, WbConstants.ACT_SND);
+                    ctx.ActU8(p2.Value + 1, WbConstants.SND_COIN);
+                }
+                if ((fxp & WbConstants.FXP_DMGNUM) != 0)
+                {
+                    Fx(ctx, WbConstants.FX_DMG, A.F64At(WbConstants.OFF_UX, s), A.F64At(WbConstants.OFF_UY, s) - 1.2, 34.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_ITEM, (uint)kind, false);
+                }
+                double rarity = A.F64At(WbConstants.OFF_TBI, d * 12 + WbConstants.IT_RARITY);
+                if (rarity >= 3.0)
+                {
+                    int? p3 = ctx.ActReserve(16);
+                    if (p3.HasValue)
+                    {
+                        ctx.ActU8(p3.Value, WbConstants.ACT_TOAST);
+                        ctx.ActU8(p3.Value + 1, 2);
+                        ctx.ActI32(p3.Value + 4, (int)A.U32At(WbConstants.OFF_UID, s));
+                        ctx.ActI32(p3.Value + 8, kind);
+                    }
+                }
+                if (rarity == 4.0)
+                {
+                    int? p4 = ctx.ActReserve(48);
+                    if (p4.HasValue)
+                    {
+                        ctx.ActU8(p4.Value, WbConstants.ACT_EVT);
+                        ctx.ActU8(p4.Value + 1, 11); // EVT_LOOT_PICKUP
+                        ctx.ActI32(p4.Value + 4, (int)A.U32At(WbConstants.OFF_UID, s));
+                        ctx.ActI32(p4.Value + 8, kind);
+                        ctx.ActF64(p4.Value + 32, A.F64At(WbConstants.OFF_UX, s));
+                        ctx.ActF64(p4.Value + 40, A.F64At(WbConstants.OFF_UY, s));
+                    }
+                }
+                Dirty(s);
+                i -= 1;
+            }
         }
 
         // ---------------- wb_units_batch（lib.rs L3542-3595） ----------------
