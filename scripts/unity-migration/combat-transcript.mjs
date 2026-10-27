@@ -1292,15 +1292,209 @@ function warTargetSp(civ) {
   const pick = Math.floor(rngNext() * enemies.length);
   return enemies[Math.min(pick, enemies.length - 1)];
 }
-const fireNearSp = (_s, _r) => -1;            // TODO(M-U3) 全量（units.rs L1187-1233）
-const extinguishFireSp = (_c, _i, _b) => {};  // TODO(M-U3) 全量（L1234-1258）
-const damagedNearSp = (_s, _r) => -1;         // TODO(M-U3) 全量（L1259-1291）
-const enemyBuildingNearSp = (_s, _r) => -1;   // TODO(M-U3) 全量（L1292-1342）
-const nearestEnemyBuildingSp = (_s) => -1;    // TODO(M-U3) 全量（L1343-1368）
-const nearestBuildingOfSp = (_s, _k) => -1;   // TODO(M-U3) 全量（L1369-1394）
-const repairBuildingSp = (_c, _i, _a) => true;  // TODO(M-U3) 全量（L1411-1457）
-const attackBuildingSp = (_c, _i, _d) => true;  // TODO(M-U3) 全量（L1491-1517）
-const maybeBoardForWarSp = (_c, _s) => false;   // TODO(M-U3) 全量（L1577-1672；SP 场景门控外）
+// —— 建筑辅助族（units.rs L401-419 + L1187-1517；M-U3a 全量，镜像 C# WbUnits）——
+function fireClear(ctxUnused, i) { // L401-416
+  if (u8at(61 /* OFF_FIREG */, i) > 0) {
+    const n = i32at(145 /* OFF_FIREN */, 0);
+    if (n > 0) setI32at(145, 0, n - 1);
+  }
+  setU8at(61, i, 0);
+  const p = actReserve(8);
+  if (p !== null) { actU8(p, 8 /* ACT_FIRE_CLEAR */); actI32(p + 1, i); }
+}
+function fireNear(s, r) { // L1187-1233
+  if (i32at(145 /* OFF_FIREN */, 0) === 0) return -1;
+  const cx = Math.floor(f64at(0 /* OFF_UX */, s));
+  const cy = Math.floor(f64at(1 /* OFF_UY */, s));
+  const rr = Math.ceil(r);
+  let best = -1; let bestD = r + 0.5;
+  const uciv = i32at(4 /* OFF_UCIV */, s);
+  const ux = f64at(0, s), uy = f64at(1, s);
+  for (let dy = -rr; dy <= rr; dy++) {
+    for (let dx = -rr; dx <= rr; dx++) {
+      const xx = cx + dx, yy = cy + dy;
+      if (xx < 0 || yy < 0 || xx >= ctxBw || yy >= ctxBh) continue;
+      const i = yy * ctxBw + xx;
+      if (u8at(61 /* OFF_FIREG */, i) === 0) continue;
+      const d = fdHypot(xx + 0.5 - ux, yy + 0.5 - uy);
+      if (d >= bestD) continue;
+      const own = uciv >= 0 && (new DataView(mem.buffer).getInt16(AP() + OFF(65 /* OFF_OWN */) + i * 2, true) === uciv
+        || (u8at(64 /* OFF_BLDK */, i) > 0 && (() => { const row = i32at(66 /* OFF_BIDX */, i); return row >= 0 && i32at(87 /* OFF_BLDC */, row) === uciv; })()));
+      if (own || d < 2.2) { bestD = d; best = i; }
+    }
+  }
+  return best;
+}
+function extinguishFire(ctxUnused, i, bySlot) { // L1234-1258
+  fireClear(null, i);
+  const firesOut = f64at(119 /* OFF_CNT */, 0) + 1.0;
+  setF64at(119, 0, firesOut);
+  void u8at(102 /* OFF_FXP */, 0); // 蓝本 fxp 读取后弃用
+  fx(null, 3 /* FX_WATER */, (i % ctxBw) + 0.5, Math.floor(i / ctxBw) + 0.5, 16.0, 1.0, 0.0, 0.0, 0.0, -1, false, 0 /* TXT_NONE */, 0, false);
+  const tick = i32at(96 /* OFF_TICK */, 0);
+  const last = f64at(119 /* OFF_CNT */, 1);
+  if (firesOut >= 3.0 && (tick - last) > 480.0) {
+    setF64at(119, 1, tick);
+    const civ = i32at(4 /* OFF_UCIV */, bySlot);
+    if (civ >= 0 && u8at(72 /* OFF_CVAL */, civ) !== 0) {
+      const p = actReserve(48);
+      if (p !== null) {
+        actU8(p, 4 /* ACT_EVT */); actU8(p + 1, 7 /* EVT_FIREOUT */);
+        actI32(p + 4, civ);
+        actF64(p + 32, (i % ctxBw) + 0.5);
+        actF64(p + 40, Math.floor(i / ctxBw) + 0.5);
+      }
+    }
+  }
+}
+function damagedNear(s, r) { // L1259-1291
+  const n = i32at(144 /* OFF_DMGN */, 0);
+  if (n === 0) return -1;
+  const uciv = i32at(4 /* OFF_UCIV */, s);
+  const ux = f64at(0, s), uy = f64at(1, s);
+  let best = -1; let bestD = r;
+  for (let k = 0; k < n; k++) {
+    if (k >= 1024 /* MAX_BLD */) break;
+    const i = i32at(143 /* OFF_DMGL */, k);
+    const row = i32at(66 /* OFF_BIDX */, i);
+    if (row < 0) continue;
+    if (i32at(87 /* OFF_BLDC */, row) !== uciv) continue;
+    const bx = i32at(86 /* OFF_BLDXY */, row * 2) + 0.5;
+    const by = i32at(86, row * 2 + 1) + 0.5;
+    const d = fdHypot(bx - ux, by - uy);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+function enemyBuildingNear(s, r) { // L1292-1342
+  const cx = Math.floor(f64at(0 /* OFF_UX */, s));
+  const cy = Math.floor(f64at(1 /* OFF_UY */, s));
+  const rr = Math.ceil(r);
+  let best = -1; let bestD = r + 0.5;
+  const uciv = i32at(4 /* OFF_UCIV */, s);
+  const ux = f64at(0, s), uy = f64at(1, s);
+  for (let dy = -rr; dy <= rr; dy++) {
+    for (let dx = -rr; dx <= rr; dx++) {
+      const xx = cx + dx, yy = cy + dy;
+      if (xx < 0 || yy < 0 || xx >= ctxBw || yy >= ctxBh) continue;
+      const i = yy * ctxBw + xx;
+      const bk = u8at(64 /* OFF_BLDK */, i);
+      if (bk === 0) continue;
+      const row = i32at(66 /* OFF_BIDX */, i);
+      if (row < 0) continue;
+      const bc = i32at(87 /* OFF_BLDC */, row);
+      if (bc === uciv) continue;
+      if (uciv >= 0 && !atWar(uciv, bc)) continue;
+      const d = fdHypot(xx - ux, yy - uy); // 裸格坐标
+      if (d < bestD) { bestD = d; best = i; }
+    }
+  }
+  return best;
+}
+function nearestEnemyBuilding(s) { // L1343-1368
+  const n = Math.max(i32at(84 /* OFF_BLDN */, 0), 0);
+  const uciv = i32at(4 /* OFF_UCIV */, s);
+  const ux = f64at(0, s), uy = f64at(1, s);
+  let best = -1; let bestD = Infinity;
+  for (let r = 0; r < Math.min(n, 1024 /* MAX_BLD */); r++) {
+    const bc = i32at(87 /* OFF_BLDC */, r);
+    if (bc === uciv) continue;
+    if (uciv < 0 || !atWar(uciv, bc)) continue;
+    const bx = i32at(86 /* OFF_BLDXY */, r * 2);
+    const by = i32at(86, r * 2 + 1);
+    const d = fdHypot(bx - ux, by - uy);
+    if (d < bestD) { bestD = d; best = r; }
+  }
+  return best;
+}
+function nearestBuildingOf(s, kind) { // L1369-1394
+  const n = Math.max(i32at(84 /* OFF_BLDN */, 0), 0);
+  const uciv = i32at(4 /* OFF_UCIV */, s);
+  const ux = f64at(0, s), uy = f64at(1, s);
+  let best = -1; let bestD = Infinity;
+  for (let r = 0; r < Math.min(n, 1024 /* MAX_BLD */); r++) {
+    if (i32at(87 /* OFF_BLDC */, r) !== uciv) continue;
+    const bk = u8at(64 /* OFF_BLDK */, i32at(85 /* OFF_BLDI */, r));
+    if (bk !== kind) continue;
+    const bx = i32at(86 /* OFF_BLDXY */, r * 2);
+    const by = i32at(86, r * 2 + 1);
+    const d = fdHypot(bx - ux, by - uy);
+    if (d < bestD) { bestD = d; best = r; }
+  }
+  return best;
+}
+function repairBuilding(ctxUnused, i, amount) { // L1411-1457
+  const row = i32at(66 /* OFF_BIDX */, i);
+  if (row < 0) return false;
+  const kind = u8at(64 /* OFF_BLDK */, i);
+  const max = jsRound(f64at(149 /* OFF_TBHP */, kind) * f64at(74 /* OFF_CVTECH */, i32at(87 /* OFF_BLDC */, row) * 24 + 2 /* TC_BHP */));
+  let hp = f64at(88 /* OFF_BLDHP */, row);
+  hp = jsMin(max, hp + amount);
+  setF64at(88, row, hp);
+  const p = actReserve(16);
+  if (p !== null) { actU8(p, 9 /* ACT_BHP */); actI32(p + 1, i); actF64(p + 8, hp); }
+  const rd = f64at(119 /* OFF_CNT */, 2) + 1.0;
+  setF64at(119, 2, rd);
+  const bx = i32at(86 /* OFF_BLDXY */, row * 2) + 0.5;
+  const by = i32at(86, row * 2 + 1) + 0.2;
+  fx(null, 4 /* FX_HAMMER */, bx, by, 14.0, 1.0, 0.0, 0.0, 0.0, -1, false, 0, 0, false);
+  const done = hp >= max;
+  if (done) {
+    dmgSetDel(i);
+    fx(null, 6 /* FX_SPAWN */, i32at(86, row * 2) + 0.5, i32at(86, row * 2 + 1) + 0.5, 22.0, 1.0, 0.0, 0.0, 0.0, -1, false, 0, 0, false);
+    const tick = i32at(96 /* OFF_TICK */, 0);
+    if (rd >= 6.0 && (tick - f64at(119 /* OFF_CNT */, 3)) > 720.0) {
+      setF64at(119, 3, tick);
+      const civ = i32at(87 /* OFF_BLDC */, row);
+      if (civ >= 0 && u8at(72 /* OFF_CVAL */, civ) !== 0) {
+        const q = actReserve(48);
+        if (q !== null) {
+          actU8(q, 4 /* ACT_EVT */); actU8(q + 1, 8 /* EVT_REPAIR */);
+          actI32(q + 4, civ);
+          actF64(q + 32, bx);
+          actF64(q + 40, i32at(86, row * 2 + 1) + 0.5);
+        }
+      }
+    }
+  }
+  return done;
+}
+function dmgSetAdd(ctxUnused, i) { // L1459-1473
+  const n = i32at(144 /* OFF_DMGN */, 0);
+  for (let k = 0; k < n; k++) {
+    if (i32at(143 /* OFF_DMGL */, k) === i) return; // Set 语义
+  }
+  if (n < 1024 /* MAX_BLD */) {
+    setI32at(143, n, i);
+    setI32at(144, 0, n + 1);
+    const p = actReserve(8);
+    if (p !== null) { actU8(p, 10 /* ACT_DMG_ADD */); actI32(p + 1, i); }
+  }
+}
+function dmgSetDel(i) { // L1475-1489
+  const n = i32at(144 /* OFF_DMGN */, 0);
+  for (let k = 0; k < n; k++) {
+    if (i32at(143 /* OFF_DMGL */, k) === i) {
+      for (let m = k; m < n - 1; m++) setI32at(143, m, i32at(143, m + 1));
+      setI32at(144, 0, n - 1);
+      return;
+    }
+  }
+}
+function attackBuilding(ctxUnused, i, dmg) { // L1491-1517
+  const kind = u8at(64 /* OFF_BLDK */, i);
+  if (kind === 0) return true;
+  const row = i32at(66 /* OFF_BIDX */, i);
+  if (row < 0) return true;
+  const hp = f64at(88 /* OFF_BLDHP */, row) - dmg;
+  if (hp <= 0.0) return false; // Err → 上层 BAIL_ATTACK_DEST
+  setF64at(88, row, hp);
+  const p = actReserve(16);
+  if (p !== null) { actU8(p, 9 /* ACT_BHP */); actI32(p + 1, i); actF64(p + 8, hp); }
+  dmgSetAdd(null, i);
+  fx(null, 5 /* FX_HIT */, (i % ctxBw) + 0.5, Math.floor(i / ctxBw) + 0.5, 6.0, 1.0, 0.0, 0.0, 0.0, -1, false, 0, 0, false);
+  return true;
+}
 function dragonBreath(ctxUnused, s) {
   const tx = jsMax(1.0, jsMin(W - 2.0, f64at(0, s) + (rngNext() * 2.0 - 1.0) * 8.0));
   const ty = jsMax(1.0, jsMin(H - 2.0, f64at(1, s) + (rngNext() * 2.0 - 1.0) * 8.0));
@@ -1871,14 +2065,14 @@ function updateUnit(s) {
       const hasArmy = i32at(51 /* OFF_UARMY */, s) >= 0;
       if (!hasArmy && firen > 0 && rngNext() < (bigFire ? 0.5 : 0.3)) {
         const radius = job === 4 ? (bigFire ? 7.0 : 4.5) : bigFire ? 5.0 : 3.0;
-        const fi = fireNearSp(s, radius); // TODO(M-U3) 全量 → -1
+        const fi = fireNear(s, radius); // TODO(M-U3) 全量 → -1
         if (fi >= 0) {
           const fxp2 = (fi % W) + 0.5;
           const fyp = (fi / W) + 0.5;
           const cdx = fxp2 - f64at(0, s);
           const cdy = fyp - f64at(1, s);
           if (cdx * cdx + cdy * cdy < 2.89) {
-            extinguishFireSp(null, fi, s); // TODO(M-U3) 全量
+            extinguishFire(null, fi, s); // TODO(M-U3) 全量
             setF64at(27, s, jsMax(f64at(27, s), 10.0));
           } else {
             setF64at(18, s, fxp2);
@@ -1889,7 +2083,7 @@ function updateUnit(s) {
         }
       }
       if (!hasArmy && job === 4 && f64at(27, s) <= 0.0 && rngNext() < 0.2) {
-        const di = damagedNearSp(s, 14.0); // TODO(M-U3) 全量 → -1
+        const di = damagedNear(s, 14.0); // TODO(M-U3) 全量 → -1
         if (di >= 0) {
           const row = i32at(66 /* OFF_BIDX */, di);
           if (row >= 0) {
@@ -1900,7 +2094,7 @@ function updateUnit(s) {
             if (bdx * bdx + bdy * bdy < 3.24) {
               setF64at(27, s, 16.0);
               setF64at(35, s, 10.0);
-              repairBuildingSp(null, di, 12.0 * f64at(74, ucivT * 24 + TC_REPRO * 0 + 9 /* TC_REPAIR */)); // TODO(M-U3) 全量
+              repairBuilding(null, di, 12.0 * f64at(74, ucivT * 24 + TC_REPRO * 0 + 9 /* TC_REPAIR */)); // TODO(M-U3) 全量
             } else {
               setF64at(18, s, bx);
               setF64at(19, s, by);
@@ -1911,20 +2105,20 @@ function updateUnit(s) {
         }
       }
       if (!hasArmy && job !== 2 && job !== 3 && f64at(27, s) <= 0.0 && i32at(144 /* OFF_DMGN */, 0) > 0 && rngNext() < 0.12) {
-        const di = damagedNearSp(s, 1.9); // TODO(M-U3) 全量 → -1
+        const di = damagedNear(s, 1.9); // TODO(M-U3) 全量 → -1
         if (di >= 0) {
           setF64at(27, s, 22.0);
-          repairBuildingSp(null, di, 3.0);
+          repairBuilding(null, di, 3.0);
         }
       }
       if (warring && (job === 2 || job === 3)) {
         const inArmy = hasArmy;
         if (f64at(27, s) <= 0.0) {
-          const bi = enemyBuildingNearSp(s, 1.6); // TODO(M-U3) 全量 → -1
+          const bi = enemyBuildingNear(s, 1.6); // TODO(M-U3) 全量 → -1
           if (bi >= 0) {
             setF64at(27, s, 14.0);
             setF64at(35, s, 12.0);
-            if (!attackBuildingSp(null, bi, f64at(22, s) * 1.6)) {
+            if (!attackBuilding(null, bi, f64at(22, s) * 1.6)) {
               setF64at(125, 0, bi);
               setF64at(125, 1, ucivT);
               return 3 /* BAIL_ATTACK_DEST */;
@@ -1932,21 +2126,21 @@ function updateUnit(s) {
           }
         }
         if (job === 3 && f64at(27, s) <= 0.0 && rngNext() < 0.1) {
-          const bi = enemyBuildingNearSp(s, f64at(132, 3 * 5 + 4 /* JB_RNG */));
+          const bi = enemyBuildingNear(s, f64at(132, 3 * 5 + 4 /* JB_RNG */));
           if (bi >= 0) {
             setF64at(27, s, 18.0);
             fx(null, FX_ARROW, (bi % W) + 0.5, (bi / W) + 0.5, 12.0, 1.0, f64at(0, s), f64at(1, s), f64at(22, s), ucivT, false, TXT_NONE, 0, true);
           }
         }
         if (!inArmy) {
-          if (rngNext() < 0.05 && maybeBoardForWarSp(null, s)) {
+          if (rngNext() < 0.05 && maybeBoardForWar(null, s)) {
             dirty(s);
             return 0;
           }
           const tdx = f64at(18, s) - f64at(0, s);
           const tdy = f64at(19, s) - f64at(1, s);
           if (tdx * tdx + tdy * tdy < 1.44 || rngNext() < 0.03) {
-            const tgt = nearestEnemyBuildingSp(s); // TODO(M-U3) 全量 → -1
+            const tgt = nearestEnemyBuilding(s); // TODO(M-U3) 全量 → -1
             if (tgt >= 0) {
               setF64at(18, s, i32at(86, tgt * 2) + rngNext() * 2.0 - 1.0);
               setF64at(19, s, i32at(86, tgt * 2 + 1) + rngNext() * 2.0 - 1.0);
@@ -1954,7 +2148,7 @@ function updateUnit(s) {
           }
         }
       } else if (job === 1 && rngNext() < 0.06) {
-        const f = nearestBuildingOfSp(s, 4); // FARM；TODO(M-U3) 全量 → -1
+        const f = nearestBuildingOf(s, 4); // FARM；TODO(M-U3) 全量 → -1
         if (f >= 0) {
           setF64at(18, s, jsMax(1.0, jsMin(W - 2.0, i32at(86, f * 2) + rngNext() * 5.0 - 2.5)));
           setF64at(19, s, jsMax(1.0, jsMin(H - 2.0, i32at(86, f * 2 + 1) + rngNext() * 5.0 - 2.5)));
@@ -1965,7 +2159,7 @@ function updateUnit(s) {
         const tdy = f64at(19, s) - f64at(1, s);
         if (civOk && (tdx * tdx + tdy * tdy < 1.44 || rngNext() < 0.03)) {
           const kindPick = rngNext() < 0.6 ? 9 : 2;
-          const m = nearestBuildingOfSp(s, kindPick); // TODO(M-U3) 全量 → -1
+          const m = nearestBuildingOf(s, kindPick); // TODO(M-U3) 全量 → -1
           if (m >= 0) {
             const mx = i32at(86, m * 2);
             const my = i32at(86, m * 2 + 1);

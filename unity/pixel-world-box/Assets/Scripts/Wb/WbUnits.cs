@@ -597,14 +597,300 @@ namespace PixelWorldBox.Wb
             return enemies[System.Math.Min(pick, enemies.Count - 1)];
         }
 
-        private static int FireNear(int s, double r) => -1;                                     // TODO(M-U3) 全量（units.rs L1187-1233）
-        private static void ExtinguishFire(WbCtx ctx, int i, int bySlot) { _ = ctx; _ = i; _ = bySlot; }   // TODO(M-U3) 全量（L1234-1258）
-        private static int DamagedNear(int s, double r) => -1;                                  // TODO(M-U3) 全量（L1259-1291）
-        private static int EnemyBuildingNear(int s, double r) => -1;                            // TODO(M-U3) 全量（L1292-1342）
-        private static int NearestEnemyBuilding(int s) => -1;                                   // TODO(M-U3) 全量（L1343-1368）
-        private static int NearestBuildingOf(int s, int kind) => -1;                            // TODO(M-U3) 全量（L1369-1394）
-        private static bool RepairBuilding(WbCtx ctx, int i, double amount) { _ = ctx; _ = i; _ = amount; return true; }   // TODO(M-U3) 全量（L1411-1457）
-        private static bool AttackBuilding(WbCtx ctx, int i, double dmg) { _ = ctx; _ = i; _ = dmg; return true; }         // TODO(M-U3) 全量（L1491-1517）
+        private static void FireClear(WbCtx ctx, int i)                                             // units.rs L401-416
+        {
+            // （蓝本首 if 为空体注释块——仅当有火才清的说明，无行为，不译）
+            if (A.U8At(WbConstants.OFF_FIREG, i) > 0)
+            {
+                int n = A.I32At(WbConstants.OFF_FIREN, 0);
+                if (n > 0) A.SetI32(WbConstants.OFF_FIREN, 0, n - 1);
+            }
+            A.SetU8(WbConstants.OFF_FIREG, i, 0);
+            int? p = ctx.ActReserve(8);
+            if (p.HasValue)
+            {
+                ctx.ActU8(p.Value, WbConstants.ACT_FIRE_CLEAR);
+                ctx.ActI32(p.Value + 1, i);
+            }
+        }
+
+        private static int FireNear(int s, double r)                                                // units.rs L1187-1233
+        {
+            if (A.I32At(WbConstants.OFF_FIREN, 0) == 0) return -1;
+            int cx = (int)System.Math.Floor(A.F64At(WbConstants.OFF_UX, s));
+            int cy = (int)System.Math.Floor(A.F64At(WbConstants.OFF_UY, s));
+            int rr = (int)System.Math.Ceiling(r);
+            int best = -1;
+            double bestD = r + 0.5;
+            int uciv = A.I32At(WbConstants.OFF_UCIV, s);
+            double ux = A.F64At(WbConstants.OFF_UX, s);
+            double uy = A.F64At(WbConstants.OFF_UY, s);
+            int dy = -rr;
+            while (dy <= rr)
+            {
+                int dx = -rr;
+                while (dx <= rr)
+                {
+                    int xx = cx + dx;
+                    int yy = cy + dy;
+                    if (xx < 0 || yy < 0 || xx >= WbConstants.W || yy >= WbConstants.H) { dx += 1; continue; }
+                    int i = yy * WbConstants.W + xx;
+                    if (A.U8At(WbConstants.OFF_FIREG, i) == 0) { dx += 1; continue; }
+                    double d = WbMath.FdHypot(xx + 0.5 - ux, yy + 0.5 - uy);
+                    if (d >= bestD) { dx += 1; continue; }
+                    bool own = uciv >= 0 && ((short)A.U16At(WbConstants.OFF_OWN, i) == (short)uciv
+                        || (A.U8At(WbConstants.OFF_BLDK, i) > 0 && BldgRowOfTile(i) >= 0
+                            && A.I32At(WbConstants.OFF_BLDC, BldgRowOfTile(i)) == uciv));
+                    if (own || d < 2.2) { bestD = d; best = i; }
+                    dx += 1;
+                }
+                dy += 1;
+            }
+            return best;
+        }
+
+        private static void ExtinguishFire(WbCtx ctx, int i, int bySlot)                            // units.rs L1234-1258
+        {
+            FireClear(ctx, i);
+            double firesOut = A.F64At(WbConstants.OFF_CNT, 0) + 1.0;
+            A.SetF64(WbConstants.OFF_CNT, 0, firesOut);
+            _ = A.U8At(WbConstants.OFF_FXP, 0); // 蓝本 fxp 读取后弃用（_ = fxp）
+            Fx(ctx, WbConstants.FX_WATER, (i % WbConstants.W) + 0.5, (i / WbConstants.W) + 0.5, 16.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, false);
+            // 节流播报：firesOut≥3 且距上次 >480 tick
+            int tick = A.I32At(WbConstants.OFF_TICK, 0);
+            double last = A.F64At(WbConstants.OFF_CNT, 1);
+            if (firesOut >= 3.0 && (tick - last) > 480.0)
+            {
+                A.SetF64(WbConstants.OFF_CNT, 1, tick);
+                int civ = A.I32At(WbConstants.OFF_UCIV, bySlot);
+                if (civ >= 0 && A.U8At(WbConstants.OFF_CVAL, civ) != 0)
+                {
+                    int? p = ctx.ActReserve(48);
+                    if (p.HasValue)
+                    {
+                        ctx.ActU8(p.Value, WbConstants.ACT_EVT);
+                        ctx.ActU8(p.Value + 1, WbConstants.EVT_FIREOUT);
+                        ctx.ActI32(p.Value + 4, civ);
+                        ctx.ActF64(p.Value + 32, (i % WbConstants.W) + 0.5);
+                        ctx.ActF64(p.Value + 40, (i / WbConstants.W) + 0.5);
+                    }
+                }
+            }
+        }
+
+        private static int DamagedNear(int s, double r)                                             // units.rs L1259-1291
+        {
+            int n = A.I32At(WbConstants.OFF_DMGN, 0);
+            if (n == 0) return -1;
+            int uciv = A.I32At(WbConstants.OFF_UCIV, s);
+            double ux = A.F64At(WbConstants.OFF_UX, s);
+            double uy = A.F64At(WbConstants.OFF_UY, s);
+            int best = -1;
+            double bestD = r;
+            for (int k = 0; k < n; k++)
+            {
+                if (k >= WbConstants.MAX_BLD) break;
+                int i = A.I32At(WbConstants.OFF_DMGL, k);
+                int row = BldgRowOfTile(i);
+                if (row < 0) continue;
+                if (A.I32At(WbConstants.OFF_BLDC, row) != uciv) continue;
+                double bx = A.I32At(WbConstants.OFF_BLDXY, row * 2) + 0.5;
+                double by = A.I32At(WbConstants.OFF_BLDXY, row * 2 + 1) + 0.5;
+                double d = WbMath.FdHypot(bx - ux, by - uy);
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            return best;
+        }
+
+        private static int EnemyBuildingNear(int s, double r)                                       // units.rs L1292-1342
+        {
+            int cx = (int)System.Math.Floor(A.F64At(WbConstants.OFF_UX, s));
+            int cy = (int)System.Math.Floor(A.F64At(WbConstants.OFF_UY, s));
+            int rr = (int)System.Math.Ceiling(r);
+            int best = -1;
+            double bestD = r + 0.5;
+            int uciv = A.I32At(WbConstants.OFF_UCIV, s);
+            double ux = A.F64At(WbConstants.OFF_UX, s);
+            double uy = A.F64At(WbConstants.OFF_UY, s);
+            int dy = -rr;
+            while (dy <= rr)
+            {
+                int dx = -rr;
+                while (dx <= rr)
+                {
+                    int xx = cx + dx;
+                    int yy = cy + dy;
+                    if (xx < 0 || yy < 0 || xx >= WbConstants.W || yy >= WbConstants.H) { dx += 1; continue; }
+                    int i = yy * WbConstants.W + xx;
+                    int bk = A.U8At(WbConstants.OFF_BLDK, i);
+                    if (bk == 0) { dx += 1; continue; }
+                    int row = BldgRowOfTile(i);
+                    if (row < 0) { dx += 1; continue; }
+                    int bc = A.I32At(WbConstants.OFF_BLDC, row);
+                    if (bc == uciv) { dx += 1; continue; }
+                    if (uciv >= 0 && !AtWar(uciv, bc)) { dx += 1; continue; }
+                    double d = WbMath.FdHypot(xx - ux, yy - uy); // 裸格坐标（无 +0.5）
+                    if (d < bestD) { bestD = d; best = i; }
+                    dx += 1;
+                }
+                dy += 1;
+            }
+            return best;
+        }
+
+        private static int NearestEnemyBuilding(int s)                                              // units.rs L1343-1368
+        {
+            int n = System.Math.Max(A.I32At(WbConstants.OFF_BLDN, 0), 0);
+            int uciv = A.I32At(WbConstants.OFF_UCIV, s);
+            double ux = A.F64At(WbConstants.OFF_UX, s);
+            double uy = A.F64At(WbConstants.OFF_UY, s);
+            int best = -1;
+            double bestD = double.PositiveInfinity;
+            for (int r = 0; r < System.Math.Min(n, WbConstants.MAX_BLD); r++)
+            {
+                int bc = A.I32At(WbConstants.OFF_BLDC, r);
+                if (bc == uciv) continue;
+                if (uciv < 0 || !AtWar(uciv, bc)) continue;
+                double bx = A.I32At(WbConstants.OFF_BLDXY, r * 2);
+                double by = A.I32At(WbConstants.OFF_BLDXY, r * 2 + 1);
+                double d = WbMath.FdHypot(bx - ux, by - uy);
+                if (d < bestD) { bestD = d; best = r; }
+            }
+            return best;
+        }
+
+        private static int NearestBuildingOf(int s, int kind)                                       // units.rs L1369-1394
+        {
+            int n = System.Math.Max(A.I32At(WbConstants.OFF_BLDN, 0), 0);
+            int uciv = A.I32At(WbConstants.OFF_UCIV, s);
+            double ux = A.F64At(WbConstants.OFF_UX, s);
+            double uy = A.F64At(WbConstants.OFF_UY, s);
+            int best = -1;
+            double bestD = double.PositiveInfinity;
+            for (int r = 0; r < System.Math.Min(n, WbConstants.MAX_BLD); r++)
+            {
+                if (A.I32At(WbConstants.OFF_BLDC, r) != uciv) continue;
+                int bk = A.U8At(WbConstants.OFF_BLDK, A.I32At(WbConstants.OFF_BLDI, r));
+                if (bk != kind) continue;
+                double bx = A.I32At(WbConstants.OFF_BLDXY, r * 2);
+                double by = A.I32At(WbConstants.OFF_BLDXY, r * 2 + 1);
+                double d = WbMath.FdHypot(bx - ux, by - uy);
+                if (d < bestD) { bestD = d; best = r; }
+            }
+            return best;
+        }
+
+        private static bool RepairBuilding(WbCtx ctx, int i, double amount)                         // units.rs L1411-1457
+        {
+            int row = BldgRowOfTile(i);
+            if (row < 0) return false;
+            int kind = A.U8At(WbConstants.OFF_BLDK, i);
+            double max = WbMath.JsRound(A.F64At(WbConstants.OFF_TBHP, kind) * A.F64At(WbConstants.OFF_CVTECH, A.I32At(WbConstants.OFF_BLDC, row) * 24 + WbConstants.TC_BHP));
+            double hp = A.F64At(WbConstants.OFF_BLDHP, row);
+            // （蓝本 hp==0 双读分支为 Map miss 语义注释，无行为——pack 时已写入 max）
+            hp = WbMath.JsMin(max, hp + amount);
+            A.SetF64(WbConstants.OFF_BLDHP, row, hp);
+            int? p = ctx.ActReserve(16);
+            if (p.HasValue)
+            {
+                ctx.ActU8(p.Value, WbConstants.ACT_BHP);
+                ctx.ActI32(p.Value + 1, i);
+                ctx.ActF64(p.Value + 8, hp);
+            }
+            double rd = A.F64At(WbConstants.OFF_CNT, 2) + 1.0;
+            A.SetF64(WbConstants.OFF_CNT, 2, rd);
+            double bx = A.I32At(WbConstants.OFF_BLDXY, row * 2) + 0.5;
+            double by = A.I32At(WbConstants.OFF_BLDXY, row * 2 + 1) + 0.2;
+            Fx(ctx, WbConstants.FX_HAMMER, bx, by, 14.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, false);
+            bool done = hp >= max;
+            if (done)
+            {
+                // damagedSet.delete
+                DmgSetDel(i);
+                Fx(ctx, WbConstants.FX_SPAWN, A.I32At(WbConstants.OFF_BLDXY, row * 2) + 0.5, A.I32At(WbConstants.OFF_BLDXY, row * 2 + 1) + 0.5, 22.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, false);
+                int tick = A.I32At(WbConstants.OFF_TICK, 0);
+                if (rd >= 6.0 && (tick - A.F64At(WbConstants.OFF_CNT, 3)) > 720.0)
+                {
+                    A.SetF64(WbConstants.OFF_CNT, 3, tick);
+                    int civ = A.I32At(WbConstants.OFF_BLDC, row);
+                    if (civ >= 0 && A.U8At(WbConstants.OFF_CVAL, civ) != 0)
+                    {
+                        int? q = ctx.ActReserve(48);
+                        if (q.HasValue)
+                        {
+                            ctx.ActU8(q.Value, WbConstants.ACT_EVT);
+                            ctx.ActU8(q.Value + 1, WbConstants.EVT_REPAIR);
+                            ctx.ActI32(q.Value + 4, civ);
+                            ctx.ActF64(q.Value + 32, bx);
+                            ctx.ActF64(q.Value + 40, A.I32At(WbConstants.OFF_BLDXY, row * 2 + 1) + 0.5);
+                        }
+                    }
+                }
+            }
+            return done;
+        }
+
+        private static void DmgSetAdd(WbCtx ctx, int i)                                             // units.rs L1459-1473
+        {
+            int n = A.I32At(WbConstants.OFF_DMGN, 0);
+            for (int k = 0; k < n; k++)
+            {
+                if (A.I32At(WbConstants.OFF_DMGL, k) == i) return; // Set 语义
+            }
+            if (n < WbConstants.MAX_BLD)
+            {
+                A.SetI32(WbConstants.OFF_DMGL, n, i);
+                A.SetI32(WbConstants.OFF_DMGN, 0, n + 1);
+                int? p = ctx.ActReserve(8);
+                if (p.HasValue)
+                {
+                    ctx.ActU8(p.Value, WbConstants.ACT_DMG_ADD);
+                    ctx.ActI32(p.Value + 1, i);
+                }
+            }
+        }
+
+        private static void DmgSetDel(int i)                                                        // units.rs L1475-1489
+        {
+            int n = A.I32At(WbConstants.OFF_DMGN, 0);
+            for (int k = 0; k < n; k++)
+            {
+                if (A.I32At(WbConstants.OFF_DMGL, k) == i)
+                {
+                    // 有序删除（保持其余顺序）；TS 侧同步由 ACT_DMG_DEL 驱动（调用方域）
+                    for (int m = k; m < n - 1; m++)
+                    {
+                        A.SetI32(WbConstants.OFF_DMGL, m, A.I32At(WbConstants.OFF_DMGL, m + 1));
+                    }
+                    A.SetI32(WbConstants.OFF_DMGN, 0, n - 1);
+                    return;
+                }
+            }
+        }
+
+        private static bool AttackBuilding(WbCtx ctx, int i, double dmg)                            // units.rs L1491-1517
+        {
+            int kind = A.U8At(WbConstants.OFF_BLDK, i);
+            if (kind == 0) return true;
+            int row = BldgRowOfTile(i);
+            if (row < 0) return true;
+            double hp = A.F64At(WbConstants.OFF_BLDHP, row) - dmg;
+            if (hp <= 0.0)
+            {
+                return false; // Err → 上层 BAIL_ATTACK_DEST（onBuildingDestroyed 级联）
+            }
+            A.SetF64(WbConstants.OFF_BLDHP, row, hp);
+            int? p = ctx.ActReserve(16);
+            if (p.HasValue)
+            {
+                ctx.ActU8(p.Value, WbConstants.ACT_BHP);
+                ctx.ActI32(p.Value + 1, i);
+                ctx.ActF64(p.Value + 8, hp);
+            }
+            DmgSetAdd(ctx, i);
+            Fx(ctx, WbConstants.FX_HIT, (i % WbConstants.W) + 0.5, (i / WbConstants.W) + 0.5, 6.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, false);
+            return true;
+        }
 
 
         private static int WildAlive()                                                          // L441-447
@@ -2578,7 +2864,7 @@ namespace PixelWorldBox.Wb
                     if (!hasArmy && firen > 0 && RngNext() < (bigFire ? 0.5 : 0.3))                     // L2982
                     {
                         double radius = job == 4 ? (bigFire ? 7.0 : 4.5) : bigFire ? 5.0 : 3.0;
-                        int fi = FireNear(s, radius);                                                   // TODO(M-U3) 全量
+                        int fi = FireNear(s, radius);                                                  
                         if (fi >= 0)
                         {
                             double fxp2 = (fi % WbConstants.W) + 0.5;
@@ -2587,7 +2873,7 @@ namespace PixelWorldBox.Wb
                             double cdy = fyp - A.F64At(WbConstants.OFF_UY, s);
                             if (cdx * cdx + cdy * cdy < 2.89)
                             {
-                                ExtinguishFire(ctx, fi, s);                                             // TODO(M-U3) 全量
+                                ExtinguishFire(ctx, fi, s);                                            
                                 A.SetF64(WbConstants.OFF_UCD, s, WbMath.JsMax(A.F64At(WbConstants.OFF_UCD, s), 10.0));
                             }
                             else
@@ -2601,7 +2887,7 @@ namespace PixelWorldBox.Wb
                     }
                     if (!hasArmy && job == 4 && A.F64At(WbConstants.OFF_UCD, s) <= 0.0 && RngNext() < 0.2)   // L3002
                     {
-                        int di = DamagedNear(s, 14.0);                                                  // TODO(M-U3) 全量
+                        int di = DamagedNear(s, 14.0);                                                 
                         if (di >= 0)
                         {
                             int row = A.I32At(WbConstants.OFF_BIDX, di);                                // bldg_row_of_tile
@@ -2616,7 +2902,7 @@ namespace PixelWorldBox.Wb
                                     A.SetF64(WbConstants.OFF_UCD, s, 16.0);
                                     A.SetF64(WbConstants.OFF_UATK, s, 10.0);
                                     double amount = 12.0 * A.F64At(WbConstants.OFF_CVTECH, ucivT * 24 + WbConstants.TC_REPAIR);
-                                    RepairBuilding(ctx, di, amount);                                    // TODO(M-U3) 全量
+                                    RepairBuilding(ctx, di, amount);                                   
                                 }
                                 else
                                 {
@@ -2630,7 +2916,7 @@ namespace PixelWorldBox.Wb
                     }
                     if (!hasArmy && job != 2 && job != 3 && A.F64At(WbConstants.OFF_UCD, s) <= 0.0 && A.I32At(WbConstants.OFF_DMGN, 0) > 0 && RngNext() < 0.12)   // L3026
                     {
-                        int di = DamagedNear(s, 1.9);                                                   // TODO(M-U3) 全量
+                        int di = DamagedNear(s, 1.9);                                                  
                         if (di >= 0)
                         {
                             A.SetF64(WbConstants.OFF_UCD, s, 22.0);
@@ -2642,7 +2928,7 @@ namespace PixelWorldBox.Wb
                         bool inArmy = hasArmy;
                         if (A.F64At(WbConstants.OFF_UCD, s) <= 0.0)
                         {
-                            int bi = EnemyBuildingNear(s, 1.6);                                         // TODO(M-U3) 全量
+                            int bi = EnemyBuildingNear(s, 1.6);                                        
                             if (bi >= 0)
                             {
                                 A.SetF64(WbConstants.OFF_UCD, s, 14.0);
@@ -2677,7 +2963,7 @@ namespace PixelWorldBox.Wb
                             double tdy = A.F64At(WbConstants.OFF_UTY, s) - A.F64At(WbConstants.OFF_UY, s);
                             if (tdx * tdx + tdy * tdy < 1.44 || RngNext() < 0.03)
                             {
-                                int tgt = NearestEnemyBuilding(s);                                      // TODO(M-U3) 全量
+                                int tgt = NearestEnemyBuilding(s);                                     
                                 if (tgt >= 0)
                                 {
                                     A.SetF64(WbConstants.OFF_UTX, s, A.I32At(WbConstants.OFF_BLDXY, tgt * 2) + RngNext() * 2.0 - 1.0);
@@ -2688,7 +2974,7 @@ namespace PixelWorldBox.Wb
                     }
                     else if (job == 1 && RngNext() < 0.06)                                               // L3075
                     {
-                        int f = NearestBuildingOf(s, 4); // BUILD_KINDS.FARM                             // TODO(M-U3) 全量
+                        int f = NearestBuildingOf(s, 4); // BUILD_KINDS.FARM                            
                         if (f >= 0)
                         {
                             A.SetF64(WbConstants.OFF_UTX, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.W - 2.0, A.I32At(WbConstants.OFF_BLDXY, f * 2) + RngNext() * 5.0 - 2.5)));
@@ -2703,7 +2989,7 @@ namespace PixelWorldBox.Wb
                         if (civOk && (tdx * tdx + tdy * tdy < 1.44 || RngNext() < 0.03))
                         {
                             int kindPick = RngNext() < 0.6 ? 9 : 2; // MARKET / CAPITAL
-                            int m = NearestBuildingOf(s, kindPick);                                     // TODO(M-U3) 全量
+                            int m = NearestBuildingOf(s, kindPick);                                    
                             if (m >= 0)
                             {
                                 double mx = A.I32At(WbConstants.OFF_BLDXY, m * 2);
