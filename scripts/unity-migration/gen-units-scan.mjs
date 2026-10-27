@@ -464,6 +464,18 @@ if (import.meta.main) {
   determinismCheck(SCENARIOS);
   console.log('determinism: 双跑 PASS');
   mkdirSync(path.dirname(OUT), { recursive: true });
-  writeFileSync(OUT, JSON.stringify({ name: 'units_scan', blueprint: 'lib.rs wb_scan L968-1106 + units.rs bucket_scan L633-734 + is_enemy_full/slot L354-444', scenarios: runs }, null, 1));
+  const out = {
+    meta: {
+      gen: 'gen-units-scan.mjs', job: 2902286, slice: 'M-U2b',
+      wasmBytes: wasmBytes.length, W, H, MAX_UNITS, MAX_RACES, TILES,
+      regionIds: ID, raceFlags: { F_HOSTILE, F_CIV, F_UNDEAD, F_PREDATOR, F_HERBIVORE },
+      eps: EP_KEYS.map((k) => ep(k)), epKeys: EP_KEYS,
+      panicCap: PANIC_CAP, grudgeCap: GRUDGE_CAP,
+      offs: (() => { const o = []; for (let i = 0; i < 154; i++) o.push(ex.wb_off(i)); return o; })(),
+      note: 'f64 字段全部 bits(hex) 位精确。蓝本 lib.rs wb_scan L968-1106 + units.rs bucket_scan L633-734 + is_enemy_full/slot L354-444。ScanResult repr(C) 424B：i32@0 i32@4 f64@8 f64@16 u32@24 u32@28 u32@32 u32@36 _pad u32×32@40 f64×32@168。单单位层 scan 直调 RESULT 全字段；批处理层 wb_units_batch 集成（rng 流+恐慌镜像）。',
+    },
+    scenarios: runs,
+  };
+  writeFileSync(OUT, JSON.stringify(out, null, 1));
   console.log(`写出 ${OUT}`);
 }

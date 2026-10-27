@@ -14,6 +14,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using PixelWorldBox.Wb;
 
@@ -53,7 +54,8 @@ namespace PixelWorldBox.Tests
     internal class GoldenUnitInput
     {
         public int slot, race;
-        public double x, y, tx, ty;
+        public double x, y;
+        public double? tx, ty;              // 缺省 = x/y（gen putUnit: u.tx ?? u.x；scan 场景多数无 tx/ty）
         public double? speed, chill, curse, hp;
         public double? food;                 // 缺省 = NaN（u_has_food=false）
         // M-U2b scan 场景扩展（gen-units-scan.mjs putUnit 字段）
@@ -84,20 +86,22 @@ namespace PixelWorldBox.Tests
     {
         public WbArena Arena;
 
-        public static GoldenFile Load()
+        public static GoldenFile Load() => LoadFile<GoldenFile>("units_move.json");
+
+        public static T LoadFile<T>(string fileName)
         {
-            string path = FindGolden();
+            string path = FindGolden(fileName);
             Assert.IsTrue(File.Exists(path), $"golden json not found: {path}");
-            return JsonConvert.DeserializeObject<GoldenFile>(File.ReadAllText(path));
+            return JsonConvert.DeserializeObject<T>(File.ReadAllText(path));
         }
 
-        private static string FindGolden()
+        private static string FindGolden(string fileName)
         {
             string[] candidates =
             {
-                "Assets/StreamingAssets/WbGolden/units_move.json",
-                Path.Combine(TestContext.CurrentContext.TestDirectory, "Assets/StreamingAssets/WbGolden/units_move.json"),
-                Path.Combine(Directory.GetParent(ApplicationDataPath()).FullName, "Assets/StreamingAssets/WbGolden/units_move.json"),
+                "Assets/StreamingAssets/WbGolden/" + fileName,
+                Path.Combine(TestContext.CurrentContext.TestDirectory, "Assets/StreamingAssets/WbGolden/" + fileName),
+                Path.Combine(Directory.GetParent(ApplicationDataPath()).FullName, "Assets/StreamingAssets/WbGolden/" + fileName),
             };
             foreach (var c in candidates) if (File.Exists(c)) return c;
             return candidates[0];
@@ -171,8 +175,8 @@ namespace PixelWorldBox.Tests
             A.SetU32(WbConstants.OFF_UCELL, u.slot, (uint)((int)Math.Floor(u.y / 4.0) * WbConstants.W + (int)Math.Floor(u.x / 4.0)));
             A.SetF64(WbConstants.OFF_UX, u.slot, u.x);
             A.SetF64(WbConstants.OFF_UY, u.slot, u.y);
-            A.SetF64(WbConstants.OFF_UTX, u.slot, u.tx);
-            A.SetF64(WbConstants.OFF_UTY, u.slot, u.ty);
+            A.SetF64(WbConstants.OFF_UTX, u.slot, u.tx ?? u.x);
+            A.SetF64(WbConstants.OFF_UTY, u.slot, u.ty ?? u.y);
             A.SetF64(WbConstants.OFF_USPEED, u.slot, u.speed ?? 0.08);
             A.SetF64(WbConstants.OFF_UHP, u.slot, u.hp ?? 100);
             A.SetF64(WbConstants.OFF_UMAXHP, u.slot, 100);
@@ -237,16 +241,123 @@ namespace PixelWorldBox.Tests
             for (int i = 0; i < n; i++) sb.Append(a[off + i].ToString("x2"));
             return sb.ToString();
         }
+
+        // ---------------- M-U2b scan 专用（gen-units-scan.mjs 同构） ----------------
+
+        /// EPS 真值覆盖（scan JSON meta.eps = engineParams.ep 真值——纪律②，零手抄）
+        public void SetEps(List<double> eps)
+        {
+            for (int i = 0; i < eps.Count; i++) Arena.SetF64(WbConstants.OFF_EPS, i, eps[i]);
+        }
+
+        /// scan 场景 races 为二元组 [race, flags]（无 TBF 语义；TBF 清零与 gen setupRaces 同构）
+        public void SetupRacesFlat(List<List<int>> races)
+        {
+            foreach (var r in races)
+            {
+                Arena.SetU8(WbConstants.OFF_RACE_FLAGS, r[0], (byte)r[1]);
+                Arena.SetU8(WbConstants.OFF_TBF, r[0] * 2, 0);
+                Arena.SetU8(WbConstants.OFF_TBF, r[0] * 2 + 1, 0);
+            }
+        }
+
+        /// atwar 对表（gen runSingle: setU8(ATWAR, a*MAX_CIVS+b, 1)）
+        public void SetAtWar(List<List<int>> atwar)
+        {
+            if (atwar == null) return;
+            foreach (var p in atwar) Arena.SetU8(WbConstants.OFF_ATWAR, p[0] * WbConstants.MAX_CIVS + p[1], 1);
+        }
+
+        /// 全局 grudge 平面（单单位版 wb_scan 读 GIDS/GVALS；gen putGlobalGrudges 同构）
+        public void PutGlobalGrudges(List<int> gids, List<double> gvals)
+        {
+            for (int t = 0; t < WbConstants.GRUDGE_CAP; t++)
+            {
+                Arena.SetI32(WbConstants.OFF_GIDS, t, gids != null && t < gids.Count ? gids[t] : -1);
+                Arena.SetF64(WbConstants.OFF_GVALS, t, gvals != null && t < gvals.Count ? gvals[t] : 0);
+            }
+        }
+
+        /// scan 场景地形（uniform base，无 rects/fire/road）
+        public void FillTerrainFlat(int? baseT)
+        {
+            int b = baseT ?? 3;
+            int terrOff = Arena.Offs[WbConstants.OFF_TERR];
+            for (int i = 0; i < WbConstants.TILES; i++) Arena.Arena[terrOff + i] = (byte)b;
+        }
+    }
+
+    // ---- M-U2b scan JSON POCO（gen-units-scan.mjs 输出）----
+    internal class GoldenScanFile
+    {
+        public GoldenScanMeta meta;
+        public List<GoldenScanScenario> scenarios;
+    }
+    internal class GoldenScanMeta
+    {
+        public int W, H, MAX_UNITS, MAX_RACES, TILES;
+        public List<double> eps;
+        public List<string> epKeys;
+        public int panicCap, grudgeCap;
+        public List<int> offs;
+    }
+    internal class GoldenScanScenario
+    {
+        public string name, mode;
+        public long seed;
+        public int fxp, ticks;
+        public int? @base;
+        public List<List<int>> races;
+        public List<List<int>> atwar;
+        public List<int> gids;
+        public List<double> gvals;
+        public List<GoldenUnitInput> units;
+        public GoldenScanSpec scan;
+        public List<GoldenScanSpec> extraScans;
+        public List<int> lutProbe;
+        public JToken output;               // single → GoldenScanOut | 数组；batch → List<GoldenScanTick>
+    }
+    internal class GoldenScanSpec { public int slot, cx, cy; public bool contagious; public int? gLen; }
+    internal class GoldenScanOut
+    {
+        public int rc;
+        public GoldenScanResult result;
+        public List<GoldenLutProbe> lutProbe;
+    }
+    internal class GoldenScanResult
+    {
+        public int enemySlot, overflow;
+        public string bestD, enemyD;        // bits hex
+        public uint allies, foes, panicN, pad;
+        public List<uint> panicSlots;
+        public List<string> panicVals;      // bits hex ×32（全量，含未写零位）
+    }
+    internal class GoldenLutProbe { public int key; public byte v; }
+    internal class GoldenScanTick
+    {
+        public int rc, actN, dlistN, batchR, bailK;
+        public long rng, tick;
+        public List<GoldenScanUnitOut> units;
+    }
+    internal class GoldenScanUnitOut
+    {
+        public int slot, race, dead, hasPanic, flip;
+        public string x, y, tx, ty, panic;  // bits hex
     }
 
     [TestFixture]
     public class WbGoldenTests
     {
         private GoldenFile _golden;
+        private GoldenScanFile _scanGolden;
         private WbGoldenFixture _fx;
 
         [OneTimeSetUp]
-        public void Load() => _golden = WbGoldenFixture.Load();
+        public void Load()
+        {
+            _golden = WbGoldenFixture.Load();
+            _scanGolden = WbGoldenFixture.LoadFile<GoldenScanFile>("units_scan.json");
+        }
 
         [SetUp]
         public void Setup() => _fx = new WbGoldenFixture();
@@ -321,6 +432,107 @@ namespace PixelWorldBox.Tests
             Assert.AreEqual(RunScenarioHex(sc), RunScenarioHex(sc), "C# 双跑输出不一致");
             // 且与黄金一致
             Assert.AreEqual(RunScenarioHex(sc), GoldenScenarioHex(sc), "C# 输出与黄金不一致");
+        }
+
+        // -------- Test 4：M-U2b 单单位层 18 场景（wb_scan 直调 → ScanSingle，RESULT 424B 逐位） --------
+        private GoldenScanScenario ScanSc(int index) => _scanGolden.scenarios[index];
+
+        private void ScanFixtureSetup(GoldenScanScenario sc)
+        {
+            _fx.InitWorld(sc.seed, sc.fxp);
+            _fx.SetEps(_scanGolden.meta.eps);                       // EPS 真值从黄金 meta 读（纪律②零手抄）
+            _fx.FillTerrainFlat(sc.@base);
+            _fx.SetupRacesFlat(sc.races);
+            foreach (var u in sc.units) _fx.PutUnit(u);
+            _fx.SetAtWar(sc.atwar);
+            _fx.PutGlobalGrudges(sc.gids, sc.gvals);
+            _fx.Arena.PackEnd((uint)sc.units.Count);
+        }
+
+        private void AssertScanResult(string tag, GoldenScanOut expect)
+        {
+            Assert.AreEqual(expect.rc, _lastScanRc, $"{tag} rc");
+            var A = _fx.Arena;
+            var r = expect.result;
+            Assert.AreEqual(r.enemySlot, A.I32At(WbConstants.OFF_RESULT, 0), $"{tag} enemySlot");
+            Assert.AreEqual(r.overflow, A.I32At(WbConstants.OFF_RESULT, 1), $"{tag} overflow");
+            Assert.AreEqual(Bits(r.bestD), A.U64At(WbConstants.OFF_RESULT, 1), $"{tag} bestD bits");
+            Assert.AreEqual(Bits(r.enemyD), A.U64At(WbConstants.OFF_RESULT, 2), $"{tag} enemyD bits");
+            Assert.AreEqual(r.allies, A.U32At(WbConstants.OFF_RESULT, 6), $"{tag} allies");
+            Assert.AreEqual(r.foes, A.U32At(WbConstants.OFF_RESULT, 7), $"{tag} foes");
+            Assert.AreEqual(r.panicN, A.U32At(WbConstants.OFF_RESULT, 8), $"{tag} panicN");
+            Assert.AreEqual(r.pad, A.U32At(WbConstants.OFF_RESULT, 9), $"{tag} _pad");
+            for (int i = 0; i < r.panicSlots.Count; i++)
+                Assert.AreEqual(r.panicSlots[i], A.U32At(WbConstants.OFF_RESULT, 10 + i), $"{tag} panicSlots[{i}]");
+            for (int i = 0; i < r.panicVals.Count; i++)
+                Assert.AreEqual(Bits(r.panicVals[i]), A.U64At(WbConstants.OFF_RESULT, 21 + i), $"{tag} panicVals[{i}] bits");
+            // lutProbe（LUT 区基址 = align8(offs[RACE_FLAGS] + MAX_RACES)，蓝本 wb_init L505-509）
+            if (expect.lutProbe != null)
+            {
+                int lut = (A.Offs[WbConstants.OFF_RACE_FLAGS] + WbConstants.MAX_RACES + 7) & ~7;
+                foreach (var p in expect.lutProbe)
+                    Assert.AreEqual(p.v, A.Arena[lut + p.key], $"{tag} LUT[{p.key}]");
+            }
+        }
+
+        private int _lastScanRc;
+
+        [TestCase(0)]  [TestCase(1)]  [TestCase(2)]  [TestCase(3)]  [TestCase(4)]
+        [TestCase(5)]  [TestCase(6)]  [TestCase(7)]  [TestCase(8)]  [TestCase(9)]
+        [TestCase(10)] [TestCase(11)] [TestCase(12)] [TestCase(13)] [TestCase(14)]
+        [TestCase(15)] [TestCase(16)] [TestCase(17)]
+        public void Scan_SingleScenarios_BitExactParity(int index)
+        {
+            var sc = ScanSc(index);
+            Assert.AreEqual("single", sc.mode, $"{sc.name} mode");
+            ScanFixtureSetup(sc);
+            // scan + extraScans 逐次执行（SC16 LUT 缓存链：三次 scan 输出数组）
+            var specs = new List<GoldenScanSpec> { sc.scan };
+            if (sc.extraScans != null) specs.AddRange(sc.extraScans);
+            var outputs = sc.output.Type == JTokenType.Array
+                ? sc.output.ToObject<List<GoldenScanOut>>()
+                : new List<GoldenScanOut> { sc.output.ToObject<GoldenScanOut>() };
+            Assert.AreEqual(specs.Count, outputs.Count, $"{sc.name} scan 次数");
+            for (int i = 0; i < specs.Count; i++)
+            {
+                var sp = specs[i];
+                _lastScanRc = WbUnits.ScanSingle((uint)sp.slot, sp.cx, sp.cy, sp.contagious, sp.gLen ?? -1);
+                AssertScanResult($"{sc.name} scan{i}", outputs[i]);
+            }
+        }
+
+        // -------- Test 5：M-U2b 批处理层 3 场景（wb_units_batch 集成：rng 流 + 恐慌镜像写入） --------
+        [TestCase(18)] [TestCase(19)] [TestCase(20)]
+        public void Scan_BatchScenarios_BitExactParity(int index)
+        {
+            var sc = ScanSc(index);
+            Assert.AreEqual("batch", sc.mode, $"{sc.name} mode");
+            ScanFixtureSetup(sc);
+            var ticks = sc.output.ToObject<List<GoldenScanTick>>();
+            Assert.AreEqual(sc.ticks, ticks.Count, $"{sc.name} tick 数");
+            for (int t = 0; t < sc.ticks; t++)
+            {
+                int rc = WbUnits.UnitsBatch(0, 0);
+                var expect = ticks[t];
+                Assert.AreEqual(expect.rc, rc, $"{sc.name} tick{t} rc");
+                Assert.AreEqual(unchecked((ulong)expect.rng), _fx.Arena.U64At(WbConstants.OFF_RNGS, 0), $"{sc.name} tick{t} RNG 终态（rng 流逐位）");
+                Assert.AreEqual(expect.actN, _fx.Arena.I32At(WbConstants.OFF_ACTN, 0), $"{sc.name} tick{t} ACTN");
+                Assert.AreEqual(expect.dlistN, _fx.Arena.I32At(WbConstants.OFF_DLISTN, 0), $"{sc.name} tick{t} DLISTN");
+                Assert.AreEqual(unchecked((uint)expect.batchR), _fx.Arena.U32At(WbConstants.OFF_BATCHR, 0), $"{sc.name} tick{t} BATCHR");
+                Assert.AreEqual(unchecked((uint)expect.bailK), _fx.Arena.U32At(WbConstants.OFF_BAILK, 0), $"{sc.name} tick{t} BAILK");
+                foreach (var eu in expect.units)
+                {
+                    Assert.AreEqual(Bits(eu.x), _fx.Arena.U64At(WbConstants.OFF_UX, eu.slot), $"{sc.name} tick{t} u{eu.slot} x");
+                    Assert.AreEqual(Bits(eu.y), _fx.Arena.U64At(WbConstants.OFF_UY, eu.slot), $"{sc.name} tick{t} u{eu.slot} y");
+                    Assert.AreEqual(Bits(eu.tx), _fx.Arena.U64At(WbConstants.OFF_UTX, eu.slot), $"{sc.name} tick{t} u{eu.slot} tx");
+                    Assert.AreEqual(Bits(eu.ty), _fx.Arena.U64At(WbConstants.OFF_UTY, eu.slot), $"{sc.name} tick{t} u{eu.slot} ty");
+                    Assert.AreEqual(Bits(eu.panic), _fx.Arena.U64At(WbConstants.OFF_UPANIC, eu.slot), $"{sc.name} tick{t} u{eu.slot} panic bits");
+                    Assert.AreEqual(eu.hasPanic, _fx.Arena.U8At(WbConstants.OFF_UHASPANIC, eu.slot), $"{sc.name} tick{t} u{eu.slot} hasPanic");
+                    Assert.AreEqual(eu.dead, _fx.Arena.U8At(WbConstants.OFF_UDEAD, eu.slot), $"{sc.name} tick{t} u{eu.slot} dead");
+                    Assert.AreEqual(eu.flip, _fx.Arena.U8At(WbConstants.OFF_UFLIP, eu.slot), $"{sc.name} tick{t} u{eu.slot} flip");
+                }
+                _fx.BetweenTicks(sc.units);
+            }
         }
 
         private string RunScenarioHex(GoldenScenario sc)

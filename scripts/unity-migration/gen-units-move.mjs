@@ -329,6 +329,7 @@ const out = {
     regionIds: ID, raceFlags: { F_HOSTILE, F_CIV, F_UNDEAD, F_PREDATOR, F_HERBIVORE },
     tbfBits: { flying: 32, aquatic: 64, sandswim: 128 }, rf2: { lavaimm: RF2_LAVAIMM },
     fxp: { AMB: FXP_AMB }, nanBits: NAN_BITS,
+    eps: EP_KEYS_MV.map((k) => ep(k)), epKeys: EP_KEYS_MV,
     offs: (() => { const o = []; for (let i = 0; i < 154; i++) o.push(ex.wb_off(i)); return o; })(),
     note: 'f64 字段全部 bits(hex) 位精确；十进制仅供阅读。蓝本 units.rs move_unit L1675/update_unit L2202。offs = wasm 运行时权威布局（wb_off 0..153），C# 布局自算须与此逐位一致。',
   },
