@@ -36,7 +36,7 @@ namespace PixelWorldBox.Wb
         public int? knowledge;
         public List<string> techs = new List<string>();
         public string research;          // null = 无
-        public int researchP;
+        public double researchP;         // engine number（M-U3e：fundResearch start + points×diffusion f64 语义）
         public int gov;
         public int govYear;
         public int stability = 70;
@@ -106,6 +106,7 @@ namespace PixelWorldBox.Wb
         public string name;
         public int hurt, breath, parity, dead, boat, boatTTL, caravan;
         public int wep, arm, hlm, shd, bts, rng, amu;
+        public double? tDmg, tHp;        // engine u.tDmg/u.tHp（undefined ?? 1 语义 → null；completeTech retro 记账）
         public object army;
         public object gene;
         public int food, fam, fgn;
@@ -333,6 +334,8 @@ namespace PixelWorldBox.Wb
         public Dictionary<string, WbIdea> emIdeas = new Dictionary<string, WbIdea>();   // engine L601
         public int ideaSeq = 1;             // engine L603
         public Dictionary<int, WbIdeaMods> ideaModCache = new Dictionary<int, WbIdeaMods>(); // engine L611（采纳时失效）
+        public Dictionary<string, WbEmTech> emTechs = new Dictionary<string, WbEmTech>();   // engine L597（涌现科技注册表）
+        public int emTechSeq = 1;           // engine L599
         public string overlayMode = "none";                                                  // 渲染 overlay（M-U4 域；黄金恒 none）
         public bool overlayDirty = true;
         public List<WbEvoNode> evoNodes = new List<WbEvoNode>();

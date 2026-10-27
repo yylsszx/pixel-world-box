@@ -95,7 +95,32 @@ namespace PixelWorldBox.Wb
                     case "tactics": m.morale += 8; break;
                     case "machinery": m.repair += 0.6; break;
                     case "crop4": m.repro += 0.15; break;
-                    default: break; // 其余科技项（emTechs 涌现域）M-U3b 黄金场景不含——TODO(M-U3c) 逐项补全
+                    // —— M-U3e：余下 24 项全量补齐（tech.ts L201-226 逐字保真） ——
+                    case "printing": m.know += 0.5; m.cult += 0.3; break;
+                    case "banking": m.gold += 0.35; break;
+                    case "astronomy": m.col -= 0.3; break;
+                    case "medicine": m.plague -= 0.45; break;
+                    case "gothic": m.bhp += 0.25; m.repair += 0.6; break;
+                    case "republic": m.stab += 15; m.gold += 0.2; break;
+                    case "steel": m.dmg += 0.2; m.hp += 0.12; break;
+                    case "legion": m.armyMax += 2; m.morale += 6; break;
+                    case "steam": m.bhp += 0.4; m.repair += 0.8; break;
+                    case "gunpowder": m.dmg += 0.25; break;
+                    case "assembly": m.gold += 0.6; break;
+                    case "sanitation": m.repro += 0.12; m.plague -= 0.3; break;
+                    case "rifling": m.range += 2.5; m.archer += 0.3; break;
+                    case "explosives": m.dmg += 0.15; m.arty += 1; break;
+                    case "flight": m.bomber += 1; break;
+                    case "atomic": m.nukeCap += 1; break;
+                    case "electronics": m.know += 0.6; break;
+                    case "singularity": m.ai += 1; m.stab += 10; m.know += 0.4; break;
+                    case "robotics": m.mech += 1; m.repair += 1.0; m.bhp += 0.4; break;
+                    case "lasers": m.laser += 1; m.dmg += 0.2; break;
+                    case "drones": m.drone += 1; break;
+                    case "orbital": m.orbital += 1; break;
+                    case "plasma": m.plasma += 1; m.dmg += 0.15; break;
+                    case "antimatter": m.antiMatter += 1; break;
+                    default: break; // 未知 key（emTechs 涌现科技走 ApplyEmTechMods 叠加域，不入静态表）
                 }
             }
             return m;
@@ -110,12 +135,204 @@ namespace PixelWorldBox.Wb
             if (techModCache.TryGetValue(civId, out cached)) return cached;
             WbCiv c = CivAt(w, civId);
             WbTechMods mods = c != null ? ModsOfTechs(c.techs) : new WbTechMods();
-            // v3 涌现科技叠加：emTechs M-U3b 恒空（TODO(M-U3c)）
+            // v3：涌现科技效果叠加（emergence.ts applyEmTechMods —— 无限发明 → 无限叠加的小加成）
+            if (c != null && w.emTechs.Count > 0)
+            {
+                foreach (string key in c.techs)
+                {
+                    if (w.emTechs.TryGetValue(key, out WbEmTech em) && em != null) WbTech.ApplyEmTechMods(mods, em);
+                }
+            }
             techModCache[civId] = mods;
             return mods;
         }
         /// generate/读档清缓存点（engine L825）
         public static void ClearTechModCache() => techModCache.Clear();
+
+        // ==================== M-U3e 科技研发域（engine L4884-5017） ====================
+
+        /// 文明中心坐标（事件定位用）（engine L4998-5006）
+        public static double CivCenterX(WbWorld w, WbCiv c)
+        {
+            if (c.capital >= 0) return WbWorld.TileX(c.capital) + 0.5;
+            return c.tiles.Count > 0 ? WbWorld.TileX(c.tiles[(c.tiles.Count / 2) | 0]) : WbWorld.W / 2;
+        }
+        public static double CivCenterY(WbWorld w, WbCiv c)
+        {
+            if (c.capital >= 0) return WbWorld.TileY(c.capital) + 0.5;
+            return c.tiles.Count > 0 ? WbWorld.TileY(c.tiles[(c.tiles.Count / 2) | 0]) : WbWorld.H / 2;
+        }
+
+        /// 文明可研究科技列表（未拥有且前置齐备）（engine L4884-4887）
+        public static List<WbTechDef> AvailableTechs(WbCiv c)
+        {
+            var owned = new HashSet<string>(c.techs ?? new List<string>());
+            var mi = new List<WbTechDef>();
+            foreach (var t in WbTech.Techs)
+                if (!owned.Contains(t.key) && AllDepsOwned(t.deps, owned)) mi.Add(t);
+            return mi;
+        }
+        private static bool AllDepsOwned(string[] deps, HashSet<string> owned)
+        {
+            foreach (string d in deps) if (!owned.Contains(d)) return false;
+            return true;
+        }
+
+        /// 文明自动选题：偏好与国家气质相关（engine L4890-4916）
+        public static string PickResearch(WbWorld w, WbCiv c)
+        {
+            List<WbTechDef> avail = AvailableTechs(c);
+            if (avail.Count == 0) return null;
+            // 偏好加权：军国主义/文化/国库影响选题倾向（真实的国家路径分化）
+            double mil = (c.militarism ?? 30) / 100.0;
+            double cul = System.Math.Min(1, (c.culture) / 120.0);
+            double rich = System.Math.Min(1, (c.gold ?? 0) / 200.0);
+            double[] wt = new double[avail.Count];
+            double total = 0;
+            for (int i = 0; i < avail.Count; i++)
+            {
+                double b = 1;
+                WbTechDef t = avail[i];
+                if (t.cat == "military") b *= 0.5 + mil * 1.6;
+                if (t.cat == "culture") b *= 0.5 + cul * 1.6;
+                if (t.cat == "econ") b *= 0.6 + rich * 1.4;
+                if (t.cat == "civic") b *= 0.7 + (100 - (c.stability)) / 150.0;
+                if (t.cat == "naval") b *= 0.7;
+                if (t.cat == "agri") b *= 0.8 + System.Math.Min(0.8, c.pop / 100.0);
+                if (t.cat == "eng") b *= 0.9;
+                wt[i] = b;
+                total += b;
+            }
+            double roll = w.Rng() * total;
+            for (int i = 0; i < avail.Count; i++)
+            {
+                roll -= wt[i];
+                if (roll <= 0) return avail[i].key;
+            }
+            return avail[avail.Count - 1].key;
+        }
+
+        /// 知识注入研究：完成返回实际消耗量（engine L4920-4948）
+        public static double FundResearch(WbWorld w, WbCiv c, double points)
+        {
+            if (points <= 0) return 0;
+            if (c.research == null)
+            {
+                string pick = PickResearch(w, c) ?? InventEmTech(w, c);
+                if (pick == null) return 0;
+                c.research = pick;
+                c.researchP = 0;
+                WbTechDef? def0 = WbTech.ByKey(pick);
+                WbEmTech em0 = null;
+                w.emTechs.TryGetValue(pick, out em0);
+                w.AddEvent("tech", $"「{c.name}」的学者们开始研究「{def0.HasValue ? def0.Value.name : (em0 != null ? em0.name : pick)}」", c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+            }
+            WbTechDef? defN = WbTech.ByKey(c.research);
+            if (!defN.HasValue && !w.emTechs.ContainsKey(c.research)) { c.research = null; return 0; }
+            double cost = defN.HasValue ? defN.Value.cost : w.emTechs[c.research].cost;
+            double start = c.researchP;
+            // —— 联盟互连：盟友已掌握的科技 → 技术交流使研究效率 ×1.2（盟内知识扩散）——
+            WbAlliance alF = AllianceOfCiv(w, c.id);
+            double diffusion = 1;
+            if (alF != null)
+            {
+                foreach (int m in alF.members)
+                {
+                    if (m == c.id) continue;
+                    WbCiv mc = CivAt(w, m);
+                    if (mc != null && mc.alive && mc.techs != null && mc.techs.Contains(c.research)) { diffusion = alF.bonded ? 1.32 : 1.2; break; }
+                }
+            }
+            c.researchP = start + points * diffusion;
+            if (c.researchP >= cost)
+            {
+                CompleteTech(w, c, c.research);
+                return System.Math.Max(0, cost - start); // 实际消耗 = 完成缺口（余量回流国库）
+            }
+            return points;
+        }
+
+        /// 科技完成：入帐 + 纪事 + 加成缓存重建（engine L4951-4996）
+        public static void CompleteTech(WbWorld w, WbCiv c, string key)
+        {
+            c.techs.Add(key);
+            WbTechDef? def = WbTech.ByKey(key);
+            WbEmTech em = null;
+            w.emTechs.TryGetValue(key, out em);
+            c.research = null;
+            c.researchP = 0;
+            techModCache.Remove(c.id);
+            // —— 科技回溯：研发完成即刻惠及全军现役单位（按新旧乘数差重算）——
+            {
+                WbTechMods nm = TechModsOf(w, c.id); // 缓存已删，重算即新值
+                if (nm.dmg != 1 || nm.hp != 1)
+                {
+                    foreach (WbU u in w.units)
+                    {
+                        if (u.dead != 0 || u.civ != c.id) continue;
+                        double rd = nm.dmg / (u.tDmg ?? 1);
+                        double rh = nm.hp / (u.tHp ?? 1);
+                        if (rd != 1) u.dmg = System.Math.Max(1, u.dmg * rd);
+                        if (rh != 1)
+                        {
+                            double ratio = u.hp / u.maxHp;
+                            u.maxHp = System.Math.Max(1, WbMath.JsRound(u.maxHp * rh));
+                            u.hp = System.Math.Min(u.maxHp, System.Math.Max(1, WbMath.JsRound(u.maxHp * ratio)));
+                        }
+                        u.tDmg = nm.dmg;
+                        u.tHp = nm.hp;
+                    }
+                }
+            }
+            w.AddEvent("tech", $"「{c.name}」研发出「{def.HasValue ? def.Value.name : (em != null ? em.name : key)}」—— {def.HasValue ? def.Value.desc : (em != null ? em.desc : "")}", c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+            // 大科技里程碑提示（涌现科技每 5 项提示一次，防刷屏）
+            if ((def.HasValue && def.Value.era >= 2) || (em != null && em.gen % 5 == 0))
+            {
+                w.Toast($"「{c.name}」掌握了「{def.HasValue ? def.Value.name : (em != null ? em.name : key)}」", "info");
+                // onSound('era') —— 纪元跃迁钟声（M-U4 域）
+            }
+            // 现有建筑随工程科技升级耐久上限（老房加固——立即重建受损映射）
+            if (def.HasValue && (def.Value.key == "masonry" || def.Value.key == "fortification" || def.Value.key == "gothic"))
+            {
+                double mul = TechModsOf(w, c.id).bhp;
+                foreach (WbBuilding b in w.buildings)
+                {
+                    if (b.civ != c.id) continue;
+                    double baseHp = BUILDING_DEFS[b.kind].hp;
+                    double max = WbMath.JsRound(baseHp * mul);
+                    double cur;
+                    w.bHp[b.i] = System.Math.Min(max, (w.bHp.TryGetValue(b.i, out cur) ? cur : baseHp) + baseHp * 0.25);
+                }
+            }
+        }
+
+        /// 涌现科技发明（静态树穷尽后的无限延伸）（engine L8794-8803）
+        public static string InventEmTech(WbWorld w, WbCiv c)
+        {
+            if (w.emTechs.Count >= 60) return null; // 注册表软上限（防超长局内存膨胀；效果仍可叠加）
+            WbEmTech t = WbTech.InventTech(w, (c.militarism ?? 30) / 100.0, System.Math.Min(1, (c.culture) / 120.0), System.Math.Min(1, (c.gold ?? 0) / 200.0), w.emTechSeq);
+            t.key = $"em{w.emTechSeq++}";
+            w.emTechs[t.key] = t;
+            RecordEvo(w, "tech", t.name, null, c.colorHex, $"{t.desc}（{c.name} 的第 {t.gen} 项涌现发明）", t.desc, null);
+            w.AddEvent("emerge", $"「{c.name}」的学者穷尽了既有典籍，开创出前所未有的学问——「{t.name}」（{t.desc}）", c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+            w.Toast($"「{c.name}」发明了「{t.name}」", "good");
+            return t.key;
+        }
+
+        /// 科技 tick：每 120 tick 一次（engine L5009-5017；无收入文明的慢速自然积累）
+        public static void TechTick(WbWorld w)
+        {
+            foreach (WbCiv c in w.civs)
+            {
+                if (c == null || !c.alive || c.pop <= 0) continue;
+                // 无图书馆的小文明：口传心授的自然积累（每 tick 段 0-1 点，人口越大越多）
+                if (c.research == null && (c.knowledge ?? 0) < 40 && w.Rng() < 0.35)
+                {
+                    FundResearch(w, c, w.Rng() < 0.5 ? 1 : 0); // 确定性 RNG（Math.random 会破坏同种子复现）
+                }
+            }
+        }
+
 
         // ---------------- civsTick（engine L5933-6040） ----------------
         public static void CivsTick(WbWorld w)

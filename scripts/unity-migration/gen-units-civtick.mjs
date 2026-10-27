@@ -46,7 +46,22 @@ const jiti = createJiti(import.meta.url, { alias: { '@': path.join(ROOT, 'src') 
 const { GameEngine } = await jiti.import(path.join(ROOT, 'src/lib/game/engine.ts'));
 const { T, RACES, JOBS, BUILDING_DEFS, BUILD_KINDS, DEFAULT_LAWS } = await jiti.import(path.join(ROOT, 'src/lib/game/types.ts'));
 const { HOUSE_CAP, isLand, isWater, buildable } = await jiti.import(path.join(ROOT, 'src/lib/game/constants.ts'));
-const { NEUTRAL_MODS } = await jiti.import(path.join(ROOT, 'src/lib/game/tech.ts'));
+const { NEUTRAL_MODS, TECHS, TECH_BY_KEY } = await jiti.import(path.join(ROOT, 'src/lib/game/tech.ts'));
+const TECH_KEYS = TECHS.map((t) => t.key);
+// M-U3e 夹具构造：ownedExcept(target) = 除 target 及其传递依赖闭包外全拥有 —— availableTechs 恒 = [target]
+// （蓝本 availableTechs：未拥有且 deps 全拥有 → 唯一可选项使 pickResearch 确定性）
+function ownedExcept(target) {
+  const desc = new Set([target]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const t of TECHS) {
+      if (desc.has(t.key)) continue;
+      if (t.deps.some((d) => desc.has(d))) { desc.add(t.key); changed = true; }
+    }
+  }
+  return TECH_KEYS.filter((k) => !desc.has(k));
+}
 
 const W = 256, H = 160;
 const idx = (x, y) => y * W + x;
@@ -95,6 +110,11 @@ function dumpDirective(d) {
     text: d.text ?? null, endTick: d.endTick === undefined ? null : d.endTick, endText: d.endText === undefined ? null : d.endText,
     killCount: d.killCount === undefined ? null : d.killCount };
 }
+function dumpEmTech(t) {
+  // emergence.ts EmTech（M-U3e 涌现科技发明产物）
+  return { key: t.key, name: t.name, cat: t.cat, cost: t.cost, gen: t.gen,
+    effects: (t.effects ?? []).map((e) => [e.k, e.v]), desc: t.desc };
+}
 function dumpEvo(n) {
   return { id: n.id, kind: n.kind, name: n.name, parent: n.parent === undefined || n.parent === null ? null : n.parent,
     year: n.year, colorHex: n.colorHex, detail: n.detail, stat: n.stat === undefined ? null : n.stat };
@@ -106,7 +126,7 @@ function dumpCiv(c) {
     colonizeCd: c.colonizeCd ?? null, popZeroTick: c.popZeroTick === undefined ? null : c.popZeroTick,
     armyCd: c.armyCd ?? null, mobilizeUntil: c.mobilizeUntil === undefined ? null : c.mobilizeUntil,
     mergedInto: c.mergedInto === undefined ? null : c.mergedInto,
-    techs: c.techs ?? null, research: c.research ?? null, researchP: c.researchP ?? null,
+    techs: c.techs ? [...c.techs] : null, research: c.research ?? null, researchP: c.researchP ?? null,
     gov: c.gov ?? null, stability: c.stability ?? null, culture: c.culture ?? null, militarism: c.militarism ?? null,
     kingId: c.kingId === undefined ? null : c.kingId, kingName: c.kingName, banner: c.banner,
     colorHex: c.colorHex, color: c.color,
@@ -141,7 +161,7 @@ function mkCiv(eng, o) {
     popZeroTick: o.popZeroTick, history: [],
     gold: o.gold ?? 0, knowledge: o.knowledge ?? 0,
     armyCd: o.armyCd ?? 0, mobilizeUntil: o.mobilizeUntil,
-    mergedInto: o.mergedInto, techs: o.techs ?? [], research: null, researchP: 0,
+    mergedInto: o.mergedInto, techs: o.techs ? [...o.techs] : [], research: null, researchP: 0,
     gov: o.gov ?? 0, govYear: 0, stability: o.stability ?? 70,
     militarism: o.militarism ?? 30, income: 0, expense: 0, festivalCd: 0,
   };
@@ -275,6 +295,8 @@ function buildTrace(eng, prevSnap, toasts, tickNo) {
     alliances: eng.alliances.map(dumpAlliance),
     directives: eng.directives.map(dumpDirective),
     evoNodes: eng.evoNodes.map(dumpEvo),
+    // —— M-U3e 扩展段 ——
+    emTechs: [...(eng.emTechs ?? new Map()).entries()].map(([k, t]) => dumpEmTech(t)),
   };
   eng.__lastEventId = eng.eventSeq;
   return [tr, s2];
@@ -357,7 +379,12 @@ function runScenario(sc) {
       for (const iss of sc.issue ?? []) {
         if (iss.at === k) eng.issueDirective(iss.civ, iss.kind, iss.param ?? 0, iss.target);
       }
+      // M-U3e：fund 点（economyTick 知识注入未译域的直调通道——fundResearch(civ, points) 蓝本原语义）
+      for (const fd of sc.fund ?? []) {
+        if (fd.at === k) eng.fundResearch(eng.civs[fd.civ], fd.points);
+      }
       if (eng.tickCount % 30 === 0) eng.directiveTick();
+      if (eng.tickCount % 120 === 5) eng.techTick(); // engine L2567（与 directiveTick 错峰）
       if (eng.tickCount % 300 === 23) eng.allianceTick();
     }
     eng.tickCount++;
@@ -367,7 +394,7 @@ function runScenario(sc) {
   }
   return { name: sc.name, seed, startTick: sc.startTick ?? 0, ticks: sc.ticks, laws: eng.laws, rngA0,
     eventSeq0, toastSeq0, terrainRle,
-    fixture: { paint: sc.paint ?? null, civs: sc.civs ?? null, rel: sc.rel ?? null, tension: sc.tension ?? null, units: sc.units ?? null, buildings: sc.buildings ?? null, met: sc.met ?? null, directives: sc.directives ?? null, alliances: sc.alliances ?? null, wars: sc.wars ?? null, noAutoKing: sc.noAutoKing ?? null, hostTicks: sc.hostTicks ?? null, issue: sc.issue ?? null },
+    fixture: { paint: sc.paint ?? null, civs: sc.civs ?? null, rel: sc.rel ?? null, tension: sc.tension ?? null, units: sc.units ?? null, buildings: sc.buildings ?? null, met: sc.met ?? null, directives: sc.directives ?? null, alliances: sc.alliances ?? null, wars: sc.wars ?? null, noAutoKing: sc.noAutoKing ?? null, hostTicks: sc.hostTicks ?? null, issue: sc.issue ?? null, fund: sc.fund ?? null },
     traces };
 }
 
@@ -685,6 +712,45 @@ const scenarios = [
     rel: [[0, 1, 10]],
     met: ['0-1'],
     issue: [{ at: 0, civ: 0, kind: 'annihilate', param: 0, target: 1 }] },
+
+  // ==================== M-U3e 科技研发域（hostTicks 扩展：fund 点 + %120===5 techTick 门） ====================
+  // 注：economyTick 知识注入（income/upkeep/集市段）属 M-U3e+ 经济域未译 —— fund 点直调 fundResearch(civ, points)
+  // 保持蓝本原语义（选题/扩散/完成/ retro 强化全链真实），知识回写 (knowGain - spent) 留经济切片。
+
+  // CVT38 口传心授：techTick %120===5 门 + 无研究+知识<40+rng<0.35 → fundResearch(rng<0.5?1:0)
+  // → pickResearch 选题加权（mil/cul/rich 气质权重 7 根科技池）→ research 设定 + tech 事件
+  { name: 'CVT38-tech-tick-natural', seed: 0x19895, ticks: 1, startTick: 125, hostTicks: true,
+    civs: [{ id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], knowledge: 10, gold: 0 }] },
+  // CVT39 青铜完成：ownedExcept('bronze') → availableTechs=[bronze] 确定性选题 → fund 20 ≥ cost 16
+  // → completeTech：techs+1/research null/researchP 0/全军现役 retro（dmg ×1.15/tDmg 记账）+ tech 事件（era1 无 toast）
+  { name: 'CVT39-fund-bronze-complete', seed: 0x5c28, ticks: 1, startTick: 0, hostTicks: true,
+    civs: [{ id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], techs: ownedExcept('bronze') }],
+    units: [{ id: 10, civ: 0, x: 120.5, y: 80.5, job: 2 }],
+    fund: [{ at: 0, civ: 0, points: 20 }] },
+  // CVT40 铁器完成：ownedExcept('iron')（含 bronze/crossbow）→ availableTechs=[iron] → fund 40 ≥ cost 30
+  // → retro dmg ×1.33（bronze 0.15+iron 0.18 叠加）/maxHp ×1.10 round/hp 按伤率缩放 + era≥2 toast
+  { name: 'CVT40-fund-iron-hp-toast', seed: 0x5c29, ticks: 1, startTick: 0, hostTicks: true,
+    civs: [{ id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], techs: ownedExcept('iron') }],
+    units: [
+      { id: 10, civ: 0, x: 120.5, y: 80.5, job: 2, hp: 7 },
+      { id: 11, civ: 0, x: 121.5, y: 80.5, job: 2 },
+    ],
+    fund: [{ at: 0, civ: 0, points: 40 }] },
+  // CVT41 石匠 bHp 升级：ownedExcept('masonry') → availableTechs=[masonry] → fund 20 ≥ cost 15
+  // → 建筑耐久上限重算：house base 70 × (1+shelter 0.15+masonry 0.25)=98 → bHp min(98, 70+17.5)=87.5 f64
+  { name: 'CVT41-fund-masonry-bhp', seed: 0x5c2a, ticks: 1, startTick: 0, hostTicks: true,
+    civs: [{ id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], techs: ownedExcept('masonry') }],
+    buildings: [[idx(120, 80), 1, 0]],
+    fund: [{ at: 0, civ: 0, points: 20 }] },
+  // CVT42 涌现发明：全 50 项拥有 → availableTechs=[] → pickResearch null → inventEmTech
+  // → inventTech 程序化（气质加权领域/前缀×领域命名/主效果+35% 副效果/代数成本）→ emTechs+recordEvo+emerge 播报
+  // → research='em1' researchP=50（cost 110+ 未达）
+  { name: 'CVT42-emtech-invent', seed: 0x5c2b, ticks: 1, startTick: 0, hostTicks: true,
+    civs: [{ id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], techs: [...TECH_KEYS], militarism: 40, culture: 30, gold: 100 }],
+    fund: [{ at: 0, civ: 0, points: 50 }] },
+  // CVT43 知识封顶反例：knowledge 50 ≥40 → techTick 自然积累门短路 → 零 rng 消耗（rngA 不变）
+  { name: 'CVT43-knowledge-cap', seed: 0x5c2c, ticks: 1, startTick: 125, hostTicks: true,
+    civs: [{ id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], knowledge: 50 }] },
 ];
 
 // ---------------- 主流程 ----------------
@@ -968,6 +1034,46 @@ function sanity(results) {
   A('CVT37 gold 42', t37.civs.find((c) => c.id === 0).gold === 42, `gold=${t37.civs.find((c) => c.id === 0).gold}`);
   A('CVT37 raceRel 21', t37.raceRel.some(([k, v]) => k === '0-1' && v === 21), JSON.stringify(t37.raceRel));
   A('CVT37 active stays', t37.directives[0].status === 'active' && t37.directives[0].deadlineTick === 4830, JSON.stringify(t37.directives[0]));
+
+  // ==================== M-U3e 科技研发域 ====================
+  const r38 = by['CVT38-tech-tick-natural'];
+  const t38 = r38.traces[0];
+  A('CVT38 research started', t38.civs[0].research != null && t38.civs[0].researchP === 1, `research=${t38.civs[0].research} p=${t38.civs[0].researchP}`);
+  A('CVT38 knowledge unchanged', t38.civs[0].knowledge === 10, `k=${t38.civs[0].knowledge}`);
+  A('CVT38 tech event', t38.newEvents.some((e) => e.kind === 'tech' && e.text.includes('开始研究')), JSON.stringify(t38.newEvents.map((e) => [e.kind, e.text.slice(0, 18)])));
+
+  const r39 = by['CVT39-fund-bronze-complete'];
+  const t39 = r39.traces[0];
+  A('CVT39 bronze owned', t39.civs[0].techs.includes('bronze') && t39.civs[0].techs.length === ownedExcept('bronze').length + 1, `n=${t39.civs[0].techs.length}`);
+  A('CVT39 research cleared', t39.civs[0].research == null && t39.civs[0].researchP === 0, `r=${t39.civs[0].research} p=${t39.civs[0].researchP}`);
+  A('CVT39 retro dmg', t39.units.every((u) => u.dmg === f64hex(1.25)), JSON.stringify(t39.units.map((u) => u.dmg)));
+  A('CVT39 tech event', t39.newEvents.some((e) => e.kind === 'tech' && e.text.includes('青铜冶炼')), JSON.stringify(t39.newEvents.map((e) => e.text.slice(0, 18))));
+
+  const r40 = by['CVT40-fund-iron-hp-toast'];
+  const t40 = r40.traces[0];
+  A('CVT40 iron owned', t40.civs[0].techs.includes('iron'), `n=${t40.civs[0].techs.length}`);
+  A('CVT40 retro dmg 1.43', t40.units.every((u) => u.dmg === f64hex(1.43)), JSON.stringify(t40.units.map((u) => u.dmg)));
+  A('CVT40 maxHp per-unit', t40.units[0].maxHp === f64hex(8) && t40.units[1].maxHp === f64hex(11) && t40.units[2].maxHp === f64hex(11), JSON.stringify(t40.units.map((u) => u.maxHp)));
+  A('CVT40 hp ratio', t40.units[0].hp === f64hex(8) && t40.units[1].hp === f64hex(11), JSON.stringify(t40.units.map((u) => u.hp)));
+  A('CVT40 era toast', t40.toasts.some((t) => t.text.includes('铁器锻造')), JSON.stringify(t40.toasts));
+
+  const r41 = by['CVT41-fund-masonry-bhp'];
+  const t41 = r41.traces[0];
+  A('CVT41 masonry owned', t41.civs[0].techs.includes('masonry'), `n=${t41.civs[0].techs.length}`);
+  A('CVT41 bHp 87.5', t41.bHp.some(([k, v]) => Math.abs(v - 87.5) < 1e-9), JSON.stringify(t41.bHp));
+
+  const r42 = by['CVT42-emtech-invent'];
+  const t42 = r42.traces[0];
+  A('CVT42 em invented', t42.emTechs.length === 1 && t42.emTechs[0].key === 'em1' && t42.emTechs[0].gen === 1, JSON.stringify(t42.emTechs));
+  A('CVT42 research em1', t42.civs[0].research === 'em1' && t42.civs[0].researchP === 50, `r=${t42.civs[0].research} p=${t42.civs[0].researchP}`);
+  A('CVT42 evo tech node', t42.evoNodes.some((n) => n.kind === 'tech'), JSON.stringify(t42.evoNodes.map((n) => n.kind)));
+  A('CVT42 emerge event', t42.newEvents.some((e) => e.kind === 'emerge'), JSON.stringify(t42.newEvents.map((e) => e.kind)));
+  A('CVT42 toast good', t42.toasts.some((t) => t.tone === 'good'), JSON.stringify(t42.toasts));
+
+  const r43 = by['CVT43-knowledge-cap'];
+  const t43 = r43.traces[0];
+  A('CVT43 no rng consumed', t43.rngA === r43.rngA0, `rngA=${t43.rngA} a0=${r43.rngA0}`);
+  A('CVT43 research null', t43.civs[0].research == null, `r=${t43.civs[0].research}`);
 
   return asserts;
 }

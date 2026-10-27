@@ -1778,7 +1778,7 @@ namespace PixelWorldBox.Tests
             Assert.AreEqual(160, meta["H"].Value<int>(), "meta H");
             Assert.AreEqual(4, meta["houseCap"].Value<int>(), "meta HOUSE_CAP");
             var scenarios = (JArray)golden["scenarios"];
-            Assert.AreEqual(38, scenarios.Count, "scenario count");
+            Assert.AreEqual(44, scenarios.Count, "scenario count");
             foreach (var sc in scenarios) RunScenario(sc);
         }
 
@@ -1970,6 +1970,7 @@ namespace PixelWorldBox.Tests
             var traces = (JArray)sc["traces"];
             bool hostTicks = sc["fixture"]["hostTicks"] != null && sc["fixture"]["hostTicks"].Type != JTokenType.Null && sc["fixture"]["hostTicks"].Value<bool>();
             var issues = (JArray)(sc["fixture"]["issue"] ?? new JArray());
+            var funds = (JArray)(sc["fixture"]["fund"] ?? new JArray());
             for (int t = 0; t < traces.Count; t++)
             {
                 var want = (JObject)traces[t];
@@ -1977,12 +1978,16 @@ namespace PixelWorldBox.Tests
                 WbCivSim.CivsTick(w);
                 if (hostTicks)
                 {
-                    // M-U3d 宿主子系统协议：issue（civsTick 后任意时点）→ %30 旨意 → %300 联盟（engine L2565/L2571）
+                    // M-U3d/M-U3e 宿主子系统协议：issue（civsTick 后任意时点）→ fund 直调 → %30 旨意 → %120 科技 → %300 联盟
                     foreach (var iss in issues)
                         if (iss["at"].Value<int>() == t)
                             WbCivSim.IssueDirective(w, iss["civ"].Value<int>(), iss["kind"].ToString(), iss["param"]?.Value<int>() ?? 0,
                                 (iss["target"] == null || iss["target"].Type == JTokenType.Null) ? (int?)null : iss["target"].Value<int>());
+                    foreach (var fd in funds)
+                        if (fd["at"].Value<int>() == t)
+                            WbCivSim.FundResearch(w, WbCivSim.CivAt(w, fd["civ"].Value<int>()), fd["points"].Value<double>());
                     if (w.tickCount % 30 == 0) WbCivSim.DirectiveTick(w);
+                    if (w.tickCount % 120 == 5) WbCivSim.TechTick(w);
                     if (w.tickCount % 300 == 23) WbCivSim.AllianceTick(w);
                 }
                 w.tickCount++;
@@ -2046,6 +2051,13 @@ namespace PixelWorldBox.Tests
                 Assert.AreEqual(wc["stability"].Type == JTokenType.Null ? 70 : wc["stability"].Value<int>(), gc.stability, $"{cid} stability");
                 Assert.AreEqual(wc["culture"].Type == JTokenType.Null ? 0 : wc["culture"].Value<int>(), gc.culture, $"{cid} culture");
                 Assert.AreEqual(wc["militarism"].Type == JTokenType.Null ? 30 : wc["militarism"].Value<int>(), gc.militarism, $"{cid} militarism");
+                // M-U3e：research/researchP/techs 断言
+                if (wc["research"] == null || wc["research"].Type == JTokenType.Null) Assert.IsNull(gc.research, $"{cid} research null");
+                else Assert.AreEqual(wc["research"].ToString(), gc.research, $"{cid} research");
+                Assert.AreEqual(wc["researchP"] == null || wc["researchP"].Type == JTokenType.Null ? 0 : wc["researchP"].Value<double>(), gc.researchP, 1e-9, $"{cid} researchP");
+                var wtks = (JArray)wc["techs"];
+                Assert.AreEqual(wtks.Count, gc.techs.Count, $"{cid} techs count");
+                for (int k = 0; k < wtks.Count; k++) Assert.AreEqual(wtks[k].ToString(), gc.techs[k], $"{cid} techs[{k}]");
                 // kingId undefined/-1 语义分离断言移至 M-U3c 段（下方 null→false / 值→相等）
                 Assert.AreEqual(wc["name"].ToString(), gc.name, $"{cid} name");
                 // tiles / frontier 逐元素
@@ -2301,6 +2313,29 @@ namespace PixelWorldBox.Tests
                 Assert.AreEqual(wen["detail"].ToString(), gen.detail, $"{eid} detail");
                 if (wen["stat"].Type == JTokenType.Null) Assert.IsTrue(string.IsNullOrEmpty(gen.stat), $"{eid} stat null");
                 else Assert.AreEqual(wen["stat"].ToString(), gen.stat, $"{eid} stat");
+            }
+
+            // —— M-U3e 扩展段：emTechs（涌现科技注册表全字段）——
+            var wantEm = (JArray)want["emTechs"];
+            Assert.AreEqual(wantEm.Count, w.emTechs.Count, $"{ctx} emTechs count");
+            var emOrder = w.emTechs.Values.OrderBy((t) => t.gen).ToList();
+            for (int k = 0; k < wantEm.Count; k++)
+            {
+                var wem = (JObject)wantEm[k];
+                var gem = emOrder[k];
+                string emid = $"{ctx} emTech[{gem.key}]";
+                Assert.AreEqual(wem["name"].ToString(), gem.name, $"{emid} name");
+                Assert.AreEqual(wem["cat"].ToString(), gem.cat, $"{emid} cat");
+                Assert.AreEqual(wem["cost"].Value<double>(), gem.cost, 1e-9, $"{emid} cost");
+                Assert.AreEqual(wem["gen"].Value<int>(), gem.gen, $"{emid} gen");
+                Assert.AreEqual(wem["desc"].ToString(), gem.desc, $"{emid} desc");
+                var weff = (JArray)wem["effects"];
+                Assert.AreEqual(weff.Count, gem.effects.Count, $"{emid} effects count");
+                for (int e = 0; e < weff.Count; e++)
+                {
+                    Assert.AreEqual(weff[e][0].ToString(), gem.effects[e].k, $"{emid} effects[{e}].k");
+                    Assert.AreEqual(weff[e][1].Value<double>(), gem.effects[e].v, 1e-12, $"{emid} effects[{e}].v");
+                }
             }
         }
 

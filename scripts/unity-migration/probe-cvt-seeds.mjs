@@ -36,5 +36,7 @@ const s27 = probe('CVT27-join-alliance', (r) => r.traces[0].alliances[0] && r.tr
 const s30 = probe('CVT30-cohesion-two-als', (r) => r.traces[0].alliances.length === 1 && r.traces[0].alliances[0].bonded === true);
 // CVT31：经济互助发生（gold 10 → 25）
 const s31 = probe('CVT31-aid-drift', (r) => r.traces[0].civs.find((c) => c.id === 0).gold === 25);
+// CVT38：口传心授命中（research 非 null —— rng<0.35 且 rng<0.5 双门）
+const s38 = probe('CVT38-tech-tick-natural', (r) => r.traces[0].civs[0].research != null);
 
-console.log(JSON.stringify({ s20, s21, s22, s24, s26, s27, s30, s31 }));
+console.log(JSON.stringify({ s20, s21, s22, s24, s26, s27, s30, s31, s38 }));

@@ -68,6 +68,7 @@ function newWorld() {
     // M-U3d 旨意/理念域（C# WbWorld 同构）
     dirSeq: 1, victoryCiv: null, lastCatastropheTick: -999999, zombieOutbreakNoted: false,
     emIdeas: new Map(), ideaSeq: 1, ideaModCache: new Map(),
+    emTechs: new Map(), emTechSeq: 1, // M-U3e 涌现科技注册表
     overlayMode: 'none', overlayDirty: true,
     evoNodes: [], evoSeq: 0, evoIndex: new Map(),
     laws: { wars: true, cityGrowth: true, rebels: true },
@@ -153,6 +154,31 @@ function ModsOfTechs(keys) {
       case 'tactics': m.morale += 8; break;
       case 'machinery': m.repair += 0.6; break;
       case 'crop4': m.repro += 0.15; break;
+      // —— M-U3e：余下 24 项全量补齐（tech.ts L201-226 逐字保真） ——
+      case 'printing': m.know += 0.5; m.cult += 0.3; break;
+      case 'banking': m.gold += 0.35; break;
+      case 'astronomy': m.col -= 0.3; break;
+      case 'medicine': m.plague -= 0.45; break;
+      case 'gothic': m.bhp += 0.25; m.repair += 0.6; break;
+      case 'republic': m.stab += 15; m.gold += 0.2; break;
+      case 'steel': m.dmg += 0.2; m.hp += 0.12; break;
+      case 'legion': m.armyMax += 2; m.morale += 6; break;
+      case 'steam': m.bhp += 0.4; m.repair += 0.8; break;
+      case 'gunpowder': m.dmg += 0.25; break;
+      case 'assembly': m.gold += 0.6; break;
+      case 'sanitation': m.repro += 0.12; m.plague -= 0.3; break;
+      case 'rifling': m.range += 2.5; m.archer += 0.3; break;
+      case 'explosives': m.dmg += 0.15; m.arty += 1; break;
+      case 'flight': m.bomber += 1; break;
+      case 'atomic': m.nukeCap += 1; break;
+      case 'electronics': m.know += 0.6; break;
+      case 'singularity': m.ai += 1; m.stab += 10; m.know += 0.4; break;
+      case 'robotics': m.mech += 1; m.repair += 1.0; m.bhp += 0.4; break;
+      case 'lasers': m.laser += 1; m.dmg += 0.2; break;
+      case 'drones': m.drone += 1; break;
+      case 'orbital': m.orbital += 1; break;
+      case 'plasma': m.plasma += 1; m.dmg += 0.15; break;
+      case 'antimatter': m.antiMatter += 1; break;
       default: break;
     }
   }
@@ -164,9 +190,247 @@ function TechModsOf(w, civId) {
   if (techModCache.has(civId)) return techModCache.get(civId);
   const c = civAt(w, civId);
   const mods = c ? ModsOfTechs(c.techs) : ModsOfTechs(null);
+  // v3：涌现科技效果叠加（emergence.ts applyEmTechMods）
+  if (c && w.emTechs.size > 0) {
+    for (const key of c.techs) {
+      const em = w.emTechs.get(key);
+      if (em) ApplyEmTechMods(mods, em);
+    }
+  }
   techModCache.set(civId, mods);
   return mods;
 }
+
+// ==================== M-U3e 科技研发域（WbCivSim.cs/WbTech.cs 机械翻译同构） ====================
+const TECHS_TABLE = [
+  { key: 'fire', name: '火种', cat: 'agri', era: 0, cost: 4, deps: [], desc: '熟食烹饪：繁衍速度 +8%' },
+  { key: 'stone', name: '石器打磨', cat: 'military', era: 0, cost: 5, deps: [], desc: '锋利石斧：战士伤害 +10%' },
+  { key: 'shelter', name: '筑巢术', cat: 'eng', era: 0, cost: 5, deps: [], desc: '梁柱结构：建筑耐久 +15%' },
+  { key: 'clan', name: '氏族血亲', cat: 'civic', era: 0, cost: 6, deps: [], desc: '长老议事：稳定度 +8' },
+  { key: 'song', name: '图腾歌舞', cat: 'culture', era: 0, cost: 6, deps: [], desc: '篝火节庆：文化积累 +50%' },
+  { key: 'gather', name: '采集术', cat: 'econ', era: 0, cost: 6, deps: [], desc: '采集储藏：人口税基 +20%' },
+  { key: 'raft', name: '木筏', cat: 'naval', era: 0, cost: 8, deps: [], desc: '漂流远航：殖民间隔 -10%' },
+  { key: 'pottery', name: '陶器', cat: 'econ', era: 0, cost: 8, deps: ['fire'], desc: '储粮储水：人口税基 +15%' },
+  { key: 'irrigation', name: '农耕灌溉', cat: 'agri', era: 1, cost: 14, deps: ['fire'], desc: '沟渠引水：农田容量 +1，繁衍 +8%' },
+  { key: 'bronze', name: '青铜冶炼', cat: 'military', era: 1, cost: 16, deps: ['stone'], desc: '青铜兵器：全军伤害 +15%' },
+  { key: 'writing', name: '文字', cat: 'culture', era: 1, cost: 14, deps: ['song'], desc: '楔形刻痕：知识产出 +30%' },
+  { key: 'masonry', name: '石匠工艺', cat: 'eng', era: 1, cost: 15, deps: ['shelter'], desc: '凿石垒砌：建筑耐久 +25%，修复速度 +50%' },
+  { key: 'currency', name: '铸币', cat: 'econ', era: 1, cost: 15, deps: ['gather', 'pottery'], desc: '金属通货：集市收入 +40%' },
+  { key: 'sail', name: '帆船', cat: 'naval', era: 1, cost: 18, deps: ['raft'], desc: '乘风破浪：殖民间隔 -20%' },
+  { key: 'law', name: '成文法典', cat: 'civic', era: 1, cost: 20, deps: ['clan', 'writing'], desc: '律令昭彰：稳定度 +12，叛乱风险降低' },
+  { key: 'crossbow', name: '弩机', cat: 'military', era: 1, cost: 20, deps: ['bronze'], desc: '弩矢穿透：弓手伤害 +20%' },
+  { key: 'plow', name: '重犁轮作', cat: 'agri', era: 2, cost: 30, deps: ['irrigation'], desc: '深耕细作：繁衍速度 +12%' },
+  { key: 'iron', name: '铁器锻造', cat: 'military', era: 2, cost: 30, deps: ['bronze'], desc: '铁剑铁甲：全军伤害 +18%，生命 +10%' },
+  { key: 'guild', name: '行会制度', cat: 'econ', era: 2, cost: 30, deps: ['currency'], desc: '匠人行会：全部经济收入 +25%' },
+  { key: 'theology', name: '神学', cat: 'culture', era: 2, cost: 30, deps: ['writing'], desc: '经院哲学：文化积累 +80% 解锁神权政体' },
+  { key: 'fortification', name: '城墙堡垒', cat: 'eng', era: 2, cost: 32, deps: ['masonry'], desc: '瓮城箭楼：建筑耐久 +30%' },
+  { key: 'compass', name: '罗盘', cat: 'naval', era: 2, cost: 32, deps: ['sail'], desc: '指北磁针：殖民间隔 -25%' },
+  { key: 'feudal', name: '封建采邑', cat: 'civic', era: 2, cost: 34, deps: ['law'], desc: '分封效忠：税基 +30%（稳定 -4）' },
+  { key: 'tactics', name: '方阵战术', cat: 'military', era: 2, cost: 36, deps: ['iron'], desc: '进退如一：军团士气上限 +8、恢复 +50%' },
+  { key: 'machinery', name: '机械装置', cat: 'eng', era: 2, cost: 38, deps: ['fortification'], desc: '绞盘滑轮：修复速度 +60% 陷阱→攻城强化' },
+  { key: 'crop4', name: '良种选育', cat: 'agri', era: 3, cost: 52, deps: ['plow'], desc: '良种轮种：繁衍速度 +15%' },
+  { key: 'printing', name: '活字印刷', cat: 'culture', era: 3, cost: 55, deps: ['theology'], desc: '知识传布：知识产出 +50%，文化 +30%' },
+  { key: 'banking', name: '银行信贷', cat: 'econ', era: 3, cost: 55, deps: ['guild'], desc: '金库汇票：全部经济收入 +35%' },
+  { key: 'astronomy', name: '天文航海', cat: 'naval', era: 3, cost: 60, deps: ['compass'], desc: '星图导航：殖民间隔 -30%' },
+  { key: 'medicine', name: '医学', cat: 'culture', era: 3, cost: 58, deps: ['printing'], desc: '瘟疫医生：瘟疫传播 -45%' },
+  { key: 'gothic', name: '哥特拱券', cat: 'eng', era: 3, cost: 55, deps: ['machinery'], desc: '飞扶壁尖拱：建筑耐久 +25%，修复 +60%' },
+  { key: 'republic', name: '共和宪政', cat: 'civic', era: 3, cost: 65, deps: ['feudal', 'printing'], desc: '市民议会：稳定 +15，收入 +20% 解锁共和政体' },
+  { key: 'steel', name: '钢铁淬火', cat: 'military', era: 3, cost: 60, deps: ['tactics'], desc: '板甲钢刃：全军伤害 +20%，生命 +12%' },
+  { key: 'legion', name: '帝国军制', cat: 'military', era: 3, cost: 75, deps: ['steel'], desc: '常备军团：军团上限 +2，士气 +6 解锁帝国政体' },
+  { key: 'steam', name: '蒸汽机', cat: 'eng', era: 4, cost: 85, deps: ['machinery'], desc: '锅炉与活塞：建筑耐久 +40%，修复 +80%' },
+  { key: 'gunpowder', name: '火药', cat: 'military', era: 4, cost: 88, deps: ['steel', 'machinery'], desc: '黑火药枪械：全军伤害 +25% 解锁火器军备' },
+  { key: 'assembly', name: '流水装配', cat: 'econ', era: 4, cost: 95, deps: ['banking', 'steam'], desc: '标准化生产：全部经济收入 +60%' },
+  { key: 'sanitation', name: '公共卫生', cat: 'agri', era: 4, cost: 92, deps: ['crop4', 'medicine'], desc: '下水道与疫苗：繁衍 +12%，瘟疫传播 -30%' },
+  { key: 'rifling', name: '线膛枪', cat: 'military', era: 4, cost: 110, deps: ['gunpowder'], desc: '膛线旋进：远程射程 +2.5，射击伤害 +30%' },
+  { key: 'explosives', name: '高爆炸药', cat: 'military', era: 4, cost: 125, deps: ['gunpowder'], desc: '苦味酸与 TNT：全军伤害 +15% 解锁火炮轰击' },
+  { key: 'flight', name: '航空引擎', cat: 'eng', era: 4, cost: 140, deps: ['steam', 'astronomy'], desc: '双翼机凌空：解锁战时空袭轰炸' },
+  { key: 'atomic', name: '原子能工程', cat: 'military', era: 4, cost: 185, deps: ['explosives', 'flight'], desc: '裂变之火：解锁核打击——终极世界大战的终局武器' },
+  { key: 'electronics', name: '电子计算', cat: 'eng', era: 5, cost: 160, deps: ['atomic'], desc: '硅基心智：知识产出 +60%' },
+  { key: 'singularity', name: '奇点智能', cat: 'civic', era: 5, cost: 240, deps: ['electronics', 'republic'], desc: '超越性 AI 治军：军团获得战术智能（会评估会战/主动增援/战术撤退），稳定 +10' },
+  { key: 'robotics', name: '机器人学', cat: 'eng', era: 5, cost: 210, deps: ['electronics', 'assembly'], desc: '钢铁之躯：修复 +100%，建筑耐久 +40%，解锁机甲军团（行军/围城/会战全面机械化）' },
+  { key: 'lasers', name: '定向能武器', cat: 'military', era: 5, cost: 200, deps: ['electronics', 'rifling'], desc: '光束即刀刃：全军伤害 +20%，解锁激光炮台（战时精确狙杀）' },
+  { key: 'drones', name: '无人机蜂群', cat: 'military', era: 5, cost: 240, deps: ['robotics', 'flight'], desc: '蔽日蜂群：解锁蜂群打击（自主游猎敌军与建筑）' },
+  { key: 'orbital', name: '轨道天基', cat: 'eng', era: 5, cost: 300, deps: ['robotics', 'astronomy'], desc: '天基动能平台：解锁轨道天罚（天顶坠落的钨棒）' },
+  { key: 'plasma', name: '等离子体', cat: 'military', era: 5, cost: 320, deps: ['lasers', 'explosives'], desc: '物质第四态：伤害 +15%，解锁等离子炮（爆破 + 电磁脉冲击溃士气）' },
+  { key: 'antimatter', name: '反物质工程', cat: 'military', era: 5, cost: 420, deps: ['plasma', 'atomic'], desc: '湮灭即终极：解锁反物质打击——终局狂热阶段的天启武器' },
+];
+const TECH_BY_KEY2 = Object.fromEntries(TECHS_TABLE.map((t) => [t.key, t]));
+// EM 词库（emergence.ts L298-326；'−' = U+2212 蓝本原文）
+const EM_PREFIX = ['量子', '纳米', '等离子', '基因', '光子', '超导', '混沌', '灵能', '暗物质', '弦', '晶格', '磁悬浮', '熵减', '聚变', '深空', '引力'];
+const EM_FIELD_NAME = ['冶金学', '护盾工程', '农艺', '算术', '航海术', '财税学', '营造法式', '市场学', '战术学', '医道', '弹道学', '射艺', '礼乐', '治理术', '营缮学', '军制'];
+const EM_FIELD_CAT = ['military', 'eng', 'agri', 'culture', 'naval', 'econ', 'eng', 'econ', 'military', 'culture', 'military', 'military', 'culture', 'civic', 'eng', 'military'];
+const EM_FIELD_EFF = ['dmg', 'hp', 'repro', 'know', 'col', 'tax', 'bhp', 'gold', 'morale', 'plague', 'range', 'archer', 'cult', 'stab', 'repair', 'armyMax'];
+const EM_EFF_NAME = { dmg: '全军伤害', hp: '全军生命', bhp: '建筑耐久', gold: '经济收入', know: '知识产出', repro: '繁衍速度', col: '殖民速度', tax: '人口税基', cult: '文化积累', repair: '修复速度', morale: '军团士气', armyMax: '军团上限', archer: '射手伤害', plague: '瘟疫传播', range: '远程射程', stab: '稳定度' };
+const ROMAN12 = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+function InventTech(w, mil, cult, rich, gen) {
+  const n = EM_FIELD_NAME.length;
+  const wt = [];
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    let b = 1;
+    if (EM_FIELD_CAT[i] === 'military') b *= 0.5 + mil * 1.5;
+    if (EM_FIELD_CAT[i] === 'culture') b *= 0.5 + cult * 1.5;
+    if (EM_FIELD_CAT[i] === 'econ') b *= 0.6 + rich * 1.4;
+    wt.push(b);
+    total += b;
+  }
+  let roll = Rng(w) * total;
+  let field = 0;
+  for (let i = 0; i < n; i++) {
+    roll -= wt[i];
+    if (roll <= 0) { field = i; break; }
+  }
+  const prefix = EM_PREFIX[Math.floor(Rng(w) * EM_PREFIX.length)];
+  const suffix = gen > 12 ? `·${ROMAN12[Math.min(11, Math.floor(gen / 12))]}` : '';
+  const name = `${prefix}${EM_FIELD_NAME[field]}${suffix}`;
+  const effs = [];
+  const mag = (k) => {
+    const t = 1 + Math.min(0.8, gen * 0.04);
+    if (k === 'morale' || k === 'armyMax' || k === 'range' || k === 'stab') return jsRound((2 + Rng(w) * 3) * t);
+    return jsRound((0.05 + Rng(w) * 0.07) * t * 1000) / 1000;
+  };
+  effs.push({ k: EM_FIELD_EFF[field], v: mag(EM_FIELD_EFF[field]) });
+  if (Rng(w) < 0.35) {
+    const other = Math.floor(Rng(w) * n);
+    if (EM_FIELD_EFF[other] !== EM_FIELD_EFF[field]) effs.push({ k: EM_FIELD_EFF[other], v: mag(EM_FIELD_EFF[other]) });
+  }
+  const desc = effs.map((e) => `${EM_EFF_NAME[e.k]} ${e.k === 'plague' ? '\u2212' : '+'}${jsRound(e.v * (e.v < 1 ? 100 : 1))}${e.v < 1 ? '%' : ''}`).join('，');
+  return { key: `em${gen}`, name, cat: EM_FIELD_CAT[field], cost: jsRound(110 + gen * 14 + Rng(w) * 30), gen, effects: effs, desc };
+}
+function ApplyEmTechMods(mods, t) {
+  for (const e of t.effects) {
+    mods[e.k] = (mods[e.k] ?? 0) + (e.k === 'plague' ? -Math.abs(e.v) : e.v);
+  }
+}
+function CivCenterX(w, c) {
+  if (c.capital >= 0) return WbTileX(c.capital) + 0.5;
+  return c.tiles.length > 0 ? WbTileX(c.tiles[(c.tiles.length / 2) | 0]) : W / 2;
+}
+function CivCenterY(w, c) {
+  if (c.capital >= 0) return WbTileY(c.capital) + 0.5;
+  return c.tiles.length > 0 ? WbTileY(c.tiles[(c.tiles.length / 2) | 0]) : H / 2;
+}
+function AvailableTechs(c) {
+  const owned = new Set(c.techs ?? []);
+  return TECHS_TABLE.filter((t) => !owned.has(t.key) && t.deps.every((d) => owned.has(d)));
+}
+function PickResearch(w, c) {
+  const avail = AvailableTechs(c);
+  if (avail.length === 0) return null;
+  const mil = (c.militarism ?? 30) / 100;
+  const cul = Math.min(1, (c.culture ?? 0) / 120);
+  const rich = Math.min(1, (c.gold ?? 0) / 200);
+  const wt = avail.map((t) => {
+    let base = 1;
+    if (t.cat === 'military') base *= 0.5 + mil * 1.6;
+    if (t.cat === 'culture') base *= 0.5 + cul * 1.6;
+    if (t.cat === 'econ') base *= 0.6 + rich * 1.4;
+    if (t.cat === 'civic') base *= 0.7 + (100 - (c.stability ?? 70)) / 150;
+    if (t.cat === 'naval') base *= 0.7;
+    if (t.cat === 'agri') base *= 0.8 + Math.min(0.8, c.pop / 100);
+    if (t.cat === 'eng') base *= 0.9;
+    return base;
+  });
+  let total = 0;
+  for (const x of wt) total += x;
+  let roll = Rng(w) * total;
+  for (let i = 0; i < avail.length; i++) {
+    roll -= wt[i];
+    if (roll <= 0) return avail[i].key;
+  }
+  return avail[avail.length - 1].key;
+}
+function FundResearch(w, c, points) {
+  if (points <= 0) return 0;
+  if (!c.research) {
+    const pick = PickResearch(w, c) ?? InventEmTech(w, c);
+    if (!pick) return 0;
+    c.research = pick;
+    c.researchP = 0;
+    const def0 = TECH_BY_KEY2[pick];
+    const em0 = w.emTechs.get(pick);
+    AddEvent(w, 'tech', `「${c.name}」的学者们开始研究「${def0?.name ?? em0?.name ?? pick}」`, c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+  }
+  const def = TECH_BY_KEY2[c.research];
+  const em = w.emTechs.get(c.research);
+  if (!def && !em) { c.research = null; return 0; }
+  const cost = def ? def.cost : em.cost;
+  const start = c.researchP;
+  // 联盟互连：盟友已掌握的科技 → 研究效率 ×1.2（bonded 1.32）
+  const alF = AllianceOfCiv(w, c.id);
+  let diffusion = 1;
+  if (alF) {
+    for (const m of alF.members) {
+      if (m === c.id) continue;
+      const mc = civAt(w, m);
+      if (mc && mc.alive && (mc.techs ?? []).includes(c.research)) { diffusion = alF.bonded ? 1.32 : 1.2; break; }
+    }
+  }
+  c.researchP = start + points * diffusion;
+  if (c.researchP >= cost) {
+    CompleteTech(w, c, c.research);
+    return Math.max(0, cost - start);
+  }
+  return points;
+}
+function CompleteTech(w, c, key) {
+  c.techs.push(key);
+  const def = TECH_BY_KEY2[key];
+  const em = w.emTechs.get(key);
+  c.research = null;
+  c.researchP = 0;
+  techModCache.delete(c.id);
+  {
+    const nm = TechModsOf(w, c.id); // 缓存已删，重算即新值
+    if (nm.dmg !== 1 || nm.hp !== 1) {
+      for (const u of w.units) {
+        if (u.dead || u.civ !== c.id) continue;
+        const rd = nm.dmg / (u.tDmg ?? 1);
+        const rh = nm.hp / (u.tHp ?? 1);
+        if (rd !== 1) u.dmg = Math.max(1, u.dmg * rd);
+        if (rh !== 1) {
+          const ratio = u.hp / u.maxHp;
+          u.maxHp = Math.max(1, jsRound(u.maxHp * rh));
+          u.hp = Math.min(u.maxHp, Math.max(1, jsRound(u.maxHp * ratio)));
+        }
+        u.tDmg = nm.dmg;
+        u.tHp = nm.hp;
+      }
+    }
+  }
+  AddEvent(w, 'tech', `「${c.name}」研发出「${def?.name ?? em?.name ?? key}」—— ${def?.desc ?? em?.desc ?? ''}`, c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+  if ((def && def.era >= 2) || (em && em.gen % 5 === 0)) {
+    Toast(w, `「${c.name}」掌握了「${def?.name ?? em?.name ?? key}」`, 'info');
+  }
+  if (def && (def.key === 'masonry' || def.key === 'fortification' || def.key === 'gothic')) {
+    const mul = TechModsOf(w, c.id).bhp;
+    for (const b of w.buildings) {
+      if (b.civ !== c.id) continue;
+      const base = BUILDING_DEFS[b.kind]?.hp ?? 70;
+      const max = jsRound(base * mul);
+      w.bHp.set(b.i, Math.min(max, (w.bHp.get(b.i) ?? base) + base * 0.25));
+    }
+  }
+}
+function InventEmTech(w, c) {
+  if (w.emTechs.size >= 60) return null;
+  const t = InventTech(w, (c.militarism ?? 30) / 100, Math.min(1, (c.culture ?? 0) / 120), Math.min(1, (c.gold ?? 0) / 200), w.emTechSeq);
+  t.key = `em${w.emTechSeq++}`;
+  w.emTechs.set(t.key, t);
+  RecordEvo(w, 'tech', t.name, null, c.colorHex, `${t.desc}（${c.name} 的第 ${t.gen} 项涌现发明）`, t.desc, null);
+  AddEvent(w, 'emerge', `「${c.name}」的学者穷尽了既有典籍，开创出前所未有的学问——「${t.name}」（${t.desc}）`, c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+  Toast(w, `「${c.name}」发明了「${t.name}」`, 'good');
+  return t.key;
+}
+function TechTick(w) {
+  for (const c of w.civs) {
+    if (!c || !c.alive || c.pop <= 0) continue;
+    if (!c.research && (c.knowledge ?? 0) < 40 && Rng(w) < 0.35) {
+      FundResearch(w, c, Rng(w) < 0.5 ? 1 : 0);
+    }
+  }
+}
+
 
 // ---------------- WbCivSim 方法族（C# 逐行转写） ----------------
 function CivFuseScan(w) {
@@ -1808,7 +2072,9 @@ function replayScenario(sc) {
     CivsTick(w);
     if (sc.fixture.hostTicks) {
       for (const iss of sc.fixture.issue ?? []) if (iss.at === t) IssueDirective(w, iss.civ, iss.kind, iss.param ?? 0, iss.target);
+      for (const fd of sc.fixture.fund ?? []) if (fd.at === t) FundResearch(w, w.civs[fd.civ], fd.points);
       if (w.tickCount % 30 === 0) DirectiveTick(w);
+      if (w.tickCount % 120 === 5) TechTick(w); // engine L2567（M-U3e）
       if (w.tickCount % 300 === 23) AllianceTick(w);
     }
     w.tickCount++;
@@ -1892,6 +2158,8 @@ function traceOf(w, t) {
     alliances: w.alliances.map((al) => ({ id: al.id, name: al.name, members: [...al.members], leader: al.leader, cohesion: al.cohesion, formedTick: al.formedTick, formedYear: al.formedYear ?? null, warsTogether: al.warsTogether ?? 0, colorHex: al.colorHex, bonded: al.bonded === true ? true : undefined })),
     directives: w.directives.map((d) => ({ id: d.id, civ: d.civ, kind: d.kind, target: d.target === undefined ? null : d.target, param: d.param ?? null, status: d.status, startTick: d.startTick ?? null, deadlineTick: d.deadlineTick ?? null, text: d.text ?? null, endTick: d.endTick === undefined ? null : d.endTick, endText: d.endText === undefined ? null : d.endText, killCount: d.killCount === undefined ? null : d.killCount })),
     evoNodes: w.evoNodes.map((n) => ({ id: n.id, kind: n.kind, name: n.name, parent: n.parent ?? null, year: n.year, colorHex: n.colorHex, detail: n.detail, stat: n.stat ?? null })),
+    // —— M-U3e 扩展段 ——
+    emTechs: [...w.emTechs.values()].map((t) => ({ key: t.key, name: t.name, cat: t.cat, cost: t.cost, gen: t.gen, effects: (t.effects ?? []).map((e) => [e.k, e.v]), desc: t.desc })),
   };
 }
 // trace 快照辅助：__prev/__evCount 注入（回放驱动层管理）
@@ -1983,7 +2251,9 @@ if (isMain) {
       CivsTick(w);
       if (sc.fixture.hostTicks) {
         for (const iss of sc.fixture.issue ?? []) if (iss.at === t) IssueDirective(w, iss.civ, iss.kind, iss.param ?? 0, iss.target);
+        for (const fd of sc.fixture.fund ?? []) if (fd.at === t) FundResearch(w, w.civs[fd.civ], fd.points);
         if (w.tickCount % 30 === 0) DirectiveTick(w);
+        if (w.tickCount % 120 === 5) TechTick(w); // engine L2567（M-U3e）
         if (w.tickCount % 300 === 23) AllianceTick(w);
       }
       w.tickCount++;
