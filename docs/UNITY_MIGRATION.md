@@ -40,8 +40,15 @@ C# 代码只允许从下列蓝本**机械翻译**，禁止从记忆重写：
 | M-U2a | 单位移动：WbArena（SOA 布局同构）+ WbUnits（wb_units_batch 批驱动 + update_unit 移动路径 + move_unit/pass_tile + 动作缓冲最小集） | units.rs L1675-1765 + L2202 起 / engine.ts L5813-5889 | ✅ 本轮 |
 | M-U2b | 网格扫描：bucket_scan 9 桶敌我扫描全量（CELL_START/CURSOR counting-sort、LUT 敌我矩阵） | lib.rs Stage 1 / units.rs | ✅ |
 | M-U2c | 战斗树：近战/远程/装备/gear/panic/curse/bless 全分支（逃逸链/神经三头/特殊近战三支/击杀结算/witness+grudge/zombify；和平尾 civ 段归 M-U3） | units.rs L2465-3240 | ✅ |
-| M-U2d | 繁衍收尸：spawn_unit/rollJob/rollTrait/家族/尸体/拾取 | units.rs | ⬜ |
-| M-U3 | 文明：建筑/科技/外交/商队/殖民 | engine.ts civs sim | ⬜ |
+| M-U2d | 繁衍收尸：spawn_unit/rollJob/rollTrait/家族/尸体/拾取（黄金 gen-units-spawn 26 场景） | units.rs | ✅ 02aa5a6 |
+| M-U3a | 文明基建：WbWorld/WbCivSim 落地 + civsTick 骨架（曾遭并行 cron agent 踩踏五文件，8136f88 恢复提交） | engine.ts | ✅ 8136f88 |
+| M-U3b | 领土与建造核：civsTick 文明模拟全量（claimTile/seedTerritory/建路建房） | engine.ts L5933-6040 | ✅ 38cd107 |
+| M-U3c | 文明桩域七件：王权（crownUnit 继承遴选）/城墙圈（wallTick 72 采样环）等 | engine.ts | ✅ 2f9dff3 |
+| M-U3d | 联盟系统 + 旨意颁布：allianceTick 六段（对账判叛/盟主继任/扩员/凝聚力）+ directiveTick | engine.ts | ✅ 96df00c |
+| M-U3e | 科技研发域：WbTech 全表 50 项 + 五函数（PickResearch/FundResearch/CompleteTech/InventEmTech/TechTick）+ ModsOfTechs 26→50 | engine.ts | ✅ 075eb31 |
+| M-U3f | 经济/社会域：economyTick + societyTick 全链（旨意/税政/军饷/稳定度/理念扩散/政体演变/危机）+ 类型 double 化五连（黄金 CVT44-55，transcript 57/57） | engine.ts L2535/L2569 真序 | ✅ bd553c1 |
+| M-O1 | 神谕 AI：dsh 五包最小闭环冒烟（主线二，见 docs/deepseek-harness-adaptation.md） | dsh 源码 | ✅ 98cb7b1 |
+| M-U3g | 文明余域盘点：商队结算/殖民建城/船单位等 bail 稀疏路径的宿主侧对齐 | engine.ts | ⬜ 待盘点 |
 | M-U4 | 渲染 I：地形/单位绘制（SOA→Unity Tilemap/Sprite） | render.ts | ⬜ |
 | M-U5 | 渲染 II：生物外形/动作精细化（sprites、动画帧、朝向 flip、特效层） | sprites.ts / render.ts | ⬜ |
 | M-U6 | 存档兼容：saveSafe/version 迁移（TS 存档可被 Unity 读） | saveSafe.ts | ⬜ |
