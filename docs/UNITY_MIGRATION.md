@@ -38,8 +38,8 @@ C# 代码只允许从下列蓝本**机械翻译**，禁止从记忆重写：
 | M-U0 | 迁移基建：目录/路线图/验证链协议 | 本文档 | ✅ 本轮 |
 | M-U1 | 底层三件套：WbRng（mulberry32）+ WbMath（fd_hypot/js_min/js_max）+ WbConstants（region id/T 地形/F 标志） | jsmath.rs / lib.rs | ✅ 本轮（随 M-U2a） |
 | M-U2a | 单位移动：WbArena（SOA 布局同构）+ WbUnits（wb_units_batch 批驱动 + update_unit 移动路径 + move_unit/pass_tile + 动作缓冲最小集） | units.rs L1675-1765 + L2202 起 / engine.ts L5813-5889 | ✅ 本轮 |
-| M-U2b | 网格扫描：bucket_scan 9 桶敌我扫描全量（CELL_START/CURSOR counting-sort、LUT 敌我矩阵） | lib.rs Stage 1 / units.rs | ⬜ |
-| M-U2c | 战斗树：近战/远程/装备/gear/panic/curse/bless 全分支 | units.rs L2465-3240 | ⬜ |
+| M-U2b | 网格扫描：bucket_scan 9 桶敌我扫描全量（CELL_START/CURSOR counting-sort、LUT 敌我矩阵） | lib.rs Stage 1 / units.rs | ✅ |
+| M-U2c | 战斗树：近战/远程/装备/gear/panic/curse/bless 全分支（逃逸链/神经三头/特殊近战三支/击杀结算/witness+grudge/zombify；和平尾 civ 段归 M-U3） | units.rs L2465-3240 | ✅ |
 | M-U2d | 繁衍收尸：spawn_unit/rollJob/rollTrait/家族/尸体/拾取 | units.rs | ⬜ |
 | M-U3 | 文明：建筑/科技/外交/商队/殖民 | engine.ts civs sim | ⬜ |
 | M-U4 | 渲染 I：地形/单位绘制（SOA→Unity Tilemap/Sprite） | render.ts | ⬜ |

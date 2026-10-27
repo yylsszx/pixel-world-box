@@ -1,11 +1,14 @@
 // ============================================================
-// WbUnits.cs — 单位批处理内核（M-U2a：移动切片）
+// WbUnits.cs — 单位批处理内核（M-U2a 移动 + M-U2b 扫描 + M-U2c 战斗树）
 // 蓝本: rust-core/src/units.rs（逐行机械翻译，纪律①；行号随注）
 // 范围: wb_units_batch 批驱动 + update_unit 移动路径 + move_unit/pass_tile
-//       + fx/ignite 动作缓冲 + 捕食者索敌/漫游决策。
+//       + fx/ignite 动作缓冲 + 捕食者索敌/漫游决策 + bucket_scan 全量
+//       + 血仇衰减/spread_plague/gear regen/白行者寒霜 + 接敌战斗树全量
+//       （逃逸链/战或逃神经/姿态网络/法师火球/弓手火枪/近战命中网络/
+//         特殊近战三支/装备结算/击杀结算/witness+grudge/zombify）。
 // 桩位（后续切片按蓝本补全，场景输入下不触发）:
-//   M-U2b bucket_scan 全量（现空桶桩）；M-U2c 战斗树/gear/spread_plague/
-//   白行者寒霜；M-U2d spawn/繁衍/拾取/家族。
+//   rise_skeleton→spawn_unit（M-U2d）；和平尾 civ 段建筑辅助族（M-U3）；
+//   spawn/繁衍/拾取/家族里程碑（M-U2d）。
 // 迭代序: parity 过滤（OFF_UPAR==OFF_PAR）+ 非 dead + slot 线性序 + iter_guard 30000
 //（lib.rs 设计铁律 5：迭代序 = JS for-of 活数组语义）
 // ============================================================
@@ -26,7 +29,7 @@ namespace PixelWorldBox.Wb
         public int Bw, Bh;
         public byte Parity;
 
-        /// units.rs L252-260
+        /// units.rs L252-260（ActReserve）
         public int? ActReserve(int bytes)
         {
             int cur = ActCur;
@@ -39,10 +42,30 @@ namespace PixelWorldBox.Wb
             return cur;
         }
 
-        public void ActU8(int pos, byte v) => WbSim.Arena.SetU8(WbConstants.OFF_ACT, pos, v);           // L262-264
-        public void ActU32(int pos, uint v) => WbSim.Arena.SetU32(WbConstants.OFF_ACT, pos, v);         // L266-272
-        public void ActI32(int pos, int v) => ActU32(pos, unchecked((uint)v));                          // L274-276
-        public void ActF64(int pos, double v) => WbSim.Arena.SetF64(WbConstants.OFF_ACT, pos, v);       // L278-284
+        // ACT 缓冲写者：蓝本布局为字节偏移（fx 记录 u8@0 kind@1 src@4 u32/f64@16..），
+        // 故直写字节数组（WbArena.SetU32/SetF64 是元素索引语义，不适用 ACT 记录）。
+        private static byte[] ActArr => WbSim.Arena.Arena;
+        private static int ActBase => WbSim.Arena.Offs[WbConstants.OFF_ACT];
+
+        public void ActU8(int pos, byte v) => ActArr[ActBase + pos] = v;
+        public void ActU32(int pos, uint v)
+        {
+            int b = ActBase + pos;
+            ActArr[b] = (byte)v;
+            ActArr[b + 1] = (byte)(v >> 8);
+            ActArr[b + 2] = (byte)(v >> 16);
+            ActArr[b + 3] = (byte)(v >> 24);
+        }
+        public void ActI32(int pos, int v) => ActU32(pos, unchecked((uint)v));
+        public void ActF64(int pos, double v)
+        {
+            ulong bits = unchecked((ulong)BitConverter.DoubleToInt64Bits(v));
+            int b = ActBase + pos;
+            for (int i = 0; i < 8; i++)
+            {
+                ActArr[b + i] = (byte)(bits >> (i * 8));
+            }
+        }
     }
 
     public static class WbUnits
@@ -532,6 +555,364 @@ namespace PixelWorldBox.Wb
             Fx(ctx, WbConstants.FX_EXPLOSION, tx, ty, 16.0, 1.6, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, true);
         }
 
+        // ---------------- M-U2c：文明/野怪计数（units.rs L418-447） ----------------
+        private static void CivDelta(WbCtx ctx, int field, int civ, double d)                 // L418-434
+        {
+            if (civ < 0) return;
+            int c = civ;
+            if (c >= WbConstants.MAX_CIVS) return;
+            uint id = field == 0 ? WbConstants.OFF_CVPOP : field == 1 ? WbConstants.OFF_CVHOU : WbConstants.OFF_CVGLD; // [CVPOP, CVHOU, CVGLD]
+            A.SetF64(id, c, A.F64At(id, c) + d);
+            int? p = ctx.ActReserve(16);
+            if (p.HasValue)
+            {
+                ctx.ActU8(p.Value, WbConstants.ACT_CIV);
+                ctx.ActU8(p.Value + 1, (byte)field);
+                ctx.ActI32(p.Value + 4, civ);
+                ctx.ActF64(p.Value + 8, d);
+            }
+        }
+
+        private static void BumpWild(int race, int d)                                          // L436-439
+        {
+            int n = A.I32At(WbConstants.OFF_WILD, race) + d;
+            A.SetI32(WbConstants.OFF_WILD, race, n > 0 ? n : 0);
+        }
+
+        private static int WildAlive()                                                          // L441-447
+        {
+            int n = 0;
+            for (int r = 0; r < WbConstants.MAX_RACES; r++) n += A.I32At(WbConstants.OFF_WILD, r);
+            return n;
+        }
+
+        private static int FamilyFind(int id)                                                   // L864-875
+        {
+            int n = A.I32At(WbConstants.OFF_FAMN, 0);
+            for (int i = 0; i < Math.Max(n, 0); i++)
+            {
+                if (i >= WbConstants.MAX_FAM) break;
+                if (A.I32At(WbConstants.OFF_FMID, i) == id) return i;
+            }
+            return -1;
+        }
+
+        // ---------------- M-U2c：神经推理（units.rs L449-540；hid/out f32 舍入语义） ----------------
+        /// units.rs L456-476 fwd_tanh_acc（与 neuro.ts fwd 位精确：hid/out 均为 Float32Array 存储即 f32 舍入）
+        private static double[] FwdTanhAcc(int w, int nIn, int nH, int nOut, double[] f)
+        {
+            double[] hid = new double[nH];
+            double[] output = new double[nOut];
+            for (int t = 0; t < nH; t++)
+            {
+                double s = A.F64At(WbConstants.OFF_NEUW, w + nIn * nH + t);                     // b1[t]
+                for (int i = 0; i < nIn; i++)
+                {
+                    s += f[i] * A.F64At(WbConstants.OFF_NEUW, w + i * nH + t);
+                }
+                hid[t] = (double)(float)WbMath.FdTanh(s);                                       // f32 舍入
+            }
+            int w2base = w + nIn * nH + nH;                                                     // w2 起点
+            for (int j = 0; j < nOut; j++)
+            {
+                double s = A.F64At(WbConstants.OFF_NEUW, w2base + nH * nOut + j);               // b2[j]
+                for (int t = 0; t < nH; t++)
+                {
+                    s += hid[t] * A.F64At(WbConstants.OFF_NEUW, w2base + t * nOut + j);
+                }
+                output[j] = (double)(float)s;                                                   // f32 舍入
+            }
+            return output;
+        }
+
+        private static double TeacherAcc(double[] f)                                            // L479-485
+        {
+            double skill = f[0], agi = f[1];
+            double cover = (f[8] > 0.5 ? 0.12 : 0.0) + (f[9] > 0.5 ? 0.1 : 0.0);
+            double baseV = 0.78 + skill * 0.15 - agi * 0.2 - cover;
+            return WbMath.JsMax(0.35, WbMath.JsMin(0.97, baseV));
+        }
+
+        private static int TeacherStance(double[] f)                                            // L486-491
+        {
+            if (f[1] < 0.28 && f[7] < 0.42) return 3;
+            if (f[7] > 0.62 && (f[3] > 0.5 || f[6] > 0.5)) return 2;
+            if (f[0] > 0.7 && f[7] > 0.5) return 1;
+            return 0;
+        }
+
+        private static int TeacherFlight(double[] f)                                            // L492-497
+        {
+            if (f[1] > 0.72 && f[2] < 0.4) return 1;
+            if (f[1] > 0.55 && f[2] < 0.5 && f[0] < 0.45) return 1;
+            if (f[2] < 0.25 && f[5] > 0.5) return 1;
+            return 0;
+        }
+
+        private static double NeuroAcc(double[] f)                                              // L499-507
+        {
+            uint n = A.U32At(WbConstants.OFF_NEUCALL, 0) + 1;
+            A.SetU32(WbConstants.OFF_NEUCALL, 0, n);
+            if ((A.U8At(WbConstants.OFF_NCTL, 0) & 1) == 0) return TeacherAcc(f);
+            double[] output = FwdTanhAcc(WbConstants.NW_ACC, 10, 16, 1, f);
+            return 1.0 / (1.0 + WbMath.FdExp(-output[0]));
+        }
+
+        private static int NeuroStance(double[] f)                                              // L508-522
+        {
+            uint n = A.U32At(WbConstants.OFF_NEUCALL, 1) + 1;
+            A.SetU32(WbConstants.OFF_NEUCALL, 1, n);
+            if ((A.U8At(WbConstants.OFF_NCTL, 0) & 1) == 0) return TeacherStance(f);
+            double[] output = FwdTanhAcc(WbConstants.NW_STANCE, 12, 10, 4, f);
+            int best = 0;
+            for (int j = 1; j < output.Length; j++)
+            {
+                if (output[j] > output[best]) best = j;
+            }
+            return best;
+        }
+
+        /// 返回 (action, logp0, logp1) —— units.rs L524-540
+        private static (int act, double l0, double l1) NeuroFlight(double[] f)
+        {
+            uint n = A.U32At(WbConstants.OFF_NEUCALL, 2) + 1;
+            A.SetU32(WbConstants.OFF_NEUCALL, 2, n);
+            if ((A.U8At(WbConstants.OFF_NCTL, 0) & 1) == 0) return (TeacherFlight(f), 0.0, 0.0);
+            int mode = (A.U8At(WbConstants.OFF_NCTL, 0) >> 1) & 3;
+            int w = mode == 1 ? WbConstants.NW_FRL : WbConstants.NW_FBC;
+            double[] output = FwdTanhAcc(w, 9, 8, 2, f);
+            double m = WbMath.JsMax(output[0], output[1]);
+            double e0 = WbMath.FdExp(output[0] - m);
+            double e1 = WbMath.FdExp(output[1] - m);
+            double z = e0 + e1;
+            double l0 = Math.Log(e0 / z);
+            double l1 = Math.Log(e1 / z);
+            return (output[1] > output[0] ? 1 : 0, l0, l1);
+        }
+
+        // ---------------- M-U2c：装备加成（units.rs L542-586） ----------------
+        public struct GearBonus
+        {
+            public double Armor, Crit, Lifesteal, Thorns, Regen, Ranged, Speed;
+            public static GearBonus Empty() => new GearBonus { Armor = 0, Crit = 0, Lifesteal = 0, Thorns = 0, Regen = 0, Ranged = 0, Speed = 1.0 };
+        }
+
+        private static GearBonus GearBonusOf(int s)                                             // L554-586
+        {
+            bool any = false;
+            for (int k = 0; k < 7; k++)
+            {
+                if (A.I32At(WbConstants.OFF_UGEAR, s * 7 + k) >= 0) { any = true; break; }
+            }
+            if (!any) return GearBonus.Empty();
+            GearBonus g = GearBonus.Empty();
+            for (int k = 0; k < 7; k++)
+            {
+                int item = A.I32At(WbConstants.OFF_UGEAR, s * 7 + k);
+                if (item < 0) continue;
+                int d = item;
+                if (d >= WbConstants.MAX_ITEMDEFS || d >= A.I32At(WbConstants.OFF_TBIN, 0)) continue;
+                g.Armor += A.F64At(WbConstants.OFF_TBI, d * 12 + WbConstants.IT_ARMOR);
+                g.Crit += A.F64At(WbConstants.OFF_TBI, d * 12 + WbConstants.IT_CRIT);
+                g.Lifesteal += A.F64At(WbConstants.OFF_TBI, d * 12 + WbConstants.IT_LIFE);
+                g.Thorns += A.F64At(WbConstants.OFF_TBI, d * 12 + WbConstants.IT_THORNS);
+                g.Regen += A.F64At(WbConstants.OFF_TBI, d * 12 + WbConstants.IT_REGEN);
+                g.Ranged = WbMath.JsMax(g.Ranged, A.F64At(WbConstants.OFF_TBI, d * 12 + WbConstants.IT_RNG));
+                g.Speed *= A.F64At(WbConstants.OFF_TBI, d * 12 + WbConstants.IT_SPDMUL);
+            }
+            g.Armor = WbMath.JsMin(60.0, g.Armor);
+            g.Speed = WbMath.JsMax(0.85, WbMath.JsMin(1.12, g.Speed));
+            return g;
+        }
+
+        private static bool ItemIsGun(int item)                                                 // L3346-3350
+        {
+            int b = item;
+            return (A.U32At(WbConstants.OFF_GUNBM, b >> 5) & (1u << (b & 31))) != 0;
+        }
+
+        private static bool ItemIsBeam(int item)                                                // L3351-3355
+        {
+            int b = item;
+            return (A.U32At(WbConstants.OFF_BEAMBM, b >> 5) & (1u << (b & 31))) != 0;
+        }
+
+        // ---------------- M-U2c：瘟疫/记仇/目击（units.rs L985-1157） ----------------
+        private static void SpreadPlague(WbCtx ctx, int s)                                      // L986-1015
+        {
+            int live = (int)WbSim.Arena.LiveLen;
+            double ux = A.F64At(WbConstants.OFF_UX, s);
+            double uy = A.F64At(WbConstants.OFF_UY, s);
+            for (int o = 0; o < live; o++)
+            {
+                if (o == s || A.U8At(WbConstants.OFF_UINF, o) != 0 || A.U8At(WbConstants.OFF_UDEAD, o) != 0) continue;
+                if (IsUndead((int)A.U32At(WbConstants.OFF_URACE, o))) continue;
+                int tr = A.I32At(WbConstants.OFF_UTRAIT, o);
+                if (tr >= 0 && (A.U8At(WbConstants.OFF_TRFL, tr) & 4) != 0) continue;
+                double dx = A.F64At(WbConstants.OFF_UX, o) - ux;
+                double dy = A.F64At(WbConstants.OFF_UY, o) - uy;
+                if (WbMath.FdHypot(dx, dy) < 1.8)
+                {
+                    int oc = A.I32At(WbConstants.OFF_UCIV, o);
+                    if (oc >= 0)
+                    {
+                        if (RngNext() < A.F64At(WbConstants.OFF_CVTECH, oc * 24 + 14 /* TC_PLAGUE */))
+                        {
+                            A.SetU8(WbConstants.OFF_UINF, o, 1);
+                            Dirty(o);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        private static void AddGrudge(int w, uint killerId, int victimCiv, int victimFam)       // L1017-1068
+        {
+            double v = 1.0;
+            int wc = A.I32At(WbConstants.OFF_UCIV, w);
+            if (victimCiv >= 0 && wc == victimCiv) v = 1.6;
+            int wf = A.I32At(WbConstants.OFF_UFAM, w);
+            if (wf >= 0 && wf == victimFam) v = 2.6;
+            int gl = UGlen(w);
+            if (gl < 0) gl = 0;
+            int found = -1;
+            for (int i = 0; i < gl; i++)
+            {
+                if ((uint)A.I32At(WbConstants.OFF_UGIDS, w * WbConstants.UG_CAP + i) == killerId)
+                {
+                    found = i;
+                    break;
+                }
+            }
+            if (found >= 0)
+            {
+                double nv = WbMath.JsMin(3.0, A.F64At(WbConstants.OFF_UGVAL, w * WbConstants.UG_CAP + found) + v * 0.6);
+                A.SetF64(WbConstants.OFF_UGVAL, w * WbConstants.UG_CAP + found, nv);
+            }
+            else
+            {
+                int n = gl;
+                if (n < 4)
+                {
+                    A.SetI32(WbConstants.OFF_UGIDS, w * WbConstants.UG_CAP + n, unchecked((int)killerId));
+                    A.SetF64(WbConstants.OFF_UGVAL, w * WbConstants.UG_CAP + n, v);
+                    A.SetI32(WbConstants.OFF_UGLN, w, n + 1);
+                }
+                else
+                {
+                    int m = Math.Min(n, WbConstants.UG_CAP);
+                    int wi = 0;
+                    for (int i = 1; i < m; i++)
+                    {
+                        if (A.F64At(WbConstants.OFF_UGVAL, w * WbConstants.UG_CAP + i) < A.F64At(WbConstants.OFF_UGVAL, w * WbConstants.UG_CAP + wi))
+                        {
+                            wi = i;
+                        }
+                    }
+                    int k2 = wi;
+                    while (k2 + 1 < m)
+                    {
+                        A.SetI32(WbConstants.OFF_UGIDS, w * WbConstants.UG_CAP + k2, A.I32At(WbConstants.OFF_UGIDS, w * WbConstants.UG_CAP + k2 + 1));
+                        A.SetF64(WbConstants.OFF_UGVAL, w * WbConstants.UG_CAP + k2, A.F64At(WbConstants.OFF_UGVAL, w * WbConstants.UG_CAP + k2 + 1));
+                        k2 += 1;
+                    }
+                    A.SetI32(WbConstants.OFF_UGIDS, w * WbConstants.UG_CAP + m - 1, unchecked((int)killerId));
+                    A.SetF64(WbConstants.OFF_UGVAL, w * WbConstants.UG_CAP + m - 1, v);
+                }
+            }
+            Dirty(w);
+        }
+
+        private static void WitnessDeath(WbCtx ctx, int killer, int victim)                     // L1070-1157
+        {
+            double vx = A.F64At(WbConstants.OFF_UX, victim);
+            double vy = A.F64At(WbConstants.OFF_UY, victim);
+            int bw = ctx.Bw, bh = ctx.Bh;
+            int cx = (int)WbMath.JsMin(bw - 1.0, WbMath.JsMax(0.0, Math.Floor(vx / 4.0)));
+            int cy = (int)WbMath.JsMin(bh - 1.0, WbMath.JsMax(0.0, Math.Floor(vy / 4.0)));
+            double fierce = WbMath.JsMin(3.0, A.F64At(WbConstants.OFF_UKILLS, killer) / 6.0);
+            uint killerId = A.U32At(WbConstants.OFF_UID, killer);
+            int victimCiv = A.I32At(WbConstants.OFF_UCIV, victim);
+            uint victimRace = A.U32At(WbConstants.OFF_URACE, victim);
+            int victimFam = A.I32At(WbConstants.OFF_UFAM, victim);
+            double killerKills = A.F64At(WbConstants.OFF_UKILLS, killer);
+
+            void Visit(int o)                                                                   // L1089-1123
+            {
+                if (A.U8At(WbConstants.OFF_UDEAD, o) != 0 || o == killer || o == victim) return;
+                bool kin = victimCiv >= 0
+                    ? A.I32At(WbConstants.OFF_UCIV, o) == victimCiv
+                    : A.U32At(WbConstants.OFF_URACE, o) == victimRace;
+                if (!kin) return;
+                if (WbMath.FdHypot(A.F64At(WbConstants.OFF_UX, o) - vx, A.F64At(WbConstants.OFF_UY, o) - vy) > 6.0) return;
+                int wr = (int)A.U32At(WbConstants.OFF_URACE, o);
+                if (IsUndead(wr)) return;
+                double inc = 0.32 + 0.08 * fierce + (killerKills >= 10.0 ? 0.12 : 0.0);
+                int wf = A.I32At(WbConstants.OFF_UFAM, o);
+                if (wf >= 0 && wf == victimFam) inc += 0.15;
+                int wtr = A.I32At(WbConstants.OFF_UTRAIT, o);
+                bool isBerserk = wtr >= 0 && (A.U8At(WbConstants.OFF_TRFL, wtr) & 64) != 0;      // bit6 berserk
+                if (isBerserk || A.U8At(WbConstants.OFF_MLOOT, wr) != 0) inc *= 0.35;
+                if (A.I32At(WbConstants.OFF_UARMY, o) >= 0) inc *= 0.4;
+                SetPanic(o, WbMath.JsMin(1.0, UPanic0(o) + inc));
+                AddGrudge(o, killerId, victimCiv, victimFam);
+            }
+
+            int by = cy - 2;                                                                    // 5×5 桶遍历
+            while (by <= cy + 2)
+            {
+                if (by < 0 || by >= bh) { by += 1; continue; }
+                int bx = cx - 2;
+                while (bx <= cx + 2)
+                {
+                    if (bx < 0 || bx >= bw) { bx += 1; continue; }
+                    int cell = by * bw + bx;
+                    int start = A.I32At(WbConstants.OFF_CELL_START, cell);
+                    int end = A.I32At(WbConstants.OFF_CELL_START, cell + 1);
+                    int k = start;
+                    while (k < end)
+                    {
+                        int o = (int)A.U32At(WbConstants.OFF_CELL_ITEMS, k);
+                        k += 1;
+                        Visit(o);
+                    }
+                    bx += 1;
+                }
+                by += 1;
+            }
+        }
+
+        // ---------------- M-U2c：zombify（units.rs L1768-1792） ----------------
+        private static void Zombify(WbCtx ctx, int s)
+        {
+            int race = (int)A.U32At(WbConstants.OFF_URACE, s);
+            int civ = A.I32At(WbConstants.OFF_UCIV, s);
+            if (civ >= 0) CivDelta(ctx, 0, civ, -1.0);
+            if (!IsCiv(race)) BumpWild(race, -1);
+            A.SetU32(WbConstants.OFF_URACE, s, (uint)WbConstants.R_ZOMBIE);
+            A.SetI32(WbConstants.OFF_UCIV, s, -1);
+            A.SetF64(WbConstants.OFF_UHP, s, 40.0);
+            A.SetF64(WbConstants.OFF_UMAXHP, s, 46.0);
+            A.SetF64(WbConstants.OFF_UDMG, s, 6.0);
+            A.SetF64(WbConstants.OFF_USPEED, s, 0.05);
+            A.SetF64(WbConstants.OFF_UAGE, s, 0.0);
+            A.SetF64(WbConstants.OFF_UMAXAGE, s, 9999.0);
+            A.SetU8(WbConstants.OFF_UINF, s, 0);
+            A.SetU8(WbConstants.OFF_UDEAD, s, 0);
+            A.SetU8(WbConstants.OFF_UBOAT, s, 0);
+            A.SetI32(WbConstants.OFF_UBTL, s, 0);
+            BumpWild(WbConstants.R_ZOMBIE, 1);
+            Fx(ctx, WbConstants.FX_SPAWN, A.F64At(WbConstants.OFF_UX, s), A.F64At(WbConstants.OFF_UY, s), 30.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, false);
+            Dirty(s);
+        }
+
+        // rise_skeleton（units.rs L1795-1808）→ 依赖 spawn_unit（M-U2d 全量翻译）
+        private static void RiseSkeleton(WbCtx ctx, double x, double y)
+        {
+            // TODO(M-U2d): spawn_unit(...) + FX_SPAWN + 0.12 EVT_SKELETON——场景不触发（M-U2c 击杀结算白行者/亡者复生支）
+        }
+
         // ---------------- 桶扫描（M-U2b 全量；units.rs L633-734 机械翻译） ----------------
         public struct ScanOut
         {
@@ -877,8 +1258,43 @@ namespace PixelWorldBox.Wb
             {
                 double p = A.F64At(WbConstants.OFF_UPANIC, s) - Ep(WbConstants.EP_PANIC_DECAY);
                 if (p <= 0.0) ClearPanic(s);
+                else A.SetF64(WbConstants.OFF_UPANIC, s, p);   // L2284-2291 else 分支写回
             }
-            // grudge 衰减段（L2292-2341）：TODO(M-U2c)——场景 UGLN=-1 整段短路
+            // 血仇衰减（L2288-2315）
+            int gl = UGlen(s);
+            if (gl >= 0)
+            {
+                bool alive = false;
+                int gi = 0;
+                while (gi < Math.Max(UGlen(s), 0))
+                {
+                    double v = A.F64At(WbConstants.OFF_UGVAL, s * WbConstants.UG_CAP + gi) - Ep(WbConstants.EP_GRUDGE_DECAY);
+                    A.SetF64(WbConstants.OFF_UGVAL, s * WbConstants.UG_CAP + gi, v);
+                    if (v < 0.3)
+                    {
+                        // JS splice(gi)：前移 + 长度减一；gi 不增（下轮处理移入者）
+                        int len = UGlen(s);
+                        int m = gi;
+                        while (m + 1 < len)
+                        {
+                            A.SetI32(WbConstants.OFF_UGIDS, s * WbConstants.UG_CAP + m, A.I32At(WbConstants.OFF_UGIDS, s * WbConstants.UG_CAP + m + 1));
+                            A.SetF64(WbConstants.OFF_UGVAL, s * WbConstants.UG_CAP + m, A.F64At(WbConstants.OFF_UGVAL, s * WbConstants.UG_CAP + m + 1));
+                            m += 1;
+                        }
+                        A.SetI32(WbConstants.OFF_UGLN, s, len - 1);
+                    }
+                    else
+                    {
+                        alive = true;
+                        gi += 1;
+                    }
+                }
+                if (UGlen(s) == 0)
+                {
+                    A.SetI32(WbConstants.OFF_UGLN, s, -1); // JS: !alive → undefined
+                }
+                Dirty(s);
+            }
             // 地形伤害（L2342-2367）
             double ux0 = A.F64At(WbConstants.OFF_UX, s);
             double uy0 = A.F64At(WbConstants.OFF_UY, s);
@@ -909,7 +1325,7 @@ namespace PixelWorldBox.Wb
                 A.SetF64(WbConstants.OFF_UHP, s, A.F64At(WbConstants.OFF_UHP, s) - 0.15);
                 if (RngNext() < 0.02)
                 {
-                    // TODO(M-U2c): spread_plague（场景 UINF=0 不触发）
+                    SpreadPlague(ctx, s);                                                             // L2376（units.rs L986-1015）
                 }
             }
             // 再生（L2379-2397）
@@ -918,10 +1334,10 @@ namespace PixelWorldBox.Wb
                 double maxhp = A.F64At(WbConstants.OFF_UMAXHP, s);
                 if (hp > 0.0 && hp < maxhp)
                 {
-                    // 蓝本 L2384: gear_bonus 仅 civ（M-U2c 桩）；野怪 rg=trait/troll
-                    double rg = 0.0;
+                    GearBonus? gb = IsCiv(race) ? GearBonusOf(s) : (GearBonus?)null;               // L2384
                     int tr = A.I32At(WbConstants.OFF_UTRAIT, s);
-                    if (tr >= 0) rg = A.F64At(WbConstants.OFF_TRREG, tr); // TODO(M-U2c): civ gear regen 附加
+                    double rg = tr >= 0 ? A.F64At(WbConstants.OFF_TRREG, tr) : 0.0;
+                    if (gb.HasValue) rg += gb.Value.Regen;
                     if (race == 21) rg += 0.35; // TROLL（L2390-2392）
                     if (rg > 0.0)
                     {
@@ -940,7 +1356,51 @@ namespace PixelWorldBox.Wb
                     A.SetF64(WbConstants.OFF_UHURT, s, WbMath.JsMax(A.F64At(WbConstants.OFF_UHURT, s), 3.0));
                 }
             }
-            // 白行者寒霜（L2407-2438）：TODO(M-U2c)——场景 race≠23 不触发
+            // 白行者寒霜（L2407-2438）
+            if (race == WbConstants.R_WHITEWALKER)
+            {
+                if (RngNext() < 0.08)
+                {
+                    int jx = (int)Math.Floor(A.F64At(WbConstants.OFF_UX, s) + RngNext() * 3.0 - 1.5);
+                    int jy = (int)Math.Floor(A.F64At(WbConstants.OFF_UY, s) + RngNext() * 3.0 - 1.5);
+                    if (jx >= 0 && jy >= 0 && jx < WbConstants.W && jy < WbConstants.H)
+                    {
+                        int j = Idx(jx, jy);
+                        byte t = A.U8At(WbConstants.OFF_TERR, j);
+                        if (t == WbConstants.T_GRASS || t == WbConstants.T_BURNT || t == WbConstants.T_SAND)
+                        {
+                            SetTerrain(ctx, j, WbConstants.T_SNOW);
+                        }
+                        else if (t == WbConstants.T_FOREST && RngNext() < 0.4)
+                        {
+                            SetTerrain(ctx, j, WbConstants.T_SNOW);
+                        }
+                        else if (TIsWater(t) && RngNext() < 0.5)
+                        {
+                            SetTerrain(ctx, j, WbConstants.T_ICE);
+                        }
+                        if (A.U8At(WbConstants.OFF_FIREG, j) > 0)
+                        {
+                            A.SetU8(WbConstants.OFF_FIREG, j, 0);
+                            int n = A.I32At(WbConstants.OFF_FIREN, 0);
+                            if (n > 0)
+                            {
+                                A.SetI32(WbConstants.OFF_FIREN, 0, n - 1);
+                            }
+                            int? p = ctx.ActReserve(5);
+                            if (p.HasValue)
+                            {
+                                ctx.ActU8(p.Value, WbConstants.ACT_FIRE_CLEAR);
+                                ctx.ActI32(p.Value + 1, j);
+                            }
+                        }
+                    }
+                }
+                if (TIsWater(A.U8At(WbConstants.OFF_TERR, ti)) && RngNext() < 0.6)
+                {
+                    SetTerrain(ctx, ti, WbConstants.T_ICE);
+                }
+            }
             if (A.F64At(WbConstants.OFF_UHP, s) <= 0.0)                                             // L2439-2442
             {
                 A.SetU8(WbConstants.OFF_UDEAD, s, 1);
@@ -955,10 +1415,639 @@ namespace PixelWorldBox.Wb
             int cx = (int)WbMath.JsMin(A.Bw - 1.0, WbMath.JsMax(0.0, Math.Floor(ux / 4.0)));
             int cy = (int)WbMath.JsMin(A.Bh - 1.0, WbMath.JsMax(0.0, Math.Floor(uy / 4.0)));
             ScanOut sc = BucketScan(ctx, s, contagious, cx, cy, ux, uy);                            // L2451（M-U2b 全量）
-            bool hasEnemy = sc.Enemy >= 0;
-            // 蓝本 L2458-2530：商队逃逸/冷却逃逸/恐慌溃逃/战或逃神经/接敌路径
-            // —— 全部 enemy != MAX 短路，M-U2c 全量翻译（fd_atan2/fd_cos/fd_sin/神经前向）
-            // skip_tail 守卫（L2957-3261）：无敌人 skip_tail=false → 尾段执行
+            int enemy = sc.Enemy;                                                                   // L2452（-1 = usize::MAX）
+            bool hasEnemy = enemy >= 0;
+            bool skipTail = false;
+
+            if (hasEnemy)
+            {
+                // —— 商队遇敌逃逸（L2458-2467）——
+                if (UCaravan0(s) > 0.0)
+                {
+                    double ex0 = A.F64At(WbConstants.OFF_UX, enemy);
+                    double ey0 = A.F64At(WbConstants.OFF_UY, enemy);
+                    double ang0 = WbMath.FdAtan2(A.F64At(WbConstants.OFF_UY, s) - ey0, A.F64At(WbConstants.OFF_UX, s) - ex0);
+                    A.SetF64(WbConstants.OFF_UTX, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.W - 2.0, A.F64At(WbConstants.OFF_UX, s) + WbMath.FdCos(ang0) * 4.0)));
+                    A.SetF64(WbConstants.OFF_UTY, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.H - 2.0, A.F64At(WbConstants.OFF_UY, s) + WbMath.FdSin(ang0) * 4.0)));
+                    MoveUnit(ctx, s, 1.15);
+                    return 0;
+                }
+                // —— 脱离冷却逃逸（L2468-2475）——
+                if (A.F64At(WbConstants.OFF_UFLEET, s) > 0.0)
+                {
+                    double ang1 = WbMath.FdAtan2(A.F64At(WbConstants.OFF_UY, s) - A.F64At(WbConstants.OFF_UY, enemy), A.F64At(WbConstants.OFF_UX, s) - A.F64At(WbConstants.OFF_UX, enemy));
+                    A.SetF64(WbConstants.OFF_UTX, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.W - 2.0, A.F64At(WbConstants.OFF_UX, s) + WbMath.FdCos(ang1) * 5.0)));
+                    A.SetF64(WbConstants.OFF_UTY, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.H - 2.0, A.F64At(WbConstants.OFF_UY, s) + WbMath.FdSin(ang1) * 5.0)));
+                    MoveUnit(ctx, s, UPanic0(s) >= 0.5 ? 1.32 : 1.18);
+                    return 0;
+                }
+                // —— 恐慌溃逃（L2476-2484）——
+                if (UPanic0(s) >= Ep(WbConstants.EP_PANIC_ROUT) && A.I32At(WbConstants.OFF_UARMY, s) < 0 && !IsUndead(race))
+                {
+                    A.SetF64(WbConstants.OFF_UFLEET, s, 60.0);
+                    double ang2 = WbMath.FdAtan2(A.F64At(WbConstants.OFF_UY, s) - A.F64At(WbConstants.OFF_UY, enemy), A.F64At(WbConstants.OFF_UX, s) - A.F64At(WbConstants.OFF_UX, enemy));
+                    A.SetF64(WbConstants.OFF_UTX, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.W - 2.0, A.F64At(WbConstants.OFF_UX, s) + WbMath.FdCos(ang2) * 5.0)));
+                    A.SetF64(WbConstants.OFF_UTY, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.H - 2.0, A.F64At(WbConstants.OFF_UY, s) + WbMath.FdSin(ang2) * 5.0)));
+                    MoveUnit(ctx, s, 1.3);
+                    return 0;
+                }
+                // —— 战或逃神经（L2485-2535）——
+                if ((!IsCiv(race) || IsHostile(race)) && !IsUndead(race))
+                {
+                    double myPow = A.F64At(WbConstants.OFF_UDMG, s) + A.F64At(WbConstants.OFF_UHP, s) / 8.0;
+                    int gl2 = UGlen(s);
+                    if (gl2 > 0)
+                    {
+                        uint eid = A.U32At(WbConstants.OFF_UID, enemy);
+                        int gi = -1;
+                        for (int t = 0; t < gl2; t++)
+                        {
+                            if ((uint)A.I32At(WbConstants.OFF_UGIDS, s * WbConstants.UG_CAP + t) == eid) { gi = t; break; }
+                        }
+                        if (gi >= 0)
+                        {
+                            myPow *= 1.0 + 0.2 * WbMath.JsMin(1.0, A.F64At(WbConstants.OFF_UGVAL, s * WbConstants.UG_CAP + gi) / 2.0);
+                        }
+                    }
+                    double foePow = A.F64At(WbConstants.OFF_UDMG, enemy) + A.F64At(WbConstants.OFF_UHP, enemy) / 8.0;
+                    double[] f = new double[9];
+                    f[0] = WbMath.JsMax(0.0, A.F64At(WbConstants.OFF_UHP, s)) / A.F64At(WbConstants.OFF_UMAXHP, s);
+                    f[1] = IsPredator(race) ? WbMath.JsMax(0.0, WbMath.JsMin(1.0, 1.0 - UFood0(s) / 160.0)) : 0.5;
+                    f[2] = myPow / (myPow + foePow);
+                    f[3] = WbMath.JsMax(0.0, A.F64At(WbConstants.OFF_UHP, enemy)) / A.F64At(WbConstants.OFF_UMAXHP, enemy);
+                    f[4] = WbMath.JsMin(12.0, sc.EnemyD) / 12.0;
+                    f[5] = IsHerbivore(A.U32At(WbConstants.OFF_URACE, enemy)) ? 1.0 : 0.0;
+                    f[6] = WbMath.JsMin(3.0, WbMath.JsMax(0.0, (double)sc.Foes - 1.0)) / 3.0;
+                    f[7] = A.U8At(WbConstants.OFF_MLOOT, race) != 0 ? 1.0 : 0.0;
+                    f[8] = WbMath.JsMin(20.0, A.F64At(WbConstants.OFF_UKILLS, s)) / 20.0;
+                    (int flAct, double l0, double _) = NeuroFlight(f);
+                    if (A.U8At(WbConstants.OFF_COLEN, 0) != 0)
+                    {
+                        int? p = ctx.ActReserve(104);
+                        if (p.HasValue)
+                        {
+                            ctx.ActU8(p.Value, WbConstants.ACT_TELEM);
+                            ctx.ActU8(p.Value + 1, WbConstants.TL_DECISION);
+                            ctx.ActI32(p.Value + 4, (int)A.U32At(WbConstants.OFF_UID, s));
+                            ctx.ActI32(p.Value + 8, A.I32At(WbConstants.OFF_TICK, 0));
+                            for (int k = 0; k < 9; k++)
+                            {
+                                ctx.ActF64(p.Value + 16 + k * 8, f[k]);
+                            }
+                            ctx.ActU8(p.Value + 88, (byte)flAct);
+                            ctx.ActF64(p.Value + 96, l0);
+                        }
+                    }
+                    if (flAct == 1)
+                    {
+                        A.SetF64(WbConstants.OFF_UFLEET, s, 40.0);
+                        double ang3 = WbMath.FdAtan2(A.F64At(WbConstants.OFF_UY, s) - A.F64At(WbConstants.OFF_UY, enemy), A.F64At(WbConstants.OFF_UX, s) - A.F64At(WbConstants.OFF_UX, enemy));
+                        A.SetF64(WbConstants.OFF_UTX, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.W - 2.0, A.F64At(WbConstants.OFF_UX, s) + WbMath.FdCos(ang3) * 5.0)));
+                        A.SetF64(WbConstants.OFF_UTY, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.H - 2.0, A.F64At(WbConstants.OFF_UY, s) + WbMath.FdSin(ang3) * 5.0)));
+                        MoveUnit(ctx, s, 1.2);
+                        return 0;
+                    }
+                }
+
+                // —— 接敌战斗树（L2539-2954）——
+                {
+                    int erace = (int)A.U32At(WbConstants.OFF_URACE, enemy);
+                    double rdRange = A.F64At(WbConstants.OFF_TBR, race * 12 + WbConstants.RB_RNG_RANGE);
+                    double rdDmg = A.F64At(WbConstants.OFF_TBR, race * 12 + WbConstants.RB_RNG_DMG);
+                    double rdCd = A.F64At(WbConstants.OFF_TBR, race * 12 + WbConstants.RB_RNG_CD);
+                    bool hasRd = rdRange != 0.0;
+                    int job = UJob0(s);
+                    int ucivB = A.I32At(WbConstants.OFF_UCIV, s);
+                    double jobRanged = job == 3 ? A.F64At(WbConstants.OFF_TBJ, 3 * 5 + WbConstants.JB_RNG) : 0.0;
+                    double gearRng = IsCiv(race) ? GearBonusOf(s).Ranged : 0.0;
+                    double techRng = IsCiv(race) && ucivB >= 0 ? A.F64At(WbConstants.OFF_CVTECH, ucivB * 24 + 15 /* TC_RANGE */) : 0.0;
+                    double bowRange = (jobRanged != 0.0 ? jobRanged : gearRng) + techRng;
+
+                    // 姿态网络（L2553-2585）
+                    double myPowB = A.F64At(WbConstants.OFF_UDMG, s) + A.F64At(WbConstants.OFF_UHP, s) / 8.0;
+                    int gl2b = UGlen(s);
+                    if (gl2b > 0)
+                    {
+                        uint eidB = A.U32At(WbConstants.OFF_UID, enemy);
+                        int giB = -1;
+                        for (int t = 0; t < gl2b; t++)
+                        {
+                            if ((uint)A.I32At(WbConstants.OFF_UGIDS, s * WbConstants.UG_CAP + t) == eidB) { giB = t; break; }
+                        }
+                        if (giB >= 0)
+                        {
+                            myPowB *= 1.0 + 0.2 * WbMath.JsMin(1.0, A.F64At(WbConstants.OFF_UGVAL, s * WbConstants.UG_CAP + giB) / 2.0);
+                        }
+                    }
+                    double foePowB = A.F64At(WbConstants.OFF_UDMG, enemy) + A.F64At(WbConstants.OFF_UHP, enemy) / 8.0;
+                    double reach = A.F64At(WbConstants.OFF_TBR, race * 12 + WbConstants.RB_REACH);
+                    reach = reach == 0.0 ? 0.9 : reach;
+                    double[] fs = new double[12];
+                    fs[0] = WbMath.JsMin(12.0, sc.EnemyD) / 12.0;
+                    fs[1] = WbMath.JsMax(0.0, A.F64At(WbConstants.OFF_UHP, s)) / A.F64At(WbConstants.OFF_UMAXHP, s);
+                    fs[2] = WbMath.JsMax(0.0, A.F64At(WbConstants.OFF_UHP, enemy)) / A.F64At(WbConstants.OFF_UMAXHP, enemy);
+                    fs[3] = hasRd || bowRange > 0.0 ? 1.0 : 0.0;
+                    fs[4] = WbMath.JsMin(8.0, hasRd ? rdRange : bowRange) / 8.0;
+                    fs[5] = WbMath.JsMin(2.0, reach) / 2.0;
+                    fs[6] = hasRd ? 1.0 : 0.0;
+                    fs[7] = myPowB / (myPowB + foePowB);
+                    fs[8] = WbMath.JsMin(4.0, (double)sc.Allies) / 4.0;
+                    fs[9] = A.I32At(WbConstants.OFF_UARMY, s) >= 0 ? 1.0 : 0.0;
+                    fs[10] = IsCiv(race) ? 1.0 : 0.0;
+                    fs[11] = WbMath.JsMin(20.0, A.F64At(WbConstants.OFF_UKILLS, s)) / 20.0;
+                    int stance = NeuroStance(fs);
+
+                    if (stance == 3)                                                                    // L2587-2594
+                    {
+                        A.SetF64(WbConstants.OFF_UFLEET, s, 50.0);
+                        double ang4 = WbMath.FdAtan2(A.F64At(WbConstants.OFF_UY, s) - A.F64At(WbConstants.OFF_UY, enemy), A.F64At(WbConstants.OFF_UX, s) - A.F64At(WbConstants.OFF_UX, enemy));
+                        A.SetF64(WbConstants.OFF_UTX, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.W - 2.0, A.F64At(WbConstants.OFF_UX, s) + WbMath.FdCos(ang4) * 6.0)));
+                        A.SetF64(WbConstants.OFF_UTY, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.H - 2.0, A.F64At(WbConstants.OFF_UY, s) + WbMath.FdSin(ang4) * 6.0)));
+                        MoveUnit(ctx, s, 1.15);
+                        return 0;
+                    }
+                    int wep = A.I32At(WbConstants.OFF_UGEAR, s * 7 + 0);
+                    if (hasRd && sc.EnemyD > 1.6 && sc.EnemyD <= rdRange)
+                    {
+                        // 法师火球（L2596-2610）
+                        if (A.F64At(WbConstants.OFF_UCD, s) <= 0.0)
+                        {
+                            A.SetF64(WbConstants.OFF_UCD, s, rdCd);
+                            A.SetF64(WbConstants.OFF_UATK, s, 10.0);
+                            double tx2 = A.F64At(WbConstants.OFF_UX, enemy) + RngNext() * 0.6 - 0.3;
+                            double ty2 = A.F64At(WbConstants.OFF_UY, enemy) + RngNext() * 0.6 - 0.3;
+                            Fx(ctx, WbConstants.FX_FIREBALL, WbMath.JsMax(0.5, WbMath.JsMin(WbConstants.W - 0.5, tx2)), WbMath.JsMax(0.5, WbMath.JsMin(WbConstants.H - 0.5, ty2)), 16.0, rdDmg, A.F64At(WbConstants.OFF_UX, s), A.F64At(WbConstants.OFF_UY, s), rdDmg, -1, false, WbConstants.TXT_NONE, 0, true);
+                        }
+                        if (stance == 2)
+                        {
+                            double ang5 = WbMath.FdAtan2(A.F64At(WbConstants.OFF_UY, s) - A.F64At(WbConstants.OFF_UY, enemy), A.F64At(WbConstants.OFF_UX, s) - A.F64At(WbConstants.OFF_UX, enemy));
+                            A.SetF64(WbConstants.OFF_UTX, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.W - 2.0, A.F64At(WbConstants.OFF_UX, s) + WbMath.FdCos(ang5) * 3.0)));
+                            A.SetF64(WbConstants.OFF_UTY, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.H - 2.0, A.F64At(WbConstants.OFF_UY, s) + WbMath.FdSin(ang5) * 3.0)));
+                            MoveUnit(ctx, s, 0.6);
+                        }
+                    }
+                    else if (bowRange > 0.0 && sc.EnemyD > 1.4 && sc.EnemyD <= bowRange)
+                    {
+                        // 弓手/火枪（L2611-2643）
+                        bool gun = wep >= 0 && ItemIsGun(wep);
+                        bool beam = wep >= 0 && ItemIsBeam(wep);
+                        if (A.F64At(WbConstants.OFF_UCD, s) <= 0.0)
+                        {
+                            A.SetF64(WbConstants.OFF_UCD, s, beam ? 12.0 : gun ? 15.0 : 18.0);
+                            A.SetF64(WbConstants.OFF_UATK, s, 10.0);
+                            double mul = IsCiv(race) && ucivB >= 0 ? A.F64At(WbConstants.OFF_CVTECH, ucivB * 24 + 13 /* TC_ARCHER */) : 1.0;
+                            double ttl = beam ? 8.0 : gun ? 5.0 : 12.0;
+                            double elx = A.F64At(WbConstants.OFF_ULX, enemy);
+                            double ely = A.F64At(WbConstants.OFF_ULY, enemy);
+                            double vx = A.F64At(WbConstants.OFF_UX, enemy) - (double.IsNaN(elx) ? A.F64At(WbConstants.OFF_UX, enemy) : elx);
+                            double vy = A.F64At(WbConstants.OFF_UY, enemy) - (double.IsNaN(ely) ? A.F64At(WbConstants.OFF_UY, enemy) : ely);
+                            double aimX = WbMath.JsMax(0.5, WbMath.JsMin(WbConstants.W - 0.5, A.F64At(WbConstants.OFF_UX, enemy) + vx * ttl + RngNext() * 0.4 - 0.2));
+                            double aimY = WbMath.JsMax(0.5, WbMath.JsMin(WbConstants.H - 0.5, A.F64At(WbConstants.OFF_UY, enemy) + vy * ttl + RngNext() * 0.4 - 0.2));
+                            double dmg = A.F64At(WbConstants.OFF_UDMG, s) * mul;
+                            byte kind = beam ? WbConstants.FX_LASER : gun ? WbConstants.FX_BULLET : WbConstants.FX_ARROW;
+                            double d2v = beam ? A.F64At(WbConstants.OFF_UDMG, s) * 0.75 * mul : dmg;
+                            Fx(ctx, kind, aimX, aimY, beam ? 8.0 : gun ? 5.0 : 12.0, 1.0, A.F64At(WbConstants.OFF_UX, s), A.F64At(WbConstants.OFF_UY, s), d2v, ucivB, false, WbConstants.TXT_NONE, 0, true);
+                            if (!beam && gun && RngNext() < 0.12)
+                            {
+                                int? p = ctx.ActReserve(8);
+                                if (p.HasValue)
+                                {
+                                    ctx.ActU8(p.Value, WbConstants.ACT_SND);
+                                    ctx.ActU8(p.Value + 1, WbConstants.SND_PLACE);
+                                }
+                            }
+                        }
+                        if (stance == 2)
+                        {
+                            double ang6 = WbMath.FdAtan2(A.F64At(WbConstants.OFF_UY, s) - A.F64At(WbConstants.OFF_UY, enemy), A.F64At(WbConstants.OFF_UX, s) - A.F64At(WbConstants.OFF_UX, enemy));
+                            A.SetF64(WbConstants.OFF_UTX, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.W - 2.0, A.F64At(WbConstants.OFF_UX, s) + WbMath.FdCos(ang6) * 3.0)));
+                            A.SetF64(WbConstants.OFF_UTY, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.H - 2.0, A.F64At(WbConstants.OFF_UY, s) + WbMath.FdSin(ang6) * 3.0)));
+                            MoveUnit(ctx, s, 0.7);
+                        }
+                    }
+                    else if (sc.EnemyD < reach)
+                    {
+                        // 近战（L2644-2938；仅 cd 门控的战斗结算，无移动；落入 POST 不 return）
+                        if (A.F64At(WbConstants.OFF_UCD, s) <= 0.0)
+                        {
+                            double wspeed = IsCiv(race) ? GearBonusOf(s).Speed : 1.0;
+                            A.SetF64(WbConstants.OFF_UCD, s, WbMath.JsRound(14.0 / wspeed));
+                            A.SetF64(WbConstants.OFF_UATK, s, 12.0);
+                            // 克拉肯触手（L2650-2669）
+                            if (race == WbConstants.R_KRAKEN && A.U8At(WbConstants.OFF_UBOAT, enemy) != 0)
+                            {
+                                A.SetF64(WbConstants.OFF_UHP, enemy, A.F64At(WbConstants.OFF_UHP, enemy) - A.F64At(WbConstants.OFF_UDMG, s) * 2.0);
+                                A.SetF64(WbConstants.OFF_UHURT, enemy, 20.0);
+                                if (RngNext() < 0.3)
+                                {
+                                    A.SetU8(WbConstants.OFF_UDEAD, enemy, 1);
+                                    A.SetU8(WbConstants.OFF_UBOAT, enemy, 0);
+                                    Dirty(enemy);
+                                    Fx(ctx, WbConstants.FX_EXPLOSION, A.F64At(WbConstants.OFF_UX, enemy), A.F64At(WbConstants.OFF_UY, enemy), 16.0, 1.6, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, true);
+                                    int? p = ctx.ActReserve(12);
+                                    if (p.HasValue)
+                                    {
+                                        ctx.ActU8(p.Value, WbConstants.ACT_EVT);
+                                        ctx.ActU8(p.Value + 1, WbConstants.EVT_SHIPWRECK);
+                                        ctx.ActI32(p.Value + 4, (int)A.U32At(WbConstants.OFF_UID, enemy));
+                                    }
+                                }
+                                else
+                                {
+                                    Fx(ctx, WbConstants.FX_TSUNAMI, A.F64At(WbConstants.OFF_UX, enemy), A.F64At(WbConstants.OFF_UY, enemy), 12.0, 2.5, 0.0, 0.0, 0.0, -1, true, WbConstants.TXT_NONE, 0, true);
+                                }
+                                Dirty(s);
+                                return 0;
+                            }
+                            // 沙虫吞噬（L2670-2683）
+                            if (race == WbConstants.R_SANDWORM && A.F64At(WbConstants.OFF_UHP, enemy) <= A.F64At(WbConstants.OFF_UMAXHP, enemy) * 0.4)
+                            {
+                                A.SetF64(WbConstants.OFF_UHP, enemy, 0.0);
+                                A.SetU8(WbConstants.OFF_UDEAD, enemy, 1);
+                                Dirty(enemy);
+                                A.SetF64(WbConstants.OFF_UKILLS, s, A.F64At(WbConstants.OFF_UKILLS, s) + 1.0);
+                                A.SetF64(WbConstants.OFF_UFD, s, WbMath.JsMin(160.0, UFood0(s) + 50.0 + WbMath.JsRound(A.F64At(WbConstants.OFF_UMAXHP, enemy) * 0.6)));
+                                Fx(ctx, WbConstants.FX_BLOOD, A.F64At(WbConstants.OFF_UX, enemy), A.F64At(WbConstants.OFF_UY, enemy), 16.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, false);
+                                if ((fxp & WbConstants.FXP_DMGNUM) != 0)
+                                {
+                                    Fx(ctx, WbConstants.FX_DMG, A.F64At(WbConstants.OFF_UX, enemy), A.F64At(WbConstants.OFF_UY, enemy), 26.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_DEVOUR, 0, false);
+                                }
+                                Dirty(s);
+                                return 0;
+                            }
+                            // 蛇怪石化（L2684-2712）
+                            if (race == WbConstants.R_BASILISK && RngNext() < 0.08)
+                            {
+                                A.SetF64(WbConstants.OFF_UHP, enemy, 0.0);
+                                A.SetU8(WbConstants.OFF_UDEAD, enemy, 1);
+                                Dirty(enemy);
+                                A.SetF64(WbConstants.OFF_UKILLS, s, A.F64At(WbConstants.OFF_UKILLS, s) + 1.0);
+                                // addCorpse(stone=true, undead=erace undead)（L2690-2699）
+                                if ((fxp & WbConstants.FXP_CORPSES) != 0)
+                                {
+                                    int? p = ctx.ActReserve(20);
+                                    if (p.HasValue)
+                                    {
+                                        ctx.ActU8(p.Value, WbConstants.ACT_CORPSE);
+                                        ctx.ActF64(p.Value + 8, A.F64At(WbConstants.OFF_UX, enemy));
+                                        ctx.ActF64(p.Value + 16, A.F64At(WbConstants.OFF_UY, enemy));
+                                        ctx.ActU8(p.Value + 4, 1);
+                                        ctx.ActU8(p.Value + 5, IsUndead(erace) ? (byte)1 : (byte)0);
+                                    }
+                                }
+                                int? q = ctx.ActReserve(48);
+                                if (q.HasValue)
+                                {
+                                    ctx.ActU8(q.Value, WbConstants.ACT_EVT);
+                                    ctx.ActU8(q.Value + 1, WbConstants.EVT_PETRIFY);
+                                    ctx.ActI32(q.Value + 4, (int)A.U32At(WbConstants.OFF_UID, enemy));
+                                    ctx.ActF64(q.Value + 32, A.F64At(WbConstants.OFF_UX, enemy));
+                                    ctx.ActF64(q.Value + 40, A.F64At(WbConstants.OFF_UY, enemy));
+                                }
+                                if ((fxp & WbConstants.FXP_DMGNUM) != 0)
+                                {
+                                    Fx(ctx, WbConstants.FX_DMG, A.F64At(WbConstants.OFF_UX, enemy), A.F64At(WbConstants.OFF_UY, enemy), 30.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_PETRIFY, 0, false);
+                                }
+                                Dirty(s);
+                                return 0;
+                            }
+                            // 命中网络（L2713-2739）
+                            {
+                                int eix = Idx(
+                                    (int)Math.Floor(WbMath.JsMax(0.0, WbMath.JsMin(WbConstants.W - 1.0, A.F64At(WbConstants.OFF_UX, enemy)))),
+                                    (int)Math.Floor(WbMath.JsMax(0.0, WbMath.JsMin(WbConstants.H - 1.0, A.F64At(WbConstants.OFF_UY, enemy)))));
+                                int etrH = A.I32At(WbConstants.OFF_UTRAIT, enemy);
+                                double[] fa = new double[10];
+                                fa[0] = WbMath.JsMin(20.0, A.F64At(WbConstants.OFF_UKILLS, s)) / 20.0;
+                                fa[1] = WbMath.JsMin(0.5, WbMath.JsMax(0.0, (A.F64At(WbConstants.OFF_TBR, erace * 12 + WbConstants.RB_SPEED) - A.F64At(WbConstants.OFF_TBR, race * 12 + WbConstants.RB_SPEED)) * 7.0)) * 2.0;
+                                fa[2] = etrH >= 0 && (A.U8At(WbConstants.OFF_TRFL, etrH) & 2) != 0 ? 1.0 : 0.0;
+                                fa[3] = etrH >= 0 && (A.U8At(WbConstants.OFF_TRFL, etrH) & 16) != 0 ? 1.0 : 0.0;  // swift（bit4 约定）
+                                fa[4] = etrH >= 0 && (A.U8At(WbConstants.OFF_TRFL, etrH) & 1) != 0 ? 1.0 : 0.0;
+                                fa[5] = A.I32At(WbConstants.OFF_UTRAIT, s) >= 0 && (A.U8At(WbConstants.OFF_TRFL, A.I32At(WbConstants.OFF_UTRAIT, s)) & 2) != 0 ? 1.0 : 0.0;
+                                fa[6] = WbMath.TruthyF(A.F64At(WbConstants.OFF_UBLESS, s)) ? 1.0 : 0.0;
+                                fa[7] = WbMath.TruthyF(A.F64At(WbConstants.OFF_UCURSE, s)) ? 1.0 : 0.0;
+                                fa[8] = A.U8At(WbConstants.OFF_TERR, eix) == WbConstants.T_FOREST ? 1.0 : 0.0;
+                                fa[9] = A.U8At(WbConstants.OFF_TERR, eix) == WbConstants.T_MOUNTAIN ? 1.0 : 0.0;
+                                double pAcc = NeuroAcc(fa);
+                                if (RngNext() > WbMath.JsMax(0.35, WbMath.JsMin(0.97, pAcc)))
+                                {
+                                    if ((fxp & WbConstants.FXP_DMGNUM) != 0 && RngNext() < 0.55)
+                                    {
+                                        Fx(ctx, WbConstants.FX_DMG, A.F64At(WbConstants.OFF_UX, enemy), A.F64At(WbConstants.OFF_UY, enemy) - 0.4, 20.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_MISS, 0, false);
+                                    }
+                                    Dirty(s);
+                                    return 0;
+                                }
+                            }
+                            // 装备战斗结算（L2740-2804）
+                            GearBonus? ga = IsCiv(race) ? GearBonusOf(s) : (GearBonus?)null;
+                            GearBonus? gd = IsCiv(erace) ? GearBonusOf(enemy) : (GearBonus?)null;
+                            double dmg = A.F64At(WbConstants.OFF_UDMG, s) * (0.8 + RngNext() * 0.4)
+                                * (WbMath.TruthyF(A.F64At(WbConstants.OFF_UBLESS, s)) ? 1.3 : 1.0)
+                                * (WbMath.TruthyF(A.F64At(WbConstants.OFF_UCURSE, s)) ? 0.75 : 1.0);
+                            double dp = A.F64At(WbConstants.OFF_DAYPH, 0);
+                            if (dp > 0.5 && dp < 0.9 && (RaceFlag2(race) & WbConstants.RF2_NIGHTSIGHT) == 0)
+                            {
+                                dmg *= 0.92;
+                            }
+                            bool crit = false;
+                            if (ga.HasValue)
+                            {
+                                if (ga.Value.Crit > 0.0 && RngNext() * 100.0 < ga.Value.Crit)
+                                {
+                                    dmg *= 2.2;
+                                    crit = true;
+                                }
+                            }
+                            if (gd.HasValue)
+                            {
+                                if (gd.Value.Armor > 0.0)
+                                {
+                                    dmg *= 1.0 - gd.Value.Armor / 100.0;
+                                }
+                            }
+                            A.SetF64(WbConstants.OFF_UHP, enemy, A.F64At(WbConstants.OFF_UHP, enemy) - dmg);
+                            A.SetF64(WbConstants.OFF_UHURT, enemy, 20.0);
+                            Dirty(enemy);
+                            Fx(ctx, WbConstants.FX_HIT, (A.F64At(WbConstants.OFF_UX, s) + A.F64At(WbConstants.OFF_UX, enemy)) / 2.0, (A.F64At(WbConstants.OFF_UY, s) + A.F64At(WbConstants.OFF_UY, enemy)) / 2.0, 6.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, false);
+                            if ((fxp & WbConstants.FXP_BLOOD) != 0 && dmg >= 5.0 && RngNext() < 0.5)
+                            {
+                                // addBlood（内部 +1 rng seed，L2765-2772）
+                                double _seed = RngNext();
+                                int? p = ctx.ActReserve(24);
+                                if (p.HasValue)
+                                {
+                                    ctx.ActU8(p.Value, WbConstants.ACT_BLOOD);
+                                    ctx.ActU8(p.Value + 1, 0);
+                                    ctx.ActF64(p.Value + 8, A.F64At(WbConstants.OFF_UX, enemy));
+                                    ctx.ActF64(p.Value + 16, A.F64At(WbConstants.OFF_UY, enemy));
+                                }
+                            }
+                            int etr = A.I32At(WbConstants.OFF_UTRAIT, enemy);
+                            bool enemyImmune = etr >= 0 && (A.U8At(WbConstants.OFF_TRFL, etr) & 4) != 0;
+                            if (race == WbConstants.R_BASILISK && RngNext() < 0.45 && A.U8At(WbConstants.OFF_UINF, enemy) == 0 && !enemyImmune)
+                            {
+                                A.SetU8(WbConstants.OFF_UINF, enemy, 1);
+                                if ((fxp & WbConstants.FXP_DMGNUM) != 0)
+                                {
+                                    Fx(ctx, WbConstants.FX_DMG, A.F64At(WbConstants.OFF_UX, enemy), A.F64At(WbConstants.OFF_UY, enemy) - 0.8, 26.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_POISON, 0, false);
+                                }
+                            }
+                            if ((fxp & WbConstants.FXP_DMGNUM) != 0 && (crit || dmg >= 12.0 || RngNext() < 0.4))
+                            {
+                                Fx(ctx, WbConstants.FX_DMG, A.F64At(WbConstants.OFF_UX, enemy), A.F64At(WbConstants.OFF_UY, enemy), 26.0, 1.0, 0.0, 0.0, dmg, -1, false, WbConstants.TXT_NUM, crit ? 1u : 0u, true);
+                            }
+                            if (race == WbConstants.R_VAMPIRE && A.F64At(WbConstants.OFF_UHP, s) > 0.0)
+                            {
+                                A.SetF64(WbConstants.OFF_UHP, s, WbMath.JsMin(A.F64At(WbConstants.OFF_UMAXHP, s), A.F64At(WbConstants.OFF_UHP, s) + dmg * 0.6));
+                                if ((fxp & WbConstants.FXP_DMGNUM) != 0 && RngNext() < 0.4)
+                                {
+                                    Fx(ctx, WbConstants.FX_HEART, A.F64At(WbConstants.OFF_UX, s), A.F64At(WbConstants.OFF_UY, s) - 0.5, 18.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, false);
+                                }
+                            }
+                            if (ga.HasValue)
+                            {
+                                if (ga.Value.Lifesteal > 0.0 && A.F64At(WbConstants.OFF_UHP, s) > 0.0)
+                                {
+                                    A.SetF64(WbConstants.OFF_UHP, s, WbMath.JsMin(A.F64At(WbConstants.OFF_UMAXHP, s), A.F64At(WbConstants.OFF_UHP, s) + (dmg * ga.Value.Lifesteal) / 100.0));
+                                }
+                            }
+                            if (gd.HasValue)
+                            {
+                                if (gd.Value.Thorns > 0.0)
+                                {
+                                    A.SetF64(WbConstants.OFF_UHP, s, A.F64At(WbConstants.OFF_UHP, s) - gd.Value.Thorns);
+                                    A.SetF64(WbConstants.OFF_UHURT, s, 14.0);
+                                    if (A.F64At(WbConstants.OFF_UHP, s) <= 0.0)
+                                    {
+                                        A.SetU8(WbConstants.OFF_UDEAD, s, 1);
+                                    }
+                                }
+                            }
+                            // 蝎/蛇毒（L2805-2817）
+                            if (race == WbConstants.R_SCORPION && RngNext() < 0.3 && A.U8At(WbConstants.OFF_UINF, enemy) == 0 && !enemyImmune)
+                            {
+                                A.SetU8(WbConstants.OFF_UINF, enemy, 1);
+                                if ((fxp & WbConstants.FXP_DMGNUM) != 0)
+                                {
+                                    Fx(ctx, WbConstants.FX_DMG, A.F64At(WbConstants.OFF_UX, enemy), A.F64At(WbConstants.OFF_UY, enemy) - 0.8, 26.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_POISON, 0, false);
+                                }
+                            }
+                            if (race == WbConstants.R_SNAKE && RngNext() < 0.3 && A.U8At(WbConstants.OFF_UINF, enemy) == 0 && !enemyImmune)
+                            {
+                                A.SetU8(WbConstants.OFF_UINF, enemy, 1);
+                                if ((fxp & WbConstants.FXP_DMGNUM) != 0)
+                                {
+                                    Fx(ctx, WbConstants.FX_DMG, A.F64At(WbConstants.OFF_UX, enemy), A.F64At(WbConstants.OFF_UY, enemy) - 0.8, 26.0, 1.0, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_POISON, 0, false);
+                                }
+                            }
+                            // 战场标记（L2818-2824）
+                            int bi = Idx((int)Math.Floor(A.F64At(WbConstants.OFF_UX, enemy)), (int)Math.Floor(A.F64At(WbConstants.OFF_UY, enemy)));
+                            int? pb = ctx.ActReserve(16);
+                            if (pb.HasValue)
+                            {
+                                ctx.ActU8(pb.Value, WbConstants.ACT_BATTLE);
+                                ctx.ActI32(pb.Value + 4, bi);
+                                ctx.ActI32(pb.Value + 8, A.I32At(WbConstants.OFF_TICK, 0) + 30);
+                            }
+                            // 击杀结算（L2825-2933）
+                            if (A.F64At(WbConstants.OFF_UHP, enemy) <= 0.0)
+                            {
+                                bool zomb = race == WbConstants.R_ZOMBIE && IsCiv(erace) && (laws & WbConstants.LAW_ZINFECT) != 0;
+                                if (zomb)
+                                {
+                                    Zombify(ctx, enemy);
+                                }
+                                else
+                                {
+                                    A.SetU8(WbConstants.OFF_UDEAD, enemy, 1);
+                                    Dirty(enemy);
+                                    double kills = A.F64At(WbConstants.OFF_UKILLS, s) + 1.0;
+                                    A.SetF64(WbConstants.OFF_UKILLS, s, kills);
+                                    WitnessDeath(ctx, s, enemy);
+                                    // 复仇（L2836-2867）
+                                    int gl3 = UGlen(s);
+                                    if (gl3 > 0)
+                                    {
+                                        uint eid = A.U32At(WbConstants.OFF_UID, enemy);
+                                        int rgi = -1;
+                                        for (int t = 0; t < gl3; t++)
+                                        {
+                                            if ((uint)A.I32At(WbConstants.OFF_UGIDS, s * WbConstants.UG_CAP + t) == eid) { rgi = t; break; }
+                                        }
+                                        if (rgi >= 0)
+                                        {
+                                            // splice(rgi)（L2848-2855）
+                                            int m = rgi;
+                                            while (m + 1 < gl3)
+                                            {
+                                                A.SetI32(WbConstants.OFF_UGIDS, s * WbConstants.UG_CAP + m, A.I32At(WbConstants.OFF_UGIDS, s * WbConstants.UG_CAP + m + 1));
+                                                A.SetF64(WbConstants.OFF_UGVAL, s * WbConstants.UG_CAP + m, A.F64At(WbConstants.OFF_UGVAL, s * WbConstants.UG_CAP + m + 1));
+                                                m += 1;
+                                            }
+                                            A.SetI32(WbConstants.OFF_UGLN, s, gl3 - 1);
+                                            if (RngNext() < 0.12)
+                                            {
+                                                int? p = ctx.ActReserve(48);
+                                                if (p.HasValue)
+                                                {
+                                                    ctx.ActU8(p.Value, WbConstants.ACT_EVT);
+                                                    ctx.ActU8(p.Value + 1, WbConstants.EVT_REVENGE);
+                                                    ctx.ActI32(p.Value + 4, (int)A.U32At(WbConstants.OFF_UID, s));
+                                                    ctx.ActI32(p.Value + 8, unchecked((int)eid));
+                                                    ctx.ActF64(p.Value + 32, A.F64At(WbConstants.OFF_UX, s));
+                                                    ctx.ActF64(p.Value + 40, A.F64At(WbConstants.OFF_UY, s));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // 家族战功（L2868-2885；FMNUM 读 *5 写 *6 为蓝本原样——纪律①不修正）
+                                    int ufam = A.I32At(WbConstants.OFF_UFAM, s);
+                                    if (ufam >= 0)
+                                    {
+                                        int row = FamilyFind(ufam);
+                                        if (row >= 0)
+                                        {
+                                            double k = A.F64At(WbConstants.OFF_FMNUM, row * 5 + 1) + 1.0;
+                                            A.SetF64(WbConstants.OFF_FMNUM, row * 6 + 1, k);
+                                            if (kills == 10.0)
+                                            {
+                                                A.SetF64(WbConstants.OFF_FMNUM, row * 6 + 1, A.F64At(WbConstants.OFF_FMNUM, row * 6 + 1) + 1.0); // heroes
+                                            }
+                                            int? p = ctx.ActReserve(16);
+                                            if (p.HasValue)
+                                            {
+                                                ctx.ActU8(p.Value, WbConstants.ACT_FAM_ONKILL);
+                                                ctx.ActI32(p.Value + 4, ufam);
+                                                ctx.ActI32(p.Value + 8, (int)A.U32At(WbConstants.OFF_UID, s));
+                                                ctx.ActI32(p.Value + 12, (int)kills);
+                                            }
+                                        }
+                                    }
+                                    // 采集（L2886-2894）
+                                    if (A.U8At(WbConstants.OFF_COLEN, 0) != 0)
+                                    {
+                                        int? p = ctx.ActReserve(16);
+                                        if (p.HasValue)
+                                        {
+                                            ctx.ActU8(p.Value, WbConstants.ACT_TELEM);
+                                            ctx.ActU8(p.Value + 1, WbConstants.TL_KILL);
+                                            ctx.ActI32(p.Value + 4, (int)A.U32At(WbConstants.OFF_UID, s));
+                                            ctx.ActF64(p.Value + 8, A.F64At(WbConstants.OFF_UMAXHP, enemy));
+                                        }
+                                    }
+                                    // 捕食者进食（L2895-2898）
+                                    if (IsPredator(race) && !IsUndead(race))
+                                    {
+                                        A.SetF64(WbConstants.OFF_UFD, s, WbMath.JsMin(160.0, UFood0(s) + 55.0 + WbMath.JsRound(A.F64At(WbConstants.OFF_UMAXHP, enemy) * 0.5)));
+                                    }
+                                    // 屠龙计数（L2899-2902）
+                                    if (erace == WbConstants.R_DRAGON)
+                                    {
+                                        A.SetF64(WbConstants.OFF_CNT, 4, A.F64At(WbConstants.OFF_CNT, 4) + 1.0);
+                                    }
+                                    // 战争簿记（L2903-2908）
+                                    int? pw = ctx.ActReserve(16);
+                                    if (pw.HasValue)
+                                    {
+                                        ctx.ActU8(pw.Value, WbConstants.ACT_WARKILL);
+                                        ctx.ActI32(pw.Value + 4, (int)A.U32At(WbConstants.OFF_UID, s));
+                                        ctx.ActI32(pw.Value + 8, (int)A.U32At(WbConstants.OFF_UID, enemy));
+                                    }
+                                    // 十杀传奇（L2909-2923）
+                                    if (kills == 10.0)
+                                    {
+                                        int? p = ctx.ActReserve(16);
+                                        if (p.HasValue)
+                                        {
+                                            ctx.ActU8(p.Value, WbConstants.ACT_TOAST);
+                                            ctx.ActU8(p.Value + 1, WbConstants.TOAST_KILLS10);
+                                            ctx.ActI32(p.Value + 4, (int)A.U32At(WbConstants.OFF_UID, s));
+                                        }
+                                        int? q = ctx.ActReserve(48);
+                                        if (q.HasValue)
+                                        {
+                                            ctx.ActU8(q.Value, WbConstants.ACT_EVT);
+                                            ctx.ActU8(q.Value + 1, WbConstants.EVT_LEGEND);
+                                            ctx.ActI32(q.Value + 4, (int)A.U32At(WbConstants.OFF_UID, s));
+                                            ctx.ActF64(q.Value + 32, A.F64At(WbConstants.OFF_UX, s));
+                                            ctx.ActF64(q.Value + 40, A.F64At(WbConstants.OFF_UY, s));
+                                        }
+                                    }
+                                    // 白行者击杀复活（L2924-2927）
+                                    if (race == WbConstants.R_WHITEWALKER && IsCiv(erace))
+                                    {
+                                        RiseSkeleton(ctx, A.F64At(WbConstants.OFF_UX, enemy), A.F64At(WbConstants.OFF_UY, enemy));
+                                    }
+                                    // 亡者复生法则（L2928-2931）
+                                    if ((laws & WbConstants.LAW_UNDEAD_RISE) != 0 && IsCiv(erace) && RngNext() < 0.06)
+                                    {
+                                        RiseSkeleton(ctx, A.F64At(WbConstants.OFF_UX, enemy), A.F64At(WbConstants.OFF_UY, enemy));
+                                    }
+                                }
+                            }
+                        }
+                        // 近战分支（enemyD < reach）：仅 cd 门控的战斗结算，无移动——落入 POST 不 return（L2935-2938）
+                        // （dirty + skip_tail 由链尾 L2952-2953 统一执行，dirty 幂等等价）
+                    }
+                    else if (stance == 2 && (hasRd || bowRange > 0.0))
+                    {
+                        // 射程死区（L2939-2944）
+                        double ang7 = WbMath.FdAtan2(A.F64At(WbConstants.OFF_UY, s) - A.F64At(WbConstants.OFF_UY, enemy), A.F64At(WbConstants.OFF_UX, s) - A.F64At(WbConstants.OFF_UX, enemy));
+                        A.SetF64(WbConstants.OFF_UTX, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.W - 2.0, A.F64At(WbConstants.OFF_UX, s) + WbMath.FdCos(ang7) * 3.0)));
+                        A.SetF64(WbConstants.OFF_UTY, s, WbMath.JsMax(1.0, WbMath.JsMin(WbConstants.H - 2.0, A.F64At(WbConstants.OFF_UY, s) + WbMath.FdSin(ang7) * 3.0)));
+                        MoveUnit(ctx, s, 0.8);
+                    }
+                    else
+                    {
+                        // 追击（L2945-2951）
+                        if (!WbMath.TruthyF(A.F64At(WbConstants.OFF_UDETOUR, s)))
+                        {
+                            A.SetF64(WbConstants.OFF_UTX, s, A.F64At(WbConstants.OFF_UX, enemy));
+                            A.SetF64(WbConstants.OFF_UTY, s, A.F64At(WbConstants.OFF_UY, enemy));
+                        }
+                        MoveUnit(ctx, s, 1.25);
+                    }
+                    Dirty(s);                                                                       // L2952
+                    skipTail = true;                                                                // L2953 接敌路径不走尾段，但落入 POST（拾取/繁衍）
+                }
+            }
+
+            // —— 和平尾段（L2957 起；仅无敌时执行）——
+            if (!skipTail)
+            {
+                if (A.U8At(WbConstants.OFF_COLEN, 0) != 0)                                          // L2958-2965
+                {
+                    int? p = ctx.ActReserve(12);
+                    if (p.HasValue)
+                    {
+                        ctx.ActU8(p.Value, WbConstants.ACT_TELEM);
+                        ctx.ActU8(p.Value + 1, WbConstants.TL_ENEMY_GONE);
+                        ctx.ActI32(p.Value + 4, (int)A.U32At(WbConstants.OFF_UID, s));
+                        ctx.ActI32(p.Value + 8, A.I32At(WbConstants.OFF_TICK, 0));
+                    }
+                }
+                // 巨龙吐息（L2966-2974）
+                if (race == WbConstants.R_DRAGON)
+                {
+                    double b = A.F64At(WbConstants.OFF_UBREATH, s) - 2.0;
+                    A.SetF64(WbConstants.OFF_UBREATH, s, b);
+                    if (b <= 0.0)
+                    {
+                        A.SetF64(WbConstants.OFF_UBREATH, s, 150.0 + Math.Floor(RngNext() * 150.0));
+                        DragonBreath(ctx, s);
+                    }
+                }
+                int ucivT = A.I32At(WbConstants.OFF_UCIV, s);
+                if (IsCiv(race) && ucivT >= 0)
+                {
+                    // 和平尾 civ 段（L2976-3141）：防灾/建筑师修缮/路过修缮/战争AI/农民/商人/贵族/
+                    // march-to-war/商队（BAIL_CARAVAN）——TODO(M-U3)：依赖建筑查询辅助族
+                    // （fire_near/extinguish_fire/damaged_near/bldg_row_of_tile/repair_building/
+                    //   enemy_building_near/attack_building/nearest_enemy_building/nearest_building_of/
+                    //   war_target）与建筑态黄金向量，随 M-U3 文明切片全量翻译。
+                    // 战斗黄金集无 civ 单独无敌形态（无建筑/火灾/军队态），行为位等价。
+                }
 
             // 捕食者索敌（L3142-3234）
             if (IsPredator(race) && !IsUndead(race) && UFood0(s) < 70.0 && RngNext() < 0.4)
@@ -1070,6 +2159,7 @@ namespace PixelWorldBox.Wb
                 MoveUnit(ctx, s, 1.0);
             }
             // skip_tail 守卫结束（L3261）
+            } // if (!skipTail) 和平尾段闭合
 
             // 拾取（L3263-3266）
             if (A.I32At(WbConstants.OFF_ITMN, 0) > 0 && (IsCiv(race) || race == WbConstants.R_BANDIT))

@@ -768,4 +768,287 @@ namespace PixelWorldBox.Tests
             }
         }
     }
+
+    // ================= M-U2c 战斗树黄金（Test6） =================
+    public class CombatGrudgeIn { public int oid; public double gv; }
+    public class CombatUnitIn
+    {
+        public int slot; public int? id; public int race; public int? civ;
+        public double x, y; public double? hp, maxhp, dmg, kills, food, panic, fleet, cvn, cd, breath;
+        public bool? inf, boat; public int? job, trait;
+        public List<int> gear; public List<CombatGrudgeIn> grudges;
+    }
+    public class CombatRectIn { public int t, x0, y0, x1, y1; }
+    public class CombatTerrainIn { public int? @base; public List<CombatRectIn> rects; public List<List<int>> fire; public List<List<int>> road; }
+    public class CombatCivIn { public int? mkt, plague, archer, range; }
+    public class CombatInput
+    {
+        public long seed; public int ticks; public int? fxp, laws, nctl; public double? dayph;
+        public List<List<double>> neuw; public CombatTerrainIn terrain;
+        public List<CombatCivIn> civs; public List<List<int>> atwar;
+        public List<CombatUnitIn> units; public List<List<int>> terrProbe;
+    }
+    public class CombatUnitOut
+    {
+        public int slot, race, dead, hasPanic, inf, boat, flip, glen;
+        public string x, y, tx, ty, hp, panic, fleet, cd, atk, hurt, food, kills, breath, age;
+        public List<int> gids; public List<string> gvals;
+    }
+    public class CombatTickOut
+    {
+        public int rc; public long rng, tick, actN, dlistN; public uint batchR, bailK;
+        public string cnt4, cvpop0; public int wildZombie, wildSheep, fireN;
+        public List<long> neuCall; public List<CombatUnitOut> units; public string actHex; public List<byte> terr;
+    }
+    public class CombatScenario { public string name; public long seed; public CombatInput input; public Newtonsoft.Json.Linq.JToken output; }
+    public class CombatBoot
+    {
+        public Dictionary<string, List<double>> tbr; public Dictionary<string, int> raceFlags;
+        public Dictionary<string, int> tbf0, tbf1; public List<double> tbj;
+        public Dictionary<string, List<double>> tbi; public int tbin;
+        public List<uint> gunbm, beambm;
+    }
+    public class CombatGoldenMeta { public List<double> eps; public CombatBoot boot; }
+    public class CombatGoldenFile { public CombatGoldenMeta meta; public List<CombatScenario> scenarios; }
+
+    [TestFixture]
+    public class WbCombatGoldenTests
+    {
+        private CombatGoldenFile _golden;
+        private WbGoldenFixture _fx;
+
+        [OneTimeSetUp]
+        public void Load()
+        {
+            string path = FindGolden();
+            Assert.IsTrue(File.Exists(path), $"combat golden json not found: {path}");
+            _golden = JsonConvert.DeserializeObject<CombatGoldenFile>(File.ReadAllText(path));
+        }
+
+        private static string FindGolden()
+        {
+            string[] candidates =
+            {
+                "Assets/StreamingAssets/WbGolden/units_combat.json",
+                Path.Combine(TestContext.CurrentContext.TestDirectory, "Assets/StreamingAssets/WbGolden/units_combat.json"),
+            };
+            foreach (var c in candidates) if (File.Exists(c)) return c;
+            return candidates[0];
+        }
+
+        [SetUp]
+        public void Setup() => _fx = new WbGoldenFixture();
+
+        /// 引导表灌入（gen meta.boot 转储 = wbspatial packTables 宿主协议的位精确镜像；
+        /// C# 侧无法 import TS 真表——纪律②的沙箱外延续：真值随黄金 JSON 分发，零手抄）
+        private void ApplyBoot(CombatBoot b)
+        {
+            var A = _fx.Arena;
+            foreach (var kv in b.tbr)
+                for (int c = 0; c < 12; c++)
+                    A.SetF64(WbConstants.OFF_TBR, int.Parse(kv.Key) * 12 + c, kv.Value[c]);
+            foreach (var kv in b.raceFlags) A.SetU8(WbConstants.OFF_RACE_FLAGS, int.Parse(kv.Key), (byte)kv.Value);
+            foreach (var kv in b.tbf0) A.SetU8(WbConstants.OFF_TBF, int.Parse(kv.Key) * 2, (byte)kv.Value);
+            foreach (var kv in b.tbf1) A.SetU8(WbConstants.OFF_TBF, int.Parse(kv.Key) * 2 + 1, (byte)kv.Value);
+            for (int c = 0; c < b.tbj.Count; c++) A.SetF64(WbConstants.OFF_TBJ, c, b.tbj[c]);
+            foreach (var kv in b.tbi)
+                for (int c = 0; c < 12; c++)
+                    A.SetF64(WbConstants.OFF_TBI, int.Parse(kv.Key) * 12 + c, kv.Value[c]);
+            A.SetI32(WbConstants.OFF_TBIN, 0, b.tbin);
+            for (int w = 0; w < 4; w++)
+            {
+                A.SetU32(WbConstants.OFF_GUNBM, w, b.gunbm[w]);
+                A.SetU32(WbConstants.OFF_BEAMBM, w, b.beambm[w]);
+            }
+        }
+
+        private void PutUnitCombat(CombatUnitIn u)
+        {
+            var A = _fx.Arena;
+            A.SetU32(WbConstants.OFF_UID, u.slot, unchecked((uint)(u.id ?? u.slot)));
+            A.SetU32(WbConstants.OFF_URACE, u.slot, (uint)u.race);
+            A.SetU32(WbConstants.OFF_UCELL, u.slot, (uint)((int)Math.Floor(u.y / 4.0) * WbConstants.W + (int)Math.Floor(u.x / 4.0)));
+            A.SetF64(WbConstants.OFF_UX, u.slot, u.x);
+            A.SetF64(WbConstants.OFF_UY, u.slot, u.y);
+            A.SetF64(WbConstants.OFF_UTX, u.slot, u.x);
+            A.SetF64(WbConstants.OFF_UTY, u.slot, u.y);
+            A.SetF64(WbConstants.OFF_USPEED, u.slot, 0.08);
+            A.SetF64(WbConstants.OFF_UHP, u.slot, u.hp ?? 100);
+            A.SetF64(WbConstants.OFF_UMAXHP, u.slot, u.maxhp ?? 100);
+            A.SetF64(WbConstants.OFF_UMAXAGE, u.slot, 9999);
+            A.SetF64(WbConstants.OFF_UAGE, u.slot, 0);
+            A.SetF64(WbConstants.OFF_UDMG, u.slot, u.dmg ?? 5);
+            A.SetF64(WbConstants.OFF_UKILLS, u.slot, u.kills ?? 0);
+            A.SetF64(WbConstants.OFF_UCHILL, u.slot, 0);
+            A.SetF64(WbConstants.OFF_UCURSE, u.slot, 0);
+            A.SetF64(WbConstants.OFF_UBLESS, u.slot, 0);
+            A.SetF64(WbConstants.OFF_UFERT, u.slot, 0);
+            A.SetF64(WbConstants.OFF_UDETOUR, u.slot, 0);
+            A.SetF64(WbConstants.OFF_UHURT, u.slot, 0);
+            A.SetF64(WbConstants.OFF_UATK, u.slot, 0);
+            A.SetF64(WbConstants.OFF_UCD, u.slot, u.cd ?? 0);
+            A.SetF64(WbConstants.OFF_UBREATH, u.slot, u.breath ?? 0);
+            A.SetF64(WbConstants.OFF_UFD, u.slot, u.food ?? double.NaN);
+            A.SetF64(WbConstants.OFF_UCVN, u.slot, u.cvn ?? 0);
+            A.SetF64(WbConstants.OFF_UFLEET, u.slot, u.fleet ?? 0);
+            A.SetI32(WbConstants.OFF_UCIV, u.slot, u.civ ?? -1);
+            A.SetI32(WbConstants.OFF_UJOB, u.slot, u.job ?? -1);
+            A.SetI32(WbConstants.OFF_UARMY, u.slot, -1);
+            A.SetI32(WbConstants.OFF_UFAM, u.slot, -1);
+            A.SetI32(WbConstants.OFF_UFGN, u.slot, -1);
+            A.SetI32(WbConstants.OFF_USTK, u.slot, 0);
+            A.SetI32(WbConstants.OFF_UTRAIT, u.slot, u.trait ?? -1);
+            A.SetU8(WbConstants.OFF_UDEAD, u.slot, 0);
+            A.SetU8(WbConstants.OFF_UHASPANIC, u.slot, (byte)(u.panic.HasValue ? 1 : 0));
+            A.SetF64(WbConstants.OFF_UPANIC, u.slot, u.panic ?? 0);
+            A.SetU8(WbConstants.OFF_UINF, u.slot, (byte)(u.inf == true ? 1 : 0));
+            A.SetU8(WbConstants.OFF_UBOAT, u.slot, (byte)(u.boat == true ? 1 : 0));
+            A.SetU8(WbConstants.OFF_UFLIP, u.slot, 0);
+            A.SetF64(WbConstants.OFF_ULX, u.slot, double.NaN); // 出生未移动语义（gen putUnitC 同款）
+            A.SetF64(WbConstants.OFF_ULY, u.slot, double.NaN);
+            for (int g = 0; g < 4; g++) A.SetF64(WbConstants.OFF_UGENE, u.slot * 4 + g, 1);
+            for (int g = 0; g < 7; g++) A.SetI32(WbConstants.OFF_UGEAR, u.slot * 7 + g, u.gear != null && g < u.gear.Count ? u.gear[g] : -1);
+            for (int g = 0; g < 8; g++) { A.SetI32(WbConstants.OFF_UGIDS, u.slot * 8 + g, -1); A.SetF64(WbConstants.OFF_UGVAL, u.slot * 8 + g, 0); }
+            if (u.grudges != null)
+            {
+                for (int g = 0; g < u.grudges.Count && g < 8; g++)
+                {
+                    A.SetI32(WbConstants.OFF_UGIDS, u.slot * 8 + g, u.grudges[g].oid);
+                    A.SetF64(WbConstants.OFF_UGVAL, u.slot * 8 + g, u.grudges[g].gv);
+                }
+                A.SetI32(WbConstants.OFF_UGLN, u.slot, Math.Min(u.grudges.Count, 8));
+            }
+            else
+            {
+                A.SetI32(WbConstants.OFF_UGLN, u.slot, -1);
+            }
+        }
+
+        private void SetupWorld(CombatInput inp)
+        {
+            _fx.InitWorld(inp.seed, inp.fxp ?? 0);
+            _fx.SetEps(_golden.meta.eps);
+            var A = _fx.Arena;
+            A.SetU8(WbConstants.OFF_LAWS, 0, (byte)(inp.laws ?? 0));
+            if (inp.dayph.HasValue) A.SetF64(WbConstants.OFF_DAYPH, 0, inp.dayph.Value);
+            if (inp.nctl.HasValue) A.SetU8(WbConstants.OFF_NCTL, 0, (byte)inp.nctl.Value);
+            if (inp.neuw != null)
+                foreach (var iv in inp.neuw) A.SetF64(WbConstants.OFF_NEUW, (int)iv[0], iv[1]);
+            if (inp.terrain != null)
+            {
+                var tr = new GoldenTerrain { @base = inp.terrain.@base };
+                if (inp.terrain.rects != null)
+                    tr.rects = inp.terrain.rects.ConvertAll(r => new GoldenRect { t = r.t, x0 = r.x0, y0 = r.y0, x1 = r.x1, y1 = r.y1 });
+                if (inp.terrain.fire != null) tr.fire = inp.terrain.fire;
+                if (inp.terrain.road != null) tr.road = inp.terrain.road;
+                _fx.FillTerrain(tr);
+            }
+            ApplyBoot(_golden.meta.boot);
+            if (inp.civs != null)
+            {
+                A.SetI32(WbConstants.OFF_CIVN, 0, inp.civs.Count);
+                for (int i = 0; i < inp.civs.Count; i++)
+                {
+                    var c = inp.civs[i];
+                    A.SetU8(WbConstants.OFF_CVAL, i, 1);
+                    if (c.mkt.HasValue) A.SetI32(WbConstants.OFF_CVMKT, i, c.mkt.Value);
+                    if (c.plague.HasValue) A.SetF64(WbConstants.OFF_CVTECH, i * 24 + 14, c.plague.Value);
+                    if (c.archer.HasValue) A.SetF64(WbConstants.OFF_CVTECH, i * 24 + 13, c.archer.Value);
+                    if (c.range.HasValue) A.SetF64(WbConstants.OFF_CVTECH, i * 24 + 15, c.range.Value);
+                }
+            }
+            if (inp.atwar != null)
+                foreach (var ab in inp.atwar)
+                {
+                    A.SetU8(WbConstants.OFF_ATWAR, ab[0] * 64 + ab[1], 1);
+                    A.SetU8(WbConstants.OFF_ATWAR, ab[1] * 64 + ab[0], 1);
+                }
+            foreach (var u in inp.units) PutUnitCombat(u);
+            A.PackEnd((uint)inp.units.Count);
+        }
+
+        [TestCase(0)]  [TestCase(1)]  [TestCase(2)]  [TestCase(3)]  [TestCase(4)]
+        [TestCase(5)]  [TestCase(6)]  [TestCase(7)]  [TestCase(8)]  [TestCase(9)]
+        [TestCase(10)] [TestCase(11)] [TestCase(12)] [TestCase(13)] [TestCase(14)]
+        [TestCase(15)] [TestCase(16)] [TestCase(17)] [TestCase(18)] [TestCase(19)]
+        [TestCase(20)] [TestCase(21)] [TestCase(22)] [TestCase(23)] [TestCase(24)]
+        [TestCase(25)] [TestCase(26)] [TestCase(27)] [TestCase(28)]
+        public void Combat_Replay_BitExactParity(int index)
+        {
+            var sc = _golden.scenarios[index];
+            var inp = sc.input;
+            SetupWorld(inp);
+            var ticks = sc.output.ToObject<List<CombatTickOut>>();
+            for (int t = 0; t < ticks.Count; t++)
+            {
+                int rc = WbUnits.UnitsBatch(0, 0);
+                var want = ticks[t];
+                Assert.AreEqual(want.rc, rc, $"{sc.name} tick{t} rc");
+                Assert.AreEqual((ulong)want.rng, _fx.Arena.U64At(WbConstants.OFF_RNGS, 0), $"{sc.name} tick{t} RNG");
+                Assert.AreEqual((ulong)want.tick, _fx.Arena.U64At(WbConstants.OFF_TICK, 0), $"{sc.name} tick{t} TICK");
+                Assert.AreEqual((int)want.actN, _fx.Arena.I32At(WbConstants.OFF_ACTN, 0), $"{sc.name} tick{t} ACTN");
+                Assert.AreEqual((int)want.dlistN, _fx.Arena.I32At(WbConstants.OFF_DLISTN, 0), $"{sc.name} tick{t} DLISTN");
+                Assert.AreEqual(want.batchR, _fx.Arena.U32At(WbConstants.OFF_BATCHR, 0), $"{sc.name} tick{t} BATCHR");
+                Assert.AreEqual(want.bailK, _fx.Arena.U32At(WbConstants.OFF_BAILK, 0), $"{sc.name} tick{t} BAILK");
+                Assert.AreEqual(WbGoldenTests.Bits(want.cnt4), _fx.Arena.U64At(WbConstants.OFF_CNT, 4), $"{sc.name} tick{t} CNT[4]");
+                Assert.AreEqual(want.wildZombie, _fx.Arena.I32At(WbConstants.OFF_WILD, 5), $"{sc.name} tick{t} WILD[zombie]");
+                Assert.AreEqual(want.wildSheep, _fx.Arena.I32At(WbConstants.OFF_WILD, 6), $"{sc.name} tick{t} WILD[sheep]");
+                Assert.AreEqual(WbGoldenTests.Bits(want.cvpop0), _fx.Arena.U64At(WbConstants.OFF_CVPOP, 0), $"{sc.name} tick{t} CVPOP[0]");
+                Assert.AreEqual(want.fireN, _fx.Arena.I32At(WbConstants.OFF_FIREN, 0), $"{sc.name} tick{t} FIREN");
+                for (int nc = 0; nc < 3; nc++)
+                    Assert.AreEqual((ulong)want.neuCall[nc], _fx.Arena.U32At(WbConstants.OFF_NEUCALL, nc), $"{sc.name} tick{t} NEUCALL[{nc}]");
+                var actBase = _fx.Arena.Offs[WbConstants.OFF_ACT];
+                int actLen = Math.Min((int)want.actN, 512);
+                string actHex = WbGoldenFixture.Hex(_fx.Arena.Arena, actBase, actLen);
+                Assert.AreEqual(want.actHex ?? "", actHex, $"{sc.name} tick{t} ACT bytes");
+                foreach (var eu in want.units)
+                {
+                    int s = eu.slot;
+                    Assert.AreEqual(eu.race, (int)_fx.Arena.U32At(WbConstants.OFF_URACE, s), $"{sc.name} tick{t} u{s} race");
+                    Assert.AreEqual(eu.dead, _fx.Arena.U8At(WbConstants.OFF_UDEAD, s), $"{sc.name} tick{t} u{s} dead");
+                    Assert.AreEqual(eu.hasPanic, _fx.Arena.U8At(WbConstants.OFF_UHASPANIC, s), $"{sc.name} tick{t} u{s} hasPanic");
+                    Assert.AreEqual(eu.inf, _fx.Arena.U8At(WbConstants.OFF_UINF, s), $"{sc.name} tick{t} u{s} inf");
+                    Assert.AreEqual(eu.boat, _fx.Arena.U8At(WbConstants.OFF_UBOAT, s), $"{sc.name} tick{t} u{s} boat");
+                    Assert.AreEqual(eu.flip, _fx.Arena.U8At(WbConstants.OFF_UFLIP, s), $"{sc.name} tick{t} u{s} flip");
+                    Assert.AreEqual(eu.glen, _fx.Arena.I32At(WbConstants.OFF_UGLN, s), $"{sc.name} tick{t} u{s} GLEN");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.x), _fx.Arena.U64At(WbConstants.OFF_UX, s), $"{sc.name} tick{t} u{s} x");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.y), _fx.Arena.U64At(WbConstants.OFF_UY, s), $"{sc.name} tick{t} u{s} y");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.tx), _fx.Arena.U64At(WbConstants.OFF_UTX, s), $"{sc.name} tick{t} u{s} tx");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.ty), _fx.Arena.U64At(WbConstants.OFF_UTY, s), $"{sc.name} tick{t} u{s} ty");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.hp), _fx.Arena.U64At(WbConstants.OFF_UHP, s), $"{sc.name} tick{t} u{s} hp");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.panic), _fx.Arena.U64At(WbConstants.OFF_UPANIC, s), $"{sc.name} tick{t} u{s} panic");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.fleet), _fx.Arena.U64At(WbConstants.OFF_UFLEET, s), $"{sc.name} tick{t} u{s} fleet");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.cd), _fx.Arena.U64At(WbConstants.OFF_UCD, s), $"{sc.name} tick{t} u{s} cd");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.atk), _fx.Arena.U64At(WbConstants.OFF_UATK, s), $"{sc.name} tick{t} u{s} atk");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.hurt), _fx.Arena.U64At(WbConstants.OFF_UHURT, s), $"{sc.name} tick{t} u{s} hurt");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.food), _fx.Arena.U64At(WbConstants.OFF_UFD, s), $"{sc.name} tick{t} u{s} food");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.kills), _fx.Arena.U64At(WbConstants.OFF_UKILLS, s), $"{sc.name} tick{t} u{s} kills");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.breath), _fx.Arena.U64At(WbConstants.OFF_UBREATH, s), $"{sc.name} tick{t} u{s} breath");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.age), _fx.Arena.U64At(WbConstants.OFF_UAGE, s), $"{sc.name} tick{t} u{s} age");
+                    for (int g = 0; g < 8; g++)
+                    {
+                        Assert.AreEqual(eu.gids[g], _fx.Arena.I32At(WbConstants.OFF_UGIDS, s * 8 + g), $"{sc.name} tick{t} u{s} GIDS[{g}]");
+                        Assert.AreEqual(WbGoldenTests.Bits(eu.gvals[g]), _fx.Arena.U64At(WbConstants.OFF_UGVAL, s * 8 + g), $"{sc.name} tick{t} u{s} GVAL[{g}]");
+                    }
+                }
+                if (want.terr != null && inp.terrProbe != null)
+                    for (int pr = 0; pr < inp.terrProbe.Count; pr++)
+                    {
+                        int px = inp.terrProbe[pr][0], py = inp.terrProbe[pr][1];
+                        Assert.AreEqual(want.terr[pr], _fx.Arena.U8At(WbConstants.OFF_TERR, py * WbConstants.W + px), $"{sc.name} tick{t} terr[{px},{py}]");
+                    }
+                // 宿主协议步进（gen tick 间语义：parity 翻转 + 活单位 UCELL/UPAR 重排 + repack）
+                _fx.Arena.SetU8(WbConstants.OFF_PAR, 0, (byte)(_fx.Arena.U8At(WbConstants.OFF_PAR, 0) ^ 1));
+                foreach (var u in inp.units)
+                {
+                    if (_fx.Arena.U8At(WbConstants.OFF_UDEAD, u.slot) != 0) continue;
+                    double x = _fx.Arena.F64At(WbConstants.OFF_UX, u.slot);
+                    double y = _fx.Arena.F64At(WbConstants.OFF_UY, u.slot);
+                    _fx.Arena.SetU32(WbConstants.OFF_UCELL, u.slot, (uint)((int)Math.Floor(y / 4.0) * WbConstants.W + (int)Math.Floor(x / 4.0)));
+                    _fx.Arena.SetU8(WbConstants.OFF_UPAR, u.slot, _fx.Arena.U8At(WbConstants.OFF_PAR, 0));
+                }
+                _fx.Arena.PackEnd((uint)inp.units.Count);
+            }
+        }
+    }
 }

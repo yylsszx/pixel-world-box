@@ -469,6 +469,238 @@ console.log(`layout offs: ${layoutFail === 0 ? 'PASS' : `FAIL(${layoutFail})`} (
   var scanVerifyFail = scanFail + panicFail + lutFail;
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0;
+// ============================================================
+// 5) M-U2c：fdlibm 六件套（WbMath.FdExp/FdExpm1/FdTanh/FdAtan/FdAtan2/FdSin/FdCos
+//    的 JS 转写 = combat-transcript 导出）vs wasm wb_math_test(op=0..4) + 战斗树转写对账
+// ============================================================
+import { ex as gex } from './gen-units-scan.mjs';
+import { unitsBatch as transcriptBatch, fdSin as tsSin, fdCos as tsCos, fdExp as tsExp, fdTanh as tsTanh, fdAtan2 as tsAtan2 } from './combat-transcript.mjs';
+import { initWorld as gInitWorld, setU8 as gSetU8, setI32 as gSetI32, setF64 as gSetF64, getF64 as gGetF64, getU32 as gGetU32, u8 as gU8, bits as gBits } from './gen-units-scan.mjs';
+import { bootTables as cbBoot, putUnitC as cbPutUnit, fillTerrainEx as cbFill } from './gen-units-combat.mjs';
+import { R as gR } from '../../src/lib/game/types.ts';
+
+{
+  // —— 5a. fdlibm 六件套位级对账（sin/cos/exp/tanh/atan2，hypot 段 2 已覆盖）——
+  const wbits = (op, y, x) => {
+    const b = new BigUint64Array(new Float64Array([y]).buffer)[0];
+    const xb = new BigUint64Array(new Float64Array([x]).buffer)[0];
+    return gex.wb_math_test(b, xb, op);
+  };
+  const wasmFn = {
+    0: (y, x) => fromBits2(0n, wbits(0, y, x)),
+    1: (y, x) => fromBits2(0n, wbits(1, y, x)),
+    2: (y) => fromBits2(0n, wbits(2, y, 0)),
+    3: (y) => fromBits2(0n, wbits(3, y, 0)),
+    4: (y, x) => fromBits2(0n, wbits(4, y, x)),
+  };
+  function fromBits2(_lo, b) { void _lo; return new Float64Array(new BigUint64Array([b]).buffer)[0]; }
+  const csharpFn = { 0: tsSin, 1: tsCos, 2: tsExp, 3: tsTanh, 4: tsAtan2 };
+  // mulberry32 场内确定性源（避免与段 1 的 refNext 互相干扰）
+  let fz = 0x5eed1234 >>> 0;
+  const frand = () => { fz = (fz + 0x6d2b79f5) >>> 0; let t = fz ^ (fz >>> 15); t = Math.imul(t, 1 | fz) >>> 0; const t2 = ((t + (Math.imul(t ^ (t >>> 7), 61 | t) >>> 0)) ^ t) >>> 0; return ((t2 ^ (t2 >>> 14)) >>> 0) / 4294967296; };
+  const randFinite = () => {
+    // 随机有限双精度（指数分布偏游戏域；避免 NaN/Inf 噪声主导）
+    const cls = frand();
+    if (cls < 0.5) return (frand() * 2 - 1) * 12;                        // 游戏值域
+    if (cls < 0.75) return (frand() * 2 - 1) * 710;                      // exp 溢出边界域
+    const b = Math.floor(frand() * 0x7fe) + 1;                            // 全指数域有限值
+    return new Float64Array(new BigUint64Array([BigInt(frand() < 0.5 ? 0 : 1) << 63n | BigInt(b) << 52n | BigInt(Math.floor(frand() * 0xfffffffffffff))]).buffer)[0];
+  };
+  let mFail = 0, mN = 0;
+  const cases = [];
+  for (let i = 0; i < 20000; i++) {
+    cases.push([0, randFinite(), randFinite()]);
+    cases.push([1, randFinite(), randFinite()]);
+    cases.push([2, randFinite(), 0]);
+    cases.push([3, randFinite(), 0]);
+    cases.push([4, randFinite(), randFinite()]);
+  }
+  // 边界特例（atan2 分支覆盖）
+  for (const sp of [0, -0.0, 1, -1, Infinity, -Infinity]) {
+    for (const sp2 of [0, -0.0, 1, -1, Infinity, -Infinity]) {
+      cases.push([4, sp, sp2]);
+    }
+  }
+  for (const [op, y, x] of cases) {
+    mN++;
+    const wv = wasmFn[op](y, x);
+    const cv = csharpFn[op](y, x);
+    const wb = new BigUint64Array(new Float64Array([wv]).buffer)[0];
+    const cb = new BigUint64Array(new Float64Array([cv]).buffer)[0];
+    if (wb !== cb) { mFail++; if (mFail < 6) console.error(`  fdlibm mismatch op=${op} y=${y} x=${x}: wasm=${wv} cs=${cv}`); }
+  }
+  console.log(`fdlibm 六件套: ${mFail === 0 ? 'PASS' : `FAIL(${mFail})`} (${mN} samples vs wasm wb_math_test op0-4)`);
+  var fdlibmFail = mFail;
+
+  // —— 5b. 战斗树黄金回放（combat-transcript unitsBatch 重放 units_combat.json 29 场景逐位）——
+  const combatGolden = JSON.parse(readFileSync(path.join(ROOT, 'scripts/unity-migration/golden/units_combat.json'), 'utf8'));
+  const R_ID = { CIVN: 67, CVTECH: 74, CVMKT: 77, CVAL: 72, DAYPH: 108, ATWAR: 13, UPAR: 47 };
+  const F64F = [['x', 0], ['y', 1], ['tx', 18], ['ty', 19], ['hp', 20], ['panic', 2], ['fleet', 37], ['cd', 27], ['atk', 35], ['hurt', 42], ['food', 28], ['kills', 26], ['breath', 29], ['age', 24]];
+  function sampleTickV(slots, sc) {
+    const memV = gex.memory;
+    const dv = new DataView(memV.buffer);
+    const at = (rid) => gex.wb_arena_ptr() + gex.wb_off(rid);
+    const units = slots.map((s) => {
+      const o = {
+        slot: s, race: gGetU32(5, s), dead: gU8(14, s), hasPanic: gU8(15, s),
+        inf: gU8(45, s), boat: gU8(48, s), flip: gU8(46, s),
+        glen: dv.getInt32(at(57) + s * 4, true),
+      };
+      for (const [k, rid] of F64F) o[k] = gBits(dv.getFloat64(at(rid) + s * 8, true));
+      o.gids = []; o.gvals = [];
+      for (let g = 0; g < 8; g++) {
+        o.gids.push(dv.getInt32(at(58) + (s * 8 + g) * 4, true));
+        o.gvals.push(gBits(dv.getFloat64(at(59) + (s * 8 + g) * 8, true)));
+      }
+      return o;
+    });
+    const actN = gGetU32(121, 0);
+    const actBase = gex.wb_arena_ptr() + gex.wb_off(120);
+    const out = {
+      rng: gGetU32(95, 0), tick: gGetU32(96, 0), actN,
+      dlistN: gGetU32(128, 0), batchR: gGetU32(129, 0), bailK: gGetU32(122, 0),
+      cnt4: gBits(dv.getFloat64(at(119) + 4 * 8, true)),
+      wildZombie: dv.getInt32(at(106) + 5 * 4, true),
+      wildSheep: dv.getInt32(at(106) + 6 * 4, true),
+      cvpop0: gBits(dv.getFloat64(at(68) + 0 * 8, true)),
+      fireN: dv.getInt32(at(145), true),
+      neuCall: [dv.getUint32(at(141), true), dv.getUint32(at(141) + 4, true), dv.getUint32(at(141) + 8, true)],
+      units, actHex: Buffer.from(memV.buffer, actBase, Math.min(actN, 512)).toString('hex'),
+    };
+    if (sc?.terrProbe) {
+      const terr = new Uint8Array(memV.buffer, gex.wb_arena_ptr() + gex.wb_off(60), 40960);
+      out.terr = sc.terrProbe.map(([x, y]) => terr[y * 256 + x]);
+    }
+    return out;
+  }
+  function setupWorldV(sc) {
+    gInitWorld(sc.seed, sc.fxp ?? 0);
+    gSetU8(101, 0, sc.laws ?? 0);
+    if (sc.dayph !== undefined) gSetF64(R_ID.DAYPH, 0, sc.dayph);
+    if (sc.nctl !== undefined) gSetU8(94, 0, sc.nctl);
+    if (sc.neuw) for (const [i, v] of sc.neuw) gSetF64(93, i, v);
+    cbFill(sc.terrain ?? {});
+    cbBoot();
+    if (sc.civs) {
+      gSetI32(R_ID.CIVN, 0, sc.civs.length);
+      sc.civs.forEach((c, i) => {
+        gSetU8(R_ID.CVAL, i, 1);
+        if (c.mkt !== undefined) gSetI32(R_ID.CVMKT, i, c.mkt);
+        if (c.plague !== undefined) gSetF64(R_ID.CVTECH, i * 24 + 14, c.plague);
+        if (c.archer !== undefined) gSetF64(R_ID.CVTECH, i * 24 + 13, c.archer);
+        if (c.range !== undefined) gSetF64(R_ID.CVTECH, i * 24 + 15, c.range);
+      });
+    }
+    if (sc.atwar) for (const [a, b] of sc.atwar) { gSetU8(R_ID.ATWAR, a * 64 + b, 1); gSetU8(R_ID.ATWAR, b * 64 + a, 1); }
+    for (const u of sc.units) cbPutUnit(u.slot, u);
+    gex.wb_pack_end(sc.units.length);
+  }
+  function hostStepV(sc) {
+    gSetU8(98, 0, gU8(98, 0) ^ 1);
+    for (const u of sc.units) {
+      if (gU8(14, u.slot)) continue;
+      const x = gGetF64(0, u.slot), y = gGetF64(1, u.slot);
+      gSetI32(7, u.slot, Math.floor(y / 4) * 256 + Math.floor(x / 4));
+      gSetU8(R_ID.UPAR, u.slot, gU8(98, 0));
+    }
+    gex.wb_pack_end(sc.units.length);
+  }
+  let cgFail = 0;
+  for (const gs of combatGolden.scenarios) {
+    const sc = gs.input;
+    const slots = sc.units.map((u) => u.slot);
+    setupWorldV(sc);
+    for (let t = 0; t < sc.ticks; t++) {
+      const rcT = transcriptBatch(0, 0, sc.units.length);
+      const got = { rc: rcT, ...sampleTickV(slots, sc) };
+      const want = gs.output[t];
+      const jw = JSON.stringify(want);
+      const jg = JSON.stringify(got);
+      if (jw !== jg) { cgFail++; if (cgFail < 4) { console.error(`  golden replay mismatch ${sc.name} tick${t}`); for (const k of Object.keys(want)) { if (JSON.stringify(want[k]) !== JSON.stringify(got[k])) console.error(`    field ${k}: want=${JSON.stringify(want[k]).slice(0, 120)} got=${JSON.stringify(got[k]).slice(0, 120)}`); } } }
+      hostStepV(sc);
+    }
+  }
+  console.log(`combat 黄金回放 (转写 unitsBatch vs units_combat.json): ${cgFail === 0 ? 'PASS' : `FAIL(${cgFail})`} (${combatGolden.scenarios.length} 场景 × 全字段逐位)`);
+
+  // —— 5c. 随机混战 fuzz（转写 vs wasm 同布置双跑）——
+  const POOL = [
+    [gR.WOLF, gR.SHEEP], [gR.BANDIT, gR.HUMAN], [gR.MAGE, gR.HUMAN], [gR.ZOMBIE, gR.HUMAN],
+    [gR.DRAGON, gR.HUMAN], [gR.KRAKEN, gR.HUMAN], [gR.BASILISK, gR.SHEEP], [gR.SANDWORM, gR.SHEEP],
+    [gR.VAMPIRE, gR.HUMAN], [gR.WHITEWALKER, gR.HUMAN], [gR.SNAKE, gR.SHEEP], [gR.BEAR, gR.SHEEP],
+  ];
+  function fuzzSetup(seed) {
+    fz = seed >>> 0;
+    const fr = frand;
+    const [ra, rb] = POOL[Math.floor(fr() * POOL.length)];
+    const x0 = 20 + fr() * 200, y0 = 20 + fr() * 120;
+    const dx = (fr() * 7 - 3.5), dy = fr() * 2 - 1;
+    const civA = ra === gR.HUMAN ? 0 : -1;
+    const civB = rb === gR.HUMAN ? 1 : -1;
+    const sc = {
+      seed, ticks: 2, fxp: Math.floor(fr() * 16),
+      civs: [{}, {}], atwar: fr() < 0.5 ? [[0, 1]] : undefined,
+      units: [
+        {
+          slot: 0, race: ra, civ: civA, x: x0, y: y0,
+          hp: 5 + fr() * 90, maxhp: 100, dmg: 3 + fr() * 10,
+          food: fr() < 0.5 ? undefined : fr() * 120,
+          panic: fr() < 0.25 ? fr() : undefined,
+          fleet: fr() < 0.2 ? fr() * 40 : 0,
+          cvn: fr() < 0.1 ? 0.5 : 0,
+          inf: fr() < 0.08, job: fr() < 0.3 ? 3 : undefined,
+          gear: fr() < 0.25 ? [29] : undefined,
+          grudges: fr() < 0.3 ? [{ oid: 1, gv: fr() * 3 }] : undefined,
+        },
+        {
+          slot: 1, race: rb, civ: civB, id: 1, x: x0 + dx, y: y0 + dy,
+          hp: 3 + fr() * 90, maxhp: 100, dmg: 3 + fr() * 10,
+          food: fr() < 0.5 ? undefined : fr() * 120,
+          panic: fr() < 0.25 ? fr() : undefined,
+          boat: ra === gR.KRAKEN && fr() < 0.6,
+          gear: fr() < 0.2 ? [-1, 8] : undefined,
+        },
+      ],
+    };
+    return sc;
+  }
+  let fzFail = 0;
+  for (let round = 0; round < 60; round++) {
+    const sc = fuzzSetup(0x9000000 + round * 7919);
+    // wasm 跑
+    setupWorldV(sc);
+    const slots = sc.units.map((u) => u.slot);
+    const gotW = [];
+    for (let t = 0; t < sc.ticks; t++) {
+      const rc = gex.wb_units_batch(0, 0);
+      const smp = { rc, ...sampleTickV(slots, sc) };
+      gotW.push(JSON.stringify(smp));
+      hostStepV(sc);
+    }
+    // 转写跑（同布置）
+    setupWorldV(sc);
+    const gotC = [];
+    for (let t = 0; t < sc.ticks; t++) {
+      const rc = transcriptBatch(0, 0, sc.units.length);
+      const smp = { rc, ...sampleTickV(slots, sc) };
+      gotC.push(JSON.stringify(smp));
+      hostStepV(sc);
+    }
+    for (let t = 0; t < sc.ticks; t++) {
+      if (gotW[t] !== gotC[t]) {
+        fzFail++;
+        if (fzFail < 4) {
+          const w = JSON.parse(gotW[t]), c = JSON.parse(gotC[t]);
+          console.error(`  fuzz mismatch round${round} tick${t} (seed 0x${sc.seed.toString(16)})`);
+          for (const k of Object.keys(w)) if (JSON.stringify(w[k]) !== JSON.stringify(c[k])) console.error(`    ${k}: wasm=${JSON.stringify(w[k]).slice(0, 100)} cs=${JSON.stringify(c[k]).slice(0, 100)}`);
+        }
+        break;
+      }
+    }
+  }
+  console.log(`combat fuzz (转写 vs wasm 同布置双跑): ${fzFail === 0 ? 'PASS' : `FAIL(${fzFail})`} (60 随机场景 × 2 tick 全字段逐位)`);
+  var combatVerifyFail = cgFail + fzFail;
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);

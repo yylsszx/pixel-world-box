@@ -345,5 +345,51 @@ namespace PixelWorldBox.Wb
         // ---------------- TBF[1] 位（units.rs L145-146） ----------------
         public const byte RF2_LAVAIMM = 1;
         public const byte RF2_NIGHTSIGHT = 2;
+
+        // ---------------- M-U2c 索引组（units.rs L83-167 机械翻译） ----------------
+        // TBR 行索引（units.rs L134-143）
+        public const int RB_HP = 0;
+        public const int RB_DMG = 1;
+        public const int RB_SPEED = 2;
+        public const int RB_MAXAGE = 3;
+        public const int RB_REPRO = 4;
+        public const int RB_REACH = 5;
+        public const int RB_GROWTH = 6;
+        public const int RB_RNG_RANGE = 7;
+        public const int RB_RNG_DMG = 8;
+        public const int RB_RNG_CD = 9;
+        // TBJ 行索引（units.rs L149-153）
+        public const int JB_HP = 0;
+        public const int JB_DMG = 1;
+        public const int JB_SPD = 2;
+        public const int JB_W = 3;
+        public const int JB_RNG = 4;
+        // TBI 列索引（units.rs L156-167）
+        public const int IT_ARMOR = 0;
+        public const int IT_CRIT = 1;
+        public const int IT_LIFE = 2;
+        public const int IT_THORNS = 3;
+        public const int IT_REGEN = 4;
+        public const int IT_RNG = 5;
+        public const int IT_SPDMUL = 6;
+        public const int IT_DMG = 7;
+        public const int IT_HP = 8;
+        public const int IT_RANK = 9;
+        public const int IT_RARITY = 10;
+        public const int IT_SLOT = 11;
+        // 遥测（units.rs L90-93）
+        public const byte TL_FLEE_END = 1;
+        public const byte TL_DECISION = 2;
+        public const byte TL_ENEMY_GONE = 3;
+        public const byte TL_KILL = 4;
+        // 音效/提示（units.rs L83-87）
+        public const byte SND_PLACE = 1;
+        public const byte SND_COIN = 2;
+        public const byte TOAST_KILLS10 = 1;
+        // 神经网络基址（units.rs L451-454；OFF_NEUW f64×2048）
+        public const int NW_ACC = 0;
+        public const int NW_STANCE = 256;
+        public const int NW_FBC = 576;
+        public const int NW_FRL = 768;
     }
 }
