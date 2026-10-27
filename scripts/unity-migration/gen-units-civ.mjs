@@ -554,6 +554,8 @@ if (import.meta.main || (process.env.WB_GEN_MAIN === '1' && process.env.WB_GEN_T
       slice: 'M-U3a civ/building', generated: new Date().toISOString(),
       W, H, note: 'fire/building/damaged/cnt 布置协议 + wb_units_batch 批层；f64 全 bits(hex)',
       eps: Object.fromEntries(EP_KEYS.map((k) => [k, ep(k)])),
+      // TBHP 建筑耐久表（NUnit 回放用；C# 无法 import TS——纪律②数据随黄金分发；曾遭并行 agent 覆写回退，重落）
+      tbhp: Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 1, BUILDING_DEFS[i + 1]?.hp ?? 70])),
     },
     scenarios,
   };
@@ -561,4 +563,4 @@ if (import.meta.main || (process.env.WB_GEN_MAIN === '1' && process.env.WB_GEN_T
   console.log(`gen-units-civ: ${scenarios.length} scenarios, sanity ${nSan} asserts, determinism PASS`);
   console.log(`-> ${OUT}`);
 }
-export { runCiv, pickSeed, SCENARIOS };
+export { runCiv, pickSeed, SCENARIOS, putTbhp, fillOwnNeg1, putCivs, putBuildings, putFires, putDamaged, putCnt, sampleTick as civSampleTick };

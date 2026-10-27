@@ -824,6 +824,76 @@ import { FIRST as spFirstTable } from '../../src/lib/game/names.ts';
   void spFirstTable; // FIRST 表经 spFirst 内部 import 消费（此引用防 lint 未用）
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0;
+// ============================================================
+// 7) M-U3a：civ/建筑辅助族黄金回放（combat-transcript 升级版 unitsBatch
+//    含 fireNear/extinguishFire/damagedNear/enemyBuildingNear/nearestEnemyBuilding/
+//    nearestBuildingOf/repairBuilding/attackBuilding/dmgSet 族转写）
+//    vs units_civ.json 30 场景全字段逐位（布置协议与 gen-units-civ 同源 import，纪律②）
+//    ⚠ 2026-10-27 10:46 本段曾被并行 cron agent 覆写丢失，本处为重落盘（内容同源）
+// ============================================================
+import {
+  putTbhp as cvPutTbhp, fillOwnNeg1 as cvFillOwn, putCivs as cvPutCivs,
+  putBuildings as cvPutBuildings, putFires as cvPutFires, putDamaged as cvPutDamaged,
+  putCnt as cvPutCnt, civSampleTick as cvSampleTick,
+} from './gen-units-civ.mjs';
+
+{
+  const civGolden = JSON.parse(readFileSync(path.join(ROOT, 'scripts/unity-migration/golden/units_civ.json'), 'utf8'));
+  const CV_UPAR = 47;
+  function cvSetupWorld(sc) {
+    gInitWorld(sc.seed, sc.fxp ?? 0);
+    cbFill(sc.terrain ?? {});
+    cbBoot();
+    cvPutTbhp();
+    cvFillOwn();
+    cvPutCivs(sc.civs ?? [{}]);
+    if (sc.atwar) for (const [a, b] of sc.atwar) { gSetU8(13, a * 64 + b, 1); gSetU8(13, b * 64 + a, 1); }
+    const techBhp = (sc.civs && sc.civs[0] && sc.civs[0].bhp) || 1;
+    if (sc.blds) cvPutBuildings(sc.blds, techBhp);
+    if (sc.fires) cvPutFires(sc.fires);
+    if (sc.damaged) cvPutDamaged(sc.damaged);
+    cvPutCnt(sc.cnt);
+    for (const u of sc.units) cbPutUnit(u.slot, u);
+    gex.wb_pack_end(sc.units.length);
+  }
+  function cvHostStep(sc) {
+    gSetU8(98, 0, gU8(98, 0) ^ 1);
+    for (const u of sc.units) {
+      if (gU8(14, u.slot)) continue;
+      const x = gGetF64(0, u.slot), y = gGetF64(1, u.slot);
+      gSetI32(7, u.slot, Math.floor(y / 4) * 256 + Math.floor(x / 4));
+      gSetU8(CV_UPAR, u.slot, gU8(98, 0));
+    }
+    gex.wb_pack_end(sc.units.length);
+  }
+  let cvFail = 0;
+  for (const gs of civGolden.scenarios) {
+    const sc = gs.input;
+    cvSetupWorld(sc);
+    const slots = sc.units.map((u) => u.slot);
+    for (let t = 0; t < (sc.ticks ?? 2); t++) {
+      const rcT = transcriptBatch(0, 0, sc.units.length);
+      const got = { rc: rcT, ...cvSampleTick(slots, sc) };
+      const want = gs.output[t];
+      const jw = JSON.stringify(want);
+      const jg = JSON.stringify(got);
+      if (jw !== jg) {
+        cvFail++;
+        if (cvFail < 4) {
+          console.error(`  civ golden mismatch ${sc.name} tick${t}`);
+          for (const k of Object.keys(want)) {
+            if (JSON.stringify(want[k]) !== JSON.stringify(got[k])) console.error(`    field ${k}: want=${JSON.stringify(want[k]).slice(0, 140)} got=${JSON.stringify(got[k]).slice(0, 140)}`);
+          }
+        }
+        break;
+      }
+      cvHostStep(sc);
+    }
+  }
+  console.log(`civ 黄金回放 (转写 unitsBatch vs units_civ.json): ${cvFail === 0 ? 'PASS' : `FAIL(${cvFail})`} (${civGolden.scenarios.length} 场景 × 全字段逐位)`);
+  var civVerifyFail = cvFail;
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);

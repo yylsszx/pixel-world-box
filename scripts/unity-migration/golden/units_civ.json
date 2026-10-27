@@ -1,7 +1,7 @@
 {
  "meta": {
   "slice": "M-U3a civ/building",
-  "generated": "2026-10-27T10:33:16.162Z",
+  "generated": "2026-10-27T10:53:24.612Z",
   "W": 256,
   "H": 160,
   "note": "fire/building/damaged/cnt 布置协议 + wb_units_batch 批层；f64 全 bits(hex)",
@@ -21,6 +21,18 @@
    "nature.quakeStress": 26,
    "nature.stormRate": 1,
    "nature.erosionRate": 1
+  },
+  "tbhp": {
+   "1": 70,
+   "2": 240,
+   "3": 120,
+   "4": 40,
+   "5": 150,
+   "6": 340,
+   "7": 90,
+   "8": 110,
+   "9": 100,
+   "10": 140
   }
  },
  "scenarios": [

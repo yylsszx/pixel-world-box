@@ -2068,7 +2068,7 @@ function updateUnit(s) {
         const fi = fireNear(s, radius); // TODO(M-U3) 全量 → -1
         if (fi >= 0) {
           const fxp2 = (fi % W) + 0.5;
-          const fyp = (fi / W) + 0.5;
+          const fyp = Math.floor(fi / W) + 0.5; // C# 整除语义（fi/W 需 floor；曾遭并行 agent 覆写回退，重落）
           const cdx = fxp2 - f64at(0, s);
           const cdy = fyp - f64at(1, s);
           if (cdx * cdx + cdy * cdy < 2.89) {
@@ -2129,7 +2129,7 @@ function updateUnit(s) {
           const bi = enemyBuildingNear(s, f64at(132, 3 * 5 + 4 /* JB_RNG */));
           if (bi >= 0) {
             setF64at(27, s, 18.0);
-            fx(null, FX_ARROW, (bi % W) + 0.5, (bi / W) + 0.5, 12.0, 1.0, f64at(0, s), f64at(1, s), f64at(22, s), ucivT, false, TXT_NONE, 0, true);
+            fx(null, FX_ARROW, (bi % W) + 0.5, Math.floor(bi / W) + 0.5, 12.0, 1.0, f64at(0, s), f64at(1, s), f64at(22, s), ucivT, false, TXT_NONE, 0, true);
           }
         }
         if (!inArmy) {
