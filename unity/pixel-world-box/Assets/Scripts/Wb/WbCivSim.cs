@@ -831,8 +831,19 @@ namespace PixelWorldBox.Wb
             return false;
         }
 
-        /// RACES diplo（types.ts RACES 表 diplo 字段 —— 种族外交底色 0-1）
-        public static readonly double[] RacesDiplo = { 0.65, 0.45, 0.4, 0.15, 0.35, 0.3 };
+        /// RACES diplo/aggr（types.ts RACES 表字段 —— 种族外交底色/好战度 0-1）
+        /// M-U3d 修复：仅 6 族定义 diplo（HUMAN/ELF/DWARF/ORC/LIZARD=19/GOBLIN=20），
+        /// BANDIT(4)/ZOMBIE(5) 无字段 → ?? 0.5 回退；旧数组按序索引曾把 4/5 错配 0.35/0.3
+        public static readonly Dictionary<int, double> RacesDiplo = new Dictionary<int, double>
+        {
+            { 0, 0.65 }, { 1, 0.45 }, { 2, 0.4 }, { 3, 0.15 }, { 19, 0.35 }, { 20, 0.3 },
+        };
+        public static double RaceDiploOf(int race) => RacesDiplo.TryGetValue(race, out double v) ? v : 0.5;
+        public static readonly Dictionary<int, double> RacesAggr = new Dictionary<int, double>
+        {
+            { 0, 0.4 }, { 1, 0.25 }, { 2, 0.5 }, { 3, 0.9 }, { 19, 0.5 }, { 20, 0.55 },
+        };
+        public static double RaceAggrOf(int race) => RacesAggr.TryGetValue(race, out double v) ? v : 0.5;
 
         /// diplomacyMeet（L2037-2059）—— warChance 判定 + pickCasus+declareWar 宣战支路全量（M-U3c 销案）
         public static void DiplomacyMeet(WbWorld w, int a, int b)
@@ -844,8 +855,8 @@ namespace PixelWorldBox.Wb
             WbCiv cb = CivAt(w, b);
             if (ca == null || cb == null) return;
             // —— 种族系统 v2：种族外交底色（兽人难交朋友，人类八面玲珑）——
-            double da = ca.race < RacesDiplo.Length ? RacesDiplo[ca.race] : 0.5; // ra?.diplo ?? 0.5
-            double db = cb.race < RacesDiplo.Length ? RacesDiplo[cb.race] : 0.5;
+            double da = RaceDiploOf(ca.race); // ra?.diplo ?? 0.5
+            double db = RaceDiploOf(cb.race);
             double raceDiplo = (da + db) / 2; // 0-1
             double warChance = System.Math.Max(0.08, System.Math.Min(0.8,
                 0.2 + ((ca.militarism ?? 30) + (cb.militarism ?? 30)) / 400.0
@@ -1556,7 +1567,7 @@ namespace PixelWorldBox.Wb
             WbCiv c = CivAt(w, civId);
             if (cause == "betray")
             {
-                al.cohesion = (int)System.Math.Max(0, al.cohesion - 22);
+                al.cohesion = System.Math.Max(0, al.cohesion - 22);
                 foreach (int m in al.members.ToArray())
                 {
                     WbCiv mc = CivAt(w, m);
@@ -1573,7 +1584,7 @@ namespace PixelWorldBox.Wb
             }
             else if (cause == "quit" && c != null && c.alive)
             {
-                al.cohesion = (int)System.Math.Max(0, al.cohesion - 8);
+                al.cohesion = System.Math.Max(0, al.cohesion - 8);
                 w.AddEvent("alliance", $"「{c.name}」宣布退出「{al.name}」，独自面对乱世", al.colorHex);
             }
             if (al.members.Count < 2)
@@ -1599,6 +1610,637 @@ namespace PixelWorldBox.Wb
             if (!w.allianceOf.TryGetValue(civId, out id)) return null;
             foreach (WbAlliance al in w.alliances) if (al != null && al.id == id) return al;
             return null;
+        }
+
+        // ==================== M-U3d 联盟系统 + 旨意颁布（engine L7725-7927 / L8076-8361） ====================
+
+        public const int YEAR_TICKS = 40;   // constants.ts L9（1 游戏年 = 40 tick）
+
+        /// DIRECTIVE_META 全表（engine L7725-7738）—— label 子表既有（DirectiveLabel），补 years/param
+        public static readonly Dictionary<string, int> DirectiveYears = new Dictionary<string, int>
+        {
+            { "annihilate", 120 }, { "conquer", 80 }, { "expand", 60 }, { "wealth", 50 }, { "wisdom", 60 },
+            { "populate", 60 }, { "legion", 30 }, { "build", 60 }, { "unify", 0 }, { "mobilize", 20 },
+            { "alliance", 40 }, { "temple", 60 },
+        };
+        public static readonly Dictionary<string, int> DirectiveParam = new Dictionary<string, int>
+        {
+            { "annihilate", 0 }, { "conquer", 0 }, { "expand", 160 }, { "wealth", 300 }, { "wisdom", 200 },
+            { "populate", 80 }, { "legion", 2 }, { "build", 20 }, { "unify", 0 }, { "mobilize", 30 },
+            { "alliance", 0 }, { "temple", 0 },
+        };
+
+        /// 文明政体 id（engine L4877-4881，缓存直读）
+        public static int GovOf(WbWorld w, int civId)
+        {
+            if (civId < 0) return 0;
+            WbCiv c = CivAt(w, civId);
+            return c != null ? c.gov : 0;
+        }
+
+        /// 联盟命名：盟主首都方位 × 本质词（engine L8076-8087）
+        public static string AllianceNameFor(WbWorld w, WbCiv leader)
+        {
+            string region = "中原";
+            if (leader.capital >= 0)
+            {
+                double dx = WbWorld.TileX(leader.capital) / (double)WbWorld.W - 0.5;
+                double dy = WbWorld.TileY(leader.capital) / (double)WbWorld.H - 0.5;
+                if (System.Math.Abs(dx) < 0.16 && System.Math.Abs(dy) < 0.16) region = "中原";
+                else if (System.Math.Abs(dy) >= System.Math.Abs(dx)) region = dy < 0 ? "北境" : "南疆";
+                else region = dx < 0 ? "西陲" : "东海";
+            }
+            string[] essence = { "同盟", "公约", "誓约", "协定", "协约", "阵营" };
+            return region + essence[(int)(w.Rng() * 6)];
+        }
+
+        /// 缔结联盟（a 为发起者/首任盟主）（engine L8090-8121）
+        public static WbAlliance FormAlliance(WbWorld w, WbCiv a, WbCiv b)
+        {
+            if (a == null || b == null) return null;
+            if (w.allianceOf.ContainsKey(a.id) || w.allianceOf.ContainsKey(b.id)) return null;
+            if (w.alliances.Count >= 4) return null;
+            WbAlliance al = new WbAlliance
+            {
+                id = w.allianceSeq++,
+                name = AllianceNameFor(w, a),
+                members = new List<int> { a.id, b.id },
+                leader = a.id,
+                cohesion = 55,
+                formedTick = w.tickCount,
+                formedYear = (int)System.Math.Floor(w.yearF),
+                warsTogether = 0,
+                colorHex = WbWorld.AllianceColors[(w.allianceSeq - 2) % WbWorld.AllianceColors.Length],
+            };
+            w.alliances.Add(al);
+            w.allianceOf[a.id] = al.id;
+            w.allianceOf[b.id] = al.id;
+            // 成员关系即刻升温（盟约即承诺）
+            string pk = WbWorld.PairKey(a.id, b.id);
+            double cur;
+            w.rel[pk] = System.Math.Max(60, w.rel.TryGetValue(pk, out cur) ? cur : 0);
+            w.met.Add(pk);
+            // 跨种族结盟 → 两个种族对彼此的看法缓改善（种族互连）
+            w.ShiftRaceRel(a.race, b.race, 9);
+            w.AddEvent("alliance", $"「{a.name}」与「{b.name}」缔结「{al.name}」——攻守同盟，荣辱与共", al.colorHex,
+                a.capital >= 0 ? WbWorld.TileX(a.capital) : (double?)null,
+                a.capital >= 0 ? WbWorld.TileY(a.capital) : (double?)null);
+            w.Toast($"「{al.name}」成立", "good");
+            // onSound('heal') —— 音效宿主回调（M-U4 域）
+            if (w.overlayMode == "alliance") w.overlayDirty = true;
+            return al;
+        }
+
+        /// 加入联盟（种族世仇审查：与盟主种族关系 < -35 的种族难以入盟）（engine L8124-8153）
+        public static bool JoinAlliance(WbWorld w, WbAlliance al, WbCiv c)
+        {
+            if (al == null || c == null) return false;
+            if (al.members.Count >= 5 || w.allianceOf.ContainsKey(c.id)) return false;
+            WbCiv leader = CivAt(w, al.leader);
+            if (leader == null || !leader.alive) return false;
+            double rr = w.RaceRelOf(c.race, leader.race);
+            if (rr < -35)
+            {
+                if (w.Rng() < 0.7)
+                {
+                    w.AddEvent("alliance", $"「{c.name}」申请加入「{al.name}」被拒——千年的种族世仇不是一纸盟约能化解的", al.colorHex);
+                    return false;
+                }
+            }
+            al.members.Add(c.id);
+            w.allianceOf[c.id] = al.id;
+            foreach (int m in al.members.ToArray())
+            {
+                if (m == c.id) continue;
+                WbCiv mc = CivAt(w, m);
+                if (mc == null || !mc.alive) continue;
+                string k = WbWorld.PairKey(m, c.id);
+                double rv;
+                w.rel[k] = System.Math.Max(52, w.rel.TryGetValue(k, out rv) ? rv : 0);
+                w.ShiftRaceRel(mc.race, c.race, 4);
+                w.met.Add(k);
+            }
+            w.AddEvent("alliance", $"「{c.name}」加入「{al.name}」——盟旗之下多了一支力量", al.colorHex,
+                c.capital >= 0 ? WbWorld.TileX(c.capital) : (double?)null,
+                c.capital >= 0 ? WbWorld.TileY(c.capital) : (double?)null);
+            if (w.overlayMode == "alliance") w.overlayDirty = true;
+            return true;
+        }
+
+        /// 理念加成汇总（engine L8833-8851）（缓存：采纳时失效；emIdeas 涌现域 M-U3e+，空表 → 全零）
+        public static WbIdeaMods IdeaModsOf(WbWorld w, int civId)
+        {
+            if (civId < 0) return new WbIdeaMods();
+            WbIdeaMods cached;
+            if (w.ideaModCache.TryGetValue(civId, out cached)) return cached;
+            WbCiv c = CivAt(w, civId);
+            WbIdeaMods mi = new WbIdeaMods();
+            if (c != null && c.ideas != null)
+            {
+                foreach (string key in c.ideas)
+                {
+                    WbIdea idea;
+                    if (!w.emIdeas.TryGetValue(key, out idea) || idea == null || idea.mods == null) continue;
+                    mi.gold += idea.mods.gold;
+                    mi.stab += idea.mods.stab;
+                    mi.mil += idea.mods.mil;
+                    mi.know += idea.mods.know;
+                    mi.repro += idea.mods.repro;
+                    mi.wear += idea.mods.wear;
+                }
+            }
+            w.ideaModCache[civId] = mi;
+            return mi;
+        }
+
+        /// 联盟主循环（每 300 tick ≈ 7.5 年）：对账 → 结盟 → 扩员 → 凝聚力 → 经济互助 → 种族关系漂移（engine L8193-8361）
+        public static void AllianceTick(WbWorld w)
+        {
+            // —— ① 对账：灭亡成员除名 + 盟主继任 + 成员互战判叛 ——
+            foreach (WbAlliance al in w.alliances.ToArray())
+            {
+                foreach (int m in al.members.ToArray())
+                {
+                    WbCiv c = CivAt(w, m);
+                    if (c == null || !c.alive || c.pop <= 0) LeaveAlliance(w, m, "fallen");
+                }
+                if (!w.alliances.Contains(al)) continue;
+                // 成员互战：挑起方（军国主义更高者）被判叛徒逐出
+                for (int i = 0; i < al.members.Count; i++)
+                {
+                    for (int j = i + 1; j < al.members.Count; j++)
+                    {
+                        int x = al.members[i];
+                        int y = al.members[j];
+                        if (!AtWar(w, x, y)) continue;
+                        WbCiv cx = CivAt(w, x);
+                        WbCiv cy = CivAt(w, y);
+                        int traitor = ((cx != null ? cx.militarism ?? 30 : 30) >= (cy != null ? cy.militarism ?? 30 : 30)) ? x : y;
+                        LeaveAlliance(w, traitor, "betray");
+                    }
+                }
+                if (!w.alliances.Contains(al)) continue;
+                if (!al.members.Contains(al.leader))
+                {
+                    int best = al.members.Count > 0 ? al.members[0] : 0;
+                    int bestPop = -1;
+                    foreach (int m in al.members)
+                    {
+                        WbCiv c = CivAt(w, m);
+                        if (c != null && c.pop > bestPop) { bestPop = c.pop; best = m; }
+                    }
+                    al.leader = best;
+                    WbCiv bc = CivAt(w, best);
+                    w.AddEvent("alliance", $"「{al.name}」盟主易位，「{bc != null ? bc.name : "?"}」执掌盟务", al.colorHex);
+                }
+            }
+            List<WbCiv> alive = new List<WbCiv>();
+            foreach (WbCiv c in w.civs) if (c != null && c.alive && c.pop > 0) alive.Add(c);
+            // —— ② 新联盟诞生：高关系 + 种族外交亲和 + 共同敌人（3 倍加成）+ 大灾同病相怜 ——
+            if (w.alliances.Count < 4 && alive.Count >= 2)
+            {
+                List<WbCiv> free = new List<WbCiv>();
+                foreach (WbCiv c in alive) if (!w.allianceOf.ContainsKey(c.id)) free.Add(c);
+                for (int i = 0; i < free.Count && w.alliances.Count < 4; i++)
+                {
+                    for (int j = i + 1; j < free.Count; j++)
+                    {
+                        WbCiv ca = free[i];
+                        WbCiv cb = free[j];
+                        if (w.allianceOf.ContainsKey(ca.id) || w.allianceOf.ContainsKey(cb.id)) continue;
+                        string key = WbWorld.PairKey(ca.id, cb.id);
+                        if (!w.met.Contains(key)) continue;
+                        double v;
+                        double rv = w.rel.TryGetValue(key, out v) ? v : 0;
+                        if (rv < 55 || AtWar(w, ca.id, cb.id)) continue;
+                        double diploMul = 0.5 + (RaceDiploOf(ca.race) + RaceDiploOf(cb.race)) / 2;
+                        // 共同敌人：两国正与同一第三国交战（同仇敌忾是结盟最强催化剂）
+                        bool commonFoe = false;
+                        foreach (WbWarData wd in w.warData.Values)
+                        {
+                            if ((AtWar(w, ca.id, wd.a) && AtWar(w, cb.id, wd.a)) || (AtWar(w, ca.id, wd.b) && AtWar(w, cb.id, wd.b))) { commonFoe = true; break; }
+                        }
+                        // 大灾同病相怜：近 250 tick 内世界刚遭大灾
+                        bool catast = w.tickCount - w.lastCatastropheTick < 250;
+                        double p = 0.05 * diploMul * (commonFoe ? 3.2 : 1) * (catast ? 1.6 : 1);
+                        if (w.Rng() < p)
+                        {
+                            WbCiv leader = ca.pop >= cb.pop ? ca : cb;
+                            WbCiv other = leader == ca ? cb : ca;
+                            FormAlliance(w, leader, other);
+                            break; // 本轮一个新联盟足矣（防一夜之间全球站队）
+                        }
+                    }
+                }
+            }
+            // —— ③ 扩员：联盟邀请关系良好的无盟国（种族世仇审查在 JoinAlliance 内）——
+            foreach (WbAlliance al in w.alliances.ToArray())
+            {
+                if (al.members.Count >= 5) continue;
+                WbCiv leader = CivAt(w, al.leader);
+                if (leader == null || !leader.alive) continue;
+                foreach (WbCiv c in alive)
+                {
+                    if (al.members.Count >= 5) break;
+                    if (w.allianceOf.ContainsKey(c.id) || al.members.Contains(c.id)) continue;
+                    double v;
+                    double rv = w.rel.TryGetValue(WbWorld.PairKey(al.leader, c.id), out v) ? v : 0;
+                    if (rv < 45) continue;
+                    // 至少一半现有成员对候选者非敌意
+                    int okCount = 0;
+                    foreach (int m in al.members)
+                    {
+                        double mv;
+                        if ((w.rel.TryGetValue(WbWorld.PairKey(m, c.id), out mv) ? mv : 0) > 5) okCount++;
+                    }
+                    if (okCount < (al.members.Count + 1) / 2) continue;
+                    double p = 0.05 * (0.5 + RaceDiploOf(c.race));
+                    if (w.Rng() < p) JoinAlliance(w, al, c);
+                }
+            }
+            // —— ④ 凝聚力结算：成员关系/共同敌人/天灾同仇/军人干政/贸易活跃/理念分歧 ——
+            int dragons = 0;
+            foreach (WbU u in w.units) if (u.dead == 0 && u.race == 9) dragons++; // R.DRAGON = 9
+            foreach (WbAlliance al in w.alliances.ToArray())
+            {
+                List<WbCiv> ms = new List<WbCiv>();
+                foreach (int m in al.members)
+                {
+                    WbCiv c = CivAt(w, m);
+                    if (c != null && c.alive) ms.Add(c);
+                }
+                if (ms.Count < 2) continue;
+                double dh = 0.5; // 存在即巩固
+                double relSum = 0;
+                int relN = 0;
+                for (int i = 0; i < ms.Count; i++)
+                {
+                    for (int j = i + 1; j < ms.Count; j++)
+                    {
+                        double rv;
+                        relSum += w.rel.TryGetValue(WbWorld.PairKey(ms[i].id, ms[j].id), out rv) ? rv : 0;
+                        relN++;
+                    }
+                }
+                double relAvg = relN > 0 ? relSum / relN : 50;
+                if (relAvg < 30) dh -= 1.5; // 貌合神离
+                // 共同敌人：≥2 成员与同一敌国交战 → 同仇敌忾
+                bool common = false;
+                foreach (WbWarData wd in w.warData.Values)
+                {
+                    int n = 0;
+                    foreach (WbCiv m in ms) if (AtWar(w, m.id, wd.a) || AtWar(w, m.id, wd.b)) n++;
+                    if (n >= 2) { common = true; break; }
+                }
+                if (common) dh += 0.8; // 同仇敌忾
+                if (dragons > 0 || w.zombieOutbreakNoted) dh += 0.5; // 巨龙/亡灵天灾下的同仇敌忾
+                double milSum = 0;
+                foreach (WbCiv c in ms) milSum += c.militarism ?? 30;
+                double milAvg = milSum / ms.Count;
+                if (milAvg > 60) dh -= 0.8; // 军人干政：黩武盟友难约束
+                // 盟内贸易活跃 → 商缘即盟缘
+                int tradeN = 0;
+                foreach (WbU u in w.units)
+                {
+                    if (u.dead != 0 || (u.caravan) <= 0) continue;
+                    if (al.members.Contains(u.civ) && al.members.Contains(u.caravan)) tradeN++;
+                }
+                if (tradeN > 0) dh += 0.4;
+                // 理念分歧：军功爵（mil>0.3）拉低 / 偃武（mil<-0.2）提振
+                foreach (WbCiv m in ms)
+                {
+                    WbIdeaMods im = IdeaModsOf(w, m.id);
+                    if (im.mil > 0.3) dh -= 0.15;
+                    if (im.mil < -0.2) dh += 0.15;
+                }
+                al.cohesion = System.Math.Max(0, System.Math.Min(100, al.cohesion + dh));
+                // —— 袍泽纽带：共战 3 次解锁阵营红利（盟内贸易再 +10%/研究扩散再 +12%）——
+                if (al.warsTogether >= 3 && !al.bonded)
+                {
+                    al.bonded = true;
+                    al.cohesion = System.Math.Min(100, al.cohesion + 8);
+                    w.AddEvent("alliance", $"「{al.name}」的盟军在血与火中淬炼出袍泽纽带——盟内商路与学术交流全面深化", al.colorHex);
+                    w.Toast($"「{al.name}」缔结袍泽纽带", "good");
+                }
+                if (al.cohesion < 25 && w.Rng() < 0.3)
+                {
+                    DissolveAlliance(w, al, $"「{al.name}」凝聚力涣散、貌合神离，盟约名存实亡");
+                }
+            }
+            // —— ⑤ 经济互助：金库见底的成员获得富盟友雪中送炭 ——
+            foreach (WbAlliance al in w.alliances.ToArray())
+            {
+                foreach (int m in al.members.ToArray())
+                {
+                    WbCiv c = CivAt(w, m);
+                    if (c == null || !c.alive || (c.gold ?? 0) >= 30) continue;
+                    WbCiv rich = null;
+                    foreach (int x in al.members)
+                    {
+                        WbCiv xc = CivAt(w, x);
+                        if (xc != null && xc.alive && (xc.gold ?? 0) > 200) { rich = xc; break; }
+                    }
+                    if (rich != null && w.Rng() < 0.4)
+                    {
+                        rich.gold = (rich.gold ?? 0) - 15;
+                        c.gold = (c.gold ?? 0) + 15;
+                        w.AddEvent("trade", $"「{rich.name}」雪中送炭：15 金驰援困顿的盟邦「{c.name}」", al.colorHex);
+                    }
+                }
+            }
+            // —— ⑥ 种族关系漂移：盟内跨种族交融 +0.15/轮（文化均 >80 额外 +0.1）；交战种族 -0.3/轮 ——
+            foreach (WbAlliance al in w.alliances.ToArray())
+            {
+                for (int i = 0; i < al.members.Count; i++)
+                {
+                    for (int j = i + 1; j < al.members.Count; j++)
+                    {
+                        WbCiv cx = CivAt(w, al.members[i]);
+                        WbCiv cy = CivAt(w, al.members[j]);
+                        if (cx == null || !cx.alive || cy == null || !cy.alive || cx.race == cy.race) continue;
+                        bool cultured = (cx.culture) > 80 && (cy.culture) > 80;
+                        w.ShiftRaceRel(cx.race, cy.race, 0.15 + (cultured ? 0.1 : 0));
+                    }
+                }
+            }
+            List<WbWarData> wds = new List<WbWarData>(w.warData.Values);
+            foreach (WbWarData wd in wds)
+            {
+                WbCiv ca = CivAt(w, wd.a);
+                WbCiv cb = CivAt(w, wd.b);
+                if (ca != null && ca.alive && cb != null && cb.alive && ca.race != cb.race) w.ShiftRaceRel(ca.race, cb.race, -0.3);
+            }
+        }
+
+        /// 颁布文明旨意（文明自行达成，可能失败）（engine L7741-7760）
+        public static WbDirective IssueDirective(WbWorld w, int civId, string kind, int param = 0, int? target = null)
+        {
+            WbCiv civ = CivAt(w, civId);
+            if (civ == null || !civ.alive) return null;
+            int activeN = 0;
+            foreach (WbDirective x in w.directives) if (x.civ == civId && x.status == "active") activeN++;
+            if (activeN >= 2) return null;
+            if (ActiveDirective(w, civId, kind) != null) return null;
+            int years = DirectiveYears.TryGetValue(kind, out int yy) ? yy : 0;
+            int metaParam = DirectiveParam.TryGetValue(kind, out int pp) ? pp : 0;
+            int p = param > 0 ? param : metaParam;
+            WbDirective d = new WbDirective
+            {
+                id = w.dirSeq++, civ = civId, kind = kind, target = target,
+                param = p, status = "active",
+                startTick = w.tickCount,
+                deadlineTick = years > 0 ? w.tickCount + years * YEAR_TICKS : 0,
+                text = DescribeDirective(w, civ, kind, p, target),
+            };
+            w.directives.Add(d);
+            ApplyDirectiveImpulse(w, d, civ);
+            w.AddEvent("decree", d.text, civ.colorHex);
+            w.Toast($"「{civ.name}」奉神谕：{DirectiveLabel[kind]}", "info");
+            return d;
+        }
+
+        /// describeDirective（engine L7762-7780）—— 文案逐字保真（「同叢」= U+53E2 蓝本原文）
+        public static string DescribeDirective(WbWorld w, WbCiv civ, string kind, int p, int? target)
+        {
+            int years = DirectiveYears.TryGetValue(kind, out int y) ? y : 0;
+            string lim = years > 0 ? $"（{years} 年内）" : "";
+            string tn = target != null ? (CivAt(w, target.Value)?.name ?? "?") : "";
+            switch (kind)
+            {
+                case "annihilate": return $"「{civ.name}」奉旨灭国：「{tn}」必须被从大地上抹去{lim}";
+                case "conquer": return $"「{civ.name}」奉旨攻城：王师须攻陷「{tn}」的王都{lim}";
+                case "expand": return $"「{civ.name}」奉旨扩张：领土须达 {p} 格{lim}";
+                case "wealth": return $"「{civ.name}」奉旨富国：国库须达 {p} 财富{lim}";
+                case "wisdom": return $"「{civ.name}」奉旨启智：知识须达 {p}{lim}";
+                case "populate": return $"「{civ.name}」奉旨繁衍：人口须达 {p}{lim}";
+                case "legion": return $"「{civ.name}」奉旨建军：须同时保有 {p} 支现役军团{lim}";
+                case "build": return $"「{civ.name}」奉旨营建：房屋须达 {p} 座{lim}";
+                case "unify": return $"「{civ.name}」奉旨统一：须成为这个世界唯一的强权";
+                case "mobilize": return $"「{civ.name}」奉旨总动员：全民皆兵，限期斩获 {p} 名敌军{lim}";
+                case "alliance": return $"「{civ.name}」奉旨结盟：须与「{tn}」缔结盟好{lim}";
+                case "temple": return $"「{civ.name}」奉旨立信：须建成一座神殿{lim}";
+            }
+            return null;
+        }
+
+        /// 旨意颁布瞬间的文明行为驱动（让文明"自己去达成"）（engine L7783-7835）
+        public static void ApplyDirectiveImpulse(WbWorld w, WbDirective d, WbCiv civ)
+        {
+            switch (d.kind)
+            {
+                case "annihilate":
+                    {
+                        if (d.target == null) break;
+                        // 圣战：神谕宣战（灭国战争——不死不休，攻方可能失败）
+                        WbWarData wd = DeclareWar(w, d.civ, d.target.Value, "holy", true, 0, true);
+                        if (wd != null) wd.giveUpAt = d.deadlineTick + 800;
+                        TryFormArmy(w, civ, d.target.Value);
+                        break;
+                    }
+                case "conquer":
+                    {
+                        if (d.target == null) break;
+                        // 圣战：神谕宣战（目的=神谕战果 45 分，攻陷王都即达成）
+                        DeclareWar(w, d.civ, d.target.Value, "holy", false, 45, true);
+                        TryFormArmy(w, civ, d.target.Value);
+                        break;
+                    }
+                case "mobilize":
+                    {
+                        civ.mobilizeUntil = w.tickCount + (d.deadlineTick - w.tickCount) * 0.8;
+                        int armed = 0;
+                        foreach (WbU u in w.units.ToArray())
+                        {
+                            if (u.dead != 0 || u.civ != civ.id) continue;
+                            int job = u.job;
+                            if (job == 0 || job == 1 || job == 5) { SetJob(w, u, 2); armed++; }
+                        }
+                        w.AddEvent("war", $"「{civ.name}」总动员！{armed} 名国民放下锄头拿起长剑", civ.colorHex);
+                        break;
+                    }
+                case "legion":
+                    {
+                        civ.armyCd = 0;
+                        TryFormArmy(w, civ, null);
+                        if (CivAtWar(w, civ.id)) TryFormArmy(w, civ, null);
+                        break;
+                    }
+                case "alliance":
+                    {
+                        if (d.target == null) break;
+                        string key = WbWorld.PairKey(d.civ, d.target.Value);
+                        w.met.Add(key);
+                        double cur;
+                        double cv = w.rel.TryGetValue(key, out cur) ? cur : 0;
+                        if (cv < -20) MakePeace(w, d.civ, d.target.Value, $"「{civ.name}」奉神谕与「{CivAt(w, d.target.Value)?.name}」化干戈为玉帛", 40);
+                        else w.rel[key] = System.Math.Max(cv, 45);
+                        // —— 联盟系统：神谕直接促成真联盟（攻守同盟实体，非数值友谊）——
+                        WbCiv t = CivAt(w, d.target.Value);
+                        WbAlliance myAl = AllianceOfCiv(w, civ.id);
+                        WbAlliance tAl = AllianceOfCiv(w, d.target.Value);
+                        if (t != null && t.alive && myAl == null && tAl == null)
+                            FormAlliance(w, civ.pop >= t.pop ? civ : t, civ.pop >= t.pop ? t : civ);
+                        else if (t != null && t.alive && myAl != null && tAl == null)
+                            JoinAlliance(w, myAl, t);
+                        break;
+                    }
+                default:
+                    break; // 扩张/富国/启智/人口/建城/统一/信仰：由各系统周期 hook 持续加成
+            }
+        }
+
+        /// tryFormArmy 门控段（engine L6052-6068）—— M-U3e 军团域桩：集结/征召/编成段 TODO
+        /// 位等价保障：golden 场景 pop<10 或敌国门早退；pickWarEnemy 段蓝本纯扫描零 rng，桩 null 位等
+        public static WbArmy TryFormArmy(WbWorld w, WbCiv civ, int? targetCiv)
+        {
+            // WBB.touchMeta() —— army 列 wasm 镜像写点（civ 层 no-op）
+            if (civ == null || !civ.alive || civ.pop < 10) return null;
+            if (w.tickCount < (civ.armyCd ?? 0)) return null;
+            int legionParam = 2;
+            WbDirective leg = ActiveDirective(w, civ.id, "legion");
+            if (leg != null) legionParam = System.Math.Max(3, leg.param);
+            double aggr = RaceAggrOf(civ.race);
+            int armyCap = (int)System.Math.Round((legionParam + TechModsOf(w, civ.id).armyMax + (GovOf(w, civ.id) == 4 ? 1 : 0)) * (0.75 + aggr * 0.5));
+            armyCap = System.Math.Max(1, armyCap);
+            int own = 0;
+            foreach (WbArmy a in w.armies) if (a.civ == civ.id) own++;
+            if (own >= armyCap) return null;
+            // 目标敌国：指定或取交战中最近且尚有建筑者
+            int enemyId = targetCiv ?? -1;
+            if (enemyId < 0) return null; // TODO(M-U3e 军团域): pickWarEnemy（纯扫描零 rng）+ 集结/征召/编成段（engine L6069-6139）
+            WbCiv ec = CivAt(w, enemyId);
+            if (ec == null || !ec.alive || !AtWar(w, civ.id, enemyId)) return null;
+            // 兵员集结（civRallyPoint L6143-6154）：王都优先，回退国民质心
+            // TODO(M-U3e 军团域): near/far 兵源 + levy 征召 + 编成/军名/军旗/军费（蓝本 return Army）
+            return null;
+        }
+
+        /// makePeace 哨兵（engine L7607-7663）—— settleFront/割地/阵营停战依赖（M-U3e 战争结算域）
+        /// 位等价保障：golden CVT36 rel=10 ≥ -20 恒走 else 支路；本桩可达即爆 = 桩域外行为不可静默漂移
+        public static void MakePeace(WbWorld w, int a, int b, string text, int postRel = 25)
+        {
+            throw new System.NotImplementedException("TODO(M-U3e): makePeace/settleFront 未翻译 —— golden 场景恒不可达（哨兵）");
+        }
+
+        /// 旨意进度评估（每 30 tick）（engine L7838-7852）
+        public static void DirectiveTick(WbWorld w)
+        {
+            for (int i = w.directives.Count - 1; i >= 0; i--)
+            {
+                WbDirective d = w.directives[i];
+                if (d.status != "active")
+                {
+                    // 已结算的旨意保留 200 tick 供 UI 展示后清理
+                    if (d.endTick != null && w.tickCount - d.endTick.Value > 200) w.directives.RemoveAt(i);
+                    continue;
+                }
+                WbCiv civ = CivAt(w, d.civ);
+                if (civ == null || !civ.alive) { FinishDirective(w, d, "failed", $"「{civ != null ? civ.name : ""}」覆灭，宏图化为泡影"); continue; }
+                (bool done, string msg) r = EvalDirective(w, d, civ);
+                if (r.done) { FinishDirective(w, d, "success", r.msg); continue; }
+                if (d.deadlineTick > 0 && w.tickCount > d.deadlineTick) { FinishDirective(w, d, "failed", r.msg); continue; }
+            }
+        }
+
+        /// 单条旨意条件评估：done=达成；msg=结算文案（engine L7855-7927）
+        public static (bool done, string msg) EvalDirective(WbWorld w, WbDirective d, WbCiv civ)
+        {
+            switch (d.kind)
+            {
+                case "annihilate":
+                    {
+                        WbCiv t = d.target != null ? CivAt(w, d.target.Value) : null;
+                        bool gone = t == null || !t.alive;
+                        // 注：t=null 时蓝本模板渲染 "undefined"（JS 语义）——golden 恒 target != null，桩域外
+                        return (gone, gone ? $"「{t != null ? t.name : null}」已被从大地上抹去" : $"期限已至，「{t.name}」仍在顽抗，灭国宏业功亏一篑");
+                    }
+                case "conquer":
+                    {
+                        WbCiv t = d.target != null ? CivAt(w, d.target.Value) : null;
+                        if (t == null || !t.alive) return (true, $"「{t != null ? t.name : null}」已亡国，王都早已易主");
+                        WbWarData wd;
+                        double s = 0;
+                        if (w.warData.TryGetValue(WbWorld.PairKey(d.civ, d.target.Value), out wd) && wd != null)
+                            s = wd.a == d.civ ? wd.scoreA : wd.scoreB;
+                        return (s >= 45, s >= 45 ? $"「{t.name}」的王都陷落了" : $"期限已至，「{t.name}」的王都仍屹立不倒");
+                    }
+                case "expand":
+                    {
+                        int tiles = 0;
+                        foreach (int i in civ.tiles) if (w.owner[i] == civ.id) tiles++;
+                        return (tiles >= d.param, tiles >= d.param ? $"领土已达 {tiles} 格" : $"期限已至，领土仅 {tiles} 格（目标 {d.param}）");
+                    }
+                case "wealth":
+                    {
+                        int g = civ.gold ?? 0;
+                        return (g >= d.param, g >= d.param ? $"国库充盈（{g} 财富）" : $"期限已至，国库仅 {g} 财富");
+                    }
+                case "wisdom":
+                    {
+                        int k = civ.knowledge ?? 0;
+                        return (k >= d.param, k >= d.param ? $"知识渊博（{k}）" : $"期限已至，知识仅 {k}");
+                    }
+                case "populate":
+                    {
+                        int pp = System.Math.Max(0, civ.pop);
+                        return (pp >= d.param, pp >= d.param ? $"人丁兴旺（{pp} 人口）" : $"期限已至，人口仅 {pp}");
+                    }
+                case "legion":
+                    {
+                        int n = 0;
+                        foreach (WbArmy a in w.armies) if (a.civ == civ.id) n++;
+                        return (n >= d.param, n >= d.param ? $"{n} 支军团同时现役" : $"期限已至，现役军团仅 {n} 支");
+                    }
+                case "build":
+                    {
+                        int h = civ.houses;
+                        return (h >= d.param, h >= d.param ? $"城郭连绵（{h} 座房屋）" : $"期限已至，房屋仅 {h} 座");
+                    }
+                case "unify":
+                    {
+                        bool done = w.victoryCiv == civ.id;
+                        return (done, done ? $"世界已归于「{civ.name}」的旌旗之下" : "统一大业未竟");
+                    }
+                case "mobilize":
+                    {
+                        int kc = d.killCount ?? 0;
+                        return (kc >= d.param, kc >= d.param ? $"总动员战果辉煌（斩获 {kc}）" : $"动员期限已至，斩获仅 {kc}");
+                    }
+                case "alliance":
+                    {
+                        // 种族系统 v2 + 联盟系统：旨意的「缔结盟好」现在是真联盟（阵营实体）
+                        WbCiv t = d.target != null ? CivAt(w, d.target.Value) : null;
+                        WbCiv me = CivAt(w, d.civ);
+                        if (t != null && me != null && t.alive && me.alive)
+                        {
+                            WbAlliance myAl = AllianceOfCiv(w, me.id);
+                            WbAlliance tAl = AllianceOfCiv(w, t.id);
+                            if (myAl != null && myAl.id == (tAl != null ? tAl.id : -1))
+                                return (true, $"与「{t.name}」同叢「{myAl.name}」盟旗之下");
+                            if (myAl == null && tAl == null && FormAlliance(w, me.pop >= t.pop ? me : t, me.pop >= t.pop ? t : me) != null)
+                                return (true, $"与「{t.name}」缔结了攻守同盟");
+                            if (myAl != null && tAl == null && JoinAlliance(w, myAl, t))
+                                return (true, $"「{t.name}」加入了「{myAl.name}」");
+                        }
+                        double v = -100;
+                        if (d.target != null)
+                        {
+                            double rv;
+                            v = w.rel.TryGetValue(WbWorld.PairKey(d.civ, d.target.Value), out rv) ? rv : -100;
+                        }
+                        return (v >= 60, v >= 60
+                            ? $"与「{CivAt(w, d.target ?? 0)?.name}」缔结盟好"
+                            : $"期限已至，两国仍未同心（关系 {System.Math.Round(v)}）");
+                    }
+                case "temple":
+                    {
+                        int[] cnt;
+                        int nn = 0;
+                        if (w.civBuildCounts.TryGetValue(civ.id, out cnt) && cnt != null) nn = cnt[BUILD_KINDS.TEMPLE];
+                        return (nn > 0, nn > 0 ? "神殿落成，钟声悠扬" : "期限已至，神殿仍是空中楼阁");
+                    }
+            }
+            return (false, null);
         }
 
         // ---------------- finishDirective（engine L7930-7949） ----------------

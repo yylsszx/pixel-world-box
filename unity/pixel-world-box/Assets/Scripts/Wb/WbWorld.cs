@@ -30,7 +30,7 @@ namespace PixelWorldBox.Wb
         public int colonizeCd;
         public int? popZeroTick;         // undefined = 有人
         public int? armyCd;              // undefined ?? 0 语义（createCiv 不初始化 → dump null）
-        public int? mobilizeUntil;
+        public double? mobilizeUntil;    // engine number（M-U3d applyDirectiveImpulse 写入 tickCount+(deadline-tick)*0.8 f64 语义）
         public int? mergedInto;
         public int? gold;                // engine civ.gold（undefined ?? 0 语义 → int?）
         public int? knowledge;
@@ -46,6 +46,7 @@ namespace PixelWorldBox.Wb
         public int expense;
         public int festivalCd;
         public List<string> history = new List<string>();   // engine civ.history（M-U3c 建国初始化空表）
+        public List<string> ideas;                          // engine civ.ideas（undefined = 未采纳 → C# null）
     }
 
     /// Building POCO —— engine.ts buildBuilding L1758 { i, x, y, kind, civ }
@@ -112,18 +113,19 @@ namespace PixelWorldBox.Wb
         public List<double> gVal = new List<double>();
     }
 
-    /// Alliance/Directive/Army 空转结构（M-U3c 域 —— 黄金场景恒空，结构保留）
+    /// Alliance/Directive/Army 空转结构（M-U3c 域；M-U3d 起联盟/旨意为真态域）
     public class WbAlliance
     {
         public int id;
         public string name;
         public List<int> members = new List<int>();
         public int leader;
-        public int cohesion;
+        public double cohesion;             // f64 语义（M-U3d 修复：int 截断会破坏 55.5/63.9 类小数凝聚力）
         public long formedTick;
         public int formedYear;
         public int warsTogether;
         public string colorHex;
+        public bool bonded;                 // 袱泽纽带（engine al.bonded —— 共战 ≥3 解锁）
     }
     public class WbDirective
     {
@@ -205,6 +207,21 @@ namespace PixelWorldBox.Wb
         public string stat;
         public bool alive = true;
         public Dictionary<string, object> meta;   // engine recordEvo meta（trace 不下发，M-U6 存档域复核）
+    }
+
+    /// 理念加成汇总（engine ideaModsOf L8833 返回形状 —— 六维全 0 起点）
+    public class WbIdeaMods
+    {
+        public double gold, stab, mil, know, repro, wear;
+    }
+
+    /// IdeaDef 最小态（engine emIdeas 消费域 —— inventIdea 涌现域 M-U3e+，容器先行）
+    public class WbIdea
+    {
+        public string key;
+        public string name;
+        public string desc;
+        public WbIdeaMods mods = new WbIdeaMods();
     }
 
     /// WorldLaws —— types.ts DEFAULT_LAWS（夹具可覆写）
@@ -307,13 +324,23 @@ namespace PixelWorldBox.Wb
         public WbWorldWar worldWar = new WbWorldWar();
         public Dictionary<int, int> allianceOf = new Dictionary<int, int>();                // civId → allianceId
         public Dictionary<int, long> allianceWarCd = new Dictionary<int, long>();
-        public int allianceSeq;
+        public int allianceSeq = 1;         // engine L553 allianceSeq = 1（M-U3d 修复：0 起始会使 FormAlliance id/颜色 off-by-one）
         public int civSeq;
+        public int dirSeq = 1;              // engine L539 dirSeq = 1（夹具 mkDirective 同游标规则）
+        public int? victoryCiv;             // engine L191 victoryCiv: number | null（evalDirective unify 消费）
+        public long lastCatastropheTick = -999999;  // engine L564 lastCatastrophe = {x:-1,y:-1,tick:-999999}（allianceTick 只读 tick）
+        public bool zombieOutbreakNoted;    // engine L200（allianceTick 凝聚力 +0.5 门之一）
+        public Dictionary<string, WbIdea> emIdeas = new Dictionary<string, WbIdea>();   // engine L601
+        public int ideaSeq = 1;             // engine L603
+        public Dictionary<int, WbIdeaMods> ideaModCache = new Dictionary<int, WbIdeaMods>(); // engine L611（采纳时失效）
         public string overlayMode = "none";                                                  // 渲染 overlay（M-U4 域；黄金恒 none）
         public bool overlayDirty = true;
         public List<WbEvoNode> evoNodes = new List<WbEvoNode>();
         public int evoSeq;
         public Dictionary<string, int> evoIndex = new Dictionary<string, int>();
+
+        /// types.ts L221 ALLIANCE_COLORS（formAlliance 颜色轮转）
+        public static readonly string[] AllianceColors = { "#14b8a6", "#f97316", "#a855f7", "#84cc16", "#ec4899", "#06b6d4" };
 
         // ---------------- 空转结构（M-U3c 域） ----------------
         public List<WbAlliance> alliances = new List<WbAlliance>();

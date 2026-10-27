@@ -27,4 +27,14 @@ const s22 = probe('CVT22-merge-fuse', (r) => { const g = r.traces[0].civs.find((
 // CVT24：宣战发生（warData border 出现）
 const s24 = probe('CVT24-diplomacy-war', (r) => r.traces[r.traces.length - 1].warData.some((w) => w.reason === 'border'));
 
-console.log(JSON.stringify({ s20, s21, s22, s24 }));
+// ==================== M-U3d 联盟系统 + 旨意颁布 ====================
+// CVT26：结盟诞生（alliances 出现 id=1 新盟）
+const s26 = probe('CVT26-form-alliance', (r) => r.traces[0].alliances.length === 1);
+// CVT27：扩员成功（members 3 人）
+const s27 = probe('CVT27-join-alliance', (r) => r.traces[0].alliances[0] && r.traces[0].alliances[0].members.length === 3);
+// CVT30：al1 凝聚力涣散解散（只剩 al0 一个盟）
+const s30 = probe('CVT30-cohesion-two-als', (r) => r.traces[0].alliances.length === 1 && r.traces[0].alliances[0].bonded === true);
+// CVT31：经济互助发生（gold 10 → 25）
+const s31 = probe('CVT31-aid-drift', (r) => r.traces[0].civs.find((c) => c.id === 0).gold === 25);
+
+console.log(JSON.stringify({ s20, s21, s22, s24, s26, s27, s30, s31 }));

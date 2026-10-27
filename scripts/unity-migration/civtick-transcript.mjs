@@ -64,7 +64,10 @@ function newWorld() {
     warData: new Map(), totalWars: new Set(), warShame: new Map(), warHistory: [],
     raceRel: new Map(), statWars: 0,
     armies: [], worldWar: { phase: 'idle', belligerents: [], fallen: [] },
-    allianceOf: new Map(), allianceWarCd: new Map(), allianceSeq: 0, civSeq: 0,
+    allianceOf: new Map(), allianceWarCd: new Map(), allianceSeq: 1, civSeq: 0,
+    // M-U3d 旨意/理念域（C# WbWorld 同构）
+    dirSeq: 1, victoryCiv: null, lastCatastropheTick: -999999, zombieOutbreakNoted: false,
+    emIdeas: new Map(), ideaSeq: 1, ideaModCache: new Map(),
     overlayMode: 'none', overlayDirty: true,
     evoNodes: [], evoSeq: 0, evoIndex: new Map(),
     laws: { wars: true, cityGrowth: true, rebels: true },
@@ -825,9 +828,9 @@ function DiplomacyMeet(w, a, b) {
   w.met.add(key);
   const ca = civAt(w, a), cb = civAt(w, b);
   if (!ca || !cb) return;
-  const RACES_DIPLO = [0.65, 0.45, 0.4, 0.15, 0.35, 0.3];
-  const da = ca.race < RACES_DIPLO.length ? RACES_DIPLO[ca.race] : 0.5;
-  const db = cb.race < RACES_DIPLO.length ? RACES_DIPLO[cb.race] : 0.5;
+  const RACES_DIPLO_MAP = { 0: 0.65, 1: 0.45, 2: 0.4, 3: 0.15, 19: 0.35, 20: 0.3 };
+  const da = ca.race in RACES_DIPLO_MAP ? RACES_DIPLO_MAP[ca.race] : 0.5;
+  const db = cb.race in RACES_DIPLO_MAP ? RACES_DIPLO_MAP[cb.race] : 0.5;
   const raceDiplo = (da + db) / 2;
   const warChance = Math.max(0.08, Math.min(0.8,
     0.2 + ((ca.militarism ?? 30) + (cb.militarism ?? 30)) / 400.0
@@ -1120,6 +1123,449 @@ function AllianceOfCiv(w, civId) {
   if (id == null) return null;
   return w.alliances.find((al) => al.id === id) ?? null;
 }
+
+// ==================== M-U3d 联盟系统 + 旨意颁布（WbCivSim.cs 机械翻译同构） ====================
+const YEAR_TICKS = 40; // constants.ts L9
+const DIRECTIVE_YEARS = { annihilate: 120, conquer: 80, expand: 60, wealth: 50, wisdom: 60, populate: 60, legion: 30, build: 60, unify: 0, mobilize: 20, alliance: 40, temple: 60 };
+const DIRECTIVE_PARAM = { annihilate: 0, conquer: 0, expand: 160, wealth: 300, wisdom: 200, populate: 80, legion: 2, build: 20, unify: 0, mobilize: 30, alliance: 0, temple: 0 };
+// RACES diplo/aggr（types.ts 仅 6 族定义 → ?? 0.5；BANDIT(4)/ZOMBIE(5) 无字段）
+const RACES_DIPLO_MAP = { 0: 0.65, 1: 0.45, 2: 0.4, 3: 0.15, 19: 0.35, 20: 0.3 };
+const RACES_AGGR_MAP = { 0: 0.4, 1: 0.25, 2: 0.5, 3: 0.9, 19: 0.5, 20: 0.55 };
+const raceDiploOf = (r) => (r in RACES_DIPLO_MAP ? RACES_DIPLO_MAP[r] : 0.5);
+const raceAggrOf = (r) => (r in RACES_AGGR_MAP ? RACES_AGGR_MAP[r] : 0.5);
+const ALLIANCE_COLORS = ['#14b8a6', '#f97316', '#a855f7', '#84cc16', '#ec4899', '#06b6d4'];
+const GovOf = (w, civId) => (civId < 0 ? 0 : (civAt(w, civId)?.gov ?? 0));
+function ShiftRaceRelF(w, a, b, dv) {
+  if (a === b) return;
+  const rk = pairKey(a, b);
+  const curR = w.raceRel.get(rk) ?? RACE_REL_BASE[rk] ?? 0;
+  w.raceRel.set(rk, Math.max(-80, Math.min(80, curR + dv)));
+}
+function AllianceNameFor(w, leader) {
+  let region = '中原';
+  if (leader.capital >= 0) {
+    const dx = WbTileX(leader.capital) / W - 0.5;
+    const dy = WbTileY(leader.capital) / H - 0.5;
+    if (Math.abs(dx) < 0.16 && Math.abs(dy) < 0.16) region = '中原';
+    else if (Math.abs(dy) >= Math.abs(dx)) region = dy < 0 ? '北境' : '南疆';
+    else region = dx < 0 ? '西陲' : '东海';
+  }
+  const essence = ['同盟', '公约', '誓约', '协定', '协约', '阵营'];
+  return region + essence[Math.floor(Rng(w) * 6)];
+}
+function FormAlliance(w, a, b) {
+  if (!a || !b) return null;
+  if (w.allianceOf.has(a.id) || w.allianceOf.has(b.id)) return null;
+  if (w.alliances.length >= 4) return null;
+  const al = {
+    id: w.allianceSeq++,
+    name: AllianceNameFor(w, a),
+    members: [a.id, b.id],
+    leader: a.id,
+    cohesion: 55,
+    formedTick: w.tickCount,
+    formedYear: Math.floor(w.yearF),
+    warsTogether: 0,
+    colorHex: ALLIANCE_COLORS[(w.allianceSeq - 2) % ALLIANCE_COLORS.length],
+    bonded: false,
+  };
+  w.alliances.push(al);
+  w.allianceOf.set(a.id, al.id);
+  w.allianceOf.set(b.id, al.id);
+  const pk = pairKey(a.id, b.id);
+  w.rel.set(pk, Math.max(60, w.rel.get(pk) ?? 0));
+  w.met.add(pk);
+  ShiftRaceRelF(w, a.race, b.race, 9);
+  AddEvent(w, 'alliance', `「${a.name}」与「${b.name}」缔结「${al.name}」——攻守同盟，荣辱与共`, al.colorHex,
+    a.capital >= 0 ? WbTileX(a.capital) : null, a.capital >= 0 ? WbTileY(a.capital) : null);
+  Toast(w, `「${al.name}」成立`, 'good');
+  if (w.overlayMode === 'alliance') w.overlayDirty = true;
+  return al;
+}
+function JoinAlliance(w, al, c) {
+  if (!al || !c) return false;
+  if (al.members.length >= 5 || w.allianceOf.has(c.id)) return false;
+  const leader = civAt(w, al.leader);
+  if (!leader || !leader.alive) return false;
+  const rr = RaceRelOf(w, c.race, leader.race);
+  if (rr < -35) {
+    if (Rng(w) < 0.7) {
+      AddEvent(w, 'alliance', `「${c.name}」申请加入「${al.name}」被拒——千年的种族世仇不是一纸盟约能化解的`, al.colorHex);
+      return false;
+    }
+  }
+  al.members.push(c.id);
+  w.allianceOf.set(c.id, al.id);
+  for (const m of [...al.members]) {
+    if (m === c.id) continue;
+    const mc = civAt(w, m);
+    if (!mc || !mc.alive) continue;
+    const k = pairKey(m, c.id);
+    w.rel.set(k, Math.max(52, w.rel.get(k) ?? 0));
+    ShiftRaceRelF(w, mc.race, c.race, 4);
+    w.met.add(k);
+  }
+  AddEvent(w, 'alliance', `「${c.name}」加入「${al.name}」——盟旗之下多了一支力量`, al.colorHex,
+    c.capital >= 0 ? WbTileX(c.capital) : null, c.capital >= 0 ? WbTileY(c.capital) : null);
+  if (w.overlayMode === 'alliance') w.overlayDirty = true;
+  return true;
+}
+function IdeaModsOf(w, civId) {
+  if (civId < 0) return { gold: 0, stab: 0, mil: 0, know: 0, repro: 0, wear: 0 };
+  const cached = w.ideaModCache.get(civId);
+  if (cached) return cached;
+  const c = civAt(w, civId);
+  const mi = { gold: 0, stab: 0, mil: 0, know: 0, repro: 0, wear: 0 };
+  if (c && c.ideas) {
+    for (const key of c.ideas) {
+      const m = w.emIdeas.get(key)?.mods;
+      if (!m) continue;
+      mi.gold += m.gold ?? 0;
+      mi.stab += m.stab ?? 0;
+      mi.mil += m.mil ?? 0;
+      mi.know += m.know ?? 0;
+      mi.repro += m.repro ?? 0;
+      mi.wear += m.wear ?? 0;
+    }
+  }
+  w.ideaModCache.set(civId, mi);
+  return mi;
+}
+function AllianceTick(w) {
+  // ① 对账：灭亡成员除名 + 盟主继任 + 成员互战判叛
+  for (const al of [...w.alliances]) {
+    for (const m of [...al.members]) {
+      const c = civAt(w, m);
+      if (!c || !c.alive || c.pop <= 0) LeaveAlliance(w, m, 'fallen');
+    }
+    if (!w.alliances.includes(al)) continue;
+    for (let i = 0; i < al.members.length; i++) {
+      for (let j = i + 1; j < al.members.length; j++) {
+        const x = al.members[i], y = al.members[j];
+        if (!AtWar(w, x, y)) continue;
+        const cx = civAt(w, x), cy = civAt(w, y);
+        const traitor = ((cx?.militarism ?? 30) >= (cy?.militarism ?? 30)) ? x : y;
+        LeaveAlliance(w, traitor, 'betray');
+      }
+    }
+    if (!w.alliances.includes(al)) continue;
+    if (!al.members.includes(al.leader)) {
+      let best = al.members[0], bestPop = -1;
+      for (const m of al.members) {
+        const c = civAt(w, m);
+        if (c && c.pop > bestPop) { bestPop = c.pop; best = m; }
+      }
+      al.leader = best;
+      AddEvent(w, 'alliance', `「${al.name}」盟主易位，「${civAt(w, best)?.name ?? '?'}」执掌盟务`, al.colorHex);
+    }
+  }
+  const alive = w.civs.filter((c) => c && c.alive && c.pop > 0);
+  // ② 新联盟诞生
+  if (w.alliances.length < 4 && alive.length >= 2) {
+    const free = alive.filter((c) => !w.allianceOf.has(c.id));
+    for (let i = 0; i < free.length && w.alliances.length < 4; i++) {
+      for (let j = i + 1; j < free.length; j++) {
+        const ca = free[i], cb = free[j];
+        if (w.allianceOf.has(ca.id) || w.allianceOf.has(cb.id)) continue;
+        const key = pairKey(ca.id, cb.id);
+        if (!w.met.has(key)) continue;
+        const v = w.rel.get(key) ?? 0;
+        if (v < 55 || AtWar(w, ca.id, cb.id)) continue;
+        const diploMul = 0.5 + (raceDiploOf(ca.race) + raceDiploOf(cb.race)) / 2;
+        const commonFoe = [...w.warData.values()].some((wd) => (AtWar(w, ca.id, wd.a) && AtWar(w, cb.id, wd.a)) || (AtWar(w, ca.id, wd.b) && AtWar(w, cb.id, wd.b)));
+        const catast = w.tickCount - w.lastCatastropheTick < 250;
+        const p = 0.05 * diploMul * (commonFoe ? 3.2 : 1) * (catast ? 1.6 : 1);
+        if (Rng(w) < p) {
+          const leader = ca.pop >= cb.pop ? ca : cb;
+          const other = leader === ca ? cb : ca;
+          FormAlliance(w, leader, other);
+          break;
+        }
+      }
+    }
+  }
+  // ③ 扩员
+  for (const al of [...w.alliances]) {
+    if (al.members.length >= 5) continue;
+    const leader = civAt(w, al.leader);
+    if (!leader || !leader.alive) continue;
+    for (const c of alive) {
+      if (al.members.length >= 5) break;
+      if (w.allianceOf.has(c.id) || al.members.includes(c.id)) continue;
+      const v = w.rel.get(pairKey(al.leader, c.id)) ?? 0;
+      if (v < 45) continue;
+      let okCount = 0;
+      for (const m of al.members) if ((w.rel.get(pairKey(m, c.id)) ?? 0) > 5) okCount++;
+      if (okCount < Math.ceil(al.members.length / 2)) continue;
+      const p = 0.05 * (0.5 + raceDiploOf(c.race));
+      if (Rng(w) < p) JoinAlliance(w, al, c);
+    }
+  }
+  // ④ 凝聚力结算
+  let dragons = 0;
+  for (const u of w.units) if (!u.dead && u.race === 9) dragons++;
+  for (const al of [...w.alliances]) {
+    const ms = al.members.map((m) => civAt(w, m)).filter((c) => c && c.alive);
+    if (ms.length < 2) continue;
+    let dh = 0.5;
+    let relSum = 0, relN = 0;
+    for (let i = 0; i < ms.length; i++) {
+      for (let j = i + 1; j < ms.length; j++) {
+        relSum += w.rel.get(pairKey(ms[i].id, ms[j].id)) ?? 0;
+        relN++;
+      }
+    }
+    const relAvg = relN > 0 ? relSum / relN : 50;
+    if (relAvg < 30) dh -= 1.5;
+    let common = false;
+    for (const wd of w.warData.values()) {
+      let n = 0;
+      for (const m of ms) if (AtWar(w, m.id, wd.a) || AtWar(w, m.id, wd.b)) n++;
+      if (n >= 2) { common = true; break; }
+    }
+    if (common) dh += 0.8;
+    if (dragons > 0 || w.zombieOutbreakNoted) dh += 0.5;
+    const milAvg = ms.reduce((s, c) => s + (c.militarism ?? 30), 0) / ms.length;
+    if (milAvg > 60) dh -= 0.8;
+    let tradeN = 0;
+    for (const u of w.units) {
+      if (u.dead || (u.caravan ?? 0) <= 0) continue;
+      if (al.members.includes(u.civ) && al.members.includes(u.caravan)) tradeN++;
+    }
+    if (tradeN > 0) dh += 0.4;
+    for (const m of ms) {
+      const im = IdeaModsOf(w, m.id);
+      if (im.mil > 0.3) dh -= 0.15;
+      if (im.mil < -0.2) dh += 0.15;
+    }
+    al.cohesion = Math.max(0, Math.min(100, al.cohesion + dh));
+    if (al.warsTogether >= 3 && !al.bonded) {
+      al.bonded = true;
+      al.cohesion = Math.min(100, al.cohesion + 8);
+      AddEvent(w, 'alliance', `「${al.name}」的盟军在血与火中淬炼出袍泽纽带——盟内商路与学术交流全面深化`, al.colorHex);
+      Toast(w, `「${al.name}」缔结袍泽纽带`, 'good');
+    }
+    if (al.cohesion < 25 && Rng(w) < 0.3) {
+      DissolveAlliance(w, al, `「${al.name}」凝聚力涣散、貌合神离，盟约名存实亡`);
+    }
+  }
+  // ⑤ 经济互助
+  for (const al of [...w.alliances]) {
+    for (const m of [...al.members]) {
+      const c = civAt(w, m);
+      if (!c || !c.alive || (c.gold ?? 0) >= 30) continue;
+      const rich = al.members.map((x) => civAt(w, x)).find((x) => x && x.alive && (x.gold ?? 0) > 200);
+      if (rich && Rng(w) < 0.4) {
+        rich.gold = (rich.gold ?? 0) - 15;
+        c.gold = (c.gold ?? 0) + 15;
+        AddEvent(w, 'trade', `「${rich.name}」雪中送炭：15 金驰援困顿的盟邦「${c.name}」`, al.colorHex);
+      }
+    }
+  }
+  // ⑥ 种族关系漂移
+  for (const al of [...w.alliances]) {
+    for (let i = 0; i < al.members.length; i++) {
+      for (let j = i + 1; j < al.members.length; j++) {
+        const cx = civAt(w, al.members[i]), cy = civAt(w, al.members[j]);
+        if (!cx || !cx.alive || !cy || !cy.alive || cx.race === cy.race) continue;
+        const cultured = (cx.culture ?? 0) > 80 && (cy.culture ?? 0) > 80;
+        ShiftRaceRelF(w, cx.race, cy.race, 0.15 + (cultured ? 0.1 : 0));
+      }
+    }
+  }
+  for (const wd of [...w.warData.values()]) {
+    const ca = civAt(w, wd.a), cb = civAt(w, wd.b);
+    if (ca && ca.alive && cb && cb.alive && ca.race !== cb.race) ShiftRaceRelF(w, ca.race, cb.race, -0.3);
+  }
+}
+function IssueDirective(w, civId, kind, param = 0, target) {
+  const civ = civAt(w, civId);
+  if (!civ || !civ.alive) return null;
+  if (w.directives.filter((d) => d.civ === civId && d.status === 'active').length >= 2) return null;
+  if (ActiveDirective(w, civId, kind)) return null;
+  const years = DIRECTIVE_YEARS[kind] ?? 0;
+  const metaParam = DIRECTIVE_PARAM[kind] ?? 0;
+  const p = param > 0 ? param : metaParam;
+  const d = {
+    id: w.dirSeq++, civ: civId, kind, target,
+    param: p, status: 'active',
+    startTick: w.tickCount,
+    deadlineTick: years > 0 ? w.tickCount + years * YEAR_TICKS : 0,
+    text: DescribeDirective(w, civ, kind, p, target),
+  };
+  w.directives.push(d);
+  ApplyDirectiveImpulse(w, d, civ);
+  AddEvent(w, 'decree', d.text, civ.colorHex);
+  Toast(w, `「${civ.name}」奉神谕：${DIRECTIVE_LABEL[kind]}`, 'info');
+  return d;
+}
+function DescribeDirective(w, civ, kind, p, target) {
+  const years = DIRECTIVE_YEARS[kind] ?? 0;
+  const lim = years > 0 ? `（${years} 年内）` : '';
+  const tn = target != null ? (civAt(w, target)?.name ?? '?') : '';
+  switch (kind) {
+    case 'annihilate': return `「${civ.name}」奉旨灭国：「${tn}」必须被从大地上抹去${lim}`;
+    case 'conquer': return `「${civ.name}」奉旨攻城：王师须攻陷「${tn}」的王都${lim}`;
+    case 'expand': return `「${civ.name}」奉旨扩张：领土须达 ${p} 格${lim}`;
+    case 'wealth': return `「${civ.name}」奉旨富国：国库须达 ${p} 财富${lim}`;
+    case 'wisdom': return `「${civ.name}」奉旨启智：知识须达 ${p}${lim}`;
+    case 'populate': return `「${civ.name}」奉旨繁衍：人口须达 ${p}${lim}`;
+    case 'legion': return `「${civ.name}」奉旨建军：须同时保有 ${p} 支现役军团${lim}`;
+    case 'build': return `「${civ.name}」奉旨营建：房屋须达 ${p} 座${lim}`;
+    case 'unify': return `「${civ.name}」奉旨统一：须成为这个世界唯一的强权`;
+    case 'mobilize': return `「${civ.name}」奉旨总动员：全民皆兵，限期斩获 ${p} 名敌军${lim}`;
+    case 'alliance': return `「${civ.name}」奉旨结盟：须与「${tn}」缔结盟好${lim}`;
+    case 'temple': return `「${civ.name}」奉旨立信：须建成一座神殿${lim}`;
+  }
+  return null;
+}
+function ApplyDirectiveImpulse(w, d, civ) {
+  switch (d.kind) {
+    case 'annihilate': {
+      if (d.target == null) break;
+      const wd = DeclareWar(w, d.civ, d.target, 'holy', { total: true, goal: 0, force: true });
+      if (wd) wd.giveUpAt = d.deadlineTick + 800;
+      TryFormArmy(w, civ, d.target);
+      break;
+    }
+    case 'conquer': {
+      if (d.target == null) break;
+      DeclareWar(w, d.civ, d.target, 'holy', { goal: 45, force: true });
+      TryFormArmy(w, civ, d.target);
+      break;
+    }
+    case 'mobilize': {
+      civ.mobilizeUntil = w.tickCount + (d.deadlineTick - w.tickCount) * 0.8;
+      let armed = 0;
+      for (const u of [...w.units]) {
+        if (u.dead || u.civ !== civ.id) continue;
+        const job = u.job ?? 0;
+        if (job === 0 || job === 1 || job === 5) { SetJob(w, u, 2); armed++; }
+      }
+      AddEvent(w, 'war', `「${civ.name}」总动员！${armed} 名国民放下锄头拿起长剑`, civ.colorHex);
+      break;
+    }
+    case 'legion': {
+      civ.armyCd = 0;
+      TryFormArmy(w, civ);
+      if (CivAtWar(w, civ.id)) TryFormArmy(w, civ);
+      break;
+    }
+    case 'alliance': {
+      if (d.target == null) break;
+      const key = pairKey(d.civ, d.target);
+      w.met.add(key);
+      const cur = w.rel.get(key) ?? 0;
+      if (cur < -20) MakePeace(w, d.civ, d.target, `「${civ.name}」奉神谕与「${civAt(w, d.target)?.name}」化干戈为玉帛`, 40);
+      else w.rel.set(key, Math.max(cur, 45));
+      const t = civAt(w, d.target);
+      const myAl = AllianceOfCiv(w, civ.id);
+      const tAl = AllianceOfCiv(w, d.target);
+      if (t && t.alive && !myAl && !tAl) FormAlliance(w, civ.pop >= t.pop ? civ : t, civ.pop >= t.pop ? t : civ);
+      else if (t && t.alive && myAl && !tAl) JoinAlliance(w, myAl, t);
+      break;
+    }
+    default: break;
+  }
+}
+function TryFormArmy(w, civ, targetCiv) {
+  // M-U3e 军团域桩：门控段位等（pickWarEnemy 纯扫描零 rng → null 位等）
+  if (!civ || !civ.alive || civ.pop < 10) return null;
+  if (w.tickCount < (civ.armyCd ?? 0)) return null;
+  const leg = ActiveDirective(w, civ.id, 'legion');
+  const legionParam = leg ? Math.max(3, leg.param) : 2;
+  const aggr = raceAggrOf(civ.race);
+  const armyCap = Math.max(1, Math.round((legionParam + TechModsOf(w, civ.id).armyMax + (GovOf(w, civ.id) === 4 ? 1 : 0)) * (0.75 + aggr * 0.5)));
+  if (w.armies.filter((a) => a.civ === civ.id).length >= armyCap) return null;
+  const enemyId = targetCiv ?? -1;
+  if (enemyId < 0) return null; // TODO(M-U3e): pickWarEnemy + 集结/征召/编成段
+  const ec = civAt(w, enemyId);
+  if (!ec || !ec.alive || !AtWar(w, civ.id, enemyId)) return null;
+  return null; // TODO(M-U3e): 兵源/征召/编成
+}
+function MakePeace() {
+  throw new Error('TODO(M-U3e): makePeace/settleFront 未翻译 —— golden 场景恒不可达（哨兵）');
+}
+function DirectiveTick(w) {
+  for (let i = w.directives.length - 1; i >= 0; i--) {
+    const d = w.directives[i];
+    if (d.status !== 'active') {
+      if (d.endTick != null && w.tickCount - d.endTick > 200) w.directives.splice(i, 1);
+      continue;
+    }
+    const civ = civAt(w, d.civ);
+    if (!civ || !civ.alive) { FinishDirective(w, d, 'failed', `「${civ?.name ?? ''}」覆灭，宏图化为泡影`); continue; }
+    const r = EvalDirective(w, d, civ);
+    if (r.done) { FinishDirective(w, d, 'success', r.msg); continue; }
+    if (d.deadlineTick > 0 && w.tickCount > d.deadlineTick) { FinishDirective(w, d, 'failed', r.msg); continue; }
+  }
+}
+function EvalDirective(w, d, civ) {
+  switch (d.kind) {
+    case 'annihilate': {
+      const t = d.target != null ? civAt(w, d.target) : null;
+      return { done: !t?.alive, msg: !t?.alive ? `「${t?.name}」已被从大地上抹去` : `期限已至，「${t.name}」仍在顽抗，灭国宏业功亏一篑` };
+    }
+    case 'conquer': {
+      const t = d.target != null ? civAt(w, d.target) : null;
+      if (!t?.alive) return { done: true, msg: `「${t?.name}」已亡国，王都早已易主` };
+      const wd = w.warData.get(pairKey(d.civ, d.target));
+      const s = wd ? (wd.a === d.civ ? wd.scoreA : wd.scoreB) : 0;
+      return { done: s >= 45, msg: s >= 45 ? `「${t.name}」的王都陷落了` : `期限已至，「${t.name}」的王都仍屹立不倒` };
+    }
+    case 'expand': {
+      let tiles = 0;
+      for (const i of civ.tiles) if (w.owner[i] === civ.id) tiles++;
+      return { done: tiles >= d.param, msg: tiles >= d.param ? `领土已达 ${tiles} 格` : `期限已至，领土仅 ${tiles} 格（目标 ${d.param}）`, progress: Math.min(1, tiles / d.param) };
+    }
+    case 'wealth': {
+      const g = civ.gold ?? 0;
+      return { done: g >= d.param, msg: g >= d.param ? `国库充盈（${g} 财富）` : `期限已至，国库仅 ${g} 财富`, progress: Math.min(1, g / d.param) };
+    }
+    case 'wisdom': {
+      const k = civ.knowledge ?? 0;
+      return { done: k >= d.param, msg: k >= d.param ? `知识渊博（${k}）` : `期限已至，知识仅 ${k}`, progress: Math.min(1, k / d.param) };
+    }
+    case 'populate': {
+      const p = Math.max(0, civ.pop);
+      return { done: p >= d.param, msg: p >= d.param ? `人丁兴旺（${p} 人口）` : `期限已至，人口仅 ${p}`, progress: Math.min(1, p / d.param) };
+    }
+    case 'legion': {
+      const n = w.armies.filter((a) => a.civ === civ.id).length;
+      return { done: n >= d.param, msg: n >= d.param ? `${n} 支军团同时现役` : `期限已至，现役军团仅 ${n} 支`, progress: Math.min(1, n / d.param) };
+    }
+    case 'build': {
+      const h = civ.houses;
+      return { done: h >= d.param, msg: h >= d.param ? `城郭连绵（${h} 座房屋）` : `期限已至，房屋仅 ${h} 座`, progress: Math.min(1, h / d.param) };
+    }
+    case 'unify': {
+      const done = w.victoryCiv === civ.id;
+      return { done, msg: done ? `世界已归于「${civ.name}」的旌旗之下` : '统一大业未竟' };
+    }
+    case 'mobilize': {
+      const kc = d.killCount ?? 0;
+      return { done: kc >= d.param, msg: kc >= d.param ? `总动员战果辉煌（斩获 ${kc}）` : `动员期限已至，斩获仅 ${kc}`, progress: Math.min(1, kc / d.param) };
+    }
+    case 'alliance': {
+      const t = d.target != null ? civAt(w, d.target) : null;
+      const me = civAt(w, d.civ);
+      if (t && me && t.alive && me.alive) {
+        const myAl = AllianceOfCiv(w, me.id);
+        const tAl = AllianceOfCiv(w, t.id);
+        if (myAl && myAl.id === tAl?.id) return { done: true, msg: `与「${t.name}」同叢「${myAl.name}」盟旗之下`, progress: 1 };
+        if (!myAl && !tAl && FormAlliance(w, me.pop >= t.pop ? me : t, me.pop >= t.pop ? t : me)) return { done: true, msg: `与「${t.name}」缔结了攻守同盟`, progress: 1 };
+        if (myAl && !tAl && JoinAlliance(w, myAl, t)) return { done: true, msg: `「${t.name}」加入了「${myAl.name}」`, progress: 1 };
+      }
+      const v = d.target != null ? w.rel.get(pairKey(d.civ, d.target)) ?? -100 : -100;
+      return { done: v >= 60, msg: v >= 60 ? `与「${civAt(w, d.target ?? 0)?.name}」缔结盟好` : `期限已至，两国仍未同心（关系 ${Math.round(v)}）`, progress: Math.min(1, (v + 100) / 160) };
+    }
+    case 'temple': {
+      const cnt = w.civBuildCounts.get(civ.id);
+      const n = cnt ? cnt[BK.TEMPLE] ?? 0 : 0;
+      return { done: n > 0, msg: n > 0 ? '神殿落成，钟声悠扬' : '期限已至，神殿仍是空中楼阁', progress: Math.min(1, n) };
+    }
+  }
+}
 function EnsureWarData(w, a, b) {
   const key = pairKey(a, b);
   let wd = w.warData.get(key);
@@ -1304,7 +1750,7 @@ function replayScenario(sc) {
       colonizeCd: c.colonizeCd ?? 0, popZeroTick: c.popZeroTick, armyCd: c.armyCd ?? 0,
       mobilizeUntil: c.mobilizeUntil, mergedInto: c.mergedInto,
       techs: c.techs ?? [], research: null, researchP: 0,
-      gov: c.gov ?? 0, govYear: 0, stability: c.stability ?? 70, culture: 0,
+      gov: c.gov ?? 0, govYear: 0, stability: c.stability ?? 70, culture: c.culture ?? 0,
       militarism: c.militarism ?? 30, income: 0, expense: 0, festivalCd: 0,
       kingId: c.kingId ?? undefined, kingName: c.kingName ?? 'K', banner: c.banner ?? 'B',
       colorHex: c.colorHex ?? '#c83c3c', color: c.color ?? [200, 60, 60],
@@ -1317,9 +1763,12 @@ function replayScenario(sc) {
   }
   // units
   for (const u of sc.fixture.units ?? []) putUnit(w, u);
-  for (const d of sc.fixture.directives ?? []) w.directives.push({ id: d.id, civ: d.civ, kind: d.kind, target: d.target, param: d.param ?? 0, status: d.status ?? 'active', startTick: d.startTick ?? 0, deadlineTick: d.deadlineTick ?? 0, text: d.text ?? '', killCount: d.killCount });
+  for (const d of sc.fixture.directives ?? []) {
+    w.directives.push({ id: d.id, civ: d.civ, kind: d.kind, target: d.target, param: d.param ?? 0, status: d.status ?? 'active', startTick: d.startTick ?? 0, deadlineTick: d.deadlineTick ?? 0, text: d.text ?? '', killCount: d.killCount });
+    w.dirSeq = Math.max(w.dirSeq ?? 1, (d.id ?? 0) + 1); // gen mkDirective 游标同步
+  }
   for (const al of sc.fixture.alliances ?? []) {
-    const a2 = { id: al.id, name: al.name ?? `A${al.id}`, members: [...al.members], leader: al.leader ?? al.members[0], cohesion: al.cohesion ?? 55, formedTick: al.formedTick ?? 0, formedYear: al.formedYear ?? 0, warsTogether: al.warsTogether ?? 0, colorHex: al.colorHex ?? '#14b8a6' };
+    const a2 = { id: al.id, name: al.name ?? `A${al.id}`, members: [...al.members], leader: al.leader ?? al.members[0], cohesion: al.cohesion ?? 55, formedTick: al.formedTick ?? 0, formedYear: al.formedYear ?? 0, warsTogether: al.warsTogether ?? 0, colorHex: al.colorHex ?? '#14b8a6', bonded: al.bonded === true };
     w.alliances.push(a2);
     for (const m of a2.members) w.allianceOf.set(m, a2.id);
   }
@@ -1357,6 +1806,11 @@ function replayScenario(sc) {
   for (let t = 0; t < sc.traces.length; t++) {
     if (w.tickCount % 5 === 0) RebuildCivBuildCounts(w);
     CivsTick(w);
+    if (sc.fixture.hostTicks) {
+      for (const iss of sc.fixture.issue ?? []) if (iss.at === t) IssueDirective(w, iss.civ, iss.kind, iss.param ?? 0, iss.target);
+      if (w.tickCount % 30 === 0) DirectiveTick(w);
+      if (w.tickCount % 300 === 23) AllianceTick(w);
+    }
     w.tickCount++;
     traces.push(traceOf(w, t));
   }
@@ -1368,7 +1822,7 @@ function putUnit(w, o) {
     id: o.id, race: o.race ?? 0, civ: o.civ ?? -1, x: o.x, y: o.y, tx: o.x, ty: o.y,
     hp: o.hp ?? 10, maxHp: o.hp ?? 10, dmg: 1, speed: 1, age: 0, maxAge: 9999, kills: 0, cd: 0, trait: 0,
     job: o.job ?? 0, king: o.king ?? 0, infected: 0, flip: 0, name: `u${o.id}`,
-    hurt: 0, breath: 0, parity: 0, dead: o.dead ?? 0, boat: o.boat ?? 0, boatTTL: 0, caravan: 0,
+    hurt: 0, breath: 0, parity: 0, dead: o.dead ?? 0, boat: o.boat ?? 0, boatTTL: 0, caravan: o.caravan ?? 0,
     wep: 0, arm: 0, hlm: 0, shd: 0, bts: 0, rng: 0, amu: 0, army: null, gene: null,
     food: 0, fam: 0, fgn: 0, gIds: [], gVal: [],
   };
@@ -1435,7 +1889,7 @@ function traceOf(w, t) {
     warHistory: [...w.warHistory],
     statWars: w.statWars,
     civSeq: w.civSeq,
-    alliances: w.alliances.map((al) => ({ id: al.id, name: al.name, members: [...al.members], leader: al.leader, cohesion: al.cohesion, formedTick: al.formedTick, formedYear: al.formedYear ?? null, warsTogether: al.warsTogether ?? 0, colorHex: al.colorHex })),
+    alliances: w.alliances.map((al) => ({ id: al.id, name: al.name, members: [...al.members], leader: al.leader, cohesion: al.cohesion, formedTick: al.formedTick, formedYear: al.formedYear ?? null, warsTogether: al.warsTogether ?? 0, colorHex: al.colorHex, bonded: al.bonded === true ? true : undefined })),
     directives: w.directives.map((d) => ({ id: d.id, civ: d.civ, kind: d.kind, target: d.target === undefined ? null : d.target, param: d.param ?? null, status: d.status, startTick: d.startTick ?? null, deadlineTick: d.deadlineTick ?? null, text: d.text ?? null, endTick: d.endTick === undefined ? null : d.endTick, endText: d.endText === undefined ? null : d.endText, killCount: d.killCount === undefined ? null : d.killCount })),
     evoNodes: w.evoNodes.map((n) => ({ id: n.id, kind: n.kind, name: n.name, parent: n.parent ?? null, year: n.year, colorHex: n.colorHex, detail: n.detail, stat: n.stat ?? null })),
   };
@@ -1473,7 +1927,7 @@ if (isMain) {
         colonizeCd: c.colonizeCd ?? 0, popZeroTick: c.popZeroTick, armyCd: c.armyCd ?? 0,
         mobilizeUntil: c.mobilizeUntil, mergedInto: c.mergedInto,
         techs: c.techs ?? [], research: null, researchP: 0,
-        gov: c.gov ?? 0, govYear: 0, stability: c.stability ?? 70, culture: 0,
+        gov: c.gov ?? 0, govYear: 0, stability: c.stability ?? 70, culture: c.culture ?? 0,
         militarism: c.militarism ?? 30, income: 0, expense: 0, festivalCd: 0,
         kingId: c.kingId ?? undefined, kingName: c.kingName ?? 'K', banner: c.banner ?? 'B',
         colorHex: c.colorHex ?? '#c83c3c', color: c.color ?? [200, 60, 60],
@@ -1499,9 +1953,12 @@ if (isMain) {
     for (const [a, b, v] of sc.fixture.rel ?? []) w.rel.set(pairKey(a, b), v);
     for (const [a, b, v] of sc.fixture.tension ?? []) w.tension.set(pairKey(a, b), v);
     for (const mk of sc.fixture.met ?? []) w.met.add(mk);
-    for (const d of sc.fixture.directives ?? []) w.directives.push({ id: d.id, civ: d.civ, kind: d.kind, target: d.target, param: d.param ?? 0, status: d.status ?? 'active', startTick: d.startTick ?? 0, deadlineTick: d.deadlineTick ?? 0, text: d.text ?? '', killCount: d.killCount });
+    for (const d of sc.fixture.directives ?? []) {
+      w.directives.push({ id: d.id, civ: d.civ, kind: d.kind, target: d.target, param: d.param ?? 0, status: d.status ?? 'active', startTick: d.startTick ?? 0, deadlineTick: d.deadlineTick ?? 0, text: d.text ?? '', killCount: d.killCount });
+      w.dirSeq = Math.max(w.dirSeq ?? 1, (d.id ?? 0) + 1); // gen mkDirective 游标同步
+    }
     for (const al of sc.fixture.alliances ?? []) {
-      const a2 = { id: al.id, name: al.name ?? `A${al.id}`, members: [...al.members], leader: al.leader ?? al.members[0], cohesion: al.cohesion ?? 55, formedTick: al.formedTick ?? 0, formedYear: al.formedYear ?? 0, warsTogether: al.warsTogether ?? 0, colorHex: al.colorHex ?? '#14b8a6' };
+      const a2 = { id: al.id, name: al.name ?? `A${al.id}`, members: [...al.members], leader: al.leader ?? al.members[0], cohesion: al.cohesion ?? 55, formedTick: al.formedTick ?? 0, formedYear: al.formedYear ?? 0, warsTogether: al.warsTogether ?? 0, colorHex: al.colorHex ?? '#14b8a6', bonded: al.bonded === true };
       w.alliances.push(a2);
       for (const m of a2.members) w.allianceOf.set(m, a2.id);
     }
@@ -1524,6 +1981,11 @@ if (isMain) {
     for (let t = 0; t < sc.traces.length; t++) {
       if (w.tickCount % 5 === 0) RebuildCivBuildCounts(w);
       CivsTick(w);
+      if (sc.fixture.hostTicks) {
+        for (const iss of sc.fixture.issue ?? []) if (iss.at === t) IssueDirective(w, iss.civ, iss.kind, iss.param ?? 0, iss.target);
+        if (w.tickCount % 30 === 0) DirectiveTick(w);
+        if (w.tickCount % 300 === 23) AllianceTick(w);
+      }
       w.tickCount++;
       const tr = traceOf(w, t);
       tr.ownerDiff = diffArr(prev.owner, [...w.owner]);

@@ -85,7 +85,9 @@ function dumpWar(wd) {
 }
 function dumpAlliance(al) {
   return { id: al.id, name: al.name, members: [...al.members], leader: al.leader, cohesion: al.cohesion,
-    formedTick: al.formedTick, formedYear: al.formedYear ?? null, warsTogether: al.warsTogether ?? 0, colorHex: al.colorHex };
+    formedTick: al.formedTick, formedYear: al.formedYear ?? null, warsTogether: al.warsTogether ?? 0, colorHex: al.colorHex,
+    // bonded 仅真值时下发（JSON.stringify 丢弃 undefined）—— CVT01-25 黄金字节不变
+    bonded: al.bonded === true ? true : undefined };
 }
 function dumpDirective(d) {
   return { id: d.id, civ: d.civ, kind: d.kind, target: d.target === undefined ? null : d.target,
@@ -133,13 +135,14 @@ function mkCiv(eng, o) {
     color: o.color ?? [200, 60, 60], colorHex: o.colorHex ?? '#c83c3c',
     pop: o.pop ?? 0, tiles: o.tiles ? [...o.tiles] : [], frontier: o.frontier ? [...o.frontier] : [],
     houses: o.houses ?? 0, capital: o.capital ?? -1,
+    culture: o.culture ?? 0,
     kingName: o.kingName ?? 'K', kingId: o.kingId, alive: o.alive ?? true,
     banner: o.banner ?? 'B', colonizeCd: o.colonizeCd ?? 0,
     popZeroTick: o.popZeroTick, history: [],
     gold: o.gold ?? 0, knowledge: o.knowledge ?? 0,
     armyCd: o.armyCd ?? 0, mobilizeUntil: o.mobilizeUntil,
     mergedInto: o.mergedInto, techs: o.techs ?? [], research: null, researchP: 0,
-    gov: o.gov ?? 0, govYear: 0, stability: o.stability ?? 70, culture: 0,
+    gov: o.gov ?? 0, govYear: 0, stability: o.stability ?? 70,
     militarism: o.militarism ?? 30, income: 0, expense: 0, festivalCd: 0,
   };
   eng.civs.push(civ);
@@ -156,7 +159,7 @@ function mkUnit(eng, o) {
     hp: o.hp ?? 10, maxHp: o.hp ?? 10, dmg: 1, speed: 1, age: 0, maxAge: 9999, kills: 0,
     cd: 0, trait: 0, job: o.job ?? 0, king: o.king ?? 0, infected: 0, flip: 0,
     name: `u${o.id}`, hurt: 0, breath: 0, parity: 0, dead: o.dead ?? 0,
-    boat: o.boat ?? 0, boatTTL: 0, caravan: 0, wep: 0, arm: 0, hlm: 0, shd: 0, bts: 0, rng: 0, amu: 0,
+    boat: o.boat ?? 0, boatTTL: 0, caravan: o.caravan ?? 0, wep: 0, arm: 0, hlm: 0, shd: 0, bts: 0, rng: 0, amu: 0,
     army: null, gene: null, food: 0, fam: 0, fgn: 0, gIds: [], gVal: [],
   };
   eng.units.push(u);
@@ -199,17 +202,19 @@ function mkBuilding0(eng, i, kind, civId) {
 }
 function mkDirective(eng, o) {
   // engine issueDirective 产物形状（M-U3c 只消费：status/civ/kind/target/param + 结算字段）
+  // M-U3d：dirSeq 游标同步（同 mkCiv civSeq 规则）—— 否则 issueDirective 分发的 id 与夹具 id 撞车
   const d = { id: o.id ?? eng.directives.length, civ: o.civ, kind: o.kind, target: o.target,
     param: o.param ?? 0, status: o.status ?? 'active', startTick: o.startTick ?? 0,
     deadlineTick: o.deadlineTick ?? 0, text: o.text ?? '', killCount: o.killCount };
   eng.directives.push(d);
+  eng.dirSeq = Math.max(eng.dirSeq ?? 1, (o.id ?? 0) + 1);
   return d;
 }
 function mkAlliance(eng, o) {
-  // engine formAlliance 产物形状（M-U3c 消费全字段）
+  // engine formAlliance 产物形状（M-U3c 消费全字段；M-U3d 加 bonded 袍泽纽带）
   const al = { id: o.id, name: o.name ?? `A${o.id}`, members: [...o.members], leader: o.leader ?? o.members[0],
     cohesion: o.cohesion ?? 55, formedTick: o.formedTick ?? 0, formedYear: o.formedYear ?? 0,
-    warsTogether: o.warsTogether ?? 0, colorHex: o.colorHex ?? '#14b8a6' };
+    warsTogether: o.warsTogether ?? 0, colorHex: o.colorHex ?? '#14b8a6', bonded: o.bonded ?? false };
   eng.alliances.push(al);
   for (const m of al.members) eng.allianceOf.set(m, al.id);
   return al;
@@ -345,6 +350,16 @@ function runScenario(sc) {
   for (let k = 0; k < sc.ticks; k++) {
     if (eng.tickCount % 5 === 0) eng.rebuildCivBuildCounts(); // 宿主协议 engine L2526
     eng.civsTick();
+    // M-U3d 宿主子系统协议（engine L2565/L2571 —— directiveTick/allianceTick 是 tick() 宿主层门控，
+    // 不在 civsTick 内；旧场景不置 hostTicks 保持 CVT01-25 黄金字节不变）。
+    // 顺序 = 真实宿主序：civsTick → issue（UI/神谕 API 任意时点，取 civsTick 后）→ %30 旨意 → %300 联盟。
+    if (sc.hostTicks) {
+      for (const iss of sc.issue ?? []) {
+        if (iss.at === k) eng.issueDirective(iss.civ, iss.kind, iss.param ?? 0, iss.target);
+      }
+      if (eng.tickCount % 30 === 0) eng.directiveTick();
+      if (eng.tickCount % 300 === 23) eng.allianceTick();
+    }
     eng.tickCount++;
     const [tr, snap] = buildTrace(eng, prev, toasts, k);
     traces.push(tr);
@@ -352,7 +367,7 @@ function runScenario(sc) {
   }
   return { name: sc.name, seed, startTick: sc.startTick ?? 0, ticks: sc.ticks, laws: eng.laws, rngA0,
     eventSeq0, toastSeq0, terrainRle,
-    fixture: { paint: sc.paint ?? null, civs: sc.civs ?? null, rel: sc.rel ?? null, tension: sc.tension ?? null, units: sc.units ?? null, buildings: sc.buildings ?? null, met: sc.met ?? null, directives: sc.directives ?? null, alliances: sc.alliances ?? null, wars: sc.wars ?? null, noAutoKing: sc.noAutoKing ?? null },
+    fixture: { paint: sc.paint ?? null, civs: sc.civs ?? null, rel: sc.rel ?? null, tension: sc.tension ?? null, units: sc.units ?? null, buildings: sc.buildings ?? null, met: sc.met ?? null, directives: sc.directives ?? null, alliances: sc.alliances ?? null, wars: sc.wars ?? null, noAutoKing: sc.noAutoKing ?? null, hostTicks: sc.hostTicks ?? null, issue: sc.issue ?? null },
     traces };
 }
 
@@ -542,6 +557,134 @@ const scenarios = [
     directives: [{ id: 0, civ: 1, kind: 'annihilate', target: 0 }],
     alliances: [{ id: 0, name: 'A0', members: [0, 1], leader: 0, cohesion: 60, formedTick: 10 }],
     wars: [{ key: '0-1', a: 0, b: 1, startTick: 400, startYear: 0, total: true, aggressor: 1, reason: 'rebel', reasonText: 'war', goal: 0, giveUpAt: 4000, popA0: 3, popB0: 4, lastActiveTick: 450 }] },
+
+  // ==================== M-U3d 联盟系统 + 旨意颁布（hostTicks 宿主子系统协议） ====================
+  // 注意：hostTicks 场景的 civsTick 段保持零噪声（frontier 空 + pop≤houses*4-2 无建造门 + 相距远无外交接触
+  // + %25/%40/%300 内部门不命中）—— rng 流完全由宿主子系统消耗，种子可预测。
+
+  // CVT26 结盟诞生：rel 60≥55 + met + 非交战 + 异族（human/elf diploMul=1.05→p=0.0525）→ rng<p
+  // → formAlliance（pop 大者为盟主）→ 盟名地域词（中原：双 capital 均近中心 |dx|<0.16）+ essence 掷 rng
+  // → rel≥60 升温 + met + shiftRaceRel +9（RACE_REL_BASE['0-1']=25 → 34）+ alliance/toast 事件
+  { name: 'CVT26-form-alliance', seed: 0xd569e, ticks: 1, startTick: 23, hostTicks: true,
+    civs: [
+      { id: 0, pop: 3, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)] },
+      { id: 1, pop: 2, houses: 1, capital: idx(130, 80), tiles: [idx(130, 80)], race: 1, colorHex: '#3c6cc8' },
+    ],
+    rel: [[0, 1, 60]],
+    met: ['0-1'] },
+  // CVT27 扩员：既有盟（0,1）+ 候选 2（rel(leader0,2)=50≥45、成员 1-2 rel 10>5 多数 ok）
+  // → rng < 0.05*(0.5+0.65) → joinAlliance：members+1、rel(0,2)/(1,2)≥52、raceRel +4（0-2 human/human 同族早退；1-2 elf/human → base+4）
+  { name: 'CVT27-join-alliance', seed: 0x27e9dc, ticks: 1, startTick: 23, hostTicks: true,
+    civs: [
+      { id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)] },
+      { id: 1, pop: 2, houses: 1, capital: idx(124, 80), tiles: [idx(124, 80)], race: 1, colorHex: '#3c6cc8' },
+      { id: 2, pop: 2, houses: 1, capital: idx(200, 120), tiles: [idx(200, 120)] },
+    ],
+    rel: [[0, 2, 50], [1, 2, 10]],
+    met: ['0-2'],
+    alliances: [{ id: 0, name: '中原同盟', members: [0, 1], leader: 0, cohesion: 60, formedTick: 100 }] },
+  // CVT28 判叛解散：双人盟成员互战（warData 0-1）→ 对账 atWar → traitor=军国主义高者（civ0 mil 50 vs 20）
+  // → leaveAlliance betray（cohesion -22、rel→min(-30,-21)=-30、叛盟事件/toast）→ members<2 → dissolve（星散事件）
+  { name: 'CVT28-betray-dissolve', seed: 0x5c1d, ticks: 1, startTick: 23, hostTicks: true,
+    civs: [
+      { id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], militarism: 50 },
+      { id: 1, pop: 2, houses: 1, capital: idx(124, 80), tiles: [idx(124, 80)], militarism: 20 },
+    ],
+    rel: [[0, 1, -21]],
+    alliances: [{ id: 0, name: '北境公约', members: [0, 1], leader: 0, cohesion: 60, formedTick: 100 }],
+    wars: [{ key: '0-1', a: 0, b: 1, startTick: 10, aggressor: 0, reason: 'border', reasonText: 'w', goal: 6, popA0: 2, popB0: 2, lastActiveTick: 20 }] },
+  // CVT29 判叛存续+盟主易位：三人盟 0-1 互战 → civ0（mil 50）叛离 → members [1,2] 存续（cohesion -22、rel(1,0)/(2,0)→-30）
+  // → leader=0 不在 members → pop 继任（civ2 pop 5 > civ1 pop 2）→ 易位事件
+  { name: 'CVT29-betray-succession', seed: 0x5c1e, ticks: 1, startTick: 23, hostTicks: true,
+    civs: [
+      { id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], militarism: 50 },
+      { id: 1, pop: 2, houses: 1, capital: idx(124, 80), tiles: [idx(124, 80)], militarism: 30 },
+      { id: 2, pop: 5, houses: 1, capital: idx(200, 120), tiles: [idx(200, 120)] },
+    ],
+    rel: [[0, 1, -21]],
+    alliances: [{ id: 0, name: '东海誓约', members: [0, 1, 2], leader: 0, cohesion: 60, formedTick: 100 }],
+    wars: [{ key: '0-1', a: 0, b: 1, startTick: 10, aggressor: 0, reason: 'border', reasonText: 'w', goal: 6, popA0: 2, popB0: 2, lastActiveTick: 20 }] },
+  // CVT30 凝聚力双盟：al0（rel 70→relAvg 70、caravan 商队 +0.4、warsTogether 3→bonded +8、mil 30）
+  //   dh=0.5+0.4=0.9 → 55+0.9=55.9 → bonded → 63.9（f64 语义！cohesion double 修复实证）+ 袍泽事件/toast
+  // al1（rel 10→relAvg<30 -1.5、mil 均 70>-60 -0.8）dh=0.5-1.5-0.8=-1.8 → 20-1.8=18.2 <25 → rng<0.3 → 涣散解散
+  { name: 'CVT30-cohesion-two-als', seed: 0x2d4fb, ticks: 1, startTick: 23, hostTicks: true,
+    civs: [
+      { id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)] },
+      { id: 1, pop: 2, houses: 1, capital: idx(124, 80), tiles: [idx(124, 80)] },
+      { id: 2, pop: 2, houses: 1, capital: idx(200, 120), tiles: [idx(200, 120)] },
+      { id: 3, pop: 2, houses: 1, capital: idx(204, 120), tiles: [idx(204, 120)], militarism: 70 },
+      { id: 4, pop: 2, houses: 1, capital: idx(208, 120), tiles: [idx(208, 120)], militarism: 70 },
+    ],
+    rel: [[0, 1, 70], [2, 3, 10], [2, 4, 10], [3, 4, 10]],
+    units: [{ id: 50, civ: 0, x: 121.5, y: 80.5, caravan: 1 }],
+    alliances: [
+      { id: 0, name: '南疆协定', members: [0, 1], leader: 0, cohesion: 55, formedTick: 100, warsTogether: 3 },
+      { id: 1, name: '西陲联盟', members: [2, 3, 4], leader: 2, cohesion: 20, formedTick: 100 },
+    ] },
+  // CVT31 经济互助+种族漂移：al0 成员 gold 10/250 → rng<0.4 → 助济 -15/+15 + trade 事件；
+  // 盟内异族对 culture 90/90 → shiftRaceRel +0.25；另 warData '2-3'（elf/orc 不同族交战）→ -0.3
+  { name: 'CVT31-aid-drift', seed: 0x5c20, ticks: 1, startTick: 23, hostTicks: true,
+    civs: [
+      { id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], gold: 10, culture: 90 },
+      { id: 1, pop: 2, houses: 1, capital: idx(124, 80), tiles: [idx(124, 80)], gold: 250, culture: 90, race: 1, colorHex: '#3c6cc8' },
+      { id: 2, pop: 2, houses: 1, capital: idx(200, 120), tiles: [idx(200, 120)], race: 1, colorHex: '#3c6cc8' },
+      { id: 3, pop: 2, houses: 1, capital: idx(204, 120), tiles: [idx(204, 120)], race: 3, colorHex: '#c8a03c' },
+    ],
+    rel: [[0, 1, 60], [2, 3, -21]],
+    alliances: [{ id: 0, name: '中原协约', members: [0, 1], leader: 0, cohesion: 55, formedTick: 100 }],
+    wars: [{ key: '2-3', a: 2, b: 3, startTick: 10, aggressor: 3, reason: 'border', reasonText: 'w', goal: 6, popA0: 2, popB0: 2, lastActiveTick: 20 }] },
+  // CVT32 旨意颁布+当轮达成：issue wealth param 300（gold 350≥300）→ directiveTick %30 → finishDirective success
+  // → gold 350+120=470、deadline=30+50*40=2030、decree/decreeOk 事件 + 双 toast
+  { name: 'CVT32-issue-wealth-success', seed: 0x5c21, ticks: 1, startTick: 30, hostTicks: true,
+    civs: [{ id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], gold: 350 }],
+    issue: [{ at: 0, civ: 0, kind: 'wealth', param: 300 }] },
+  // CVT33 颁布门禁：civ0 已有 1 条 active → 再颁不同 kind 成功（2 条）；civ1 已有 wealth active → 再颁 wealth 被拒
+  { name: 'CVT33-issue-guards', seed: 0x5c22, ticks: 1, startTick: 30, hostTicks: true,
+    civs: [
+      { id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], gold: 100 },
+      { id: 1, pop: 2, houses: 1, capital: idx(124, 80), tiles: [idx(124, 80)], gold: 100 },
+    ],
+    directives: [
+      { id: 1, civ: 0, kind: 'expand', param: 160, deadlineTick: 30 + 60 * 40 },
+      { id: 2, civ: 1, kind: 'wealth', param: 300, deadlineTick: 30 + 50 * 40 },
+    ],
+    issue: [{ at: 0, civ: 0, kind: 'build', param: 0 }, { at: 0, civ: 1, kind: 'wealth', param: 0 }] },
+  // CVT34 期限落败：expand 期限 20<30 → eval 领土 2<160 未达 → finishDirective failed → gold max(0,50-60)=0
+  { name: 'CVT34-deadline-fail', seed: 0x5c23, ticks: 1, startTick: 30, hostTicks: true,
+    civs: [{ id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80), idx(121, 80)], gold: 50 }],
+    directives: [{ id: 1, civ: 0, kind: 'expand', param: 160, startTick: 0, deadlineTick: 20 }] },
+  // CVT35 总动员颁布：mobilize 令 → mobilizeUntil=30+(830-30)*0.8=670 → job 0/1/5 → 战士（setJob 属性换算）+ 动员事件
+  // → eval killCount 0 < 30 → active 存续
+  { name: 'CVT35-mobilize-impulse', seed: 0x5c24, ticks: 1, startTick: 30, hostTicks: true,
+    paint: [[115, 75, 130, 85, 3]],
+    civs: [{ id: 0, pop: 4, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)] }],
+    units: [
+      { id: 10, civ: 0, x: 120.5, y: 80.5, job: 0 },
+      { id: 11, civ: 0, x: 121.5, y: 80.5, job: 1 },
+      { id: 12, civ: 0, x: 122.5, y: 80.5, job: 5 },
+      { id: 13, civ: 0, x: 123.5, y: 80.5, job: 2 },
+    ],
+    issue: [{ at: 0, civ: 0, kind: 'mobilize', param: 0 }] },
+  // CVT36 联盟令颁布：alliance 令 target=1（rel 10 ≥-20 不走 makePeace）→ met + rel max(10,45)=45
+  // → formAlliance（pop 5≥3 → civ0 盟主）→ rel 60/raceRel+9 → directiveTick 当轮 eval 同盟 done → success +120
+  { name: 'CVT36-alliance-directive', seed: 0x5c25, ticks: 1, startTick: 30, hostTicks: true,
+    civs: [
+      { id: 0, pop: 5, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], gold: 20 },
+      { id: 1, pop: 3, houses: 1, capital: idx(130, 80), tiles: [idx(130, 80)], race: 1, colorHex: '#3c6cc8', gold: 10 },
+    ],
+    rel: [[0, 1, 10]],
+    issue: [{ at: 0, civ: 0, kind: 'alliance', param: 0, target: 1 }] },
+  // CVT37 灭国令圣战：annihilate target=1 → declareWar holy force total → rel min(10,-90)=-90、
+  // goal 0（holy 摧毁敌国）、giveUpAt 先 3600 后被覆写 deadline+800=30+120*40+800=5630、宣战烧钱 min(40,8+0)=8
+  // → tryFormArmy pop 5<10 门早退（M-U3e 军团域桩位）→ eval target alive → active 存续
+  { name: 'CVT37-annihilate-holy', seed: 0x5c26, ticks: 1, startTick: 30, hostTicks: true,
+    civs: [
+      { id: 0, pop: 5, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], gold: 50 },
+      { id: 1, pop: 3, houses: 1, capital: idx(130, 80), tiles: [idx(130, 80)], race: 1, colorHex: '#3c6cc8' },
+    ],
+    rel: [[0, 1, 10]],
+    met: ['0-1'],
+    issue: [{ at: 0, civ: 0, kind: 'annihilate', param: 0, target: 1 }] },
 ];
 
 // ---------------- 主流程 ----------------
@@ -728,6 +871,103 @@ function sanity(results) {
   A('CVT25 decree success', last25.directives.find((d) => d.id === 0).status === 'success', JSON.stringify(last25.directives.map((d) => d.status)));
   A('CVT25 decreeOk event', last25.newEvents.some((e) => e.kind === 'decreeOk'), JSON.stringify(last25.newEvents.map((e) => e.kind)));
   A('CVT25 dissolve event', last25.newEvents.some((e) => e.kind === 'alliance' && e.text.includes('星散')), JSON.stringify(last25.newEvents.map((e) => [e.kind, e.text.slice(0, 20)])));
+
+  // ==================== M-U3d 联盟系统 + 旨意颁布 ====================
+  const r26 = by['CVT26-form-alliance'];
+  const t26 = r26.traces[0];
+  A('CVT26 alliance born', t26.alliances.length === 1 && t26.alliances[0].id === 1 && t26.alliances[0].leader === 0, JSON.stringify(t26.alliances));
+  A('CVT26 name zhongyuan', t26.alliances[0] && t26.alliances[0].name.startsWith('中原'), `name=${t26.alliances[0]?.name}`);
+  A('CVT26 cohesion 55.5', Math.abs(t26.alliances[0].cohesion - 55.5) < 1e-9, `coh=${t26.alliances[0].cohesion}`);
+  A('CVT26 color first', t26.alliances[0].colorHex === '#14b8a6', `c=${t26.alliances[0].colorHex}`);
+  A('CVT26 rel raised', t26.rel.some(([k, v]) => k === '0-1' && v === 60), JSON.stringify(t26.rel));
+  A('CVT26 raceRel 34.15', t26.raceRel.some(([k, v]) => k === '0-1' && Math.abs(v - 34.15) < 1e-9), JSON.stringify(t26.raceRel));
+  A('CVT26 form event', t26.newEvents.some((e) => e.kind === 'alliance' && e.text.includes('攻守同盟')), JSON.stringify(t26.newEvents.map((e) => e.kind)));
+  A('CVT26 toast good', t26.toasts.some((t) => t.tone === 'good'), JSON.stringify(t26.toasts.map((t) => t.tone)));
+
+  const r27 = by['CVT27-join-alliance'];
+  const t27 = r27.traces[0];
+  A('CVT27 joined', t27.alliances.length === 1 && t27.alliances[0].members.length === 3, JSON.stringify(t27.alliances[0]?.members));
+  A('CVT27 rel 52', t27.rel.some(([k, v]) => k === '0-2' && v === 52) && t27.rel.some(([k, v]) => k === '1-2' && v === 52), JSON.stringify(t27.rel));
+  A('CVT27 raceRel 29.3', t27.raceRel.some(([k, v]) => k === '0-1' && Math.abs(v - 29.3) < 1e-9), JSON.stringify(t27.raceRel));
+  A('CVT27 join event', t27.newEvents.some((e) => e.kind === 'alliance' && e.text.includes('加入')), JSON.stringify(t27.newEvents.map((e) => [e.kind, e.text.slice(0, 16)])));
+
+  const r28 = by['CVT28-betray-dissolve'];
+  const t28 = r28.traces[0];
+  A('CVT28 dissolved', t28.alliances.length === 0, `al=${t28.alliances.length}`);
+  A('CVT28 rel -30', t28.rel.some(([k, v]) => k === '0-1' && v === -30), JSON.stringify(t28.rel));
+  A('CVT28 betray event', t28.newEvents.some((e) => e.kind === 'alliance' && e.text.includes('刀兵相向')), JSON.stringify(t28.newEvents.map((e) => [e.kind, e.text.slice(0, 16)])));
+  A('CVT28 star event', t28.newEvents.some((e) => e.kind === 'alliance' && e.text.includes('星散')), JSON.stringify(t28.newEvents.map((e) => e.text.slice(0, 16))));
+  A('CVT28 toast danger', t28.toasts.some((t) => t.tone === 'danger'), JSON.stringify(t28.toasts));
+
+  const r29 = by['CVT29-betray-succession'];
+  const t29 = r29.traces[0];
+  A('CVT29 survive', t29.alliances.length === 1 && JSON.stringify(t29.alliances[0].members) === '[1,2]', JSON.stringify(t29.alliances));
+  A('CVT29 leader 2', t29.alliances[0].leader === 2, `leader=${t29.alliances[0].leader}`);
+  A('CVT29 cohesion 37.8', Math.abs(t29.alliances[0].cohesion - 37.8) < 1e-9, `coh=${t29.alliances[0].cohesion}`);
+  A('CVT29 rel both -30', t29.rel.some(([k, v]) => k === '0-1' && v === -30) && t29.rel.some(([k, v]) => k === '0-2' && v === -30), JSON.stringify(t29.rel));
+  A('CVT29 successor event', t29.newEvents.some((e) => e.kind === 'alliance' && e.text.includes('易位')), JSON.stringify(t29.newEvents.map((e) => e.text.slice(0, 16))));
+
+  const r30 = by['CVT30-cohesion-two-als'];
+  const t30 = r30.traces[0];
+  const al30 = t30.alliances[0];
+  A('CVT30 bonded true', al30 && al30.bonded === true && al30.warsTogether === 3, JSON.stringify(al30));
+  A('CVT30 cohesion 63.9', al30 && Math.abs(al30.cohesion - 63.9) < 1e-9, `coh=${al30?.cohesion}`);
+  A('CVT30 al1 dissolved', t30.alliances.length === 1, `als=${t30.alliances.length}`);
+  A('CVT30 fused event', t30.newEvents.some((e) => e.kind === 'alliance' && e.text.includes('涣散')), JSON.stringify(t30.newEvents.map((e) => e.text.slice(0, 14))));
+
+  const r31 = by['CVT31-aid-drift'];
+  const t31 = r31.traces[0];
+  A('CVT31 gold moved', t31.civs.find((c) => c.id === 0).gold === 25 && t31.civs.find((c) => c.id === 1).gold === 235, `gold=${t31.civs.map((c) => c.gold)}`);
+  A('CVT31 aid event', t31.newEvents.some((e) => e.kind === 'trade' && e.text.includes('雪中送炭')), JSON.stringify(t31.newEvents.map((e) => [e.kind, e.text.slice(0, 12)])));
+  A('CVT31 drift +0.25', t31.raceRel.some(([k, v]) => k === '0-1' && Math.abs(v - 25.25) < 1e-9), JSON.stringify(t31.raceRel));
+  A('CVT31 war drift -0.3', t31.raceRel.some(([k, v]) => k === '1-3' && Math.abs(v + 45.3) < 1e-9), JSON.stringify(t31.raceRel));
+
+  const r32 = by['CVT32-issue-wealth-success'];
+  const t32 = r32.traces[0];
+  const d32 = t32.directives[0];
+  A('CVT32 success', d32.status === 'success' && d32.deadlineTick === 2030 && d32.id === 1, JSON.stringify(d32));
+  A('CVT32 gold 470', t32.civs[0].gold === 470, `gold=${t32.civs[0].gold}`);
+  A('CVT32 decree events', t32.newEvents.some((e) => e.kind === 'decree') && t32.newEvents.some((e) => e.kind === 'decreeOk'), JSON.stringify(t32.newEvents.map((e) => e.kind)));
+  A('CVT32 text rich', d32.text.includes('奉旨富国') && d32.text.includes('300'), d32.text);
+
+  const r33 = by['CVT33-issue-guards'];
+  const t33 = r33.traces[0];
+  A('CVT33 civ0 two', t33.directives.filter((d) => d.civ === 0).length === 2 && t33.directives.some((d) => d.civ === 0 && d.kind === 'build' && d.id === 3), JSON.stringify(t33.directives.map((d) => [d.id, d.civ, d.kind])));
+  A('CVT33 civ1 dup blocked', t33.directives.filter((d) => d.civ === 1).length === 1, `civ1=${t33.directives.filter((d) => d.civ === 1).length}`);
+  A('CVT33 build deadline', t33.directives.find((d) => d.kind === 'build').deadlineTick === 2430, `dl=${t33.directives.find((d) => d.kind === 'build').deadlineTick}`);
+
+  const r34 = by['CVT34-deadline-fail'];
+  const t34 = r34.traces[0];
+  const d34 = t34.directives[0];
+  A('CVT34 failed', d34.status === 'failed' && d34.endTick === 30, JSON.stringify(d34));
+  A('CVT34 endText', d34.endText.includes('期限已至') && d34.endText.includes('2 格'), d34.endText);
+  A('CVT34 gold clamped 0', t34.civs[0].gold === 0, `gold=${t34.civs[0].gold}`);
+
+  const r35 = by['CVT35-mobilize-impulse'];
+  const t35 = r35.traces[0];
+  A('CVT35 all armed', t35.units.filter((u) => u.civ === 0).every((u) => u.job === 2), JSON.stringify(t35.units.map((u) => u.job)));
+  A('CVT35 hp transformed', t35.units[0].hp === f64hex(13), `hp=${t35.units[0].hp}`);
+  A('CVT35 directive active', t35.directives[0].status === 'active' && t35.directives[0].param === 30 && t35.directives[0].deadlineTick === 830, JSON.stringify(t35.directives[0]));
+  A('CVT35 war event', t35.newEvents.some((e) => e.kind === 'war' && e.text.includes('4 名国民')), JSON.stringify(t35.newEvents.map((e) => [e.kind, e.text.slice(0, 14)])));
+
+  const r36 = by['CVT36-alliance-directive'];
+  const t36 = r36.traces[0];
+  A('CVT36 alliance formed', t36.alliances.length === 1 && t36.alliances[0].leader === 0 && t36.alliances[0].cohesion === 55, JSON.stringify(t36.alliances));
+  A('CVT36 rel 60', t36.rel.some(([k, v]) => k === '0-1' && v === 60), JSON.stringify(t36.rel));
+  A('CVT36 raceRel 34', t36.raceRel.some(([k, v]) => k === '0-1' && v === 34), JSON.stringify(t36.raceRel));
+  A('CVT36 decree success', t36.directives[0].status === 'success', JSON.stringify(t36.directives[0]));
+  A('CVT36 gold 140', t36.civs[0].gold === 140, `gold=${t36.civs[0].gold}`);
+
+  const r37 = by['CVT37-annihilate-holy'];
+  const t37 = r37.traces[0];
+  const wd37 = t37.warData[0];
+  A('CVT37 holy war', wd37 && wd37.reason === 'holy' && wd37.total === true && wd37.goal === 0 && wd37.aggressor === 0, JSON.stringify(wd37));
+  A('CVT37 giveUpAt 5630', wd37 && wd37.giveUpAt === 5630, `g=${wd37?.giveUpAt}`);
+  A('CVT37 rel -90', t37.rel.some(([k, v]) => k === '0-1' && v === -90), JSON.stringify(t37.rel));
+  A('CVT37 totalWars', JSON.stringify(t37.totalWars) === '["0-1"]' && t37.warHistory.includes(30), `tw=${JSON.stringify(t37.totalWars)} wh=${JSON.stringify(t37.warHistory)}`);
+  A('CVT37 gold 42', t37.civs.find((c) => c.id === 0).gold === 42, `gold=${t37.civs.find((c) => c.id === 0).gold}`);
+  A('CVT37 raceRel 21', t37.raceRel.some(([k, v]) => k === '0-1' && v === 21), JSON.stringify(t37.raceRel));
+  A('CVT37 active stays', t37.directives[0].status === 'active' && t37.directives[0].deadlineTick === 4830, JSON.stringify(t37.directives[0]));
 
   return asserts;
 }

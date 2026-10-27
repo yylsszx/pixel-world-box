@@ -1778,7 +1778,7 @@ namespace PixelWorldBox.Tests
             Assert.AreEqual(160, meta["H"].Value<int>(), "meta H");
             Assert.AreEqual(4, meta["houseCap"].Value<int>(), "meta HOUSE_CAP");
             var scenarios = (JArray)golden["scenarios"];
-            Assert.AreEqual(26, scenarios.Count, "scenario count");
+            Assert.AreEqual(38, scenarios.Count, "scenario count");
             foreach (var sc in scenarios) RunScenario(sc);
         }
 
@@ -1831,13 +1831,19 @@ namespace PixelWorldBox.Tests
                     banner = c["banner"]?.ToString() ?? "B",
                     colonizeCd = c["colonizeCd"]?.Value<int>() ?? 0,
                     stability = c["stability"]?.Value<int>() ?? 70,
+                    culture = c["culture"]?.Value<int>() ?? 0,
                     militarism = c["militarism"]?.Value<int>() ?? 30,
                     gov = c["gov"]?.Value<int>() ?? 0,
                 };
                 if (c["popZeroTick"] != null && c["popZeroTick"].Type != JTokenType.Null) civ.popZeroTick = c["popZeroTick"].Value<int>();
-                if (c["mobilizeUntil"] != null && c["mobilizeUntil"].Type != JTokenType.Null) civ.mobilizeUntil = c["mobilizeUntil"].Value<int>();
+                if (c["mobilizeUntil"] != null && c["mobilizeUntil"].Type != JTokenType.Null) civ.mobilizeUntil = c["mobilizeUntil"].Value<double>();
                 if (c["techs"] != null && c["techs"].Type != JTokenType.Null)
                     foreach (var t in (JArray)c["techs"]) civ.techs.Add(t.ToString());
+                if (c["ideas"] != null && c["ideas"].Type != JTokenType.Null)
+                {
+                    civ.ideas = new List<string>();
+                    foreach (var t in (JArray)c["ideas"]) civ.ideas.Add(t.ToString());
+                }
                 if (c["tiles"] != null) foreach (var t in (JArray)c["tiles"]) civ.tiles.Add(t.Value<int>());
                 if (c["frontier"] != null) foreach (var f in (JArray)c["frontier"]) civ.frontier.Add(f.Value<int>());
                 w.civs.Add(civ);
@@ -1877,6 +1883,7 @@ namespace PixelWorldBox.Tests
             // —— directives/alliances/wars 夹具（M-U3c）——
             if (sc["fixture"]["directives"] != null)
                 foreach (var d in (JArray)sc["fixture"]["directives"])
+                {
                     w.directives.Add(new WbDirective
                     {
                         id = d["id"]?.Value<int>() ?? w.directives.Count,
@@ -1889,6 +1896,8 @@ namespace PixelWorldBox.Tests
                         deadlineTick = d["deadlineTick"]?.Value<int>() ?? 0,
                         text = d["text"]?.ToString() ?? "",
                     });
+                    w.dirSeq = System.Math.Max(w.dirSeq, d["id"]?.Value<int>() != null ? d["id"].Value<int>() + 1 : w.directives.Count); // gen mkDirective 游标同步
+                }
             if (sc["fixture"]["alliances"] != null)
                 foreach (var al in (JArray)sc["fixture"]["alliances"])
                 {
@@ -1897,11 +1906,12 @@ namespace PixelWorldBox.Tests
                         id = al["id"].Value<int>(),
                         name = al["name"]?.ToString() ?? $"A{al["id"].Value<int>()}",
                         leader = al["leader"]?.Value<int>() ?? al["members"][0].Value<int>(),
-                        cohesion = al["cohesion"]?.Value<int>() ?? 55,
+                        cohesion = al["cohesion"]?.Value<double>() ?? 55,
                         formedTick = al["formedTick"]?.Value<long>() ?? 0,
                         formedYear = al["formedYear"]?.Value<int>() ?? 0,
                         warsTogether = al["warsTogether"]?.Value<int>() ?? 0,
                         colorHex = al["colorHex"]?.ToString() ?? "#14b8a6",
+                        bonded = al["bonded"] != null && al["bonded"].Type != JTokenType.Null && al["bonded"].Value<bool>(),
                     };
                     foreach (var m in (JArray)al["members"]) a2.members.Add(m.Value<int>());
                     w.alliances.Add(a2);
@@ -1958,11 +1968,23 @@ namespace PixelWorldBox.Tests
             // —— 驱动 + 逐 tick 断言 ——
             w.tickCount = sc["startTick"].Value<int>();
             var traces = (JArray)sc["traces"];
+            bool hostTicks = sc["fixture"]["hostTicks"] != null && sc["fixture"]["hostTicks"].Type != JTokenType.Null && sc["fixture"]["hostTicks"].Value<bool>();
+            var issues = (JArray)(sc["fixture"]["issue"] ?? new JArray());
             for (int t = 0; t < traces.Count; t++)
             {
                 var want = (JObject)traces[t];
                 if (w.tickCount % 5 == 0) WbCivSim.RebuildCivBuildCounts(w);
                 WbCivSim.CivsTick(w);
+                if (hostTicks)
+                {
+                    // M-U3d 宿主子系统协议：issue（civsTick 后任意时点）→ %30 旨意 → %300 联盟（engine L2565/L2571）
+                    foreach (var iss in issues)
+                        if (iss["at"].Value<int>() == t)
+                            WbCivSim.IssueDirective(w, iss["civ"].Value<int>(), iss["kind"].ToString(), iss["param"]?.Value<int>() ?? 0,
+                                (iss["target"] == null || iss["target"].Type == JTokenType.Null) ? (int?)null : iss["target"].Value<int>());
+                    if (w.tickCount % 30 == 0) WbCivSim.DirectiveTick(w);
+                    if (w.tickCount % 300 == 23) WbCivSim.AllianceTick(w);
+                }
                 w.tickCount++;
                 AssertTrace(w, want, name, t);
             }
@@ -1985,6 +2007,7 @@ namespace PixelWorldBox.Tests
                 king = o["king"]?.Value<int>() ?? 0,
                 dead = o["dead"]?.Value<int>() ?? 0,
                 boat = o["boat"]?.Value<int>() ?? 0,
+                caravan = o["caravan"]?.Value<int>() ?? 0,
                 name = $"u{o["id"].Value<int>()}",
             };
             w.units.Add(u);
@@ -2019,8 +2042,9 @@ namespace PixelWorldBox.Tests
                 if (wc["popZeroTick"].Type == JTokenType.Null) Assert.IsFalse(gc.popZeroTick.HasValue, $"{cid} popZeroTick null");
                 else Assert.AreEqual(wc["popZeroTick"].Value<int>(), gc.popZeroTick.Value, $"{cid} popZeroTick");
                 if (wc["mobilizeUntil"].Type == JTokenType.Null) Assert.IsFalse(gc.mobilizeUntil.HasValue, $"{cid} mobilizeUntil null");
-                else Assert.AreEqual(wc["mobilizeUntil"].Value<int>(), gc.mobilizeUntil.Value, $"{cid} mobilizeUntil");
+                else Assert.AreEqual(wc["mobilizeUntil"].Value<double>(), gc.mobilizeUntil.Value, 1e-9, $"{cid} mobilizeUntil");
                 Assert.AreEqual(wc["stability"].Type == JTokenType.Null ? 70 : wc["stability"].Value<int>(), gc.stability, $"{cid} stability");
+                Assert.AreEqual(wc["culture"].Type == JTokenType.Null ? 0 : wc["culture"].Value<int>(), gc.culture, $"{cid} culture");
                 Assert.AreEqual(wc["militarism"].Type == JTokenType.Null ? 30 : wc["militarism"].Value<int>(), gc.militarism, $"{cid} militarism");
                 // kingId undefined/-1 语义分离断言移至 M-U3c 段（下方 null→false / 值→相等）
                 Assert.AreEqual(wc["name"].ToString(), gc.name, $"{cid} name");
@@ -2227,9 +2251,11 @@ namespace PixelWorldBox.Tests
                 string aid = $"{ctx} alliance[{gal.id}]";
                 Assert.AreEqual(wal["name"].ToString(), gal.name, $"{aid} name");
                 Assert.AreEqual(wal["leader"].Value<int>(), gal.leader, $"{aid} leader");
-                Assert.AreEqual(wal["cohesion"].Value<int>(), gal.cohesion, $"{aid} cohesion");
+                Assert.AreEqual(wal["cohesion"].Value<double>(), gal.cohesion, 1e-9, $"{aid} cohesion(f64)");
                 Assert.AreEqual(wal["formedTick"].Value<long>(), gal.formedTick, $"{aid} formedTick");
                 Assert.AreEqual(wal["warsTogether"].Value<int>(), gal.warsTogether, $"{aid} warsTogether");
+                if (wal["bonded"] != null && wal["bonded"].Type != JTokenType.Null)
+                    Assert.AreEqual(wal["bonded"].Value<bool>(), gal.bonded, $"{aid} bonded");
                 Assert.AreEqual(((JArray)wal["members"]).Count, gal.members.Count, $"{aid} members count");
                 for (int m = 0; m < gal.members.Count; m++)
                     Assert.AreEqual(((JArray)wal["members"])[m].Value<int>(), gal.members[m], $"{aid} members[{m}]");
@@ -2249,6 +2275,9 @@ namespace PixelWorldBox.Tests
                 if (wdd["target"].Type == JTokenType.Null) Assert.IsFalse(gdd.target.HasValue, $"{did} target null");
                 else Assert.AreEqual(wdd["target"].Value<int>(), gdd.target.Value, $"{did} target");
                 Assert.AreEqual(wdd["status"].ToString(), gdd.status, $"{did} status");
+                Assert.AreEqual(wdd["param"]?.Value<int>() ?? 0, gdd.param, $"{did} param");
+                Assert.AreEqual(wdd["deadlineTick"]?.Value<int>() ?? 0, gdd.deadlineTick, $"{did} deadlineTick");
+                Assert.AreEqual(wdd["startTick"]?.Value<int>() ?? 0, gdd.startTick, $"{did} startTick");
                 if (wdd["endTick"].Type == JTokenType.Null) Assert.IsFalse(gdd.endTick.HasValue, $"{did} endTick null");
                 else Assert.AreEqual(wdd["endTick"].Value<int>(), gdd.endTick.Value, $"{did} endTick");
                 if (wdd["endText"].Type == JTokenType.Null) Assert.IsTrue(string.IsNullOrEmpty(gdd.endText), $"{did} endText null");
