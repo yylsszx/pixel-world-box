@@ -14387,9 +14387,15 @@ export class GameEngine {
         }
       }
       // —— 冬季雪人（Task 104）：村民堆起的雪人装饰。雪原白底上以色温差立形：
-      //  冷蓝白底球+底缘阴影、暖白头、双煤眼+胡萝卜鼻、枝手探出 ——
+      //  冷蓝白底球+底缘阴影、暖白头、双煤眼+胡萝卜鼻、枝手探出；
+      //  Task 113：冷调暗环描边——夜间雪原与雪人同色系难辨，1px 幽蓝轮廓昼夜皆立形 ——
       if (this.snowman[i]) {
         const px = x * 4;
+        propsCtx.fillStyle = 'rgba(52,70,92,0.42)';
+        propsCtx.fillRect(px, y * 4 + 1, 1, 3); // 左缘
+        propsCtx.fillRect(px + 3, y * 4 + 1, 1, 3); // 右缘
+        propsCtx.fillRect(px + 1, y * 4 - 1, 2, 1); // 顶缘
+        propsCtx.fillRect(px + 1, y * 4 + 4, 2, 1); // 底缘落地影
         propsCtx.fillStyle = 'rgba(96,74,50,0.9)';
         propsCtx.fillRect(px, y * 4 + 2, 1, 1);
         propsCtx.fillRect(px + 3, y * 4 + 2, 1, 1);

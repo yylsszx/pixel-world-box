@@ -668,23 +668,31 @@ function drawAurora(engine: GameEngine, sk: CanvasRenderingContext2D, nightN: nu
   return drew;
 }
 
-/** 雨后彩虹（Task 110，天气 × 天幕）：骤歇暴雨上空的七色同心弧——
- *  亮度随昼夜门渐隐（黄昏淡出）、随 TTL 尾段消散、半径呼吸微动；
- *  与雨丝/雷暴构成完整天气戏剧（雨来了→天怒了→雨停了）。性能 7 次 stroke 弧/帧。 */
+/** 雨后彩虹/月虹（Task 110/113，天气 × 天幕）：骤歇暴雨上空的虹——
+ *  昼虹：七色同心弧，亮度随昼夜门渐隐（黄昏淡出）；月虹（Task 113）：深夜骤停暴雨的罕见变体，
+ *  月光太暗人眼只见苍白——去饱和银蓝单色系、alpha 更低，夜色越深越显（门控与昼虹反向）。
+ *  与雨丝/雷暴/流星构成完整天幕戏剧。性能 7 次 stroke 弧/帧。 */
 function drawRainbow(engine: GameEngine, sk: CanvasRenderingContext2D, nightN: number): boolean {
   const nat = engine.nature;
-  if (nat.rainbowTTL <= 0 || nightN > 0.35) return false;
+  if (nat.rainbowTTL <= 0) return false;
+  const moon = nat.rainbowMoon;
+  if (moon ? nightN < 0.45 : nightN > 0.35) return false; // 昼虹黄昏淡出 / 月虹夜浅不显
   const ttl = nat.rainbowTTL;
-  // 渐入 10%（首 240 tick）→ 常亮 → 渐出 40%（尾 960 tick）× 夜色渐隐
-  const fade = (ttl > 2160 ? (2400 - ttl) / 240 : ttl < 960 ? ttl / 960 : 1) * Math.max(0, 1 - nightN / 0.35);
+  // 渐入 10%（首 240 tick）→ 常亮 → 渐出 40%（尾 960 tick）× 昼夜门（昼虹夜淡 / 月虹昼淡）
+  const dayGate = moon ? Math.max(0, Math.min(1, (nightN - 0.45) / 0.25)) : Math.max(0, 1 - nightN / 0.35);
+  const fade = (ttl > 2160 ? (2400 - ttl) / 240 : ttl < 960 ? ttl / 960 : 1) * dayGate;
   if (fade <= 0.01) return false;
   const fc = engine.frameCount;
   const cx = nat.rainbowX * 2 + Math.sin(fc * 0.003) * 2;
   const cy = Math.max(84, nat.rainbowY * 2 - 26); // 弧心钳制：保证弧顶不入画外
-  const COLORS = ['255,66,66', '255,152,44', '255,224,66', '96,224,96', '72,192,255', '96,116,255', '176,96,236'];
+  // 月虹：低照度下人眼视锥失灵 → 只见苍白（去饱和银蓝系七档，保留微弱色序暗示）
+  const COLORS = moon
+    ? ['198,214,238', '190,224,234', '212,230,240', '188,214,226', '192,208,238', '202,216,242', '208,212,234']
+    : ['255,66,66', '255,152,44', '255,224,66', '96,224,96', '72,192,255', '96,116,255', '176,96,236'];
+  const aBase = moon ? 0.055 : 0.09; // 月虹更淡：若隐若现的月光幽灵
   sk.globalCompositeOperation = 'lighter';
   for (let k = 0; k < 7; k++) {
-    sk.strokeStyle = `rgba(${COLORS[k]},${(0.09 * fade).toFixed(3)})`;
+    sk.strokeStyle = `rgba(${COLORS[k]},${(aBase * fade).toFixed(3)})`;
     sk.lineWidth = 2.4;
     sk.beginPath();
     sk.arc(cx, cy, 64 - k * 2 + Math.sin(fc * 0.006 + k * 0.9) * 1.2, Math.PI, 2 * Math.PI);

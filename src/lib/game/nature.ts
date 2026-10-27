@@ -190,10 +190,14 @@ export class NatureSystem {
   rainbowX = -1;
   rainbowY = -1;
   rainbowTTL = 0;
-  /** 彩虹节流冷却（瞬态）：一道彩虹谢幕后 90s 内不再出新虹——连雨天气防彩虹泛滥 */
+  /** 彩虹节流冷却（瞬态）：一道彩虹谢幕后 90s 内不再出新虹——连雨天气防彩虹泛滥（昼虹/月虹共享） */
   rainbowCool = 0;
+  /** 月虹标记（瞬态）：本次骤停发生在深夜 → 苍白银蓝变体（drawRainbow 换调色与门控方向） */
+  rainbowMoon = false;
   prevRain = new Uint8Array(AW * AH);
   rainbowChronDone = false;
+  /** 月虹首见纪事防重（瞬态，不入档；与昼虹各记一次——雷暴/雷打雪同款双叙事） */
+  moonChronDone = false;
   /** 晴夜流星（瞬态装饰，不入档）：起点世界坐标 + 单位方向向量 + TTL tick（tick 驱动阶梯步进，speed=0 冻结可截图） */
   meteorX = -1;
   meteorY = -1;
@@ -549,24 +553,39 @@ export class NatureSystem {
         }
       }
     }
-    // —— 雨后彩虹：上一拍的大雨（≥120）本拍骤停 + 白昼 + 概率门 → 天幕挂一道渐隐彩虹；
-    //    全场至多一道（rainbowTTL 期间不再触发）+ 谢幕节流（rainbowCool：90s 内不出第二道，
-    //    连雨天气防彩虹连环泛滥）；prevRain 快照供下一拍对比 ——
+    // —— 雨后彩虹/月虹：上一拍的大雨（≥120）本拍骤停 + 概率门 → 天幕挂一道渐隐虹；
+    //    昼夜分化（与雷暴/雷打雪同款同构件分叉）：白昼骤停 → 七色彩虹（p 0.02）；
+    //    深夜骤停（0.54-0.86，月光足够亮）→ 苍白月虹（p 0.008，更罕见——真实月虹极罕）；
+    //    黄昏/破晓窗口不触发（昼夜过渡带虹不可辨）；全场至多一道（rainbowTTL 期间不再触发）
+    //    + 谢幕节流（rainbowCool：90s 内不出第二道，昼虹/月虹共享）；prevRain 快照供下一拍对比 ——
     if (this.rainbowTTL > 0) {
       this.rainbowTTL -= 10;
-    } else if (eng.dayPhase() < 0.42 && this.rainbowCool <= 0) {
-      for (let i = 0; i < AW * AH; i++) {
-        if (this.prevRain[i] >= 120 && this.rainCell[i] === 0 && eng.rng() < 0.02) {
-          this.rainbowTTL = 2400;
-          this.rainbowCool = 5400; // 谢幕后 50s 间隔（TTL 40s + 50s = 90s 一道上限）
-          this.rainbowX = (i % AW) * CELL + CELL / 2;
-          this.rainbowY = ((i / AW) | 0) * CELL + CELL / 2;
-          if (!this.rainbowChronDone) {
-            this.rainbowChronDone = true;
-            this.eng.toast('雨过天青——一道彩虹横跨天际', 'good');
-            this.eng.addEvent('geo', '雨过天青：骤歇的暴雨在天幕留下一道彩虹');
+    } else if (this.rainbowCool <= 0) {
+      const dp = eng.dayPhase();
+      const day = dp < 0.42;
+      const deepNight = dp > 0.54 && dp < 0.86;
+      if (day || deepNight) {
+        const moon = deepNight; // 月虹：深夜骤停暴雨的罕见变体
+        for (let i = 0; i < AW * AH; i++) {
+          if (this.prevRain[i] >= 120 && this.rainCell[i] === 0 && eng.rng() < (moon ? 0.008 : 0.02)) {
+            this.rainbowTTL = 2400;
+            this.rainbowCool = 5400; // 谢幕后 50s 间隔（TTL 40s + 50s = 90s 一道上限）
+            this.rainbowMoon = moon;
+            this.rainbowX = (i % AW) * CELL + CELL / 2;
+            this.rainbowY = ((i / AW) | 0) * CELL + CELL / 2;
+            if (moon) {
+              if (!this.moonChronDone) {
+                this.moonChronDone = true;
+                eng.toast('月虹——雨歇的夜空挂起一道苍白的虹', 'good');
+                eng.addEvent('geo', '月虹：骤歇的暴雨在月色里留下一道苍白的虹，如梦似幻');
+              }
+            } else if (!this.rainbowChronDone) {
+              this.rainbowChronDone = true;
+              eng.toast('雨过天青——一道彩虹横跨天际', 'good');
+              eng.addEvent('geo', '雨过天青：骤歇的暴雨在天幕留下一道彩虹');
+            }
+            break;
           }
-          break;
         }
       }
     }
