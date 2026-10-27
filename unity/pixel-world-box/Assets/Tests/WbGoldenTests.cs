@@ -1,10 +1,12 @@
 // ============================================================
-// WbGoldenTests.cs — M-U2a 黄金向量对账（NUnit）
-// 黄金数据: Assets/StreamingAssets/WbGolden/units_move.json
-//   由 scripts/unity-migration/gen-units-move.mjs 生成（真实现 = wbcore.wasm，
-//   双跑确定性 + 健全性断言已在生成时通过）。
+// WbGoldenTests.cs — M-U2a/M-U2b 黄金向量对账（NUnit）
+// 黄金数据: Assets/StreamingAssets/WbGolden/units_move.json（移动 19 场景）
+//           Assets/StreamingAssets/WbGolden/units_scan.json（扫描 21 场景）
+//   由 scripts/unity-migration/gen-units-{move,scan}.mjs 生成
+//   （真实现 = wbcore.wasm，双跑确定性 + 健全性断言已在生成时通过）。
 // 验证链（纪律④）: 黄金向量(wasm) → 本文件 NUnit 逐位(bits 精确) → 网页 parity/冒烟。
 // Unity 侧执行: Window > General > Test Runner（EditMode）。
+// UCELL 公式（wbspatial L298-305 权威）: cy*engine.bw+cx，bw=256 tile 宽，坐标除 4。
 // ============================================================
 using System;
 using System.Collections.Generic;
@@ -54,7 +56,16 @@ namespace PixelWorldBox.Tests
         public double x, y, tx, ty;
         public double? speed, chill, curse, hp;
         public double? food;                 // 缺省 = NaN（u_has_food=false）
+        // M-U2b scan 场景扩展（gen-units-scan.mjs putUnit 字段）
+        public int? id;                      // 缺省 = slot
+        public int? civ;                     // 缺省 = -1（野生）
+        public double? panic;                // 缺省 = 无（UHASPANIC=0）
+        public bool? dead;
+        public double? cvn, fleet;
+        public int? glen;
+        public List<GoldenGrudge> grudges;   // 单位级 grudge（批内版 bucket_scan 读 UGIDS/UGVAL）
     }
+    internal class GoldenGrudge { public int oid; public double gv; }
     internal class GoldenTick
     {
         public int rc;
@@ -95,11 +106,12 @@ namespace PixelWorldBox.Tests
         // UnityEngine.Application.dataPath（EditMode TestRunner cwd = 工程根）
         private static string ApplicationDataPath() => "Assets";
 
-        // —— 输入布置（与 gen-units-move.mjs initWorld/fillTerrain/setupRaces/putUnit 同构；
+        // —— 输入布置（与 gen 脚本 initWorld/fillTerrain/setupRaces/putUnit 同构；
         //    offs 自算布局，黄金对账 Test 1 会先锁布局）——
         public void InitWorld(long seed, int fxp)
         {
             Arena = new WbArena();
+            WbSim.Arena = Arena;   // 接线：WbUnits/WbCtx 全走 WbSim.Arena（static），fixture 布置必须同实例
             Assert.IsTrue(Arena.Init(WbConstants.W, WbConstants.H, WbConstants.MAX_UNITS), "wb_init failed");
             Arena.SetU32(WbConstants.OFF_RNGS, 0, unchecked((uint)seed));
             Arena.SetU8(WbConstants.OFF_LAWS, 0, 0);
@@ -108,6 +120,9 @@ namespace PixelWorldBox.Tests
             Arena.SetU8(WbConstants.OFF_COLEN, 0, 0);
             Arena.SetU8(WbConstants.OFF_NCTL, 0, 0);
             Arena.SetI32(WbConstants.OFF_MISC, 0, WbConstants.MAX_UNITS);
+            // EPS 表（engineParams.ts 真值，EP_KEYS 序；panicDecay=0.008 等）
+            double[] eps = { 1, 700, 1, 1, 3, 1, 0.92, 0.06, 0.08, 0.008, 0.72, 0.006, 26, 1, 1 };
+            for (int i = 0; i < eps.Length; i++) Arena.SetF64(WbConstants.OFF_EPS, i, eps[i]);
             // TBT 引导表（bit0 walkable bit1 water bit2 flammable bit3 buildable）
             for (byte t = 0; t < 16; t++)
             {
@@ -150,9 +165,10 @@ namespace PixelWorldBox.Tests
         public void PutUnit(GoldenUnitInput u)
         {
             var A = Arena;
-            A.SetU32(WbConstants.OFF_UID, u.slot, (uint)u.slot);
+            A.SetU32(WbConstants.OFF_UID, u.slot, unchecked((uint)(u.id ?? u.slot)));
             A.SetU32(WbConstants.OFF_URACE, u.slot, (uint)u.race);
-            A.SetU32(WbConstants.OFF_UCELL, u.slot, (uint)((int)u.y * WbConstants.W + (int)u.x));
+            // UCELL = cy*engine.bw+cx（wbspatial L298-305；bw=W=256 tile 宽，坐标除 4）
+            A.SetU32(WbConstants.OFF_UCELL, u.slot, (uint)((int)Math.Floor(u.y / 4.0) * WbConstants.W + (int)Math.Floor(u.x / 4.0)));
             A.SetF64(WbConstants.OFF_UX, u.slot, u.x);
             A.SetF64(WbConstants.OFF_UY, u.slot, u.y);
             A.SetF64(WbConstants.OFF_UTX, u.slot, u.tx);
@@ -166,8 +182,8 @@ namespace PixelWorldBox.Tests
             A.SetF64(WbConstants.OFF_UCHILL, u.slot, u.chill ?? 0);
             A.SetF64(WbConstants.OFF_UCURSE, u.slot, u.curse ?? 0);
             A.SetF64(WbConstants.OFF_UFD, u.slot, u.food ?? double.NaN);
-            A.SetF64(WbConstants.OFF_UCVN, u.slot, 0);
-            A.SetF64(WbConstants.OFF_UFLEET, u.slot, 0);
+            A.SetF64(WbConstants.OFF_UCVN, u.slot, u.cvn ?? 0);
+            A.SetF64(WbConstants.OFF_UFLEET, u.slot, u.fleet ?? 0);
             A.SetF64(WbConstants.OFF_UBLESS, u.slot, 0);
             A.SetF64(WbConstants.OFF_UFERT, u.slot, 0);
             A.SetF64(WbConstants.OFF_UDETOUR, u.slot, 0);
@@ -175,19 +191,28 @@ namespace PixelWorldBox.Tests
             A.SetF64(WbConstants.OFF_UATK, u.slot, 0);
             A.SetF64(WbConstants.OFF_UCD, u.slot, 0);
             A.SetF64(WbConstants.OFF_UBREATH, u.slot, 0);
-            A.SetI32(WbConstants.OFF_UCIV, u.slot, -1);
+            A.SetI32(WbConstants.OFF_UCIV, u.slot, u.civ ?? -1);
             A.SetI32(WbConstants.OFF_UJOB, u.slot, -1);
             A.SetI32(WbConstants.OFF_UARMY, u.slot, -1);
-            A.SetI32(WbConstants.OFF_UGLN, u.slot, -1);
+            A.SetI32(WbConstants.OFF_UGLN, u.slot, u.glen ?? -1);
             A.SetI32(WbConstants.OFF_UFAM, u.slot, -1);
             A.SetI32(WbConstants.OFF_UFGN, u.slot, -1);
             A.SetI32(WbConstants.OFF_USTK, u.slot, 0);
-            A.SetU8(WbConstants.OFF_UDEAD, u.slot, 0);
-            A.SetU8(WbConstants.OFF_UHASPANIC, u.slot, 0);
+            A.SetU8(WbConstants.OFF_UDEAD, u.slot, (byte)(u.dead == true ? 1 : 0));
+            A.SetU8(WbConstants.OFF_UHASPANIC, u.slot, (byte)(u.panic.HasValue ? 1 : 0));
+            A.SetF64(WbConstants.OFF_UPANIC, u.slot, u.panic ?? 0);
             A.SetU8(WbConstants.OFF_UINF, u.slot, 0);
             A.SetU8(WbConstants.OFF_UBOAT, u.slot, 0);
             A.SetU8(WbConstants.OFF_UFLIP, u.slot, 0);
             for (int g = 0; g < 4; g++) A.SetF64(WbConstants.OFF_UGENE, u.slot * 4 + g, 1);
+            // 单位级 grudge 清零 + 可选填充（gen putUnit 同款）
+            for (int t = 0; t < 8; t++) { A.SetI32(WbConstants.OFF_UGIDS, u.slot * 8 + t, -1); A.SetF64(WbConstants.OFF_UGVAL, u.slot * 8 + t, 0); }
+            if (u.grudges != null)
+                for (int t = 0; t < u.grudges.Count && t < 8; t++)
+                {
+                    A.SetI32(WbConstants.OFF_UGIDS, u.slot * 8 + t, u.grudges[t].oid);
+                    A.SetF64(WbConstants.OFF_UGVAL, u.slot * 8 + t, u.grudges[t].gv);
+                }
         }
 
         /// 宿主协议模拟：翻转 parity + 重排 cell + repack（gen 脚本 tick 间语义）
@@ -199,7 +224,8 @@ namespace PixelWorldBox.Tests
                 if (Arena.U8At(WbConstants.OFF_UDEAD, u.slot) != 0) continue;
                 double x = Arena.F64At(WbConstants.OFF_UX, u.slot);
                 double y = Arena.F64At(WbConstants.OFF_UY, u.slot);
-                Arena.SetU32(WbConstants.OFF_UCELL, u.slot, (uint)((int)y * WbConstants.W + (int)x));
+                // 桶索引（wbspatial L298-305）：cy*256+cx，坐标除 4
+                Arena.SetU32(WbConstants.OFF_UCELL, u.slot, (uint)((int)Math.Floor(y / 4.0) * WbConstants.W + (int)Math.Floor(x / 4.0)));
                 Arena.SetU8(WbConstants.OFF_UPAR, u.slot, Arena.U8At(WbConstants.OFF_PAR, 0));
             }
             Arena.PackEnd((uint)units.Count);
@@ -335,10 +361,199 @@ namespace PixelWorldBox.Tests
             return sb.ToString();
         }
 
-        private static ulong Bits(string hex)
+        internal static ulong Bits(string hex)
         {
             string h = hex.StartsWith("0x") ? hex.Substring(2) : hex;
             return ulong.Parse(h, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+        }
+    }
+
+    // ============================================================
+    // M-U2b：扫描黄金向量对账（units_scan.json，21 场景）
+    // 单层（wb_scan 直测）：RESULT 424B 全字段逐位 + LUT 探针
+    // 批层（wb_units_batch 集成）：恐慌蔓延 rng 流与镜像写入逐位
+    // ============================================================
+    internal class ScanGoldenFile
+    {
+        public string name;
+        public List<ScanScenario> scenarios;
+    }
+    internal class ScanScenario
+    {
+        public string name;
+        public string mode;
+        public ScanInput input;
+        public Newtonsoft.Json.Linq.JToken output;   // single=对象或对象数组（extraScans）；batch=tick 数组
+    }
+    internal class ScanInput
+    {
+        public long seed;
+        public int fxp;
+        public int ticks;
+        public int? @base;
+        public List<List<int>> races;                // [race, flags]（scan 版二 元组）
+        public List<GoldenUnitInput> units;
+        public ScanCall scan;
+        public List<ScanCall> extraScans;
+        public List<int> gids;
+        public List<double> gvals;
+        public List<List<int>> atwar;
+    }
+    internal class ScanCall
+    {
+        public int slot, cx, cy;
+        public int contagious;
+        public int? gLen;
+    }
+    internal class ScanOutSingle
+    {
+        public int rc;
+        public ScanResultBody result;
+        public List<ScanLutProbe> lutProbe;
+    }
+    internal class ScanResultBody
+    {
+        public int enemySlot, overflow;
+        public string bestD, enemyD;                 // bits hex
+        public long allies, foes, panicN, pad;
+        public List<long> panicSlots;
+        public List<string> panicVals;               // bits hex
+    }
+    internal class ScanLutProbe { public long key; public int v; }
+    internal class ScanTickOut
+    {
+        public int rc;
+        public long rng, tick;
+        public int actN, dlistN, batchR, bailK;
+        public List<ScanUnitOut> units;
+    }
+    internal class ScanUnitOut
+    {
+        public int slot, race, flip, dead, hasPanic;
+        public string x, y, tx, ty, panic;           // bits hex
+    }
+
+    [TestFixture]
+    public class WbScanGoldenTests
+    {
+        private ScanGoldenFile _golden;
+        private WbGoldenFixture _fx;
+
+        [OneTimeSetUp]
+        public void Load()
+        {
+            string path = FindGolden();
+            Assert.IsTrue(File.Exists(path), $"scan golden json not found: {path}");
+            _golden = JsonConvert.DeserializeObject<ScanGoldenFile>(File.ReadAllText(path));
+        }
+
+        private static string FindGolden()
+        {
+            string[] candidates =
+            {
+                "Assets/StreamingAssets/WbGolden/units_scan.json",
+                Path.Combine(TestContext.CurrentContext.TestDirectory, "Assets/StreamingAssets/WbGolden/units_scan.json"),
+            };
+            foreach (var c in candidates) if (File.Exists(c)) return c;
+            return candidates[0];
+        }
+
+        [SetUp]
+        public void Setup() => _fx = new WbGoldenFixture();
+
+        private void SetupWorld(ScanInput inp)
+        {
+            _fx.InitWorld(inp.seed, inp.fxp);
+            var terr = new GoldenTerrain { @base = inp.@base };
+            _fx.FillTerrain(terr);
+            // scan 版 races 为二元组 [race, flags]——复用四元组路径（flags2/tbf 缺省 0）
+            _fx.SetupRaces(inp.races.ConvertAll(r => new List<int> { r[0], r.Count > 1 ? r[1] : 0, 0, 0 }));
+            foreach (var u in inp.units) _fx.PutUnit(u);
+            if (inp.atwar != null)
+                foreach (var ab in inp.atwar) _fx.Arena.SetU8(WbConstants.OFF_ATWAR, ab[0] * 64 + ab[1], 1);
+            // 平面 grudge 表（wb_scan 契约：GIDS/GVALS 预填）
+            if (inp.gids != null)
+                for (int t = 0; t < inp.gids.Count; t++) _fx.Arena.SetI32(WbConstants.OFF_GIDS, t, inp.gids[t]);
+            if (inp.gvals != null)
+                for (int t = 0; t < inp.gvals.Count; t++) _fx.Arena.SetF64(WbConstants.OFF_GVALS, t, inp.gvals[t]);
+            _fx.Arena.PackEnd((uint)inp.units.Count);
+        }
+
+        // -------- 单层：RESULT 424B 全字段逐位 + LUT 探针 --------
+        [TestCase(0)]  [TestCase(1)]  [TestCase(2)]  [TestCase(3)]  [TestCase(4)]
+        [TestCase(5)]  [TestCase(6)]  [TestCase(7)]  [TestCase(8)]  [TestCase(9)]
+        [TestCase(10)] [TestCase(11)] [TestCase(12)] [TestCase(13)] [TestCase(14)]
+        [TestCase(15)] [TestCase(16)] [TestCase(17)]
+        public void Single_ScanResult_BitExactParity(int index)
+        {
+            var sc = _golden.scenarios[index];
+            if (sc.mode != "single") Assert.Ignore("非单层场景");
+            SetupWorld(sc.input);
+            var calls = new List<ScanCall> { sc.input.scan };
+            if (sc.input.extraScans != null) calls.AddRange(sc.input.extraScans);
+
+            var outputs = new List<ScanOutSingle>();
+            var tok = sc.output;
+            if (tok.Type == Newtonsoft.Json.Linq.JTokenType.Array)
+                foreach (var t in tok) outputs.Add(t.ToObject<ScanOutSingle>());
+            else outputs.Add(tok.ToObject<ScanOutSingle>());
+            Assert.AreEqual(calls.Count, outputs.Count, $"{sc.name} 调用数与输出数不一致");
+
+            for (int i = 0; i < calls.Count; i++)
+            {
+                var c = calls[i];
+                int rc = WbUnits.ScanSingle((uint)c.slot, c.cx, c.cy, c.contagious != 0, c.gLen ?? -1);
+                var expect = outputs[i];
+                Assert.AreEqual(expect.rc, rc, $"{sc.name} call{i} rc");
+                var r = expect.result;
+                Assert.AreEqual(r.enemySlot, _fx.Arena.I32At(WbConstants.OFF_RESULT, 0), $"{sc.name} call{i} enemySlot");
+                Assert.AreEqual(r.overflow, _fx.Arena.I32At(WbConstants.OFF_RESULT, 1), $"{sc.name} call{i} overflow");
+                Assert.AreEqual(WbGoldenTests.Bits(r.bestD), _fx.Arena.U64At(WbConstants.OFF_RESULT, 1), $"{sc.name} call{i} bestD bits");
+                Assert.AreEqual(WbGoldenTests.Bits(r.enemyD), _fx.Arena.U64At(WbConstants.OFF_RESULT, 2), $"{sc.name} call{i} enemyD bits");
+                Assert.AreEqual((ulong)r.allies, _fx.Arena.U32At(WbConstants.OFF_RESULT, 6), $"{sc.name} call{i} allies");
+                Assert.AreEqual((ulong)r.foes, _fx.Arena.U32At(WbConstants.OFF_RESULT, 7), $"{sc.name} call{i} foes");
+                Assert.AreEqual((ulong)r.panicN, _fx.Arena.U32At(WbConstants.OFF_RESULT, 8), $"{sc.name} call{i} panicN");
+                for (int p = 0; p < 32; p++)
+                {
+                    Assert.AreEqual((ulong)r.panicSlots[p], _fx.Arena.U32At(WbConstants.OFF_RESULT, 10 + p), $"{sc.name} call{i} panicSlots[{p}]");
+                    Assert.AreEqual(WbGoldenTests.Bits(r.panicVals[p]), _fx.Arena.U64At(WbConstants.OFF_RESULT, 21 + p), $"{sc.name} call{i} panicVals[{p}] bits");
+                }
+                if (expect.lutProbe != null)
+                    foreach (var lp in expect.lutProbe)
+                        Assert.AreEqual(lp.v, _fx.Arena.Arena[_fx.Arena.LutOff + (int)lp.key], $"{sc.name} call{i} LUT[{lp.key}]");
+            }
+        }
+
+        // -------- 批层：UnitsBatch 集成（恐慌蔓延 rng 流与镜像写入逐位） --------
+        [TestCase(18)] [TestCase(19)] [TestCase(20)]
+        public void Batch_ScanIntegration_BitExactParity(int index)
+        {
+            var sc = _golden.scenarios[index];
+            if (sc.mode != "batch") Assert.Ignore("非批层场景");
+            SetupWorld(sc.input);
+            var ticks = sc.output.ToObject<List<ScanTickOut>>();
+            for (int t = 0; t < ticks.Count; t++)
+            {
+                int rc = WbUnits.UnitsBatch(0, 0);
+                var expect = ticks[t];
+                Assert.AreEqual(expect.rc, rc, $"{sc.name} tick{t} rc");
+                Assert.AreEqual((ulong)expect.rng, _fx.Arena.U64At(WbConstants.OFF_RNGS, 0), $"{sc.name} tick{t} RNG");
+                Assert.AreEqual(expect.actN, _fx.Arena.I32At(WbConstants.OFF_ACTN, 0), $"{sc.name} tick{t} ACTN");
+                Assert.AreEqual(expect.dlistN, _fx.Arena.I32At(WbConstants.OFF_DLISTN, 0), $"{sc.name} tick{t} DLISTN");
+                Assert.AreEqual((uint)expect.batchR, _fx.Arena.U32At(WbConstants.OFF_BATCHR, 0), $"{sc.name} tick{t} BATCHR");
+                foreach (var eu in expect.units)
+                {
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.x), _fx.Arena.U64At(WbConstants.OFF_UX, eu.slot), $"{sc.name} tick{t} u{eu.slot} x");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.y), _fx.Arena.U64At(WbConstants.OFF_UY, eu.slot), $"{sc.name} tick{t} u{eu.slot} y");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.tx), _fx.Arena.U64At(WbConstants.OFF_UTX, eu.slot), $"{sc.name} tick{t} u{eu.slot} tx");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.ty), _fx.Arena.U64At(WbConstants.OFF_UTY, eu.slot), $"{sc.name} tick{t} u{eu.slot} ty");
+                    Assert.AreEqual(WbGoldenTests.Bits(eu.panic), _fx.Arena.U64At(WbConstants.OFF_UPANIC, eu.slot), $"{sc.name} tick{t} u{eu.slot} panic");
+                    Assert.AreEqual(eu.hasPanic, _fx.Arena.U8At(WbConstants.OFF_UHASPANIC, eu.slot), $"{sc.name} tick{t} u{eu.slot} hasPanic");
+                    Assert.AreEqual(eu.dead, _fx.Arena.U8At(WbConstants.OFF_UDEAD, eu.slot), $"{sc.name} tick{t} u{eu.slot} dead");
+                    Assert.AreEqual(eu.flip, _fx.Arena.U8At(WbConstants.OFF_UFLIP, eu.slot), $"{sc.name} tick{t} u{eu.slot} flip");
+                }
+                _fx.BetweenTicks(sc.input.units);
+            }
         }
     }
 }

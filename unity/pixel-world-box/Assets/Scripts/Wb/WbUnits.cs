@@ -532,7 +532,7 @@ namespace PixelWorldBox.Wb
             Fx(ctx, WbConstants.FX_EXPLOSION, tx, ty, 16.0, 1.6, 0.0, 0.0, 0.0, -1, false, WbConstants.TXT_NONE, 0, true);
         }
 
-        // ---------------- 桶扫描（M-U2b 全量；现空桶桩，units.rs L633-644 空结果语义） ----------------
+        // ---------------- 桶扫描（M-U2b 全量；units.rs L633-734 机械翻译） ----------------
         public struct ScanOut
         {
             public int Enemy;
@@ -545,11 +545,248 @@ namespace PixelWorldBox.Wb
             public static ScanOut Empty() => new ScanOut { Enemy = -1, BestD = 7.0, EnemyD = 7.0, Allies = 0, Foes = 0, Overflow = false, PanicWrites = 0 };
         }
 
+        /// units.rs bucket_scan L633-734（批内版：含追加单位；恐慌蔓延镜像直写 + dirty）
         private static ScanOut BucketScan(WbCtx ctx, int s, bool contagious, int cx, int cy, double uxx, double uyy)
         {
-            // TODO(M-U2b): units.rs L633-810 全量翻译（9 桶 visit 闭包 + LUT 敌我 + 恐慌蔓延镜像）。
-            // M-U2a 黄金场景 CELL 桶为空 → 空结果常量（L644 ScanOut 初值）位等价。
-            return ScanOut.Empty();
+            int bw = ctx.Bw;                                                                        // L635
+            int bh = ctx.Bh;                                                                        // L636
+            int uCiv = A.I32At(WbConstants.OFF_UCIV, s);                                            // L637
+            uint uRace = A.U32At(WbConstants.OFF_URACE, s);                                         // L638
+            double upanic0v = UPanic0(s);                                                           // L639
+            int gl = UGlen(s);                                                                      // L640
+            bool hasG = gl >= 0;                                                                    // L641
+            int gn = gl > 0 ? gl : 0;                                                               // L642
+
+            ScanOut o = ScanOut.Empty();                                                            // L644
+
+            // L646-647 cs/ci（Rust 侧用于 unsafe 指针；C# 用访问器直读，蓝本 L713-723 语义一致）
+
+            void Visit(int other)                                                                   // L650-698 visit 闭包
+            {
+                if (A.U8At(WbConstants.OFF_UDEAD, other) != 0 || other == s) return;                // L651
+                double ddx = A.F64At(WbConstants.OFF_UX, other) - uxx;                              // L654
+                double ddy = A.F64At(WbConstants.OFF_UY, other) - uyy;                              // L655
+                if (IsEnemySlot(s, other))                                                          // L656
+                {
+                    o.Foes += 1;                                                                    // L657
+                    double d2 = ddx * ddx + ddy * ddy;                                              // L658
+                    if (!hasG && d2 >= o.BestD * o.BestD) return;                                   // L659-661
+                    double d = Math.Sqrt(d2);                                                       // L662
+                    double wd = d;                                                                  // L663
+                    if (hasG)                                                                       // L664
+                    {
+                        uint oid = A.U32At(WbConstants.OFF_UID, other);                             // L665
+                        int gi = -1;                                                                // L666
+                        for (int t = 0; t < gn; t++)                                                // L667-672
+                        {
+                            if ((uint)A.I32At(WbConstants.OFF_UGIDS, s * WbConstants.UG_CAP + t) == oid)
+                            {
+                                gi = t;
+                                break;
+                            }
+                        }
+                        if (gi >= 0)                                                                // L673
+                        {
+                            double gv = A.F64At(WbConstants.OFF_UGVAL, s * WbConstants.UG_CAP + gi); // L674
+                            wd = d * (1.0 - 0.42 * WbMath.JsMin(1.0, gv / 2.0));                    // L675
+                        }
+                    }
+                    if (wd < o.BestD)                                                               // L678
+                    {
+                        o.BestD = wd;                                                               // L679
+                        o.Enemy = other;                                                            // L680
+                        o.EnemyD = d;                                                               // L681
+                    }
+                }
+                else if (uCiv >= 0                                                                  // L683
+                    ? A.I32At(WbConstants.OFF_UCIV, other) == uCiv
+                    : A.U32At(WbConstants.OFF_URACE, other) == uRace)
+                {
+                    o.Allies += 1;                                                                  // L688
+                    if (contagious)                                                                 // L689
+                    {
+                        double oPanic = UPanic0(other);                                             // L690
+                        if (oPanic < upanic0v - 0.15 && ddx * ddx + ddy * ddy < 16.0)               // L691
+                        {
+                            double np = WbMath.JsMin(1.0, oPanic + upanic0v * 0.4);                 // L692
+                            SetPanic(other, np);                                                    // L693（含 dirty——与 wb_scan 直写版的关键差异）
+                            o.PanicWrites += 1;                                                     // L694
+                        }
+                    }
+                }
+            }
+
+            int by = cy - 1;                                                                        // L700-730 9 桶遍历
+            while (by <= cy + 1)
+            {
+                if (by < 0 || by >= bh) { by += 1; continue; }
+                int bx = cx - 1;
+                while (bx <= cx + 1)
+                {
+                    if (bx < 0 || bx >= bw) { bx += 1; continue; }
+                    int cell = by * bw + bx;                                                        // L712
+                    uint start = unchecked((uint)A.I32At(WbConstants.OFF_CELL_START, cell));        // L713-717
+                    uint end = unchecked((uint)A.I32At(WbConstants.OFF_CELL_START, cell + 1));
+                    uint k = start;                                                                 // L718
+                    while (k < end)                                                                 // L719-725
+                    {
+                        int other = (int)A.U32At(WbConstants.OFF_CELL_ITEMS, (int)k);               // L720-723
+                        k += 1;
+                        Visit(other);                                                               // L725
+                    }
+                    bx += 1;
+                }
+                by += 1;
+            }
+            // NOTE（蓝本 L731）：JS 侧 buckets 每 tick 初重建——本批新生单位不在桶中（与 JS 行为一致：扫描不可见）
+            return o;                                                                               // L733
+        }
+
+        // ---------------- wb_scan（lib.rs L968-1106；Stage 1 兼容单单位版，RESULT 写回） ----------------
+        // 与批内版差异（机械翻译保持）：grudge 从 GIDS/GVALS 平面区域读（调用者预填）；panic 直写
+        // 不调 dirty；panic_slots/vals 记录（PANIC_CAP=32，溢出 overflow=1 返回 2）。
+        // ScanResult repr(C) 布局（lib.rs L83-95）：i32@0 i32@4 f64@8 f64@16 u32@24 u32@28 u32@32
+        // u32@36（_pad）u32×32@40 f64×32@168，总 424B。
+        public static int ScanSingle(uint slot, int cx, int cy, bool contagious, int gLen)
+        {
+            int s = (int)slot;
+            if ((uint)s >= WbSim.Arena.N) return 0;                                                 // L973-975
+            int bw = (int)WbSim.Arena.Bw;                                                           // L976
+            int bh = (int)WbSim.Arena.Bh;                                                           // L977
+
+            double uxx = A.F64At(WbConstants.OFF_UX, s);                                            // L979
+            double uyy = A.F64At(WbConstants.OFF_UY, s);                                            // L980
+            int uCiv = A.I32At(WbConstants.OFF_UCIV, s);                                            // L981
+            uint uRace = A.U32At(WbConstants.OFF_URACE, s);                                         // L982
+            double upanic0 = UPanic0(s);                                                            // L983-985
+            bool hasG = gLen >= 0;                                                                  // L986
+            int gn = gLen > 0 ? gLen : 0;                                                           // L987
+
+            int enemy = -1;                                                                         // L989
+            double bestD = 7.0;                                                                     // L990
+            double enemyD = 7.0;                                                                    // L991
+            uint allies = 0;                                                                        // L992
+            uint foes = 0;                                                                          // L993
+            uint panicN = 0;                                                                        // L994
+            int overflow = 0;                                                                       // L995
+            uint[] panicSlots = new uint[WbConstants.PANIC_CAP];                                    // L996
+            double[] panicVals = new double[WbConstants.PANIC_CAP];                                 // L997
+
+            // L999-1000 cs/ci（同上：C# 访问器直读）
+
+            int by = cy - 1;                                                                        // L1002-1086
+            while (by <= cy + 1)
+            {
+                if (by < 0 || by >= bh) { by += 1; continue; }
+                int bx = cx - 1;
+                while (bx <= cx + 1)
+                {
+                    if (bx < 0 || bx >= bw) { bx += 1; continue; }
+                    int cell = by * bw + bx;                                                        // L1014
+                    uint start = unchecked((uint)A.I32At(WbConstants.OFF_CELL_START, cell));        // L1015-1019
+                    uint end = unchecked((uint)A.I32At(WbConstants.OFF_CELL_START, cell + 1));
+                    uint k = start;                                                                 // L1020
+                    while (k < end)                                                                 // L1021
+                    {
+                        int other = (int)A.U32At(WbConstants.OFF_CELL_ITEMS, (int)k);               // L1022-1025
+                        k += 1;
+                        if (A.U8At(WbConstants.OFF_UDEAD, other) != 0 || other == s) continue;      // L1027
+                        double ddx = A.F64At(WbConstants.OFF_UX, other) - uxx;                      // L1030
+                        double ddy = A.F64At(WbConstants.OFF_UY, other) - uyy;                      // L1031
+                        if (IsEnemySlot(s, other))                                                  // L1032
+                        {
+                            foes += 1;                                                              // L1033
+                            double d2 = ddx * ddx + ddy * ddy;                                      // L1034
+                            if (!hasG && d2 >= bestD * bestD) continue;                             // L1035-1037
+                            double d = Math.Sqrt(d2);                                               // L1038
+                            double wd = d;                                                          // L1039
+                            if (hasG)                                                               // L1040-1053
+                            {
+                                uint oid = A.U32At(WbConstants.OFF_UID, other);                     // L1041
+                                int gi = -1;
+                                for (int t = 0; t < gn; t++)
+                                {
+                                    if ((uint)A.I32At(WbConstants.OFF_GIDS, t) == oid) { gi = t; break; } // L1044（平面 GIDS——wb_scan 契约）
+                                }
+                                if (gi >= 0)
+                                {
+                                    double gv = A.F64At(WbConstants.OFF_GVALS, gi);                 // L1050（平面 GVALS）
+                                    wd = d * (1.0 - 0.42 * WbMath.JsMin(1.0, gv / 2.0));             // L1051
+                                }
+                            }
+                            if (wd < bestD)                                                          // L1054
+                            {
+                                bestD = wd;
+                                enemy = other;
+                                enemyD = d;
+                            }
+                        }
+                        else if (uCiv >= 0                                                          // L1059-1063
+                            ? A.I32At(WbConstants.OFF_UCIV, other) == uCiv
+                            : A.U32At(WbConstants.OFF_URACE, other) == uRace)
+                        {
+                            allies += 1;                                                            // L1064
+                            if (contagious)                                                          // L1065
+                            {
+                                double oPanic = UPanic0(other);                                     // L1066-1067
+                                if (oPanic < upanic0 - 0.15 && ddx * ddx + ddy * ddy < 16.0)        // L1068
+                                {
+                                    double np = WbMath.JsMin(1.0, oPanic + upanic0 * 0.4);          // L1069
+                                    A.SetU8(WbConstants.OFF_UHASPANIC, other, 1);                   // L1070（直写——Stage 1 兼容，不 dirty）
+                                    A.SetF64(WbConstants.OFF_UPANIC, other, np);                    // L1071
+                                    if (panicN < WbConstants.PANIC_CAP)                              // L1072-1078
+                                    {
+                                        panicSlots[panicN] = unchecked((uint)other);
+                                        panicVals[panicN] = np;
+                                        panicN += 1;
+                                    }
+                                    else
+                                    {
+                                        overflow = 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    bx += 1;
+                }
+                by += 1;
+            }
+
+            // RESULT 写回（lib.rs L1088-1101；repr(C) 424B）
+            int ro = WbSim.Arena.Offs[WbConstants.OFF_RESULT];
+            byte[] arena = WbSim.Arena.Arena;
+            WriteI32Raw(arena, ro + 0, enemy);
+            WriteI32Raw(arena, ro + 4, overflow);
+            WriteF64Raw(arena, ro + 8, bestD);
+            WriteF64Raw(arena, ro + 16, enemyD);
+            WriteU32Raw(arena, ro + 24, allies);
+            WriteU32Raw(arena, ro + 28, foes);
+            WriteU32Raw(arena, ro + 32, panicN);
+            WriteU32Raw(arena, ro + 36, 0);                                                          // _pad
+            for (int i = 0; i < WbConstants.PANIC_CAP; i++) WriteU32Raw(arena, ro + 40 + i * 4, panicSlots[i]);
+            for (int i = 0; i < WbConstants.PANIC_CAP; i++) WriteF64Raw(arena, ro + 168 + i * 8, panicVals[i]);
+
+            if (overflow != 0) return 2;                                                             // L1102-1104
+            return 1;                                                                               // L1105
+        }
+
+        private static void WriteI32Raw(byte[] a, int off, int v)
+        {
+            uint u = unchecked((uint)v);
+            a[off] = (byte)u; a[off + 1] = (byte)(u >> 8); a[off + 2] = (byte)(u >> 16); a[off + 3] = (byte)(u >> 24);
+        }
+
+        private static void WriteU32Raw(byte[] a, int off, uint u)
+        {
+            a[off] = (byte)u; a[off + 1] = (byte)(u >> 8); a[off + 2] = (byte)(u >> 16); a[off + 3] = (byte)(u >> 24);
+        }
+
+        private static void WriteF64Raw(byte[] a, int off, double v)
+        {
+            ulong u = unchecked((ulong)BitConverter.DoubleToInt64Bits(v));
+            a[off] = (byte)u; a[off + 1] = (byte)(u >> 8); a[off + 2] = (byte)(u >> 16); a[off + 3] = (byte)(u >> 24);
+            a[off + 4] = (byte)(u >> 32); a[off + 5] = (byte)(u >> 40); a[off + 6] = (byte)(u >> 48); a[off + 7] = (byte)(u >> 56);
         }
 
         // ---------------- update_unit（units.rs L2202-3342；移动路径全翻，余桩位） ----------------

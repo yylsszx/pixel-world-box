@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { T } from '../../src/lib/game/types.ts';
 import { walkable, isWater } from '../../src/lib/game/constants.ts';
+import { ep } from '../../src/lib/game/engineParams.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const WASM = path.join(ROOT, 'public/wasm/wbcore.wasm');
@@ -38,6 +39,8 @@ const ID = {
 const F_HOSTILE = 1, F_CIV = 2, F_UNDEAD = 4, F_PREDATOR = 8, F_HERBIVORE = 16;
 const RF2_LAVAIMM = 1;
 const FXP_AMB = 2;
+// ep 键序（wbspatial.ts L505-506；与 units.rs EP_* 一致）
+const EP_KEYS_MV = ['pop.reproMul', 'eco.regrowBase', 'eco.grazeRate', 'fire.spreadMul', 'fire.damage', 'war.declareRate', 'war.tensionDecay', 'war.milPressure', 'evo.mutationRate', 'social.panicDecay', 'social.panicRout', 'social.grudgeDecay', 'nature.quakeStress', 'nature.stormRate', 'nature.erosionRate'];
 
 // —— f64 bits 工具 ——
 const _buf = new ArrayBuffer(8);
@@ -53,7 +56,7 @@ const mod = await WebAssembly.instantiate(wasmBytes, {});
 const ex = mod.instance.exports;
 const mem = ex.memory;
 
-function u8(id, i) { return new Uint8Array(mem.buffer, ex.wb_arena_ptr() + ex.wb_off(id), 1)[0]; }
+function u8(id, i) { return new Uint8Array(mem.buffer, ex.wb_arena_ptr() + ex.wb_off(id))[i]; }
 function setU8(id, i, v) { new Uint8Array(mem.buffer, ex.wb_arena_ptr() + ex.wb_off(id))[i] = v & 0xff; }
 function setU32(id, i, v) { const a = ex.wb_arena_ptr() + ex.wb_off(id); new DataView(mem.buffer).setUint32(a + i * 4, v >>> 0, true); }
 function setI32(id, i, v) { const a = ex.wb_arena_ptr() + ex.wb_off(id); new DataView(mem.buffer).setInt32(a + i * 4, v | 0, true); }
@@ -74,6 +77,8 @@ function initWorld(seed, fxp) {
   setU8(ID.COLEN, 0, 0);          // 采集器关
   setU8(ID.NCTL, 0, 0);           // 神经禁用
   setI32(ID.MISC, 0, MAX_UNITS);  // spawn 预算（M-U2a 不触发，置满保险）
+  // EPS 表（wbspatial.ts L505-506 EP_KEYS 序 + engineParams.ep 真值——纪律②；与 gen-units-scan 同源）
+  EP_KEYS_MV.forEach((k, i) => setF64(100 /* OFF_EPS */, i, ep(k)));
   // TBT 引导表（u8×16）：bit0 walkable bit1 water bit2 flammable bit3 buildable
   // —— 灌入源 = src/lib/game/constants.ts 真实现（walkable/isWater + FLAMMABLE/buildable 语义）
   for (let t = 0; t < 16; t++) {
@@ -121,7 +126,7 @@ function setupRaces(races) {
 function putUnit(slot, u) {
   setU32(ID.UID, slot, slot);
   setU32(ID.URACE, slot, u.race);
-  setU32(ID.UCELL, slot, Math.floor(u.y) * W + Math.floor(u.x)); // wbspatial L305: cy*bw+cx
+  setU32(ID.UCELL, slot, Math.floor(u.y / 4) * 256 + Math.floor(u.x / 4)); // wbspatial L298-305：cy*engine.bw+cx（bw=256 tile 宽，坐标除 4）
   setF64(ID.UX, slot, u.x);
   setF64(ID.UY, slot, u.y);
   setF64(ID.UTX, slot, u.tx);
@@ -198,7 +203,7 @@ function runScenario(sc) {
     for (const u of sc.units) {
       if (u8(ID.UDEAD, u.slot)) continue;
       const x = getF64(ID.UX, u.slot), y = getF64(ID.UY, u.slot);
-      setU32(ID.UCELL, u.slot, Math.floor(y) * W + Math.floor(x));
+      setU32(ID.UCELL, u.slot, Math.floor(y / 4) * 256 + Math.floor(x / 4));
       setU8(ID.UPAR, u.slot, u8(ID.PAR, 0));
     }
     ex.wb_pack_end(sc.units.length);

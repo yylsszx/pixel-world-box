@@ -235,6 +235,240 @@ for (let i = 0; i < N_REGIONS; i++) {
 }
 console.log(`layout offs: ${layoutFail === 0 ? 'PASS' : `FAIL(${layoutFail})`} (${N_REGIONS} regions vs wasm wb_off)`);
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0;
+// —— 4) M-U2b：WbUnits.ScanSingle（wb_scan C# 版）JS 转写 vs wasm 随机场景对账 ——
+// 转写自 C# 源（WbUnits.cs ScanSingle/IsEnemySlot/IsEnemyFull/IsHerbivore/UPanic0 +
+// WriteI32Raw/WriteU32Raw/WriteF64Raw）——不从蓝本重推。LUT 用独立数组演化，
+// 终态与 wasm LUT 区域字节对账（防「用 wasm 验 wasm」循环论证的同时覆盖 LUT 行为）。
+{
+  const wasmBytes2 = readFileSync(path.join(ROOT, 'public/wasm/wbcore.wasm'));
+  const mod2 = await WebAssembly.instantiate(wasmBytes2, {});
+  const ex = mod2.instance.exports;
+  const mem = ex.memory;
+  const W = 256, H = 160, MAX_UNITS = 4096;
+  const ID = { GVALS: 3, UCIV: 4, URACE: 5, UID: 6, UCELL: 7, GIDS: 8, UDEAD: 14, UHASPANIC: 15, RESULT: 16, UX: 0, UY: 1, UPANIC: 2, CELL_START: 9, CELL_ITEMS: 10, RACE_FLAGS: 11, DYN_PARENT: 12, ATWAR: 13, OFF: 0 };
+  const MAX_RACES = 512, MAX_CIVS = 64, PANIC_CAP = 32, GRUDGE_CAP = 32;
+  const F_UNDEAD = 4, F_HOSTILE = 1, F_CIV = 2, F_PREDATOR = 8, F_HERBIVORE = 16;
+  const R_ZOMBIE = 5, R_BEAR = 8, R_DRAGON = 9, R_SCORPION = 13, R_SNAKE = 14, R_SKELETON = 16, R_DEMON = 17, R_WHITEWALKER = 23, R_KRAKEN = 25, R_SANDWORM = 26, R_BASILISK = 27;
+
+  const dv = () => new DataView(mem.buffer);
+  const u8 = (id, i) => new Uint8Array(mem.buffer, ex.wb_arena_ptr() + ex.wb_off(id))[i];
+  const setU8 = (id, i, v) => { new Uint8Array(mem.buffer, ex.wb_arena_ptr() + ex.wb_off(id))[i] = v & 0xff; };
+  const setU32 = (id, i, v) => dv().setUint32(ex.wb_arena_ptr() + ex.wb_off(id) + i * 4, v >>> 0, true);
+  const setI32 = (id, i, v) => dv().setInt32(ex.wb_arena_ptr() + ex.wb_off(id) + i * 4, v | 0, true);
+  const setF64 = (id, i, v) => dv().setFloat64(ex.wb_arena_ptr() + ex.wb_off(id) + i * 8, v, true);
+  const getF64 = (id, i) => dv().getFloat64(ex.wb_arena_ptr() + ex.wb_off(id) + i * 8, true);
+  const getU32 = (id, i) => dv().getUint32(ex.wb_arena_ptr() + ex.wb_off(id) + i * 4, true);
+  const getI32 = (id, i) => dv().getInt32(ex.wb_arena_ptr() + ex.wb_off(id) + i * 4, true);
+
+  // —— C# 转写：IsHerbivore（WbUnits.cs，lib.rs L355-368 链上溯） ——
+  const isHerbivoreCS = (r0) => {
+    let r = r0 >>> 0;
+    for (let i = 0; i < 32; i++) {
+      if ((u8(ID.RACE_FLAGS, r) & F_HERBIVORE) !== 0) return true;
+      const p = getI32(ID.DYN_PARENT, r);
+      if (p < 0) return false;
+      r = p >>> 0;
+    }
+    return false;
+  };
+  // —— C# 转写：IsEnemyFull（WbUnits.cs，机械序） ——
+  const isEnemyFullCS = (a, b) => {
+    const ra = getU32(ID.URACE, a) | 0, rb = getU32(ID.URACE, b) | 0;
+    const fa = u8(ID.RACE_FLAGS, ra), fb = u8(ID.RACE_FLAGS, rb);
+    if ((fa & F_UNDEAD) !== 0 && (fb & F_UNDEAD) !== 0) return false;
+    if (ra === R_ZOMBIE || rb === R_ZOMBIE) return ra !== rb;
+    if (ra === R_SKELETON || rb === R_SKELETON) return ra !== rb;
+    if (ra === R_WHITEWALKER || rb === R_WHITEWALKER) return ra !== rb;
+    if (ra === R_DRAGON || rb === R_DRAGON) return ra !== rb;
+    if (ra === R_DEMON || rb === R_DEMON) return ra !== rb;
+    if (ra === R_KRAKEN || rb === R_KRAKEN) return ra !== rb;
+    if (ra === R_SANDWORM || rb === R_SANDWORM) return ra !== rb;
+    if (ra === R_BASILISK || rb === R_BASILISK) return ra !== rb;
+    if ((fa & F_HOSTILE) !== 0 && (fb & F_CIV) !== 0) return true;
+    if ((fb & F_HOSTILE) !== 0 && (fa & F_CIV) !== 0) return true;
+    if ((fa & F_PREDATOR) !== 0 && isHerbivoreCS(rb >>> 0)) return true;
+    if ((fa & F_PREDATOR) !== 0 && ra === R_BEAR && (fb & F_CIV) !== 0) return true;
+    if (ra === R_SCORPION && isHerbivoreCS(rb >>> 0)) return true;
+    if (ra === R_SNAKE && (isHerbivoreCS(rb >>> 0) || rb === R_SCORPION)) return true;
+    const ca = getI32(ID.UCIV, a), cb = getI32(ID.UCIV, b);
+    if (ca >= 0 && cb >= 0 && ca !== cb) return u8(ID.ATWAR, ca * MAX_CIVS + cb) !== 0;
+    return false;
+  };
+  // —— C# 转写：IsEnemySlot + 独立 LUT（WbUnits.cs LutGet/LutSet 用独立 Uint8Array） ——
+  const lutCS = new Uint8Array(MAX_RACES * MAX_RACES);
+  const isEnemySlotCS = (a, b) => {
+    if (getI32(ID.UCIV, a) < 0 && getI32(ID.UCIV, b) < 0) {
+      const ra = getU32(ID.URACE, a) | 0, rb = getU32(ID.URACE, b) | 0;
+      const key = ra * MAX_RACES + rb;
+      const hit = lutCS[key];
+      if (hit === 1) return false;
+      if (hit === 2) return true;
+      const r = isEnemyFullCS(a, b);
+      lutCS[key] = r ? 2 : 1;
+      return r;
+    }
+    return isEnemyFullCS(a, b);
+  };
+  // —— C# 转写：UPanic0 ——
+  const uPanic0CS = (s) => u8(ID.UHASPANIC, s) !== 0 ? getF64(ID.UPANIC, s) : 0.0;
+  // —— C# 转写：ScanSingle 全量（WbUnits.cs；RESULT 写到独立 buffer，panic 直写 wasm 镜像前先快照）
+  const jsMin = (x, y) => (Math.min(x, y)); // C# WbMath.JsMin 语义见下（NaN 传染版）；场景值均有限，等价
+  function scanSingleCS(slot, cx, cy, contagious, gLen) {
+    const s = slot | 0;
+    // N 守卫：转写侧由调用者传 n（与 wasm 侧 st.n = pack_end(n) 同步）
+    const n = scanSingleCS._n;
+    if ((s >>> 0) >= n) return { rc: 0 };
+    const bw = W, bh = H;
+    const uxx = getF64(ID.UX, s), uyy = getF64(ID.UY, s);
+    const uCiv = getI32(ID.UCIV, s), uRace = getU32(ID.URACE, s);
+    const upanic0 = uPanic0CS(s);
+    const hasG = gLen >= 0;
+    const gn = gLen > 0 ? gLen : 0;
+    let enemy = -1, bestD = 7.0, enemyD = 7.0, allies = 0, foes = 0, panicN = 0, overflow = 0;
+    const panicSlots = new Uint32Array(PANIC_CAP), panicVals = new Float64Array(PANIC_CAP);
+    const panicMirror = []; // C# 直写镜像（等 wasm 侧写完对比）
+    let by = cy - 1;
+    while (by <= cy + 1) {
+      if (by < 0 || by >= bh) { by += 1; continue; }
+      let bx = cx - 1;
+      while (bx <= cx + 1) {
+        if (bx < 0 || bx >= bw) { bx += 1; continue; }
+        const cell = by * bw + bx;
+        const start = getU32(ID.CELL_START, cell) >>> 0, end = getU32(ID.CELL_START, cell + 1) >>> 0;
+        let k = start;
+        while (k < end) {
+          const other = getU32(ID.CELL_ITEMS, k) | 0;
+          k += 1;
+          if (u8(ID.UDEAD, other) !== 0 || other === s) continue;
+          const ddx = getF64(ID.UX, other) - uxx, ddy = getF64(ID.UY, other) - uyy;
+          if (isEnemySlotCS(s, other)) {
+            foes += 1;
+            const d2 = ddx * ddx + ddy * ddy;
+            if (!hasG && d2 >= bestD * bestD) continue;
+            const d = Math.sqrt(d2);
+            let wd = d;
+            if (hasG) {
+              const oid = getU32(ID.UID, other);
+              let gi = -1;
+              for (let t = 0; t < gn; t++) { if ((getI32(ID.GIDS, t) >>> 0) === oid) { gi = t; break; } }
+              if (gi >= 0) {
+                const gv = getF64(ID.GVALS, gi);
+                wd = d * (1.0 - 0.42 * jsMin(1.0, gv / 2.0));
+              }
+            }
+            if (wd < bestD) { bestD = wd; enemy = other; enemyD = d; }
+          } else if (uCiv >= 0 ? getI32(ID.UCIV, other) === uCiv : getU32(ID.URACE, other) === uRace) {
+            allies += 1;
+            if (contagious) {
+              const oPanic = uPanic0CS(other);
+              if (oPanic < upanic0 - 0.15 && ddx * ddx + ddy * ddy < 16.0) {
+                const np = jsMin(1.0, oPanic + upanic0 * 0.4);
+                panicMirror.push([other, np]); // C# 直写（不 dirty）
+                if (panicN < PANIC_CAP) { panicSlots[panicN] = other >>> 0; panicVals[panicN] = np; panicN += 1; }
+                else overflow = 1;
+              }
+            }
+          }
+        }
+        bx += 1;
+      }
+      by += 1;
+    }
+    // RESULT 424B（独立 buffer LE 序——WriteI32/U32/F64Raw 转写）
+    const buf = new ArrayBuffer(424), w = new DataView(buf);
+    w.setInt32(0, enemy, true); w.setInt32(4, overflow, true);
+    w.setFloat64(8, bestD, true); w.setFloat64(16, enemyD, true);
+    w.setUint32(24, allies, true); w.setUint32(28, foes, true);
+    w.setUint32(32, panicN, true); w.setUint32(36, 0, true);
+    for (let i = 0; i < PANIC_CAP; i++) w.setUint32(40 + i * 4, panicSlots[i], true);
+    for (let i = 0; i < PANIC_CAP; i++) w.setFloat64(168 + i * 8, panicVals[i], true);
+    return { rc: overflow !== 0 ? 2 : 1, buf, panicMirror };
+  }
+  scanSingleCS._n = 0;
+
+  // —— 随机场景双跑 ——
+  const RACE_POOL = [6, 8, 5, 4, 9, 25, 26, 16, 100, 101];
+  const FLAG_POOL = { 6: F_HERBIVORE, 8: F_PREDATOR, 5: F_HOSTILE | F_UNDEAD, 4: F_HOSTILE, 9: F_HOSTILE | F_PREDATOR, 25: F_HOSTILE, 26: F_HOSTILE, 16: F_HOSTILE | F_UNDEAD, 100: F_CIV, 101: F_CIV };
+  let scanFail = 0, lutFail = 0, panicFail = 0, lutOff;
+  // mulberry32 场景随机源（确定性）
+  let rs = 0x12345678;
+  const rnd = () => { rs = (rs + 0x6d2b79f5) >>> 0; let t = rs; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+
+  for (let round = 0; round < 120; round++) {
+    ex.wb_init(W, H, MAX_UNITS);
+    // lutOff 推导（C# WbArena 布局同款：RACE_FLAGS 后对齐）
+    lutOff = (ex.wb_off(ID.RACE_FLAGS) + MAX_RACES + 7) & ~7;
+    lutCS.fill(0);
+    // 种族表
+    for (const r of RACE_POOL) { setU8(ID.RACE_FLAGS, r, FLAG_POOL[r]); setU8(11, r, FLAG_POOL[r]); }
+    // 随机单位 2-9 只，聚在 (60..76, 60..76)（9 桶邻域）
+    const n = 2 + Math.floor(rnd() * 8);
+    for (let i = 0; i < n; i++) {
+      const race = RACE_POOL[Math.floor(rnd() * RACE_POOL.length)];
+      const x = 60 + rnd() * 16, y = 60 + rnd() * 16;
+      setU32(ID.UID, i, i + 10); setU32(ID.URACE, i, race);
+      setU32(ID.UCELL, i, Math.floor(y / 4) * W + Math.floor(x / 4));
+      setF64(ID.UX, i, x); setF64(ID.UY, i, y);
+      setF64(ID.UTX, i, x); setF64(ID.UTY, i, y);
+      setF64(ID.USPEED, i, 0.08); setF64(ID.UHP, i, 100); setF64(ID.UMAXHP, i, 100);
+      setF64(ID.UMAXAGE, i, 9999); setF64(ID.UFD, i, NaN);
+      setI32(ID.UCIV, i, rnd() < 0.5 ? -1 : Math.floor(rnd() * 3));
+      setI32(ID.UJOB, i, -1); setI32(ID.UARMY, i, -1); setI32(ID.UGLN, i, -1);
+      setI32(ID.UFAM, i, -1); setI32(ID.UFGN, i, -1); setI32(ID.USTK, i, 0);
+      setU8(ID.UDEAD, i, rnd() < 0.12 ? 1 : 0);
+      const hasP = rnd() < 0.6;
+      setU8(ID.UHASPANIC, i, hasP ? 1 : 0); setF64(ID.UPANIC, i, hasP ? +(rnd() * 0.95).toFixed(3) : 0);
+      setU8(ID.UINF, i, 0); setU8(ID.UBOAT, i, 0); setU8(ID.UFLIP, i, 0);
+      for (let g = 0; g < 4; g++) setF64(53, i * 4 + g, 1);
+    }
+    // civ 战争矩阵随机
+    for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) setU8(ID.ATWAR, a * MAX_CIVS + b, rnd() < 0.3 ? 1 : 0);
+    // grudge 平面表
+    const gLen = rnd() < 0.4 ? 1 + Math.floor(rnd() * 2) : -1;
+    if (gLen > 0) for (let t = 0; t < gLen; t++) { setI32(ID.GIDS, t, 10 + Math.floor(rnd() * n)); setF64(ID.GVALS, t, +(rnd() * 3).toFixed(2)); }
+    ex.wb_pack_end(n);
+    scanSingleCS._n = n;
+    // 快照 panic 基线（对比直写镜像）
+    const panicBefore = Array.from({ length: n }, (_, i) => [u8(ID.UHASPANIC, i), getF64(ID.UPANIC, i)]);
+    const slot = Math.floor(rnd() * n);
+    const cx = 15, cy = 15;
+    const contagious = rnd() < 0.5;
+    // wasm 先跑
+    const rcW = ex.wb_scan(slot, cx, cy, contagious ? 1 : 0, gLen);
+    const roW = Buffer.from(mem.buffer, ex.wb_arena_ptr() + ex.wb_off(ID.RESULT), 424);
+    const panicAfterW = Array.from({ length: n }, (_, i) => [u8(ID.UHASPANIC, i), getF64(ID.UPANIC, i)]);
+    // C# 转写后跑（注意：panic 直写会改 wasm 内存——先快照 wasm 写完的状态再跑转写）
+    const rCS = scanSingleCS(slot, cx, cy, contagious, gLen);
+    const bufHex = Buffer.from(rCS.buf).toString('hex');
+    const roHexW = roW.toString('hex');
+    if (rcW !== rCS.rc || bufHex !== roHexW) {
+      scanFail++;
+      if (scanFail < 4) {
+        console.error(`  scan mismatch @round${round}: rc ${rcW} vs ${rCS.rc}`);
+        for (let i = 0; i < 424; i++) if (bufHex[i * 2] !== roHexW[i * 2] || bufHex[i * 2 + 1] !== roHexW[i * 2 + 1]) { console.error(`    首 diff @byte${i}`); break; }
+      }
+    }
+    // panic 镜像对比（转写记录 vs wasm 实写差分）
+    const wWrites = [];
+    for (let i = 0; i < n; i++) {
+      const [h0, p0] = panicBefore[i], [h1, p1] = panicAfterW[i];
+      if (h1 === 1 && !(h0 === 1 && p0 === p1)) wWrites.push([i, p1]);
+    }
+    const mWrites = rCS.panicMirror.map(([o, np]) => [o, np]);
+    if (JSON.stringify(wWrites) !== JSON.stringify(mWrites)) {
+      panicFail++;
+      if (panicFail < 4) console.error(`  panic mirror mismatch @round${round}: wasm=${JSON.stringify(wWrites)} cs=${JSON.stringify(mWrites)}`);
+    }
+    // LUT 终态对比（转写独立 LUT vs wasm LUT 区域）
+    const lutW = new Uint8Array(mem.buffer, ex.wb_arena_ptr() + lutOff, 512 * 512);
+    for (let i = 0; i < 512 * 512; i++) {
+      if (lutW[i] !== lutCS[i]) { lutFail++; if (lutFail < 4) console.error(`  LUT mismatch @round${round} key=${i} wasm=${lutW[i]} cs=${lutCS[i]}`); break; }
+    }
+  }
+  console.log(`scan (C# JS 转写 vs wasm wb_scan): ${scanFail === 0 && panicFail === 0 && lutFail === 0 ? 'PASS' : `FAIL(scan=${scanFail} panic=${panicFail} lut=${lutFail})`} (120 随机场景 × 424B 逐位 + panic 镜像 + LUT 终态)`);
+  var scanVerifyFail = scanFail + panicFail + lutFail;
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);
