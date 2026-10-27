@@ -1728,4 +1728,365 @@ namespace PixelWorldBox.Tests
             }
         }
     }
+
+    // ============================================================
+    // Test 9 — M-U3b civsTick 领土与建造核 黄金回放（gen-units-civtick.mjs）
+    // 蓝本: engine.ts civsTick 族（WbWorld 托管态 + WbCivSim 机械翻译）
+    // 回放: 夹具重放（terrainRle/laws/civs+owner/units+补王/buildings/rel/tension/met/rngA0/eventSeq0）
+    //       → 每 tick（%5==0 rebuild → CivsTick）→ trace 全字段逐位
+    // ============================================================
+    [TestFixture]
+    public class WbCivTickGoldenTests
+    {
+        private static JObject LoadCivTick()
+        {
+            string path = WbCivTickPath("units_civtick.json");
+            Assert.IsTrue(File.Exists(path), $"golden json not found: {path}");
+            return JsonConvert.DeserializeObject<JObject>(File.ReadAllText(path));
+        }
+
+        private static string WbCivTickPath(string fileName)
+        {
+            string[] candidates =
+            {
+                "Assets/StreamingAssets/WbGolden/" + fileName,
+                Path.Combine(TestContext.CurrentContext.TestDirectory, "Assets/StreamingAssets/WbGolden/" + fileName),
+                Path.Combine(Directory.GetParent("Assets").FullName, "Assets/StreamingAssets/WbGolden/" + fileName),
+            };
+            foreach (var c in candidates) if (File.Exists(c)) return c;
+            return candidates[0];
+        }
+
+        /// double → 8 字节小端 hex（gen f64hex 同构：DataView LE）
+        private static string F64Hex(double v)
+        {
+            long bits = BitConverter.DoubleToInt64Bits(v);
+            var sb = new StringBuilder(16);
+            for (int i = 0; i < 8; i++) sb.Append(((byte)(bits >> (i * 8))).ToString("x2"));
+            return sb.ToString();
+        }
+
+        private static string JHex(JToken tok) => tok == null || tok.Type == JTokenType.Null ? F64Hex(0) : tok.ToString();
+
+        [Test]
+        public void Test9_CivTick_Golden()
+        {
+            var golden = LoadCivTick();
+            var meta = golden["meta"];
+            Assert.AreEqual(256, meta["W"].Value<int>(), "meta W");
+            Assert.AreEqual(160, meta["H"].Value<int>(), "meta H");
+            Assert.AreEqual(4, meta["houseCap"].Value<int>(), "meta HOUSE_CAP");
+            var scenarios = (JArray)golden["scenarios"];
+            Assert.AreEqual(16, scenarios.Count, "scenario count");
+            foreach (var sc in scenarios) RunScenario(sc);
+        }
+
+        private void RunScenario(JObject sc)
+        {
+            string name = sc["name"].ToString();
+            var w = new WbWorld();
+
+            // —— rngA0 / 序列初值（generate 残留对齐）——
+            w.rngA = unchecked((uint)sc["rngA0"].Value<long>());
+            w.eventSeq = sc["eventSeq0"].Value<int>();
+            w.toastSeq = sc["toastSeq0"].Value<int>();
+
+            // —— terrain RLE 解码（generate 底图 + paint 夹具）——
+            var rle = (JArray)sc["terrainRle"];
+            int pos = 0;
+            for (int k = 0; k < rle.Count; k += 2)
+            {
+                byte v = (byte)rle[k].Value<int>();
+                int run = rle[k + 1].Value<int>();
+                for (int j = 0; j < run && pos < WbWorld.W * WbWorld.H; j++) w.terrain[pos++] = v;
+            }
+            Assert.AreEqual(WbWorld.W * WbWorld.H, pos, $"{name} terrain RLE 全量覆盖");
+
+            // —— laws 覆写 ——
+            var laws = sc["laws"];
+            w.laws.wars = laws["wars"].Value<bool>();
+            w.laws.cityGrowth = laws["cityGrowth"].Value<bool>();
+            w.laws.rebels = laws["rebels"].Value<bool>();
+
+            // —— civ 夹具（gen mkCiv 同构）——
+            var civs = (JArray)sc["fixture"]["civs"];
+            foreach (var c in civs)
+            {
+                var civ = new WbCiv
+                {
+                    id = c["id"].Value<int>(),
+                    name = c["name"]?.ToString() ?? $"C{c["id"].Value<int>()}",
+                    race = c["race"]?.Value<int>() ?? 0,
+                    pop = c["pop"]?.Value<int>() ?? 0,
+                    houses = c["houses"]?.Value<int>() ?? 0,
+                    capital = c["capital"]?.Value<int>() ?? -1,
+                    alive = c["alive"] == null || c["alive"].Value<bool>(),
+                    gold = c["gold"]?.Value<int>() ?? 0,
+                    knowledge = c["knowledge"]?.Value<int>() ?? 0,
+                    kingId = c["kingId"] == null ? -1 : c["kingId"].Value<int>(),
+                    kingName = c["kingName"]?.ToString() ?? "K",
+                    banner = c["banner"]?.ToString() ?? "B",
+                    colonizeCd = c["colonizeCd"]?.Value<int>() ?? 0,
+                    stability = c["stability"]?.Value<int>() ?? 70,
+                    militarism = c["militarism"]?.Value<int>() ?? 30,
+                    gov = c["gov"]?.Value<int>() ?? 0,
+                };
+                if (c["popZeroTick"] != null && c["popZeroTick"].Type != JTokenType.Null) civ.popZeroTick = c["popZeroTick"].Value<int>();
+                if (c["mobilizeUntil"] != null && c["mobilizeUntil"].Type != JTokenType.Null) civ.mobilizeUntil = c["mobilizeUntil"].Value<int>();
+                if (c["techs"] != null && c["techs"].Type != JTokenType.Null)
+                    foreach (var t in (JArray)c["techs"]) civ.techs.Add(t.ToString());
+                if (c["tiles"] != null) foreach (var t in (JArray)c["tiles"]) civ.tiles.Add(t.Value<int>());
+                if (c["frontier"] != null) foreach (var f in (JArray)c["frontier"]) civ.frontier.Add(f.Value<int>());
+                w.civs.Add(civ);
+                while (w.civs.Count <= civ.id) w.civs.Add(null); // dense 补洞
+                if (w.civs[civ.id] == null) w.civs[civ.id] = civ; // dense 直索引（engine L1595 同构）
+                // owner 同步（gen mkCiv 夹具语义）
+                foreach (int i in civ.tiles) w.owner[i] = (short)civ.id;
+            }
+
+            // —— units 夹具 ——
+            var units = (JArray)sc["fixture"]["units"];
+            foreach (var u in units) PutWorldUnit(w, u);
+
+            // —— 在位王补夹具（gen runScenario 同构：pop>0 alive 且无王 → id 1000+ 殿后）——
+            int kingSeq = 1000;
+            foreach (var civ in w.civs)
+            {
+                if (civ == null || !civ.alive || civ.pop <= 0) continue;
+                if (civ.kingId != -1) continue;
+                int wid = kingSeq++;
+                int t0 = civ.tiles.Count > 0 ? civ.tiles[0] : 0;
+                PutWorldUnit(w, new JObject
+                {
+                    ["id"] = wid,
+                    ["civ"] = civ.id,
+                    ["x"] = t0 % 256 + 0.5,
+                    ["y"] = (t0 / 256 | 0) + 0.5,
+                    ["king"] = 1,
+                });
+                civ.kingId = wid;
+            }
+
+            // —— rel/tension/met/buildings 夹具 ——
+            if (sc["fixture"]["rel"] != null)
+                foreach (var r in (JArray)sc["fixture"]["rel"])
+                {
+                    int a = r[0].Value<int>(), b = r[1].Value<int>(), v = r[2].Value<int>();
+                    w.rel[WbWorld.PairKey(a, b)] = v;
+                }
+            if (sc["fixture"]["tension"] != null)
+                foreach (var r in (JArray)sc["fixture"]["tension"])
+                {
+                    int a = r[0].Value<int>(), b = r[1].Value<int>(), v = r[2].Value<int>();
+                    w.tension[WbWorld.PairKey(a, b)] = v;
+                }
+            if (sc["fixture"]["met"] != null)
+                foreach (var m in (JArray)sc["fixture"]["met"]) w.met.Add(m.ToString());
+            if (sc["fixture"]["buildings"] != null)
+                foreach (var b in (JArray)sc["fixture"]["buildings"])
+                {
+                    // gen mkBuilding0 同构（不经 buildBuilding：rng/连路无扰动，黄金基线由夹具定）
+                    int i = b[0].Value<int>(), kind = b[1].Value<int>(), civId = b[2].Value<int>();
+                    var bb = new WbBuilding { i = i, x = i % WbWorld.W, y = i / WbWorld.W, kind = kind, civ = civId };
+                    w.buildings.Add(bb);
+                    w.bIdx[i] = w.buildings.Count - 1;
+                    w.building[i] = (byte)kind;
+                    w.bHp[i] = WbCivSim.BUILDING_DEFS[kind].hp;
+                    var civ = WbCivSim.CivAt(w, civId);
+                    if (civ != null && kind != WbCivSim.BUILD_KINDS.WALL) civ.houses++;
+                }
+
+            // —— 驱动 + 逐 tick 断言 ——
+            w.tickCount = sc["startTick"].Value<int>();
+            var traces = (JArray)sc["traces"];
+            for (int t = 0; t < traces.Count; t++)
+            {
+                var want = (JObject)traces[t];
+                if (w.tickCount % 5 == 0) WbCivSim.RebuildCivBuildCounts(w);
+                WbCivSim.CivsTick(w);
+                w.tickCount++;
+                AssertTrace(w, want, name, t);
+            }
+        }
+
+        private static void PutWorldUnit(WbWorld w, JObject o)
+        {
+            var u = new WbU
+            {
+                id = o["id"].Value<int>(),
+                race = o["race"]?.Value<int>() ?? 0,
+                civ = o["civ"]?.Value<int>() ?? -1,
+                x = o["x"].Value<double>(),
+                y = o["y"].Value<double>(),
+                tx = o["x"].Value<double>(),
+                ty = o["y"].Value<double>(),
+                hp = 10, maxHp = 10,
+                job = o["job"]?.Value<int>() ?? 0,
+                king = o["king"]?.Value<int>() ?? 0,
+                dead = o["dead"]?.Value<int>() ?? 0,
+                boat = o["boat"]?.Value<int>() ?? 0,
+                name = $"u{o["id"].Value<int>()}",
+            };
+            w.units.Add(u);
+            w.unitById[u.id] = u;
+        }
+
+        private static void AssertTrace(WbWorld w, JObject want, string name, int t)
+        {
+            string ctx = $"{name} tick{t}";
+            Assert.AreEqual((uint)want["rngA"].Value<long>(), w.rngA, $"{ctx} rngA");
+            Assert.AreEqual(want["tickCount"].Value<int>(), w.tickCount, $"{ctx} tickCount");
+            Assert.AreEqual(want["statCivsFallen"].Value<int>(), w.statCivsFallen, $"{ctx} statCivsFallen");
+
+            // civs 全字段（数组序 + tiles/frontier 逐元素）
+            var wantCivs = (JArray)want["civs"];
+            var liveCivs = new List<WbCiv>();
+            foreach (var c in w.civs) if (c != null) liveCivs.Add(c);
+            Assert.AreEqual(wantCivs.Count, liveCivs.Count, $"{ctx} civs count");
+            for (int c = 0; c < wantCivs.Count; c++)
+            {
+                var wc = (JObject)wantCivs[c];
+                var gc = liveCivs[c];
+                Assert.AreEqual(wc["id"].Value<int>(), gc.id, $"{ctx} civ{id} id");
+                string cid = $"{ctx} civ{gc.id}";
+                Assert.AreEqual(wc["pop"].Value<int>(), gc.pop, $"{cid} pop");
+                Assert.AreEqual(wc["houses"].Value<int>(), gc.houses, $"{cid} houses");
+                Assert.AreEqual(wc["capital"].Value<int>(), gc.capital, $"{cid} capital");
+                Assert.AreEqual(wc["alive"].Value<bool>(), gc.alive, $"{cid} alive");
+                Assert.AreEqual(wc["gold"].Type == JTokenType.Null ? 0 : wc["gold"].Value<int>(), gc.gold ?? 0, $"{cid} gold");
+                Assert.AreEqual(wc["knowledge"].Type == JTokenType.Null ? 0 : wc["knowledge"].Value<int>(), gc.knowledge ?? 0, $"{cid} knowledge");
+                Assert.AreEqual(wc["colonizeCd"].Type == JTokenType.Null ? 0 : wc["colonizeCd"].Value<int>(), gc.colonizeCd, $"{cid} colonizeCd");
+                if (wc["popZeroTick"].Type == JTokenType.Null) Assert.IsFalse(gc.popZeroTick.HasValue, $"{cid} popZeroTick null");
+                else Assert.AreEqual(wc["popZeroTick"].Value<int>(), gc.popZeroTick.Value, $"{cid} popZeroTick");
+                if (wc["mobilizeUntil"].Type == JTokenType.Null) Assert.IsFalse(gc.mobilizeUntil.HasValue, $"{cid} mobilizeUntil null");
+                else Assert.AreEqual(wc["mobilizeUntil"].Value<int>(), gc.mobilizeUntil.Value, $"{cid} mobilizeUntil");
+                Assert.AreEqual(wc["stability"].Type == JTokenType.Null ? 70 : wc["stability"].Value<int>(), gc.stability, $"{cid} stability");
+                Assert.AreEqual(wc["militarism"].Type == JTokenType.Null ? 30 : wc["militarism"].Value<int>(), gc.militarism, $"{cid} militarism");
+                Assert.AreEqual(wc["kingId"].Type == JTokenType.Null ? -1 : wc["kingId"].Value<int>(), gc.kingId, $"{cid} kingId");
+                Assert.AreEqual(wc["name"].ToString(), gc.name, $"{cid} name");
+                // tiles / frontier 逐元素
+                var wt = (JArray)wc["tiles"];
+                Assert.AreEqual(wt.Count, gc.tiles.Count, $"{cid} tiles count");
+                for (int k = 0; k < wt.Count; k++) Assert.AreEqual(wt[k].Value<int>(), gc.tiles[k], $"{cid} tiles[{k}]");
+                var wf = (JArray)wc["frontier"];
+                Assert.AreEqual(wf.Count, gc.frontier.Count, $"{cid} frontier count");
+                for (int k = 0; k < wf.Count; k++) Assert.AreEqual(wf[k].Value<int>(), gc.frontier[k], $"{cid} frontier[{k}]");
+            }
+
+            // buildings 全量
+            var wantB = (JArray)want["buildings"];
+            Assert.AreEqual(wantB.Count, w.buildings.Count, $"{ctx} buildings count");
+            for (int b = 0; b < wantB.Count; b++)
+            {
+                var wb = (JObject)wantB[b];
+                Assert.AreEqual(wb["i"].Value<int>(), w.buildings[b].i, $"{ctx} bld{b} i");
+                Assert.AreEqual(wb["kind"].Value<int>(), w.buildings[b].kind, $"{ctx} bld{b} kind");
+                Assert.AreEqual(wb["civ"].Value<int>(), w.buildings[b].civ, $"{ctx} bld{b} civ");
+            }
+
+            // bHp / civBuildCounts / marketIdx
+            var wantHp = (JArray)want["bHp"];
+            Assert.AreEqual(wantHp.Count, w.bHp.Count, $"{ctx} bHp count");
+            var hpSorted = new List<KeyValuePair<int, double>>(w.bHp);
+            hpSorted.Sort((a, b) => a.Key.CompareTo(b.Key)); // JS Map 迭代序 = 插入序；C# Dict 无序 → 键序对账（黄金插入序即键增序近似——回放重放插入序）
+            for (int k = 0; k < wantHp.Count; k++)
+                Assert.AreEqual(wantHp[k][0].Value<int>(), hpSorted[k].Key, $"{ctx} bHp[{k}] key");
+            var wantCounts = (JArray)want["civBuildCounts"];
+            Assert.AreEqual(wantCounts.Count, w.civBuildCounts.Count, $"{ctx} civBuildCounts count");
+            foreach (var kv in WantCountsDict(want))
+            {
+                int[] arr;
+                Assert.IsTrue(w.civBuildCounts.TryGetValue(int.Parse(kv.Key), out arr), $"{ctx} civBuildCounts[{kv.Key}] exists");
+                for (int k = 0; k < kv.Value.Count; k++) Assert.AreEqual(kv.Value[k].Value<int>(), arr[k], $"{ctx} civBuildCounts[{kv.Key}][{k}]");
+            }
+            var wantMkt = (JArray)want["marketIdx"];
+            Assert.AreEqual(wantMkt.Count, w.marketIdx.Count, $"{ctx} marketIdx count");
+
+            // 数组 diff（owner/building/road/occCiv）
+            AssertDiff(want["ownerDiff"], i => w.owner[i], $"{ctx} ownerDiff");
+            AssertDiff(want["buildingDiff"], i => w.building[i], $"{ctx} buildingDiff");
+            AssertDiff(want["roadDiff"], i => w.road[i], $"{ctx} roadDiff");
+            AssertDiff(want["occCivDiff"], i => w.occCiv[i], $"{ctx} occCivDiff");
+
+            // dirty/propsDirty
+            AssertSet((JArray)want["dirty"], w.dirty, $"{ctx} dirty");
+            AssertSet((JArray)want["propsDirty"], w.propsDirty, $"{ctx} propsDirty");
+
+            // effects 全字段（f64 hex 逐位）
+            var wantFx = (JArray)want["effects"];
+            Assert.AreEqual(wantFx.Count, w.effects.Count, $"{ctx} effects count");
+            for (int e = 0; e < wantFx.Count; e++)
+            {
+                var we = (JObject)wantFx[e];
+                var ge = w.effects[e];
+                Assert.AreEqual(we["kind"].ToString(), ge.kind, $"{ctx} fx{e} kind");
+                Assert.AreEqual(JHex(we["x"]), F64Hex(ge.x), $"{ctx} fx{e} x bits");
+                Assert.AreEqual(JHex(we["y"]), F64Hex(ge.y), $"{ctx} fx{e} y bits");
+                Assert.AreEqual(JHex(we["ttl"]), F64Hex(ge.ttl), $"{ctx} fx{e} ttl bits");
+                Assert.AreEqual((int)we["seed"], ge.seed, $"{ctx} fx{e} seed");
+                Assert.AreEqual(JHex(we["dir"]), F64Hex(ge.dir), $"{ctx} fx{e} dir bits");
+            }
+
+            // newEvents（id/year/kind/text/colorHex/x/y bits）
+            var wantEv = (JArray)want["newEvents"];
+            Assert.AreEqual(wantEv.Count, w.worldEvents.Count, $"{ctx} newEvents count");
+            for (int e = 0; e < wantEv.Count; e++)
+            {
+                var we = (JObject)wantEv[e];
+                // worldEvents unshift：新在前 —— want newEvents 按产生序 → 对齐 worldEvents 尾部
+                var ge = w.worldEvents[w.worldEvents.Count - wantEv.Count + e];
+                Assert.AreEqual(we["id"].Value<int>(), ge.id, $"{ctx} ev{e} id");
+                Assert.AreEqual(we["kind"].ToString(), ge.kind, $"{ctx} ev{e} kind");
+                Assert.AreEqual(we["text"].ToString(), ge.text, $"{ctx} ev{e} text");
+                if (we["x"].Type == JTokenType.Null) Assert.IsFalse(ge.x.HasValue, $"{ctx} ev{e} x null");
+                else Assert.AreEqual(JHex(we["x"]), F64Hex(ge.x.Value), $"{ctx} ev{e} x bits");
+            }
+
+            // toasts
+            var wantToast = (JArray)want["toasts"];
+            Assert.AreEqual(wantToast.Count, w.toasts.Count, $"{ctx} toasts count");
+            for (int e = 0; e < wantToast.Count; e++)
+            {
+                var wt2 = (JObject)wantToast[e];
+                Assert.AreEqual(wt2["id"].Value<int>(), w.toasts[e].id, $"{ctx} toast{e} id");
+                Assert.AreEqual(wt2["text"].ToString(), w.toasts[e].text, $"{ctx} toast{e} text");
+                Assert.AreEqual(wt2["tone"].ToString(), w.toasts[e].tone, $"{ctx} toast{e} tone");
+            }
+            w.toasts.Clear(); // onToast 回调每 tick 清空语义（gen toasts.splice(0)）
+
+            // tension/rel/met
+            var wantTen = (JArray)want["tension"];
+            Assert.AreEqual(wantTen.Count, w.tension.Count, $"{ctx} tension count");
+            var wantRel = (JArray)want["rel"];
+            Assert.AreEqual(wantRel.Count, w.rel.Count, $"{ctx} rel count");
+            foreach (var r in wantRel)
+            {
+                Assert.IsTrue(w.rel.ContainsKey(r[0].ToString()), $"{ctx} rel[{r[0]}] exists");
+                Assert.AreEqual(r[1].Value<double>(), w.rel[r[0].ToString()], 1e-12, $"{ctx} rel[{r[0]}] value(f64)");
+            }
+            var wantMet = (JArray)want["met"];
+            Assert.AreEqual(wantMet.Count, w.met.Count, $"{ctx} met count");
+        }
+
+        private static Dictionary<string, JArray> WantCountsDict(JObject want)
+        {
+            var d = new Dictionary<string, JArray>();
+            foreach (var kv in (JObject)want["civBuildCounts"])
+                d[kv.Key] = (JArray)kv.Value;
+            return d;
+        }
+
+        private static void AssertDiff(JToken diff, Func<int, int> get, string ctx)
+        {
+            var arr = (JArray)diff;
+            foreach (var d in arr)
+                Assert.AreEqual(d[1].Value<int>(), get(d[0].Value<int>()), $"{ctx}[{d[0]}]");
+        }
+
+        private static void AssertSet(JArray want, HashSet<int> got, string ctx)
+        {
+            Assert.AreEqual(want.Count, got.Count, $"{ctx} count");
+            foreach (var v in want) Assert.IsTrue(got.Contains(v.Value<int>()), $"{ctx} contains {v}");
+        }
+    }
 }
