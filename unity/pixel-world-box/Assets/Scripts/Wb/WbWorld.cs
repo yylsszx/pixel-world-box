@@ -32,18 +32,18 @@ namespace PixelWorldBox.Wb
         public int? armyCd;              // undefined ?? 0 语义（createCiv 不初始化 → dump null）
         public double? mobilizeUntil;    // engine number（M-U3d applyDirectiveImpulse 写入 tickCount+(deadline-tick)*0.8 f64 语义）
         public int? mergedInto;
-        public int? gold;                // engine civ.gold（undefined ?? 0 语义 → int?）
-        public int? knowledge;
+        public double? gold;            // engine civ.gold（undefined ?? 0 语义 → double?；M-U3f economyTick upkeep 小数域迁移）
+        public double? knowledge;      // engine f64（M-U3f economyTick 回流小数域迁移）
         public List<string> techs = new List<string>();
         public string research;          // null = 无
         public double researchP;         // engine number（M-U3e：fundResearch start + points×diffusion f64 语义）
         public int gov;
         public int govYear;
-        public int stability = 70;
-        public int culture;
-        public int? militarism = 30;     // engine (civ.militarism ?? 30) 语义 → int?
+        public double stability = 70;    // engine f64（M-U3f societyTick stab 小数域迁移：temple*0.15/culture*0.001）
+        public double culture;           // engine f64（M-U3f societyTick cultGain 小数域迁移）
+        public double? militarism = 30;  // engine (civ.militarism ?? 30) 语义 → double?（M-U3f societyTick 漂移小数域迁移）
         public int income;
-        public int expense;
+        public double expense;           // engine Math.round(upkeep*10)/10 → 小数（M-U3f）
         public int festivalCd;
         public List<string> history = new List<string>();   // engine civ.history（M-U3c 建国初始化空表）
         public List<string> ideas;                          // engine civ.ideas（undefined = 未采纳 → C# null）
@@ -174,10 +174,12 @@ namespace PixelWorldBox.Wb
         public int civ;
         public string name;
         public List<int> members = new List<int>();
+        public int leaderId = -1;         // engine Army.leaderId（指挥官单位 id，-1 = 无；M-U3f 夹具协议）
         public double morale;
         public double kills, losses;
         public bool tactical;
         public double x, y;
+        public double tx, ty;             // engine 行军目标（M-U3f 夹具协议）
         public int? clashWith;
         public string state;             // 'march' | 'battle' | ...
     }
@@ -210,10 +212,11 @@ namespace PixelWorldBox.Wb
         public Dictionary<string, object> meta;   // engine recordEvo meta（trace 不下发，M-U6 存档域复核）
     }
 
-    /// 理念加成汇总（engine ideaModsOf L8833 返回形状 —— 六维全 0 起点）
+    /// 理念加成汇总（engine ideaModsOf L8833 返回形状 —— 六维全 0 起点；
+    /// M-U3f 字段 double? 化：IdeaDef.mods optional（undefined = 无此加成）—— 夹具 dump null ≠ 0 逐位语义）
     public class WbIdeaMods
     {
-        public double gold, stab, mil, know, repro, wear;
+        public double? gold, stab, mil, know, repro, wear;
     }
 
     /// IdeaDef 最小态（engine emIdeas 消费域 —— inventIdea 涌现域 M-U3e+，容器先行）
@@ -336,6 +339,11 @@ namespace PixelWorldBox.Wb
         public Dictionary<int, WbIdeaMods> ideaModCache = new Dictionary<int, WbIdeaMods>(); // engine L611（采纳时失效）
         public Dictionary<string, WbEmTech> emTechs = new Dictionary<string, WbEmTech>();   // engine L597（涌现科技注册表）
         public int emTechSeq = 1;           // engine L599
+        // ---------------- M-U3f 经济/社会域（engine L649/L651/L562 + nature.season） ----------------
+        public Dictionary<int, int> govCache = new Dictionary<int, int>();                 // engine L649（setGov 写，UI 消费）
+        public Dictionary<int, int> lastGovEventTick = new Dictionary<int, int>();        // engine L651（tryGovEvolve 冷却门）
+        public Dictionary<int, double> civHomogeneity = new Dictionary<int, double>();    // engine L562（statsTick 维护；黄金声明式注入）
+        public int seasonOffset;            // NatureSystem.seasonOffset（reset 恒 0；夹具注入冬季场景）
         public string overlayMode = "none";                                                  // 渲染 overlay（M-U4 域；黄金恒 none）
         public bool overlayDirty = true;
         public List<WbEvoNode> evoNodes = new List<WbEvoNode>();
@@ -383,6 +391,14 @@ namespace PixelWorldBox.Wb
                 t = (t + ((t ^ (t >> 7)) * (61u | t))) ^ t;
                 return (double)(uint)(t ^ (t >> 14)) / 4294967296.0;
             }
+        }
+
+        /// nature.ts season getter L160-163 —— 黄金驱动 yearF 恒 0（SEASON_YEARS = 2）
+        public int NatureSeason()
+        {
+            if (!laws.seasons) return 1; // 永夏
+            int s = (int)(((long)(yearF / 2) + seasonOffset) % 4);
+            return s < 0 ? s + 4 : s;
         }
 
         /// engine.ts fx L9781-9799 —— 渲染侧效应入事件流（rng 消耗×2 是模拟语义，桩不掉）

@@ -69,9 +69,11 @@ function newWorld() {
     dirSeq: 1, victoryCiv: null, lastCatastropheTick: -999999, zombieOutbreakNoted: false,
     emIdeas: new Map(), ideaSeq: 1, ideaModCache: new Map(),
     emTechs: new Map(), emTechSeq: 1, // M-U3e 涌现科技注册表
+    // M-U3f 经济/社会域（C# WbWorld 同构）
+    govCache: new Map(), lastGovEventTick: new Map(), civHomogeneity: new Map(), seasonOffset: 0,
     overlayMode: 'none', overlayDirty: true,
     evoNodes: [], evoSeq: 0, evoIndex: new Map(),
-    laws: { wars: true, cityGrowth: true, rebels: true },
+    laws: { wars: true, cityGrowth: true, rebels: true, seasons: true },
     rngA: 0, tickCount: 0, yearF: 0, statCivsFallen: 0,
   };
 }
@@ -1076,6 +1078,70 @@ function EliminateCiv(w, civ) {
 
 const RACES_NAME = ['人类', '精灵', '矮人', '兽人', '强盗', '僵尸', '绵羊', '狼', '熊', '巨龙', '鹿', '企鹅', '骆驼', '蝎子', '蛇', '雪狼', '骷髅', '恶魔', '法师', '蜥蜴人', '哥布林', '巨魔', '食人魔', '白行者', '吸血鬼', '克拉肯', '沙虫', '蛇怪', '天使', '凤凰', '树人', '巫妖', '九头蛇', '鸡', '猪', '兔', '狐', '鱼', '蟹', '龟', '鲨鱼'];
 
+// ---------------- M-U3f 种族社会属性（types.ts RACES isCiv 六族稀疏表 + ?? 0.5 回退 —— C# RacesIndustry 同构） ----------------
+const RACES_INDUSTRY = { 0: 0.6, 1: 0.3, 2: 0.9, 3: 0.3, 19: 0.45, 20: 0.4 };
+const RACES_ARCANE = { 0: 0.35, 1: 0.85, 2: 0.4, 3: 0.15, 19: 0.45, 20: 0.3 };
+const RACES_PIETY = { 0: 0.4, 1: 0.75, 2: 0.35, 3: 0.25, 19: 0.5, 20: 0.2 };
+const RACES_HARMONY = { 0: 0.7, 1: 0.5, 2: 0.45, 3: 0.25, 19: 0.4, 20: 0.35 };
+const raceIndustryOf = (r) => (r in RACES_INDUSTRY ? RACES_INDUSTRY[r] : 0.5);
+const raceArcaneOf = (r) => (r in RACES_ARCANE ? RACES_ARCANE[r] : 0.5);
+const racePietyOf = (r) => (r in RACES_PIETY ? RACES_PIETY[r] : 0.5);
+const raceHarmonyOf = (r) => (r in RACES_HARMONY ? RACES_HARMONY[r] : 0.5);
+
+// engine tick() 季节 getter（nature.ts L160-163）—— 黄金驱动 yearF 恒 0
+function NatureSeason(w) {
+  if (!w.laws.seasons) return 1; // 永夏
+  const s = (Math.floor(w.yearF / 2) + w.seasonOffset) % 4; // SEASON_YEARS = 2
+  return s < 0 ? s + 4 : s;
+}
+
+// GOV_DEFS（tech.ts L242-248）—— setGov 播报用
+const GOV_DEFS = [
+  { key: 'tribal', name: '部落制', desc: '长老围坐篝火议事，血脉即律法' },
+  { key: 'monarchy', name: '君主制', desc: '王冠与权杖，世袭的秩序' },
+  { key: 'theocracy', name: '神权制', desc: '神谕高过王令，祭司执掌尘世' },
+  { key: 'republic', name: '共和制', desc: '市民的广场与选票' },
+  { key: 'empire', name: '帝国制', desc: '铁蹄与大道，万邦来朝' },
+];
+
+// IDEA 词表（emergence.ts L435-446 逐字保真）
+const IDEA_PRE = ['军功爵', '重商', '垦荒', '天工', '航海', '民本', '格物', '荣耀', '万学', '大同', '无为', '铁律'];
+const IDEA_POST = ['主义', '律令', '学会', '改革', '之道', '运动'];
+const IDEA_BODY = [
+  { name: '重商', desc: '商路即国脉', mods: { gold: 0.18 } },
+  { name: '军功爵', desc: '斩首授田，武士阶层的上升阶梯', mods: { mil: 0.06, stab: -1 } },
+  { name: '民本', desc: '民为邦本，本固邦宁', mods: { stab: 3, repro: 0.05 } },
+  { name: '格物', desc: '致知在格物', mods: { know: 0.22 } },
+  { name: '垦荒', desc: '寸土不荒', mods: { repro: 0.08, gold: 0.06 } },
+  { name: '偃武', desc: '铸剑为犁', mods: { wear: -0.15, mil: -0.05 } },
+  { name: '铁律', desc: '令行禁止', mods: { stab: 4, gold: -0.05 } },
+  { name: '万学', desc: '百花齐放', mods: { know: 0.15, stab: 1 } },
+];
+
+function InventIdea(w, seq) {
+  const pick = (arr) => arr[Math.floor(Rng(w) * arr.length)];
+  const body = pick(IDEA_BODY);
+  const post = pick(IDEA_POST);
+  const pre = Rng(w) < 0.2 ? pick(IDEA_PRE) : '';
+  const jitter = (v, amt) => v === undefined ? undefined : Math.round((v + (Rng(w) - 0.5) * amt) * 1000) / 1000;
+  const mods = {
+    gold: jitter(body.mods.gold, 0.08),
+    stab: body.mods.stab !== undefined ? Math.round(body.mods.stab + (Rng(w) - 0.5) * 1.5) : undefined,
+    mil: jitter(body.mods.mil, 0.02),
+    know: jitter(body.mods.know, 0.08),
+    repro: jitter(body.mods.repro, 0.03),
+    wear: jitter(body.mods.wear, 0.06),
+  };
+  const effBits = [];
+  if (mods.gold) effBits.push(`收入 +${Math.round(mods.gold * 100)}%`);
+  if (mods.stab) effBits.push(`稳定 ${mods.stab > 0 ? '+' : ''}${mods.stab}`);
+  if (mods.mil) effBits.push(`军国倾向 ${mods.mil > 0 ? '+' : ''}${Math.round(mods.mil * 100)}/十年`);
+  if (mods.know) effBits.push(`知识 +${Math.round(mods.know * 100)}%`);
+  if (mods.repro) effBits.push(`繁衍 +${Math.round(mods.repro * 100)}%`);
+  if (mods.wear) effBits.push(`厌战 ${mods.wear > 0 ? '+' : ''}${Math.round(mods.wear * 100)}%`);
+  return { key: `id${seq}`, name: `${pre}${body.name}${post}`, desc: `${body.desc} —— ${effBits.join('，')}`, mods };
+}
+
 function AtWar(w, a, b) {
   const v = w.rel.get(pairKey(a, b));
   return v !== undefined && v < -20;
@@ -1495,6 +1561,208 @@ function IdeaModsOf(w, civId) {
   w.ideaModCache.set(civId, mi);
   return mi;
 }
+
+// ==================== M-U3f 经济/社会域镜像（engine L4800-5136 + L8806-8830） ====================
+// GovOf 已有（M-U3d L1467 箭头版）—— 语义同 engine govOf L4877
+
+/// engine economyTick L4800-4854（每 %120===0；hostTicks 门在驱动循环）
+function EconomyTick(w) {
+  for (const c of w.civs) {
+    if (!c || !c.alive || c.pop <= 0) continue;
+    const counts = w.civBuildCounts.get(c.id);
+    if (!counts) continue;
+    const markets = counts[BK.MARKET] ?? 0;
+    const libraries = counts[BK.LIBRARY] ?? 0;
+    const temples = counts[BK.TEMPLE] ?? 0;
+    const ports = counts[BK.PORT] ?? 0;
+    // 旨意加成：富国令财富产出 ×2 / 启智令知识产出 ×2（文明自行达成的引擎）
+    const wealthBoost = ActiveDirective(w, c.id, 'wealth') ? 2 : 1;
+    const wisdomBoost = ActiveDirective(w, c.id, 'wisdom') ? 2 : 1;
+    // —— 科技/社会加成：税基×tech.tax×政体 / 经济×tech.gold / 知识×tech.know（文化反哺）——
+    const tm = TechModsOf(w, c.id);
+    const im = IdeaModsOf(w, c.id); // v3：涌现理念加成（经济/知识）
+    const gov = GovOf(w, c.id);
+    const cultKnow = 1 + Math.min(0.5, (c.culture ?? 0) * 0.002); // 文化反哺学术（上限 +50%）
+    const govTaxMul = gov === 1 ? 1.1 : gov === 2 ? 1.0 : gov === 3 ? 1.0 : gov === 4 ? 1.05 : 1;
+    // —— 种族互连：勤勉种族的税基更丰厚（矮人的工坊永不熄火）——
+    const industryMul = 0.8 + raceIndustryOf(c.race) * 0.4;
+    // —— 季节互连：冬季雪封商路，集市与港口收入 ×0.9 ——
+    const winterMul = NatureSeason(w) === 3 ? 0.9 : 1;
+    const taxBase = Math.floor(c.pop * 0.05 * tm.tax * govTaxMul);
+    // —— 财富饱和：囤积低效（官僚损耗随库藏膨胀 → 净入账递减 —— 软上限防数万金通胀） ——
+    const hoard = c.gold ?? 0;
+    const drag = 1 / (1 + hoard / 900);
+    // —— 联盟互连：盟友间商贸一体化，关税减免 ×1.15（盟内市场优先繁荣）——
+    const alE = AllianceOfCiv(w, c.id);
+    const allyTrade = alE && alE.members.length >= 2 ? (alE.bonded ? 1.25 : 1.15) : 1;
+    const income = Math.max(0, Math.round((markets * 3 + temples * 1 + ports * 2 + taxBase) * wealthBoost * tm.gold * (gov === 3 ? 1.25 : 1) * (1 + im.gold) * industryMul * winterMul * allyTrade * drag));
+    // —— 军团军饷：现役军团成员人均 0.12 金/tick 段（军国主义高涨的国家咬牙供养）——
+    let upkeep = 0;
+    for (const a of w.armies) {
+      if (a.civ === c.id && a.state !== 'retreat') upkeep += a.members.length * 0.12; // 军饷（战时大军是吞金兽）
+    }
+    upkeep += (counts[BK.CASTLE] ?? 0) * 0.5 + (counts[BK.TOWER] ?? 0) * 0.15; // 城防维护
+    c.income = income;
+    c.expense = Math.round(upkeep * 10) / 10;
+    c.gold = Math.max(0, (c.gold ?? 0) + income - upkeep);
+    // —— 军饷欠饷：国库见底 → 军团士气滑落（帝国过度扩张的代价）——
+    if ((c.gold ?? 0) <= 0 && upkeep > 2) {
+      for (const a of w.armies) {
+        if (a.civ === c.id) a.morale = Math.max(0, a.morale - 0.5);
+      }
+    }
+    // —— 知识：种族奥术天赋（精灵的魔法学术）× 冬季蛰居苦读（×1.05 反向补偿）——
+    const arcaneMul = 0.8 + raceArcaneOf(c.race) * 0.45;
+    const knowGain = Math.round((libraries * 2 + (c.pop > 20 ? 1 : 0)) * wisdomBoost * tm.know * cultKnow * (gov === 2 ? 1.15 : 1) * (1 + im.know) * arcaneMul * (NatureSeason(w) === 3 ? 1.05 : 1));
+    // 知识优先投入研究（科技研发体系），余量入国库知识存量（解锁建筑）
+    const spent = FundResearch(w, c, knowGain);
+    c.knowledge = (c.knowledge ?? 0) + (knowGain - spent);
+  }
+}
+
+/// engine recentVictory L5088-5094（战争分数结算中最近 200-300 tick 窗口内取胜）
+function RecentVictory(w, civId) {
+  for (const wd of w.warData.values()) {
+    const winner = wd.scoreA > wd.scoreB ? wd.a : wd.b;
+    if (winner === civId && w.tickCount - wd.startTick < 300 && w.tickCount - wd.startTick > 200) return true;
+  }
+  return false;
+}
+
+/// engine setGov L5097-5108（政体变革含播报）
+function SetGov(w, c, gov, cause) {
+  if ((c.gov ?? 0) === gov) return;
+  c.gov = gov;
+  c.govYear = Math.floor(w.yearF);
+  w.govCache.set(c.id, gov);
+  const g = GOV_DEFS[gov];
+  const text = cause === 'revolution'
+    ? `革命席卷「${c.name}」！王冠坠地，${g.name}在废墟上建立`
+    : `「${c.name}」确立了${g.name}（${g.desc}）`;
+  AddEvent(w, 'gov', text, c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+  Toast(w, `「${c.name}」改制为${g.name}`, 'info');
+}
+
+/// engine tryGovEvolve L5111-5136（门槛达成 → 概率跃迁；升序判定：帝国 > 共和 > 神权 > 君主）
+function TryGovEvolve(w, c) {
+  const last = w.lastGovEventTick.get(c.id) ?? -4000;
+  if (w.tickCount - last < 2000) return; // 变革冷却（≥50 年）
+  const owned = new Set(c.techs ?? []);
+  const gov = c.gov ?? 0;
+  const counts = w.civBuildCounts.get(c.id);
+  const temples = counts ? (counts[BK.TEMPLE] ?? 0) : 0;
+  const canMonarchy = gov < 1 && c.pop >= 25;
+  const canTheocracy = gov < 2 && temples >= 1 && owned.has('theology') && (c.culture ?? 0) > 50;
+  const canRepublic = gov !== 3 && c.pop >= 60 && (owned.has('law') || owned.has('printing')) && (c.knowledge ?? 0) >= 40 && (c.stability ?? 70) < 55;
+  const canEmpire = gov !== 4 && c.pop >= 120 && (c.militarism ?? 30) >= 55 && (owned.has('legion') || owned.has('tactics'));
+  if (canEmpire && Rng(w) < 0.25) {
+    w.lastGovEventTick.set(c.id, w.tickCount);
+    SetGov(w, c, 4, 'evolve');
+  } else if (canRepublic && Rng(w) < 0.18) {
+    w.lastGovEventTick.set(c.id, w.tickCount);
+    SetGov(w, c, 3, 'evolve');
+  } else if (canTheocracy && Rng(w) < 0.15) {
+    w.lastGovEventTick.set(c.id, w.tickCount);
+    SetGov(w, c, 2, 'evolve');
+  } else if (canMonarchy && Rng(w) < 0.2) {
+    w.lastGovEventTick.set(c.id, w.tickCount);
+    SetGov(w, c, 1, 'evolve');
+  }
+}
+
+/// engine adoptIdea L8806-8830（50% 全新发明 / 50% 邻国理念文化扩散）
+function AdoptIdea(w, c) {
+  const known = [...w.emIdeas.values()].filter((i) => !(c.ideas ?? []).includes(i.key));
+  let idea = null;
+  let spread = false;
+  if (known.length > 0 && Rng(w) < 0.5) {
+    // 文化扩散：优先采纳文化强国的理念（文明间的思想传播）
+    idea = known[Math.floor(Rng(w) * known.length)];
+    spread = true;
+  } else if (w.emIdeas.size < 48) {
+    idea = InventIdea(w, w.ideaSeq);
+    idea.key = `id${w.ideaSeq++}`;
+    w.emIdeas.set(idea.key, idea);
+  } else if (known.length > 0) {
+    idea = known[Math.floor(Rng(w) * known.length)];
+    spread = true;
+  }
+  if (!idea) return;
+  if (!c.ideas) c.ideas = [];
+  c.ideas.push(idea.key);
+  w.ideaModCache.delete(c.id);
+  RecordEvo(w, 'society', idea.name, null, c.colorHex, spread ? `${idea.desc}（自邻邦传入「${c.name}」）` : `${idea.desc}（${c.name} 独创）`, idea.desc, { civ: c.id });
+  AddEvent(w, 'emerge', spread
+    ? `「${c.name}」的使节带回了异邦的思想——「${idea.name}」开始在朝野流传（${idea.desc}）`
+    : `「${c.name}」酝酿出新的治国理念——「${idea.name}」（${idea.desc}）`, c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+}
+
+/// engine societyTick L5021-5085（每 %150===7：稳定度/文化/军国主义/节日/理念采纳/政体演变/危机）
+function SocietyTick(w) {
+  for (const c of w.civs) {
+    if (!c || !c.alive || c.pop <= 0) continue;
+    const counts = w.civBuildCounts.get(c.id);
+    const temples = counts ? (counts[BK.TEMPLE] ?? 0) : 0;
+    const libraries = counts ? (counts[BK.LIBRARY] ?? 0) : 0;
+    const tm2 = TechModsOf(w, c.id);
+    const im2 = IdeaModsOf(w, c.id); // v3：涌现理念加成（稳定/军国/厌战）
+    const gov = GovOf(w, c.id);
+    // —— 稳定度：战争损耗 / 领土过大 / 税负 vs 神殿安抚 / 文化繁荣 / 科技治理 ——
+    let stab = c.stability ?? 70;
+    const atWar = CivAtWar(w, c.id);
+    stab += atWar ? -1.2 : 0.6;
+    if (c.tiles.length > 120) stab -= 0.4; // 过度扩张
+    stab += temples * 0.15 + (c.culture ?? 0) * 0.001;
+    stab += tm2.stab / 50; // 法律/共和科技的治理红利
+    stab += im2.stab * 0.45; // 涌现理念：民本/铁律的治理实效
+    stab += gov === 1 ? 0.2 : gov === 2 ? 0.12 : gov === 3 ? 0.25 : gov === 4 ? -0.15 : 0;
+    // —— 种族互连：多族王国的种族张力（包容种族多元化更稳 / 排外种族动荡）——
+    const homo = w.civHomogeneity.get(c.id) ?? 1;
+    if (homo < 0.9) stab += (raceHarmonyOf(c.race) - 0.45) * 20 * (0.9 - homo);
+    // —— 联盟互连：盟约的安全感（凝聚力高的联盟成员更安定）——
+    const alS = AllianceOfCiv(w, c.id);
+    if (alS && !atWar) stab += Math.min(1.2, alS.cohesion * 0.012);
+    c.stability = Math.max(0, Math.min(100, stab));
+    // —— 文化积累：神殿 + 节日 + 科技乘数 + 种族虔诚（精灵的仪式与信仰）——
+    const cultGain = (temples * 0.8 + 0.4 + libraries * 0.3) * (0.7 + racePietyOf(c.race) * 0.6) * tm2.cult * (gov === 2 ? 1.4 : 1);
+    c.culture = (c.culture ?? 0) + cultGain;
+    // —— 军国主义：战争推高 / 胜利强化 / 和平消退 + 种族好战基线引力（血蹄永不停步）——
+    let mil = c.militarism ?? 30;
+    mil += atWar ? 0.9 : -0.5;
+    mil += im2.mil * 3; // 涌现理念：军功爵推高 / 偃武主义拉低
+    if (RecentVictory(w, c.id)) mil += 1.2;
+    mil += (raceAggrOf(c.race) * 100 - mil) * 0.01; // 向种族基线缓漂（每十年约 10% 靠近）
+    c.militarism = Math.max(0, Math.min(100, mil));
+    // —— 节日：文化丰盈时举国庆典（稳定度小振作 + 纪事）——
+    const fest = c.festivalCd ?? 0;
+    if (fest > 0) {
+      c.festivalCd = fest - 1;
+    } else if ((c.culture ?? 0) > 40 && Rng(w) < 0.3) {
+      c.festivalCd = 10;
+      c.culture = (c.culture ?? 0) - 20;
+      c.stability = Math.min(100, (c.stability ?? 70) + 3);
+      AddEvent(w, 'festival', `「${c.name}」举国欢庆丰年祭，鼓乐与篝火彻夜不息`, c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+    }
+    // —— v3：涌现理念采纳（文化丰盈时酝酿新思想 / 异邦思想传入） ——
+    if ((c.ideas ?? []).length < 3 && (c.culture ?? 0) > 60 && Rng(w) < 0.15) {
+      AdoptIdea(w, c);
+    }
+    // —— 政体演变：满足门槛且概率变革（革命式跃迁）——
+    TryGovEvolve(w, c);
+    // —— 危机：稳定度 < 18 → 动乱（叛乱分裂既有系统）/ 妥协变革 ——
+    if ((c.stability ?? 70) < 18 && Rng(w) < 0.25) {
+      if (c.pop > 25 && (c.knowledge ?? 0) > 30 && c.gov !== 3) {
+        // 启蒙革命：直接进入共和制（翻身求稳）
+        SetGov(w, c, 3, 'revolution');
+      } else {
+        AddEvent(w, 'riot', `「${c.name}」爆发了暴动——粮仓被劫，贵族的宅邸火光冲天`, c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+        c.stability = Math.min(40, (c.stability ?? 10) + 12); // 动乱宣泄后回升
+        c.gold = Math.max(0, (c.gold ?? 0) - 15);
+      }
+    }
+  }
+}
+
 function AllianceTick(w) {
   // ① 对账：灭亡成员除名 + 盟主继任 + 成员互战判叛
   for (const al of [...w.alliances]) {
@@ -2013,9 +2281,10 @@ function replayScenario(sc) {
       alive: c.alive ?? true, gold: c.gold ?? 0, knowledge: c.knowledge ?? 0,
       colonizeCd: c.colonizeCd ?? 0, popZeroTick: c.popZeroTick, armyCd: c.armyCd ?? 0,
       mobilizeUntil: c.mobilizeUntil, mergedInto: c.mergedInto,
-      techs: c.techs ?? [], research: null, researchP: 0,
+      techs: c.techs ?? [], research: c.research ?? null, researchP: c.researchP ?? 0,
       gov: c.gov ?? 0, govYear: 0, stability: c.stability ?? 70, culture: c.culture ?? 0,
       militarism: c.militarism ?? 30, income: 0, expense: 0, festivalCd: 0,
+      ideas: c.ideas ? [...c.ideas] : undefined,
       kingId: c.kingId ?? undefined, kingName: c.kingName ?? 'K', banner: c.banner ?? 'B',
       colorHex: c.colorHex ?? '#c83c3c', color: c.color ?? [200, 60, 60],
       tiles: c.tiles ? [...c.tiles] : [], frontier: c.frontier ? [...c.frontier] : [],
@@ -2037,8 +2306,18 @@ function replayScenario(sc) {
     for (const m of a2.members) w.allianceOf.set(m, a2.id);
   }
   for (const wd of sc.fixture.wars ?? []) {
-    w.warData.set(wd.key, { key: wd.key, a: wd.a, b: wd.b, startTick: wd.startTick ?? 0, startYear: wd.startYear ?? 0, total: wd.total ?? false, scoreA: 0, scoreB: 0, exA: 0, exB: 0, casA: 0, casB: 0, razedA: 0, razedB: 0, battles: 0, giveUpAt: wd.giveUpAt ?? 0, reason: wd.reason ?? 'border', reasonText: wd.reasonText ?? '', aggressor: wd.aggressor ?? 0, goal: wd.goal ?? 0, goalNow: 0, occA: 0, occB: 0, popA0: wd.popA0 ?? 0, popB0: wd.popB0 ?? 0, lastActiveTick: wd.lastActiveTick ?? 0 });
+    w.warData.set(wd.key, { key: wd.key, a: wd.a, b: wd.b, startTick: wd.startTick ?? 0, startYear: wd.startYear ?? 0, total: wd.total ?? false, scoreA: wd.scoreA ?? 0, scoreB: wd.scoreB ?? 0, exA: 0, exB: 0, casA: 0, casB: 0, razedA: 0, razedB: 0, battles: 0, giveUpAt: wd.giveUpAt ?? 0, reason: wd.reason ?? 'border', reasonText: wd.reasonText ?? '', aggressor: wd.aggressor ?? 0, goal: wd.goal ?? 0, goalNow: 0, occA: 0, occB: 0, popA0: wd.popA0 ?? 0, popB0: wd.popB0 ?? 0, lastActiveTick: wd.lastActiveTick ?? 0 });
   }
+  for (const ar of sc.fixture.armies ?? []) {
+    w.armies.push({ id: ar.id, civ: ar.civ, name: ar.name ?? `A${ar.id}`, members: [...(ar.members ?? [])], leaderId: ar.leaderId ?? -1, x: ar.x ?? 0, y: ar.y ?? 0, tx: ar.tx ?? ar.x ?? 0, ty: ar.ty ?? ar.y ?? 0, state: ar.state ?? 'rally', morale: ar.morale ?? 1, kills: ar.kills ?? 0, losses: ar.losses ?? 0, tactical: ar.tactical ?? false, clashWith: ar.clashWith });
+  }
+  for (const id_ of sc.fixture.emIdeas ?? []) {
+    w.emIdeas.set(id_.key, { key: id_.key, name: id_.name ?? `I${id_.key}`, desc: id_.desc ?? '', mods: { gold: id_.mods?.gold, stab: id_.mods?.stab, mil: id_.mods?.mil, know: id_.mods?.know, repro: id_.mods?.repro, wear: id_.mods?.wear } });
+    const nId = parseInt(String(id_.key).replace(/^id/, ''), 10);
+    if (Number.isFinite(nId)) w.ideaSeq = Math.max(w.ideaSeq ?? 1, nId + 1);
+  }
+  for (const [cid, v] of sc.fixture.homogeneity ?? []) w.civHomogeneity.set(cid, v); // M-U3f：种族同质性声明式
+  if (sc.fixture.seasonOffset != null) w.seasonOffset = sc.fixture.seasonOffset; // M-U3f：季节注入
   // 补王（gen 同构；noAutoKing 场景跳过）
   if (!sc.fixture.noAutoKing) {
     let kingSeq = 1000;
@@ -2073,8 +2352,10 @@ function replayScenario(sc) {
     if (sc.fixture.hostTicks) {
       for (const iss of sc.fixture.issue ?? []) if (iss.at === t) IssueDirective(w, iss.civ, iss.kind, iss.param ?? 0, iss.target);
       for (const fd of sc.fixture.fund ?? []) if (fd.at === t) FundResearch(w, w.civs[fd.civ], fd.points);
+      if (w.tickCount % 120 === 0) EconomyTick(w); // engine L2535（M-U3f）
       if (w.tickCount % 30 === 0) DirectiveTick(w);
       if (w.tickCount % 120 === 5) TechTick(w); // engine L2567（M-U3e）
+      if (w.tickCount % 150 === 7) SocietyTick(w); // engine L2569（M-U3f）
       if (w.tickCount % 300 === 23) AllianceTick(w);
     }
     w.tickCount++;
@@ -2117,6 +2398,8 @@ function traceOf(w, t) {
       mergedInto: c.mergedInto === undefined ? null : c.mergedInto,
       techs: c.techs ?? null, research: c.research ?? null, researchP: c.researchP ?? null,
       gov: c.gov ?? null, stability: c.stability ?? null, culture: c.culture ?? null, militarism: c.militarism ?? null,
+      income: c.income ?? null, expense: c.expense ?? null, festivalCd: c.festivalCd ?? null, govYear: c.govYear ?? null,
+      ideas: c.ideas ? [...c.ideas] : null,
       kingId: c.kingId === undefined ? null : c.kingId, kingName: c.kingName, banner: c.banner,
       colorHex: c.colorHex, color: c.color,
       tiles: [...c.tiles], frontier: [...c.frontier],
@@ -2160,6 +2443,10 @@ function traceOf(w, t) {
     evoNodes: w.evoNodes.map((n) => ({ id: n.id, kind: n.kind, name: n.name, parent: n.parent ?? null, year: n.year, colorHex: n.colorHex, detail: n.detail, stat: n.stat ?? null })),
     // —— M-U3e 扩展段 ——
     emTechs: [...w.emTechs.values()].map((t) => ({ key: t.key, name: t.name, cat: t.cat, cost: t.cost, gen: t.gen, effects: (t.effects ?? []).map((e) => [e.k, e.v]), desc: t.desc })),
+    // —— M-U3f 扩展段（armies/emIdeas/ideaSeq —— gen dumpArmy/dumpIdea 同构）——
+    armies: w.armies.map((a) => ({ id: a.id, civ: a.civ, name: a.name, members: [...a.members], leaderId: a.leaderId, x: a.x, y: a.y, tx: a.tx, ty: a.ty, state: a.state, morale: a.morale, kills: a.kills, losses: a.losses, tactical: a.tactical, clashWith: a.clashWith === undefined ? null : a.clashWith })),
+    emIdeas: [...w.emIdeas.values()].map((i) => ({ key: i.key, name: i.name, desc: i.desc, mods: { gold: i.mods.gold ?? null, stab: i.mods.stab ?? null, mil: i.mods.mil ?? null, know: i.mods.know ?? null, repro: i.mods.repro ?? null, wear: i.mods.wear ?? null } })),
+    ideaSeq: w.ideaSeq ?? null,
   };
 }
 // trace 快照辅助：__prev/__evCount 注入（回放驱动层管理）
@@ -2194,9 +2481,10 @@ if (isMain) {
         alive: c.alive ?? true, gold: c.gold ?? 0, knowledge: c.knowledge ?? 0,
         colonizeCd: c.colonizeCd ?? 0, popZeroTick: c.popZeroTick, armyCd: c.armyCd ?? 0,
         mobilizeUntil: c.mobilizeUntil, mergedInto: c.mergedInto,
-        techs: c.techs ?? [], research: null, researchP: 0,
+        techs: c.techs ?? [], research: c.research ?? null, researchP: c.researchP ?? 0,
         gov: c.gov ?? 0, govYear: 0, stability: c.stability ?? 70, culture: c.culture ?? 0,
         militarism: c.militarism ?? 30, income: 0, expense: 0, festivalCd: 0,
+        ideas: c.ideas ? [...c.ideas] : undefined,
         kingId: c.kingId ?? undefined, kingName: c.kingName ?? 'K', banner: c.banner ?? 'B',
         colorHex: c.colorHex ?? '#c83c3c', color: c.color ?? [200, 60, 60],
         tiles: c.tiles ? [...c.tiles] : [], frontier: c.frontier ? [...c.frontier] : [],
@@ -2231,8 +2519,18 @@ if (isMain) {
       for (const m of a2.members) w.allianceOf.set(m, a2.id);
     }
     for (const wd of sc.fixture.wars ?? []) {
-      w.warData.set(wd.key, { key: wd.key, a: wd.a, b: wd.b, startTick: wd.startTick ?? 0, startYear: wd.startYear ?? 0, total: wd.total ?? false, scoreA: 0, scoreB: 0, exA: 0, exB: 0, casA: 0, casB: 0, razedA: 0, razedB: 0, battles: 0, giveUpAt: wd.giveUpAt ?? 0, reason: wd.reason ?? 'border', reasonText: wd.reasonText ?? '', aggressor: wd.aggressor ?? 0, goal: wd.goal ?? 0, goalNow: 0, occA: 0, occB: 0, popA0: wd.popA0 ?? 0, popB0: wd.popB0 ?? 0, lastActiveTick: wd.lastActiveTick ?? 0 });
+      w.warData.set(wd.key, { key: wd.key, a: wd.a, b: wd.b, startTick: wd.startTick ?? 0, startYear: wd.startYear ?? 0, total: wd.total ?? false, scoreA: wd.scoreA ?? 0, scoreB: wd.scoreB ?? 0, exA: 0, exB: 0, casA: 0, casB: 0, razedA: 0, razedB: 0, battles: 0, giveUpAt: wd.giveUpAt ?? 0, reason: wd.reason ?? 'border', reasonText: wd.reasonText ?? '', aggressor: wd.aggressor ?? 0, goal: wd.goal ?? 0, goalNow: 0, occA: 0, occB: 0, popA0: wd.popA0 ?? 0, popB0: wd.popB0 ?? 0, lastActiveTick: wd.lastActiveTick ?? 0 });
     }
+    for (const ar of sc.fixture.armies ?? []) {
+      w.armies.push({ id: ar.id, civ: ar.civ, name: ar.name ?? `A${ar.id}`, members: [...(ar.members ?? [])], leaderId: ar.leaderId ?? -1, x: ar.x ?? 0, y: ar.y ?? 0, tx: ar.tx ?? ar.x ?? 0, ty: ar.ty ?? ar.y ?? 0, state: ar.state ?? 'rally', morale: ar.morale ?? 1, kills: ar.kills ?? 0, losses: ar.losses ?? 0, tactical: ar.tactical ?? false, clashWith: ar.clashWith });
+    }
+      for (const id_ of sc.fixture.emIdeas ?? []) {
+      w.emIdeas.set(id_.key, { key: id_.key, name: id_.name ?? `I${id_.key}`, desc: id_.desc ?? '', mods: { gold: id_.mods?.gold, stab: id_.mods?.stab, mil: id_.mods?.mil, know: id_.mods?.know, repro: id_.mods?.repro, wear: id_.mods?.wear } });
+      const nId = parseInt(String(id_.key).replace(/^id/, ''), 10);
+        if (Number.isFinite(nId)) w.ideaSeq = Math.max(w.ideaSeq ?? 1, nId + 1);
+    }
+      for (const [cid, v] of sc.fixture.homogeneity ?? []) w.civHomogeneity.set(cid, v); // M-U3f：种族同质性声明式
+      if (sc.fixture.seasonOffset != null) w.seasonOffset = sc.fixture.seasonOffset; // M-U3f：季节注入
     for (const [i, kind, civId] of sc.fixture.buildings ?? []) {
       const b = { i, x: i % W, y: (i / W) | 0, kind, civ: civId };
       w.buildings.push(b);
@@ -2252,8 +2550,10 @@ if (isMain) {
       if (sc.fixture.hostTicks) {
         for (const iss of sc.fixture.issue ?? []) if (iss.at === t) IssueDirective(w, iss.civ, iss.kind, iss.param ?? 0, iss.target);
         for (const fd of sc.fixture.fund ?? []) if (fd.at === t) FundResearch(w, w.civs[fd.civ], fd.points);
+        if (w.tickCount % 120 === 0) EconomyTick(w); // engine L2535（M-U3f：directiveTick 前）
         if (w.tickCount % 30 === 0) DirectiveTick(w);
         if (w.tickCount % 120 === 5) TechTick(w); // engine L2567（M-U3e）
+        if (w.tickCount % 150 === 7) SocietyTick(w); // engine L2569（M-U3f：techTick 后 allianceTick 前）
         if (w.tickCount % 300 === 23) AllianceTick(w);
       }
       w.tickCount++;

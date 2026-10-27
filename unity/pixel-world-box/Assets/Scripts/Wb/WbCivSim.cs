@@ -442,7 +442,7 @@ namespace PixelWorldBox.Wb
                 // 社会体系联动：稳定度低 → 概率倍增（动荡帝国四分五裂）；稳定度高 → 几乎无内乱
                 if (w.laws.rebels && w.tickCount % 300 == 0 && civ.pop > 30 && civ.tiles.Count > 220)
                 {
-                    int stab = civ.stability;
+                    double stab = civ.stability; // M-U3f stability double 化
                     double rebelChance = stab < 30 ? 0.16 : stab < 50 ? 0.08 : stab < 70 ? 0.04 : 0.015;
                     if (w.Rng() < rebelChance)
                     {
@@ -645,8 +645,8 @@ namespace PixelWorldBox.Wb
             w.civBuildCounts.TryGetValue(civ.id, out counts);
             int C(int k) => (counts != null && k < counts.Length) ? counts[k] : 0;
             int houses = System.Math.Max(1, civ.houses);
-            int gold = civ.gold ?? 0;
-            int know = civ.knowledge ?? 0;
+            double gold = civ.gold ?? 0; // M-U3f gold double 化
+            double know = civ.knowledge ?? 0; // M-U3f knowledge double 化
             bool war = CivAtWar(w, civ.id);
             int pop = System.Math.Max(1, civ.pop);
             // 旨意加成：建城令住宅权重 ×3 / 信仰令神殿权重 ×5（文明自行达成的引擎）
@@ -1061,6 +1061,45 @@ namespace PixelWorldBox.Wb
             { 0, 0.4 }, { 1, 0.25 }, { 2, 0.5 }, { 3, 0.9 }, { 19, 0.5 }, { 20, 0.55 },
         };
         public static double RaceAggrOf(int race) => RacesAggr.TryGetValue(race, out double v) ? v : 0.5;
+
+        /// RACES 社会属性四表（M-U3f：economyTick industry/arcane + societyTick piety/harmony 消费域）
+        /// 同 RacesDiplo 模式：仅 isCiv 六族有值，其余 ?? 0.5 回退（蓝本 rpE?.industry ?? 0.5）
+        public static readonly Dictionary<int, double> RacesIndustry = new Dictionary<int, double>
+        {
+            { 0, 0.6 }, { 1, 0.3 }, { 2, 0.9 }, { 3, 0.3 }, { 19, 0.45 }, { 20, 0.4 },
+        };
+        public static double RaceIndustryOf(int race) => RacesIndustry.TryGetValue(race, out double v) ? v : 0.5;
+        public static readonly Dictionary<int, double> RacesArcane = new Dictionary<int, double>
+        {
+            { 0, 0.35 }, { 1, 0.85 }, { 2, 0.4 }, { 3, 0.15 }, { 19, 0.45 }, { 20, 0.3 },
+        };
+        public static double RaceArcaneOf(int race) => RacesArcane.TryGetValue(race, out double v) ? v : 0.5;
+        public static readonly Dictionary<int, double> RacesPiety = new Dictionary<int, double>
+        {
+            { 0, 0.4 }, { 1, 0.75 }, { 2, 0.35 }, { 3, 0.25 }, { 19, 0.5 }, { 20, 0.2 },
+        };
+        public static double RacePietyOf(int race) => RacesPiety.TryGetValue(race, out double v) ? v : 0.5;
+        public static readonly Dictionary<int, double> RacesHarmony = new Dictionary<int, double>
+        {
+            { 0, 0.7 }, { 1, 0.5 }, { 2, 0.45 }, { 3, 0.25 }, { 19, 0.4 }, { 20, 0.35 },
+        };
+        public static double RaceHarmonyOf(int race) => RacesHarmony.TryGetValue(race, out double v) ? v : 0.5;
+
+        /// GOV_DEFS（tech.ts L242-248）—— setGov 播报用（M-U3f）
+        public class WbGovDef
+        {
+            public string key;
+            public string name;
+            public string desc;
+        }
+        public static readonly WbGovDef[] GovDefs = new WbGovDef[]
+        {
+            new WbGovDef { key = "tribal", name = "部落制", desc = "长老围坐篝火议事，血脉即律法" },
+            new WbGovDef { key = "monarchy", name = "君主制", desc = "王冠与权杖，世袭的秩序" },
+            new WbGovDef { key = "theocracy", name = "神权制", desc = "神谕高过王令，祭司执掌尘世" },
+            new WbGovDef { key = "republic", name = "共和制", desc = "市民的广场与选票" },
+            new WbGovDef { key = "empire", name = "帝国制", desc = "铁蹄与大道，万邦来朝" },
+        };
 
         /// diplomacyMeet（L2037-2059）—— warChance 判定 + pickCasus+declareWar 宣战支路全量（M-U3c 销案）
         public static void DiplomacyMeet(WbWorld w, int a, int b)
@@ -1958,16 +1997,259 @@ namespace PixelWorldBox.Wb
                 {
                     WbIdea idea;
                     if (!w.emIdeas.TryGetValue(key, out idea) || idea == null || idea.mods == null) continue;
-                    mi.gold += idea.mods.gold;
-                    mi.stab += idea.mods.stab;
-                    mi.mil += idea.mods.mil;
-                    mi.know += idea.mods.know;
-                    mi.repro += idea.mods.repro;
-                    mi.wear += idea.mods.wear;
+                    mi.gold = (mi.gold ?? 0) + (idea.mods.gold ?? 0);
+                    mi.stab = (mi.stab ?? 0) + (idea.mods.stab ?? 0);
+                    mi.mil = (mi.mil ?? 0) + (idea.mods.mil ?? 0);
+                    mi.know = (mi.know ?? 0) + (idea.mods.know ?? 0);
+                    mi.repro = (mi.repro ?? 0) + (idea.mods.repro ?? 0);
+                    mi.wear = (mi.wear ?? 0) + (idea.mods.wear ?? 0);
                 }
             }
             w.ideaModCache[civId] = mi;
             return mi;
+        }
+
+        // ==================== M-U3f 经济/社会域（engine L4800-5136 + L8806-8830 机械翻译，纪律①） ====================
+
+        /// engine economyTick L4800-4854（每 %120===0；宿主门在驱动循环 —— NUnit/gen 同序）
+        public static void EconomyTick(WbWorld w)
+        {
+            foreach (WbCiv c in w.civs.ToArray())
+            {
+                if (c == null || !c.alive || c.pop <= 0) continue;
+                int[] counts;
+                w.civBuildCounts.TryGetValue(c.id, out counts);
+                if (counts == null) continue;
+                int markets = counts[BUILD_KINDS.MARKET];
+                int libraries = counts[BUILD_KINDS.LIBRARY];
+                int temples = counts[BUILD_KINDS.TEMPLE];
+                int ports = counts[BUILD_KINDS.PORT];
+                // 旨意加成：富国令财富产出 ×2 / 启智令知识产出 ×2（文明自行达成的引擎）
+                int wealthBoost = ActiveDirective(w, c.id, "wealth") != null ? 2 : 1;
+                int wisdomBoost = ActiveDirective(w, c.id, "wisdom") != null ? 2 : 1;
+                // —— 科技/社会加成：税基×tech.tax×政体 / 经济×tech.gold / 知识×tech.know（文化反哺）——
+                WbTechMods tm = TechModsOf(w, c.id);
+                WbIdeaMods im = IdeaModsOf(w, c.id); // v3：涌现理念加成（经济/知识）
+                int gov = GovOf(w, c.id);
+                double cultKnow = 1 + System.Math.Min(0.5, c.culture * 0.002); // 文化反哺学术（上限 +50%）
+                double govTaxMul = gov == 1 ? 1.1 : gov == 2 ? 1.0 : gov == 3 ? 1.0 : gov == 4 ? 1.05 : 1;
+                // —— 种族互连：勤勉种族的税基更丰厚（矮人的工坊永不熄火）——
+                double industryMul = 0.8 + RaceIndustryOf(c.race) * 0.4;
+                // —— 季节互连：冬季雪封商路，集市与港口收入 ×0.9 ——
+                double winterMul = w.NatureSeason() == 3 ? 0.9 : 1;
+                int taxBase = (int)System.Math.Floor(c.pop * 0.05 * tm.tax * govTaxMul);
+                // —— 财富饱和：囤积低效（官僚损耗随库藏膨胀 → 净入账递减 —— 软上限防数万金通胀） ——
+                double hoard = c.gold ?? 0;
+                double drag = 1 / (1 + hoard / 900);
+                // —— 联盟互连：盟友间商贸一体化，关税减免 ×1.15（盟内市场优先繁荣）——
+                WbAlliance alE = AllianceOfCiv(w, c.id);
+                double allyTrade = alE != null && alE.members.Count >= 2 ? (alE.bonded ? 1.25 : 1.15) : 1;
+                int income = (int)System.Math.Max(0, WbMath.JsRound((markets * 3 + temples * 1 + ports * 2 + taxBase) * wealthBoost * tm.gold * (gov == 3 ? 1.25 : 1) * (1 + (im.gold ?? 0)) * industryMul * winterMul * allyTrade * drag));
+                // —— 军团军饷：现役军团成员人均 0.12 金/tick 段（军国主义高涨的国家咬牙供养）——
+                double upkeep = 0;
+                foreach (WbArmy a in w.armies)
+                {
+                    if (a.civ == c.id && a.state != "retreat") upkeep += a.members.Count * 0.12; // 军饷（战时大军是吞金兽）
+                }
+                upkeep += counts[BUILD_KINDS.CASTLE] * 0.5 + counts[BUILD_KINDS.TOWER] * 0.15; // 城防维护
+                c.income = income;
+                c.expense = WbMath.JsRound(upkeep * 10) / 10;
+                c.gold = System.Math.Max(0, (c.gold ?? 0) + income - upkeep);
+                // —— 军饷欠饷：国库见底 → 军团士气滑落（帝国过度扩张的代价）——
+                if ((c.gold ?? 0) <= 0 && upkeep > 2)
+                {
+                    foreach (WbArmy a in w.armies)
+                    {
+                        if (a.civ == c.id) a.morale = System.Math.Max(0, a.morale - 0.5);
+                    }
+                }
+                // —— 知识：种族奥术天赋（精灵的魔法学术）× 冬季蛰居苦读（×1.05 反向补偿）——
+                double arcaneMul = 0.8 + RaceArcaneOf(c.race) * 0.45;
+                double knowGain = WbMath.JsRound((libraries * 2 + (c.pop > 20 ? 1 : 0)) * wisdomBoost * tm.know * cultKnow * (gov == 2 ? 1.15 : 1) * (1 + (im.know ?? 0)) * arcaneMul * (w.NatureSeason() == 3 ? 1.05 : 1));
+                // 知识优先投入研究（科技研发体系），余量入国库知识存量（解锁建筑）
+                double spent = FundResearch(w, c, knowGain);
+                c.knowledge = (c.knowledge ?? 0) + (knowGain - spent); // M-U3f 去 int 截断（diffusion 后余量小数）
+            }
+        }
+
+        /// engine recentVictory L5088-5094（战争分数结算中最近 200-300 tick 窗口内取胜）
+        public static bool RecentVictory(WbWorld w, int civId)
+        {
+            foreach (WbWarData wd in w.warData.Values)
+            {
+                int winner = wd.scoreA > wd.scoreB ? wd.a : wd.b;
+                if (winner == civId && w.tickCount - wd.startTick < 300 && w.tickCount - wd.startTick > 200) return true;
+            }
+            return false;
+        }
+
+        /// engine setGov L5097-5108（政体变革含播报）
+        public static void SetGov(WbWorld w, WbCiv c, int gov, string cause)
+        {
+            if (c.gov == gov) return;
+            c.gov = gov;
+            c.govYear = (int)System.Math.Floor(w.yearF);
+            w.govCache[c.id] = gov;
+            WbGovDef g = GovDefs[gov];
+            string text = cause == "revolution"
+                ? $"革命席卷「{c.name}」！王冠坠地，{g.name}在废墟上建立"
+                : $"「{c.name}」确立了{g.name}（{g.desc}）";
+            w.AddEvent("gov", text, c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+            w.Toast($"「{c.name}」改制为{g.name}", "info");
+        }
+
+        /// engine tryGovEvolve L5111-5136（门槛达成 → 概率跃迁；升序判定：帝国 > 共和 > 神权 > 君主）
+        public static void TryGovEvolve(WbWorld w, WbCiv c)
+        {
+            int last;
+            if (!w.lastGovEventTick.TryGetValue(c.id, out last)) last = -4000;
+            if (w.tickCount - last < 2000) return; // 变革冷却（≥50 年）
+            var owned = new HashSet<string>(c.techs ?? new List<string>());
+            int gov = c.gov;
+            int[] counts;
+            w.civBuildCounts.TryGetValue(c.id, out counts);
+            int temples = counts != null ? counts[BUILD_KINDS.TEMPLE] : 0;
+            bool canMonarchy = gov < 1 && c.pop >= 25;
+            bool canTheocracy = gov < 2 && temples >= 1 && owned.Contains("theology") && c.culture > 50;
+            bool canRepublic = gov != 3 && c.pop >= 60 && (owned.Contains("law") || owned.Contains("printing")) && (c.knowledge ?? 0) >= 40 && (c.stability ?? 70) < 55;
+            bool canEmpire = gov != 4 && c.pop >= 120 && (c.militarism ?? 30) >= 55 && (owned.Contains("legion") || owned.Contains("tactics"));
+            if (canEmpire && w.Rng() < 0.25)
+            {
+                w.lastGovEventTick[c.id] = w.tickCount;
+                SetGov(w, c, 4, "evolve");
+            }
+            else if (canRepublic && w.Rng() < 0.18)
+            {
+                w.lastGovEventTick[c.id] = w.tickCount;
+                SetGov(w, c, 3, "evolve");
+            }
+            else if (canTheocracy && w.Rng() < 0.15)
+            {
+                w.lastGovEventTick[c.id] = w.tickCount;
+                SetGov(w, c, 2, "evolve");
+            }
+            else if (canMonarchy && w.Rng() < 0.2)
+            {
+                w.lastGovEventTick[c.id] = w.tickCount;
+                SetGov(w, c, 1, "evolve");
+            }
+        }
+
+        /// engine adoptIdea L8806-8830（50% 全新发明 / 50% 邻国理念文化扩散）
+        public static void AdoptIdea(WbWorld w, WbCiv c)
+        {
+            List<WbIdea> known = new List<WbIdea>();
+            foreach (WbIdea i in w.emIdeas.Values)
+            {
+                if (c.ideas == null || !c.ideas.Contains(i.key)) known.Add(i);
+            }
+            WbIdea idea = null;
+            bool spread = false;
+            if (known.Count > 0 && w.Rng() < 0.5)
+            {
+                // 文化扩散：优先采纳文化强国的理念（文明间的思想传播）
+                idea = known[(int)(w.Rng() * known.Count)];
+                spread = true;
+            }
+            else if (w.emIdeas.Count < 48)
+            {
+                idea = WbTech.InventIdea(w, w.ideaSeq);
+                idea.key = $"id{w.ideaSeq++}";
+                w.emIdeas[idea.key] = idea;
+            }
+            else if (known.Count > 0)
+            {
+                idea = known[(int)(w.Rng() * known.Count)];
+                spread = true;
+            }
+            if (idea == null) return;
+            if (c.ideas == null) c.ideas = new List<string>();
+            c.ideas.Add(idea.key);
+            w.ideaModCache.Remove(c.id);
+            RecordEvo(w, "society", idea.name, null, c.colorHex,
+                spread ? $"{idea.desc}（自邻邦传入「{c.name}」）" : $"{idea.desc}（{c.name} 独创）", idea.desc,
+                new Dictionary<string, object> { { "civ", c.id } });
+            w.AddEvent("emerge", spread
+                ? $"「{c.name}」的使节带回了异邦的思想——「{idea.name}」开始在朝野流传（{idea.desc}）"
+                : $"「{c.name}」酝酿出新的治国理念——「{idea.name}」（{idea.desc}）", c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+        }
+
+        /// engine societyTick L5021-5085（每 %150===7：稳定度/文化/军国主义/节日/理念采纳/政体演变/危机）
+        public static void SocietyTick(WbWorld w)
+        {
+            foreach (WbCiv c in w.civs.ToArray())
+            {
+                if (c == null || !c.alive || c.pop <= 0) continue;
+                int[] counts;
+                w.civBuildCounts.TryGetValue(c.id, out counts);
+                int temples = counts != null ? counts[BUILD_KINDS.TEMPLE] : 0;
+                int libraries = counts != null ? counts[BUILD_KINDS.LIBRARY] : 0;
+                WbTechMods tm2 = TechModsOf(w, c.id);
+                WbIdeaMods im2 = IdeaModsOf(w, c.id); // v3：涌现理念加成（稳定/军国/厌战）
+                int gov = GovOf(w, c.id);
+                // —— 稳定度：战争损耗 / 领土过大 / 税负 vs 神殿安抚 / 文化繁荣 / 科技治理 ——
+                double stab = c.stability;
+                bool atWar = CivAtWar(w, c.id);
+                stab += atWar ? -1.2 : 0.6;
+                if (c.tiles.Count > 120) stab -= 0.4; // 过度扩张
+                stab += temples * 0.15 + c.culture * 0.001;
+                stab += tm2.stab / 50; // 法律/共和科技的治理红利
+                stab += (im2.stab ?? 0) * 0.45; // 涌现理念：民本/铁律的治理实效
+                stab += gov == 1 ? 0.2 : gov == 2 ? 0.12 : gov == 3 ? 0.25 : gov == 4 ? -0.15 : 0;
+                // —— 种族互连：多族王国的种族张力（包容种族多元化更稳 / 排外种族动荡）——
+                double homo;
+                if (!w.civHomogeneity.TryGetValue(c.id, out homo)) homo = 1;
+                if (homo < 0.9) stab += (RaceHarmonyOf(c.race) - 0.45) * 20 * (0.9 - homo);
+                // —— 联盟互连：盟约的安全感（凝聚力高的联盟成员更安定）——
+                WbAlliance alS = AllianceOfCiv(w, c.id);
+                if (alS != null && !atWar) stab += System.Math.Min(1.2, alS.cohesion * 0.012);
+                c.stability = System.Math.Max(0, System.Math.Min(100, stab));
+                // —— 文化积累：神殿 + 节日 + 科技乘数 + 种族虔诚（精灵的仪式与信仰）——
+                double cultGain = (temples * 0.8 + 0.4 + libraries * 0.3) * (0.7 + RacePietyOf(c.race) * 0.6) * tm2.cult * (gov == 2 ? 1.4 : 1);
+                c.culture = c.culture + cultGain;
+                // —— 军国主义：战争推高 / 胜利强化 / 和平消退 + 种族好战基线引力（血蹄永不停步）——
+                double mil = c.militarism ?? 30;
+                mil += atWar ? 0.9 : -0.5;
+                mil += (im2.mil ?? 0) * 3; // 涌现理念：军功爵推高 / 偃武主义拉低
+                if (RecentVictory(w, c.id)) mil += 1.2;
+                mil += (RaceAggrOf(c.race) * 100 - mil) * 0.01; // 向种族基线缓漂（每十年约 10% 靠近）
+                c.militarism = System.Math.Max(0, System.Math.Min(100, mil));
+                // —— 节日：文化丰盈时举国庆典（稳定度小振作 + 纪事）——
+                int fest = c.festivalCd;
+                if (fest > 0)
+                {
+                    c.festivalCd = fest - 1;
+                }
+                else if (c.culture > 40 && w.Rng() < 0.3)
+                {
+                    c.festivalCd = 10;
+                    c.culture = c.culture - 20;
+                    c.stability = System.Math.Min(100, c.stability + 3);
+                    w.AddEvent("festival", $"「{c.name}」举国欢庆丰年祭，鼓乐与篝火彻夜不息", c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+                }
+                // —— v3：涌现理念采纳（文化丰盈时酝酿新思想 / 异邦思想传入） ——
+                if ((c.ideas != null ? c.ideas.Count : 0) < 3 && c.culture > 60 && w.Rng() < 0.15)
+                {
+                    AdoptIdea(w, c);
+                }
+                // —— 政体演变：满足门槛且概率变革（革命式跃迁）——
+                TryGovEvolve(w, c);
+                // —— 危机：稳定度 < 18 → 动乱（叛乱分裂既有系统）/ 妥协变革 ——
+                if (c.stability < 18 && w.Rng() < 0.25)
+                {
+                    if (c.pop > 25 && (c.knowledge ?? 0) > 30 && c.gov != 3)
+                    {
+                        // 启蒙革命：直接进入共和制（翻身求稳）
+                        SetGov(w, c, 3, "revolution");
+                    }
+                    else
+                    {
+                        w.AddEvent("riot", $"「{c.name}」爆发了暴动——粮仓被劫，贵族的宅邸火光冲天", c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+                        c.stability = System.Math.Min(40, c.stability + 12); // 动乱宣泄后回升
+                        c.gold = System.Math.Max(0, (c.gold ?? 0) - 15);
+                    }
+                }
+            }
         }
 
         /// 联盟主循环（每 300 tick ≈ 7.5 年）：对账 → 结盟 → 扩员 → 凝聚力 → 经济互助 → 种族关系漂移（engine L8193-8361）
@@ -2389,12 +2671,12 @@ namespace PixelWorldBox.Wb
                     }
                 case "wealth":
                     {
-                        int g = civ.gold ?? 0;
+                        double g = civ.gold ?? 0; // M-U3f gold double 化（wealth 评估）
                         return (g >= d.param, g >= d.param ? $"国库充盈（{g} 财富）" : $"期限已至，国库仅 {g} 财富");
                     }
                 case "wisdom":
                     {
-                        int k = civ.knowledge ?? 0;
+                        double k = civ.knowledge ?? 0; // M-U3f knowledge double 化（wisdom 评估）
                         return (k >= d.param, k >= d.param ? $"知识渊博（{k}）" : $"期限已至，知识仅 {k}");
                     }
                 case "populate":
@@ -2479,7 +2761,7 @@ namespace PixelWorldBox.Wb
                 }
                 else
                 {
-                    civ.gold = (int)System.Math.Max(0, (civ.gold ?? 0) - 60);
+                    civ.gold = System.Math.Max(0, (civ.gold ?? 0) - 60); // M-U3f 去 int 截断
                     foreach (WbArmy a in w.armies) if (a.civ == civ.id) a.morale = System.Math.Max(25, a.morale - 10);
                     w.AddEvent("decreeFail", $"神谕落空：「{civ.name}」——{msg}", civ.colorHex);
                     w.Toast($"「{civ.name}」未能达成{DirectiveLabel[d.kind]}", "danger");

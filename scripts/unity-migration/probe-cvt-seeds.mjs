@@ -39,4 +39,13 @@ const s31 = probe('CVT31-aid-drift', (r) => r.traces[0].civs.find((c) => c.id ==
 // CVT38：口传心授命中（research 非 null —— rng<0.35 且 rng<0.5 双门）
 const s38 = probe('CVT38-tech-tick-natural', (r) => r.traces[0].civs[0].research != null);
 
-console.log(JSON.stringify({ s20, s21, s22, s24, s26, s27, s30, s31, s38 }));
+// ==================== M-U3f 经济/社会域 ====================
+// CVT52：理念扩散三连门（festival rng≥0.3 跳过 + idea rng<0.15 + adoptIdea rng<0.5 known 分支）
+const s52 = probe('CVT52-society-adopt-idea', (r) => {
+  const c = r.traces[0].civs[0];
+  return JSON.stringify(c.ideas) === '["id0"]' && r.traces[0].emIdeas.length === 1;
+});
+// CVT54：危机暴动门（crisis rng<0.25 且 pop≤25 走 riot 支）
+const s54 = probe('CVT54-society-riot', (r) => r.traces[0].newEvents.some((e) => e.kind === 'riot'));
+
+console.log(JSON.stringify({ s20, s21, s22, s24, s26, s27, s30, s31, s38, s52, s54 }));

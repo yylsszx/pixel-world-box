@@ -128,10 +128,26 @@ function dumpCiv(c) {
     mergedInto: c.mergedInto === undefined ? null : c.mergedInto,
     techs: c.techs ? [...c.techs] : null, research: c.research ?? null, researchP: c.researchP ?? null,
     gov: c.gov ?? null, stability: c.stability ?? null, culture: c.culture ?? null, militarism: c.militarism ?? null,
+    // —— M-U3f 经济/社会域断言锚点 ——
+    income: c.income ?? null, expense: c.expense ?? null, festivalCd: c.festivalCd ?? null, govYear: c.govYear ?? null,
+    ideas: c.ideas ? [...c.ideas] : null,
     kingId: c.kingId === undefined ? null : c.kingId, kingName: c.kingName, banner: c.banner,
     colorHex: c.colorHex, color: c.color,
     tiles: [...c.tiles], frontier: [...c.frontier],
   };
+}
+function dumpArmy(a) {
+  return {
+    id: a.id, civ: a.civ, name: a.name, members: [...a.members], leaderId: a.leaderId,
+    x: a.x, y: a.y, tx: a.tx, ty: a.ty, state: a.state, morale: a.morale,
+    kills: a.kills, losses: a.losses, tactical: a.tactical, clashWith: a.clashWith === undefined ? null : a.clashWith,
+  };
+}
+function dumpIdea(i) {
+  return { key: i.key, name: i.name, desc: i.desc, mods: {
+    gold: i.mods.gold ?? null, stab: i.mods.stab ?? null, mil: i.mods.mil ?? null,
+    know: i.mods.know ?? null, repro: i.mods.repro ?? null, wear: i.mods.wear ?? null,
+  } };
 }
 function diffArr(prev, cur) {
   const out = [];
@@ -161,10 +177,12 @@ function mkCiv(eng, o) {
     popZeroTick: o.popZeroTick, history: [],
     gold: o.gold ?? 0, knowledge: o.knowledge ?? 0,
     armyCd: o.armyCd ?? 0, mobilizeUntil: o.mobilizeUntil,
-    mergedInto: o.mergedInto, techs: o.techs ? [...o.techs] : [], research: null, researchP: 0,
+    mergedInto: o.mergedInto, techs: o.techs ? [...o.techs] : [], research: o.research ?? null, researchP: o.researchP ?? 0,
     gov: o.gov ?? 0, govYear: 0, stability: o.stability ?? 70,
     militarism: o.militarism ?? 30, income: 0, expense: 0, festivalCd: 0,
   };
+  // civ.ideas undefined 语义（未采纳 → dump null）—— 采纳域 C# null（M-U3f economy im.gold 消费前置）
+  if (o.ideas) civ.ideas = [...o.ideas];
   eng.civs.push(civ);
   eng.civs[civ.id] = civ;
   // createCiv 的 id = civSeq++（engine L1564）—— 夹具绕过 createCiv 时须同步游标，否则叛乱/融合建新国 id 撞车
@@ -172,6 +190,29 @@ function mkCiv(eng, o) {
   // 夹具语义：tiles 是已持有领土 → owner 数组同步（蓝本 claimTile/tryBuildBuilding/seedTerritory 均以 owner 为真态）
   for (const i of civ.tiles) eng.owner[i] = civ.id;
   return civ;
+}
+function mkArmy(eng, o) {
+  // engine Army 产物形状（types.ts L607）—— economyTick 消费域：civ/state/members/morale（军饷/欠饷）
+  const a = {
+    id: o.id, civ: o.civ, name: o.name ?? `A${o.id}`, members: [...(o.members ?? [])],
+    leaderId: o.leaderId ?? -1, x: o.x ?? 0, y: o.y ?? 0, tx: o.tx ?? o.x ?? 0, ty: o.ty ?? o.y ?? 0,
+    state: o.state ?? 'rally', morale: o.morale ?? 1, kills: o.kills ?? 0, losses: o.losses ?? 0,
+    tactical: o.tactical ?? false, clashWith: o.clashWith,
+  };
+  eng.armies.push(a);
+  return a;
+}
+function mkIdea(eng, o) {
+  // engine adoptIdea 产物形状（emergence.ts IdeaDef）—— societyTick adoptIdea 扩散域夹具
+  const idea = {
+    key: o.key, name: o.name ?? `I${o.key}`, desc: o.desc ?? '',
+    mods: { gold: o.mods?.gold, stab: o.mods?.stab, mil: o.mods?.mil, know: o.mods?.know, repro: o.mods?.repro, wear: o.mods?.wear },
+  };
+  eng.emIdeas.set(idea.key, idea);
+  // ideaSeq 游标同步（engine adoptIdea: idea.key = `id${this.ideaSeq++}` —— 夹具注入不撞发明 id）
+  const n = parseInt(String(o.key).replace(/^id/, ''), 10);
+  if (Number.isFinite(n)) eng.ideaSeq = Math.max(eng.ideaSeq ?? 1, n + 1);
+  return idea;
 }
 function mkUnit(eng, o) {
   const u = {
@@ -240,10 +281,10 @@ function mkAlliance(eng, o) {
   return al;
 }
 function mkWar(eng, o) {
-  // engine ensureWarData 产物形状（声明式战争档案夹具 —— eliminateCiv 清理路径用）
+  // engine ensureWarData 产物形状（声明式战争档案夹具 —— eliminateCiv 清理路径用；M-U3f 加 scoreA/scoreB —— recentVictory 窗口判定）
   eng.warData.set(o.key, {
     key: o.key, a: o.a, b: o.b, startTick: o.startTick ?? 0, startYear: o.startYear ?? 0,
-    total: o.total ?? false, scoreA: 0, scoreB: 0, exA: 0, exB: 0, casA: 0, casB: 0,
+    total: o.total ?? false, scoreA: o.scoreA ?? 0, scoreB: o.scoreB ?? 0, exA: 0, exB: 0, casA: 0, casB: 0,
     razedA: 0, razedB: 0, battles: 0, giveUpAt: o.giveUpAt ?? 0,
     reason: o.reason ?? 'border', reasonText: o.reasonText ?? '', aggressor: o.aggressor ?? 0,
     goal: o.goal ?? 0, goalNow: 0, occA: 0, occB: 0, popA0: o.popA0 ?? 0, popB0: o.popB0 ?? 0,
@@ -297,6 +338,10 @@ function buildTrace(eng, prevSnap, toasts, tickNo) {
     evoNodes: eng.evoNodes.map(dumpEvo),
     // —— M-U3e 扩展段 ——
     emTechs: [...(eng.emTechs ?? new Map()).entries()].map(([k, t]) => dumpEmTech(t)),
+    // —— M-U3f 扩展段（经济/社会域）——
+    armies: eng.armies.map(dumpArmy),
+    emIdeas: [...(eng.emIdeas ?? new Map()).entries()].map(([k, i]) => dumpIdea(i)),
+    ideaSeq: eng.ideaSeq ?? null,
   };
   eng.__lastEventId = eng.eventSeq;
   return [tr, s2];
@@ -353,6 +398,10 @@ function runScenario(sc) {
   for (const d of sc.directives ?? []) mkDirective(eng, d); // M-U3c：旨意夹具（finishDirective 结算路径）
   for (const al of sc.alliances ?? []) mkAlliance(eng, al); // M-U3c：联盟夹具（融合/除名/解散路径）
   for (const wd of sc.wars ?? []) mkWar(eng, wd); // M-U3c：战争档案夹具（eliminateCiv 清理路径）
+  for (const ar of sc.armies ?? []) mkArmy(eng, ar); // M-U3f：军团夹具（economyTick 军饷/欠饷路径）
+  for (const id_ of sc.emIdeas ?? []) mkIdea(eng, id_); // M-U3f：涌现理念夹具（adoptIdea 扩散/ideaMods 消费路径）
+  for (const [cid, v] of sc.homogeneity ?? []) eng.civHomogeneity.set(cid, v); // M-U3f：种族同质性声明式（statsTick 黄金不跑 → 声明式）
+  if (sc.seasonOffset != null) eng.nature.seasonOffset = sc.seasonOffset; // M-U3f：季节注入（season getter = (floor(yearF/2)+offset)%4）
   if (sc.setup) sc.setup(eng);
   eng.tickCount = sc.startTick ?? 0;
   // 夹具后清 generate 残留（generate 的 fx/dirty/纪事是 C# 夹具无法复现的噪声 —— 黄金基线只含夹具+tick 产物）
@@ -380,11 +429,16 @@ function runScenario(sc) {
         if (iss.at === k) eng.issueDirective(iss.civ, iss.kind, iss.param ?? 0, iss.target);
       }
       // M-U3e：fund 点（economyTick 知识注入未译域的直调通道——fundResearch(civ, points) 蓝本原语义）
+      // M-U3f 起 economyTick 已译，fund 点保留用于纯研究场景（CVT39-42 类）
       for (const fd of sc.fund ?? []) {
         if (fd.at === k) eng.fundResearch(eng.civs[fd.civ], fd.points);
       }
+      // M-U3f 宿主序对齐 engine L2526-2571：economy（%120===0，L2535）在 directive 前；
+      // society（%150===7，L2569）在 techTick 后 allianceTick 前
+      if (eng.tickCount % 120 === 0) eng.economyTick(); // engine L2535
       if (eng.tickCount % 30 === 0) eng.directiveTick();
       if (eng.tickCount % 120 === 5) eng.techTick(); // engine L2567（与 directiveTick 错峰）
+      if (eng.tickCount % 150 === 7) eng.societyTick(); // engine L2569
       if (eng.tickCount % 300 === 23) eng.allianceTick();
     }
     eng.tickCount++;
@@ -394,7 +448,7 @@ function runScenario(sc) {
   }
   return { name: sc.name, seed, startTick: sc.startTick ?? 0, ticks: sc.ticks, laws: eng.laws, rngA0,
     eventSeq0, toastSeq0, terrainRle,
-    fixture: { paint: sc.paint ?? null, civs: sc.civs ?? null, rel: sc.rel ?? null, tension: sc.tension ?? null, units: sc.units ?? null, buildings: sc.buildings ?? null, met: sc.met ?? null, directives: sc.directives ?? null, alliances: sc.alliances ?? null, wars: sc.wars ?? null, noAutoKing: sc.noAutoKing ?? null, hostTicks: sc.hostTicks ?? null, issue: sc.issue ?? null, fund: sc.fund ?? null },
+    fixture: { paint: sc.paint ?? null, civs: sc.civs ?? null, rel: sc.rel ?? null, tension: sc.tension ?? null, units: sc.units ?? null, buildings: sc.buildings ?? null, met: sc.met ?? null, directives: sc.directives ?? null, alliances: sc.alliances ?? null, wars: sc.wars ?? null, noAutoKing: sc.noAutoKing ?? null, hostTicks: sc.hostTicks ?? null, issue: sc.issue ?? null, fund: sc.fund ?? null, armies: sc.armies ?? null, emIdeas: sc.emIdeas ?? null, homogeneity: sc.homogeneity ?? null, seasonOffset: sc.seasonOffset ?? null } ,
     traces };
 }
 
@@ -723,13 +777,13 @@ const scenarios = [
     civs: [{ id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], knowledge: 10, gold: 0 }] },
   // CVT39 青铜完成：ownedExcept('bronze') → availableTechs=[bronze] 确定性选题 → fund 20 ≥ cost 16
   // → completeTech：techs+1/research null/researchP 0/全军现役 retro（dmg ×1.15/tDmg 记账）+ tech 事件（era1 无 toast）
-  { name: 'CVT39-fund-bronze-complete', seed: 0x5c28, ticks: 1, startTick: 0, hostTicks: true,
+  { name: 'CVT39-fund-bronze-complete', seed: 0x5c28, ticks: 1, startTick: 1, hostTicks: true,
     civs: [{ id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], techs: ownedExcept('bronze') }],
     units: [{ id: 10, civ: 0, x: 120.5, y: 80.5, job: 2 }],
     fund: [{ at: 0, civ: 0, points: 20 }] },
   // CVT40 铁器完成：ownedExcept('iron')（含 bronze/crossbow）→ availableTechs=[iron] → fund 40 ≥ cost 30
   // → retro dmg ×1.33（bronze 0.15+iron 0.18 叠加）/maxHp ×1.10 round/hp 按伤率缩放 + era≥2 toast
-  { name: 'CVT40-fund-iron-hp-toast', seed: 0x5c29, ticks: 1, startTick: 0, hostTicks: true,
+  { name: 'CVT40-fund-iron-hp-toast', seed: 0x5c29, ticks: 1, startTick: 1, hostTicks: true,
     civs: [{ id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], techs: ownedExcept('iron') }],
     units: [
       { id: 10, civ: 0, x: 120.5, y: 80.5, job: 2, hp: 7 },
@@ -738,19 +792,90 @@ const scenarios = [
     fund: [{ at: 0, civ: 0, points: 40 }] },
   // CVT41 石匠 bHp 升级：ownedExcept('masonry') → availableTechs=[masonry] → fund 20 ≥ cost 15
   // → 建筑耐久上限重算：house base 70 × (1+shelter 0.15+masonry 0.25)=98 → bHp min(98, 70+17.5)=87.5 f64
-  { name: 'CVT41-fund-masonry-bhp', seed: 0x5c2a, ticks: 1, startTick: 0, hostTicks: true,
+  { name: 'CVT41-fund-masonry-bhp', seed: 0x5c2a, ticks: 1, startTick: 1, hostTicks: true,
     civs: [{ id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], techs: ownedExcept('masonry') }],
     buildings: [[idx(120, 80), 1, 0]],
     fund: [{ at: 0, civ: 0, points: 20 }] },
   // CVT42 涌现发明：全 50 项拥有 → availableTechs=[] → pickResearch null → inventEmTech
   // → inventTech 程序化（气质加权领域/前缀×领域命名/主效果+35% 副效果/代数成本）→ emTechs+recordEvo+emerge 播报
   // → research='em1' researchP=50（cost 110+ 未达）
-  { name: 'CVT42-emtech-invent', seed: 0x5c2b, ticks: 1, startTick: 0, hostTicks: true,
+  { name: 'CVT42-emtech-invent', seed: 0x5c2b, ticks: 1, startTick: 1, hostTicks: true,
     civs: [{ id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], techs: [...TECH_KEYS], militarism: 40, culture: 30, gold: 100 }],
     fund: [{ at: 0, civ: 0, points: 50 }] },
   // CVT43 知识封顶反例：knowledge 50 ≥40 → techTick 自然积累门短路 → 零 rng 消耗（rngA 不变）
   { name: 'CVT43-knowledge-cap', seed: 0x5c2c, ticks: 1, startTick: 125, hostTicks: true,
     civs: [{ id: 0, pop: 2, houses: 1, capital: idx(120, 80), tiles: [idx(120, 80)], knowledge: 50 }] },
+
+  // ==================== M-U3f 经济/社会域（economy %120===0 / society %150===7） ====================
+  // 预算口径：taxBase=floor(pop*0.05*tm.tax*govTaxMul)；industryMul=0.8+(rpE?.industry??0.5)*0.4；
+  // drag=1/(1+hoard/900)；income=round((mkt*3+tmp+prt*2+tax)*wealth*tm.gold*gov3?(1+im.gold)*ind*winter*ally*drag)；
+  // upkeep=Σmembers*0.12(retreat 不计)+castle*0.5+tower*0.15；expense=round(upkeep*10)/10。
+
+  // CVT44 经济基线：pop 16 taxBase 0、5 建筑（market/temple/port/tower/castle → houses 5 cap 20 不建）
+  // human industry 0.6 → 1.04；knowGain=0（libraries 0 + pop≤20）→ fundResearch(0) 早退零 rng
+  { name: 'CVT44-econ-basic', seed: 0x5c31, ticks: 1, startTick: 120, hostTicks: true,
+    civs: [{ id: 0, pop: 16, capital: idx(120, 80), tiles: [idx(120, 80)], gold: 100 }],
+    buildings: [[idx(118, 80), 9, 0], [idx(119, 80), 10, 0], [idx(121, 80), 7, 0], [idx(122, 80), 3, 0], [idx(123, 80), 6, 0]] },
+  // CVT45 富国+启智双旨意 ×2：+ culture 100 → cultKnow 1.2 + ideas [id0] im.gold 0.18 + library
+  { name: 'CVT45-econ-wealth-wisdom', seed: 0x5c32, ticks: 1, startTick: 120, hostTicks: true,
+    civs: [{ id: 0, pop: 16, capital: idx(120, 80), tiles: [idx(120, 80)], gold: 100, culture: 100, ideas: ['id0'] }],
+    buildings: [[idx(118, 80), 9, 0], [idx(119, 80), 10, 0], [idx(121, 80), 7, 0], [idx(122, 80), 3, 0], [idx(123, 80), 6, 0], [idx(124, 80), 8, 0]],
+    directives: [{ id: 1, civ: 0, kind: 'wealth', param: 300, status: 'active', startTick: 120, deadlineTick: 1300 },
+                 { id: 2, civ: 0, kind: 'wisdom', param: 50, status: 'active', startTick: 120, deadlineTick: 1300 }],
+    emIdeas: [{ key: 'id0', name: '重商', desc: '商路即国脉', mods: { gold: 0.18 } }] },
+  // CVT46 冬季×矮人：seasonOffset 3 → winterMul 0.9 / 知识 ×1.05；dwarf industry 0.9 → 1.16 arcane 0.4 → 0.98
+  { name: 'CVT46-econ-winter-dwarf', seed: 0x5c33, ticks: 1, startTick: 120, hostTicks: true,
+    civs: [{ id: 0, pop: 16, race: 2, capital: idx(120, 80), tiles: [idx(120, 80)], gold: 100 }],
+    buildings: [[idx(118, 80), 9, 0], [idx(119, 80), 10, 0], [idx(121, 80), 7, 0], [idx(122, 80), 3, 0], [idx(123, 80), 6, 0], [idx(124, 80), 8, 0]],
+    seasonOffset: 3 },
+  // CVT47 联盟商贸 bonded 1.25：双国跑 economy（civ1 无建筑 income 0 金不动）
+  { name: 'CVT47-econ-ally-bonded', seed: 0x5c34, ticks: 1, startTick: 120, hostTicks: true,
+    civs: [{ id: 0, pop: 16, capital: idx(120, 80), tiles: [idx(120, 80)], gold: 100 },
+           { id: 1, pop: 16, houses: 5, capital: idx(150, 80), tiles: [idx(150, 80)], gold: 50 }],
+    buildings: [[idx(118, 80), 9, 0], [idx(119, 80), 10, 0], [idx(121, 80), 7, 0], [idx(122, 80), 3, 0], [idx(123, 80), 6, 0]],
+    alliances: [{ id: 1, name: '中原商盟', members: [0, 1], leader: 0, cohesion: 60, bonded: true }] },
+  // CVT48 军饷+欠饷：军团 march 20 人 retreat 30 人（retreat 不计军饷）→ upkeep 2.4；gold 0 → 欠饷双军团 morale -0.5
+  { name: 'CVT48-econ-army-morale', seed: 0x5c35, ticks: 1, startTick: 120, hostTicks: true,
+    civs: [{ id: 0, pop: 16, houses: 5, capital: idx(120, 80), tiles: [idx(120, 80)], gold: 0 }],
+    buildings: [[idx(118, 80), 4, 0]], // farm 垫门：economyTick 首门 counts 缺失 → continue 整体跳过（farm 不在 upkeep 公式）
+    armies: [{ id: 1, civ: 0, members: [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], state: 'march', morale: 1 },
+             { id: 2, civ: 0, members: [31, 32, 33], state: 'retreat', morale: 1 }] },
+  // CVT49 知识注入完成+回流：8 library → knowGain 15 ≥ masonry cost 15 → completeTech（bHp 88）→ 余量回流 knowledge+0
+  { name: 'CVT49-knowledge-spill', seed: 0x5c36, ticks: 1, startTick: 120, hostTicks: true,
+    civs: [{ id: 0, pop: 16, capital: idx(120, 80), tiles: [idx(120, 80)], gold: 100, research: 'masonry', researchP: 0 }],
+    buildings: [[idx(110, 78), 8, 0], [idx(111, 78), 8, 0], [idx(112, 78), 8, 0], [idx(113, 78), 8, 0],
+                [idx(114, 78), 8, 0], [idx(115, 78), 8, 0], [idx(116, 78), 8, 0], [idx(117, 78), 8, 0]] },
+  // CVT50 社会稳定度：warData 夹具 atWar -1.2 + homogeneity civ0 0.5（human harmony 0.7 → +2.0）civ1 默认 1（跳过）
+  // culture 0.376 / mil atWar 31.0（双国）
+  { name: 'CVT50-society-stab', seed: 0x5c37, ticks: 1, startTick: 157, hostTicks: true,
+    civs: [{ id: 0, pop: 16, capital: idx(120, 80), tiles: [idx(120, 80)] },
+           { id: 1, pop: 16, capital: idx(150, 80), tiles: [idx(150, 80)] }],
+    rel: [[0, 1, -21]], // atWar 真相 = rel < -20（engine L2061）非 warData
+    wars: [{ key: '0-1', a: 0, b: 1, startTick: 100, reason: 'border' }],
+    homogeneity: [[0, 0.5]] },
+  // CVT51 节日：culture 45 → +0.376=45.376 >40 + rng<0.3 → festival（culture-20/stab+3/festivalCd=10/丰年祭纪事）
+  { name: 'CVT51-society-festival', seed: 0x5c38, ticks: 1, startTick: 157, hostTicks: true,
+    civs: [{ id: 0, pop: 16, capital: idx(120, 80), tiles: [idx(120, 80)], culture: 45 }] },
+  // CVT52 理念扩散：culture 65 → festival rng≥0.3 跳过 → idea rng<0.15 → adoptIdea（known=[id0] rng<0.5 → spread 传入）
+  { name: 'CVT52-society-adopt-idea', seed: 0xd56bc, ticks: 1, startTick: 157, hostTicks: true,
+    civs: [{ id: 0, pop: 16, capital: idx(120, 80), tiles: [idx(120, 80)], culture: 65 }],
+    emIdeas: [{ key: 'id0', name: '重商', desc: '商路即国脉', mods: { gold: 0.18 } }] },
+  // CVT53 政体演变君主制：pop 25 canMonarchy（gov 0<1）→ festival rng≥0.3 跳 → govEvolve rng<0.2 → setGov(1,'evolve') govYear=0
+  { name: 'CVT53-society-gov-monarchy', seed: 0x5c3a, ticks: 1, startTick: 157, hostTicks: true,
+    civs: [{ id: 0, pop: 25, capital: idx(120, 80), tiles: [idx(120, 80)], culture: 45, houses: 7 }] },
+  // CVT54 危机暴动：stability 10 → 10.6+im.stab 3*0.45=1.35 → 11.95 <18 + rng<0.25 → pop≤25 → riot（stab min(40,+12) / gold-15）
+  { name: 'CVT54-society-riot', seed: 0x54df3, ticks: 1, startTick: 157, hostTicks: true,
+    civs: [{ id: 0, pop: 16, capital: idx(120, 80), tiles: [idx(120, 80)], stability: 10, gold: 20, ideas: ['id0'] }],
+    emIdeas: [{ key: 'id0', name: '民本', desc: '民为邦本，本固邦宁', mods: { stab: 3 } }] },
+  // CVT55 近期胜利：warData scoreA 5 scoreB 1 + startTick -93（tickCount-start=250 ∈(200,300)）→ winner civ0 → mil +1.2
+  { name: 'CVT55-society-recent-victory', seed: 0x5c3c, ticks: 1, startTick: 157, hostTicks: true,
+    civs: [{ id: 0, pop: 16, capital: idx(120, 80), tiles: [idx(120, 80)] },
+           { id: 1, pop: 16, capital: idx(150, 80), tiles: [idx(150, 80)] }],
+    rel: [[0, 1, -21]],
+    wars: [{ key: '0-1', a: 0, b: 1, startTick: -93, scoreA: 5, scoreB: 1, reason: 'border' }] },
+  // CVT56 共和演变：pop 60 houses 20（cap 80 不建）+ techs law + knowledge 40 + stab 50 → 50.6<55 canRepublic → rng<0.18
+  { name: 'CVT56-society-gov-republic', seed: 0x5c3d, ticks: 1, startTick: 157, hostTicks: true,
+    civs: [{ id: 0, pop: 60, houses: 20, capital: idx(120, 80), tiles: [idx(120, 80)], stability: 50, knowledge: 40, techs: ['law'] }] },
 ];
 
 // ---------------- 主流程 ----------------
@@ -1074,6 +1199,94 @@ function sanity(results) {
   const t43 = r43.traces[0];
   A('CVT43 no rng consumed', t43.rngA === r43.rngA0, `rngA=${t43.rngA} a0=${r43.rngA0}`);
   A('CVT43 research null', t43.civs[0].research == null, `r=${t43.civs[0].research}`);
+
+  // ==================== M-U3f 经济/社会域 ====================
+  const r44 = by['CVT44-econ-basic'];
+  const c44 = r44.traces[0].civs[0];
+  A('CVT44 income 6', c44.income === 6, `income=${c44.income}（预算 (3+1+2+0)*1.04*0.9=5.616→6）`);
+  A('CVT44 expense 0.7', c44.expense === 0.7, `expense=${c44.expense}（round(6.5)/10）`);
+  A('CVT44 gold 105.35', c44.gold === 105.35, `gold=${c44.gold}（100+6-0.65 f64）`);
+  A('CVT44 knowledge 0 spent', c44.knowledge === 0, `k=${c44.knowledge}（knowGain 0 → fund 早退）`);
+  A('CVT44 research null', c44.research == null, `r=${c44.research}（fundResearch(0) 早退）`);
+
+  const r45 = by['CVT45-econ-wealth-wisdom'];
+  const c45 = r45.traces[0].civs[0];
+  A('CVT45 income 13', c45.income === 13, `income=${c45.income}（6*2*1.18*1.04*0.9=13.2278→13）`);
+  A('CVT45 gold 112.35', c45.gold === 112.35, `gold=${c45.gold}`);
+  // 火种 cost 4：knowGain 5 ≥ 4 → 完成 + 缺口回流 knowledge=5-4=1（真引擎验证）
+  A('CVT45 fire completed', c45.techs.includes('fire') && c45.research == null && c45.researchP === 0, `techs=${JSON.stringify(c45.techs)} r=${c45.research}`);
+  A('CVT45 knowledge spill 1', c45.knowledge === 1, `k=${c45.knowledge}（knowGain 5 - cost 4 余量回流）`);
+
+  const r46 = by['CVT46-econ-winter-dwarf'];
+  const c46 = r46.traces[0].civs[0];
+  A('CVT46 winter income 6', c46.income === 6, `income=${c46.income}（6*1.16*0.9=6.264→6，非冬为 7）`);
+  A('CVT46 gold 105.35', c46.gold === 105.35, `gold=${c46.gold}`);
+  A('CVT46 researchP 2', c46.researchP === 2, `p=${c46.researchP}（knowGain round(2*0.98*1.05)=2）`);
+
+  const r47 = by['CVT47-econ-ally-bonded'];
+  const c47a = r47.traces[0].civs.find((c) => c.id === 0);
+  const c47b = r47.traces[0].civs.find((c) => c.id === 1);
+  A('CVT47 bonded income 7', c47a.income === 7, `income=${c47a.income}（6*1.04*1.25*0.9=7.02→7，drag 漏不得）`);
+  A('CVT47 gold 106.35', c47a.gold === 106.35, `gold=${c47a.gold}`);
+  A('CVT47 civ1 gold 50', c47b.gold === 50, `gold=${c47b.gold}（零建筑 counts 缺 → continue 跳过）`);
+
+  const r48 = by['CVT48-econ-army-morale'];
+  const c48 = r48.traces[0].civs[0];
+  A('CVT48 gold clamped 0', c48.gold === 0, `gold=${c48.gold}（0+0-2.4→max(0,·)）`);
+  A('CVT48 upkeep 2.4', c48.expense === 2.4, `expense=${c48.expense}（20*0.12 retreat 不计）`);
+  A('CVT48 both armies unpaid', r48.traces[0].armies.every((a) => Math.abs(a.morale - 0.5) < 1e-9), JSON.stringify(r48.traces[0].armies.map((a) => a.morale)));
+
+  const r49 = by['CVT49-knowledge-spill'];
+  const c49 = r49.traces[0].civs[0];
+  A('CVT49 masonry owned', c49.techs.includes('masonry'), `techs=${JSON.stringify(c49.techs)}`);
+  A('CVT49 knowledge 0 spill', c49.knowledge === 0, `k=${c49.knowledge}（15-15 缺口全耗）`);
+  A('CVT49 research cleared', c49.research == null && c49.researchP === 0, `r=${c49.research} p=${c49.researchP}`);
+  A('CVT49 bHp library 137.5', r49.traces[0].bHp.some(([k, v]) => Math.abs(v - 137.5) < 1e-9), JSON.stringify(r49.traces[0].bHp.slice(0, 3)));
+
+  const r50 = by['CVT50-society-stab'];
+  const c50a = r50.traces[0].civs.find((c) => c.id === 0);
+  const c50b = r50.traces[0].civs.find((c) => c.id === 1);
+  A('CVT50 stab homo 70.8', Math.abs(c50a.stability - 70.8) < 1e-9, `stab=${c50a.stability}（70-1.2+2.0）`);
+  A('CVT50 stab civ1 68.8', Math.abs(c50b.stability - 68.8) < 1e-9, `stab=${c50b.stability}`);
+  A('CVT50 culture 0.376', Math.abs(c50a.culture - 0.376) < 1e-9, `cult=${c50a.culture}（0.4*(0.7+0.4*0.6)）`);
+  A('CVT50 mil 30.991', Math.abs(c50a.militarism - 30.991) < 1e-9, `mil=${c50a.militarism}（30+0.9+(40-30.9)*0.01）`);
+
+  const r51 = by['CVT51-society-festival'];
+  const c51 = r51.traces[0].civs[0];
+  A('CVT51 festivalCd 10', c51.festivalCd === 10, `cd=${c51.festivalCd}`);
+  A('CVT51 culture 25.376', Math.abs(c51.culture - 25.376) < 1e-9, `cult=${c51.culture}（45.376-20）`);
+  A('CVT51 stab 73.645', Math.abs(c51.stability - 73.645) < 1e-9, `stab=${c51.stability}（70.645+3，culture*0.001 在 festival 前）`);
+  A('CVT51 festival event', r51.traces[0].newEvents.some((e) => e.kind === 'festival' && e.text.includes('丰年祭')), JSON.stringify(r51.traces[0].newEvents.map((e) => e.kind)));
+
+  const r52 = by['CVT52-society-adopt-idea'];
+  const c52 = r52.traces[0].civs[0];
+  A('CVT52 idea adopted', JSON.stringify(c52.ideas) === '["id0"]', `ideas=${JSON.stringify(c52.ideas)}`);
+  A('CVT52 no invention', r52.traces[0].emIdeas.length === 1 && r52.traces[0].emIdeas[0].key === 'id0', `em=${r52.traces[0].emIdeas.length}（扩散不发明）`);
+  A('CVT52 evo society', r52.traces[0].evoNodes.some((n) => n.kind === 'society'), JSON.stringify(r52.traces[0].evoNodes.map((n) => n.kind)));
+  A('CVT52 emerge event', r52.traces[0].newEvents.some((e) => e.kind === 'emerge' && e.text.includes('使节带回')), JSON.stringify(r52.traces[0].newEvents.map((e) => [e.kind, e.text.slice(0, 16)])));
+
+  const r53 = by['CVT53-society-gov-monarchy'];
+  const c53 = r53.traces[0].civs[0];
+  A('CVT53 gov 1', c53.gov === 1 && c53.govYear === 0, `gov=${c53.gov} year=${c53.govYear}`);
+  A('CVT53 gov event', r53.traces[0].newEvents.some((e) => e.kind === 'gov' && e.text.includes('君主制')), JSON.stringify(r53.traces[0].newEvents.map((e) => e.kind)));
+  A('CVT53 toast', r53.traces[0].toasts.some((t) => t.text.includes('君主制')), JSON.stringify(r53.traces[0].toasts.map((t) => t.text.slice(0, 14))));
+
+  const r54 = by['CVT54-society-riot'];
+  const c54 = r54.traces[0].civs[0];
+  A('CVT54 stab 23.95', Math.abs(c54.stability - 23.95) < 1e-9, `stab=${c54.stability}（min(40, 11.95+12)）`);
+  A('CVT54 gold 5', c54.gold === 5, `gold=${c54.gold}（20-15）`);
+  A('CVT54 riot event', r54.traces[0].newEvents.some((e) => e.kind === 'riot' && e.text.includes('暴动')), JSON.stringify(r54.traces[0].newEvents.map((e) => e.kind)));
+
+  const r55 = by['CVT55-society-recent-victory'];
+  const c55a = r55.traces[0].civs.find((c) => c.id === 0);
+  const c55b = r55.traces[0].civs.find((c) => c.id === 1);
+  A('CVT55 victor mil 32.179', Math.abs(c55a.militarism - 32.179) < 1e-9, `mil=${c55a.militarism}（30+0.9+1.2+(40-32.1)*0.01）`);
+  A('CVT55 loser mil 30.991', Math.abs(c55b.militarism - 30.991) < 1e-9, `mil=${c55b.militarism}`);
+
+  const r56 = by['CVT56-society-gov-republic'];
+  const c56 = r56.traces[0].civs[0];
+  A('CVT56 gov 3', c56.gov === 3, `gov=${c56.gov}`);
+  A('CVT56 republic event', r56.traces[0].newEvents.some((e) => e.kind === 'gov' && e.text.includes('共和制')), JSON.stringify(r56.traces[0].newEvents.map((e) => e.kind)));
 
   return asserts;
 }

@@ -1778,7 +1778,7 @@ namespace PixelWorldBox.Tests
             Assert.AreEqual(160, meta["H"].Value<int>(), "meta H");
             Assert.AreEqual(4, meta["houseCap"].Value<int>(), "meta HOUSE_CAP");
             var scenarios = (JArray)golden["scenarios"];
-            Assert.AreEqual(44, scenarios.Count, "scenario count");
+            Assert.AreEqual(57, scenarios.Count, "scenario count");
             foreach (var sc in scenarios) RunScenario(sc);
         }
 
@@ -1823,20 +1823,23 @@ namespace PixelWorldBox.Tests
                     houses = c["houses"]?.Value<int>() ?? 0,
                     capital = c["capital"]?.Value<int>() ?? -1,
                     alive = c["alive"] == null || c["alive"].Value<bool>(),
-                    gold = c["gold"]?.Value<int>() ?? 0,
-                    knowledge = c["knowledge"]?.Value<int>() ?? 0,
+                    gold = c["gold"]?.Value<double>() ?? 0,
+                    knowledge = c["knowledge"]?.Value<double>() ?? 0,
                     kingId = (c["kingId"] == null || c["kingId"].Type == JTokenType.Null) ? (int?)null : c["kingId"].Value<int>(),
                     armyCd = (c["armyCd"] == null || c["armyCd"].Type == JTokenType.Null) ? (int?)null : c["armyCd"].Value<int>(),
                     kingName = c["kingName"]?.ToString() ?? "K",
                     banner = c["banner"]?.ToString() ?? "B",
                     colonizeCd = c["colonizeCd"]?.Value<int>() ?? 0,
-                    stability = c["stability"]?.Value<int>() ?? 70,
-                    culture = c["culture"]?.Value<int>() ?? 0,
-                    militarism = c["militarism"]?.Value<int>() ?? 30,
+                    stability = c["stability"]?.Value<double>() ?? 70,
+                    culture = c["culture"]?.Value<double>() ?? 0,
+                    militarism = c["militarism"]?.Value<double>() ?? 30,
                     gov = c["gov"]?.Value<int>() ?? 0,
                 };
                 if (c["popZeroTick"] != null && c["popZeroTick"].Type != JTokenType.Null) civ.popZeroTick = c["popZeroTick"].Value<int>();
                 if (c["mobilizeUntil"] != null && c["mobilizeUntil"].Type != JTokenType.Null) civ.mobilizeUntil = c["mobilizeUntil"].Value<double>();
+                // M-U3f：research/researchP 夹具（CVT49 知识注入完成场景）
+                if (c["research"] != null && c["research"].Type != JTokenType.Null) civ.research = c["research"].ToString();
+                if (c["researchP"] != null && c["researchP"].Type != JTokenType.Null) civ.researchP = c["researchP"].Value<double>();
                 if (c["techs"] != null && c["techs"].Type != JTokenType.Null)
                     foreach (var t in (JArray)c["techs"]) civ.techs.Add(t.ToString());
                 if (c["ideas"] != null && c["ideas"].Type != JTokenType.Null)
@@ -1936,6 +1939,49 @@ namespace PixelWorldBox.Tests
                         lastActiveTick = wd["lastActiveTick"]?.Value<int>() ?? 0,
                     };
 
+            // —— M-U3f armies/emIdeas/homogeneity/seasonOffset 夹具（gen runScenario 同构）——
+            if (sc["fixture"]["armies"] != null)
+                foreach (var ar in (JArray)sc["fixture"]["armies"])
+                {
+                    var a = new WbArmy
+                    {
+                        id = ar["id"].Value<int>(), civ = ar["civ"].Value<int>(),
+                        name = ar["name"]?.ToString() ?? $"A{ar["id"].Value<int>()}",
+                        leaderId = ar["leaderId"]?.Value<int>() ?? -1,
+                        x = ar["x"]?.Value<double>() ?? 0, y = ar["y"]?.Value<double>() ?? 0,
+                        tx = ar["tx"]?.Value<double>() ?? ar["x"]?.Value<double>() ?? 0,
+                        ty = ar["ty"]?.Value<double>() ?? ar["y"]?.Value<double>() ?? 0,
+                        state = ar["state"]?.ToString() ?? "rally", morale = ar["morale"]?.Value<double>() ?? 1,
+                        kills = ar["kills"]?.Value<double>() ?? 0, losses = ar["losses"]?.Value<double>() ?? 0,
+                        tactical = ar["tactical"]?.Value<bool>() ?? false,
+                    };
+                    if (ar["members"] != null) foreach (var m in (JArray)ar["members"]) a.members.Add(m.Value<int>());
+                    w.armies.Add(a);
+                }
+            if (sc["fixture"]["emIdeas"] != null)
+                foreach (var id_ in (JArray)sc["fixture"]["emIdeas"])
+                {
+                    var idea = new WbIdea { key = id_["key"].ToString(), name = id_["name"]?.ToString() ?? $"I{id_["key"]}", desc = id_["desc"]?.ToString() ?? "", mods = new WbIdeaMods() };
+                    var md = id_["mods"];
+                    if (md != null)
+                    {
+                        if (md["gold"] != null && md["gold"].Type != JTokenType.Null) idea.mods.gold = md["gold"].Value<double>();
+                        if (md["stab"] != null && md["stab"].Type != JTokenType.Null) idea.mods.stab = md["stab"].Value<double>();
+                        if (md["mil"] != null && md["mil"].Type != JTokenType.Null) idea.mods.mil = md["mil"].Value<double>();
+                        if (md["know"] != null && md["know"].Type != JTokenType.Null) idea.mods.know = md["know"].Value<double>();
+                        if (md["repro"] != null && md["repro"].Type != JTokenType.Null) idea.mods.repro = md["repro"].Value<double>();
+                        if (md["wear"] != null && md["wear"].Type != JTokenType.Null) idea.mods.wear = md["wear"].Value<double>();
+                    }
+                    w.emIdeas[idea.key] = idea;
+                    if (idea.key.StartsWith("id") && int.TryParse(idea.key.Substring(2), out int nId))
+                        w.ideaSeq = System.Math.Max(w.ideaSeq, nId + 1);
+                }
+            if (sc["fixture"]["homogeneity"] != null)
+                foreach (var h in (JArray)sc["fixture"]["homogeneity"])
+                    w.civHomogeneity[h[0].Value<int>()] = h[1].Value<double>();
+            if (sc["fixture"]["seasonOffset"] != null && sc["fixture"]["seasonOffset"].Type != JTokenType.Null)
+                w.seasonOffset = sc["fixture"]["seasonOffset"].Value<int>();
+
             // —— rel/tension/met/buildings 夹具 ——
             if (sc["fixture"]["rel"] != null)
                 foreach (var r in (JArray)sc["fixture"]["rel"])
@@ -1986,8 +2032,10 @@ namespace PixelWorldBox.Tests
                     foreach (var fd in funds)
                         if (fd["at"].Value<int>() == t)
                             WbCivSim.FundResearch(w, WbCivSim.CivAt(w, fd["civ"].Value<int>()), fd["points"].Value<double>());
+                    if (w.tickCount % 120 == 0) WbCivSim.EconomyTick(w); // engine L2535（M-U3f：directiveTick 前）
                     if (w.tickCount % 30 == 0) WbCivSim.DirectiveTick(w);
                     if (w.tickCount % 120 == 5) WbCivSim.TechTick(w);
+                    if (w.tickCount % 150 == 7) WbCivSim.SocietyTick(w); // engine L2569（M-U3f：techTick 后 allianceTick 前）
                     if (w.tickCount % 300 == 23) WbCivSim.AllianceTick(w);
                 }
                 w.tickCount++;
@@ -2041,16 +2089,29 @@ namespace PixelWorldBox.Tests
                 Assert.AreEqual(wc["houses"].Value<int>(), gc.houses, $"{cid} houses");
                 Assert.AreEqual(wc["capital"].Value<int>(), gc.capital, $"{cid} capital");
                 Assert.AreEqual(wc["alive"].Value<bool>(), gc.alive, $"{cid} alive");
-                Assert.AreEqual(wc["gold"].Type == JTokenType.Null ? 0 : wc["gold"].Value<int>(), gc.gold ?? 0, $"{cid} gold");
-                Assert.AreEqual(wc["knowledge"].Type == JTokenType.Null ? 0 : wc["knowledge"].Value<int>(), gc.knowledge ?? 0, $"{cid} knowledge");
+                Assert.AreEqual(wc["gold"].Type == JTokenType.Null ? 0 : wc["gold"].Value<double>(), gc.gold ?? 0, 1e-9, $"{cid} gold");
+                Assert.AreEqual(wc["knowledge"].Type == JTokenType.Null ? 0 : wc["knowledge"].Value<double>(), gc.knowledge ?? 0, 1e-9, $"{cid} knowledge");
                 Assert.AreEqual(wc["colonizeCd"].Type == JTokenType.Null ? 0 : wc["colonizeCd"].Value<int>(), gc.colonizeCd, $"{cid} colonizeCd");
                 if (wc["popZeroTick"].Type == JTokenType.Null) Assert.IsFalse(gc.popZeroTick.HasValue, $"{cid} popZeroTick null");
                 else Assert.AreEqual(wc["popZeroTick"].Value<int>(), gc.popZeroTick.Value, $"{cid} popZeroTick");
                 if (wc["mobilizeUntil"].Type == JTokenType.Null) Assert.IsFalse(gc.mobilizeUntil.HasValue, $"{cid} mobilizeUntil null");
                 else Assert.AreEqual(wc["mobilizeUntil"].Value<double>(), gc.mobilizeUntil.Value, 1e-9, $"{cid} mobilizeUntil");
-                Assert.AreEqual(wc["stability"].Type == JTokenType.Null ? 70 : wc["stability"].Value<int>(), gc.stability, $"{cid} stability");
-                Assert.AreEqual(wc["culture"].Type == JTokenType.Null ? 0 : wc["culture"].Value<int>(), gc.culture, $"{cid} culture");
-                Assert.AreEqual(wc["militarism"].Type == JTokenType.Null ? 30 : wc["militarism"].Value<int>(), gc.militarism, $"{cid} militarism");
+                Assert.AreEqual(wc["stability"].Type == JTokenType.Null ? 70 : wc["stability"].Value<double>(), gc.stability, 1e-9, $"{cid} stability");
+                Assert.AreEqual(wc["culture"].Type == JTokenType.Null ? 0 : wc["culture"].Value<double>(), gc.culture, 1e-9, $"{cid} culture");
+                if (wc["militarism"].Type == JTokenType.Null) Assert.IsFalse(gc.militarism.HasValue, $"{cid} militarism null");
+                else Assert.AreEqual(wc["militarism"].Value<double>(), gc.militarism.Value, 1e-9, $"{cid} militarism");
+                // M-U3f：经济/社会域四字段 + ideas 断言
+                Assert.AreEqual(wc["income"].Type == JTokenType.Null ? 0 : wc["income"].Value<int>(), gc.income, $"{cid} income");
+                Assert.AreEqual(wc["expense"].Type == JTokenType.Null ? 0 : wc["expense"].Value<double>(), gc.expense, 1e-9, $"{cid} expense");
+                Assert.AreEqual(wc["festivalCd"].Type == JTokenType.Null ? 0 : wc["festivalCd"].Value<int>(), gc.festivalCd, $"{cid} festivalCd");
+                Assert.AreEqual(wc["govYear"].Type == JTokenType.Null ? 0 : wc["govYear"].Value<int>(), gc.govYear, $"{cid} govYear");
+                if (wc["ideas"] == null || wc["ideas"].Type == JTokenType.Null) Assert.IsNull(gc.ideas, $"{cid} ideas null");
+                else
+                {
+                    var wid2 = (JArray)wc["ideas"];
+                    Assert.AreEqual(wid2.Count, gc.ideas.Count, $"{cid} ideas count");
+                    for (int k = 0; k < wid2.Count; k++) Assert.AreEqual(wid2[k].ToString(), gc.ideas[k], $"{cid} ideas[{k}]");
+                }
                 // M-U3e：research/researchP/techs 断言
                 if (wc["research"] == null || wc["research"].Type == JTokenType.Null) Assert.IsNull(gc.research, $"{cid} research null");
                 else Assert.AreEqual(wc["research"].ToString(), gc.research, $"{cid} research");
@@ -2336,6 +2397,48 @@ namespace PixelWorldBox.Tests
                     Assert.AreEqual(weff[e][0].ToString(), gem.effects[e].k, $"{emid} effects[{e}].k");
                     Assert.AreEqual(weff[e][1].Value<double>(), gem.effects[e].v, 1e-12, $"{emid} effects[{e}].v");
                 }
+            }
+
+            // —— M-U3f 扩展段：armies（economyTick 军饷/欠饷消费域）——
+            var wantAr = (JArray)want["armies"];
+            Assert.AreEqual(wantAr.Count, w.armies.Count, $"{ctx} armies count");
+            for (int k = 0; k < wantAr.Count; k++)
+            {
+                var war = (JObject)wantAr[k];
+                var gar = w.armies[k];
+                string arid = $"{ctx} army[{gar.id}]";
+                Assert.AreEqual(war["id"].Value<int>(), gar.id, $"{arid} id");
+                Assert.AreEqual(war["civ"].Value<int>(), gar.civ, $"{arid} civ");
+                Assert.AreEqual(war["name"].ToString(), gar.name, $"{arid} name");
+                Assert.AreEqual(war["leaderId"].Value<int>(), gar.leaderId, $"{arid} leaderId");
+                Assert.AreEqual(war["state"].ToString(), gar.state, $"{arid} state");
+                Assert.AreEqual(war["morale"].Value<double>(), gar.morale, 1e-9, $"{arid} morale");
+                Assert.AreEqual(war["members"].Count(), gar.members.Count, $"{arid} members count");
+            }
+
+            // —— M-U3f 扩展段：emIdeas（涌现理念注册表全字段）——
+            var wantId = (JArray)want["emIdeas"];
+            Assert.AreEqual(wantId.Count, w.emIdeas.Count, $"{ctx} emIdeas count");
+            for (int k = 0; k < wantId.Count; k++)
+            {
+                var wid = (JObject)wantId[k];
+                var gid = w.emIdeas[wid["key"].ToString()];
+                string idid = $"{ctx} idea[{gid.key}]";
+                Assert.AreEqual(wid["key"].ToString(), gid.key, $"{idid} key");
+                Assert.AreEqual(wid["name"].ToString(), gid.name, $"{idid} name");
+                Assert.AreEqual(wid["desc"].ToString(), gid.desc, $"{idid} desc");
+                if (wid["mods"]["gold"] == null || wid["mods"]["gold"].Type == JTokenType.Null) Assert.IsFalse(gid.mods.gold.HasValue, $"{idid} mods.gold null");
+                else Assert.AreEqual(wid["mods"]["gold"].Value<double>(), gid.mods.gold.Value, 1e-12, $"{idid} mods.gold");
+                if (wid["mods"]["stab"] == null || wid["mods"]["stab"].Type == JTokenType.Null) Assert.IsFalse(gid.mods.stab.HasValue, $"{idid} mods.stab null");
+                else Assert.AreEqual(wid["mods"]["stab"].Value<double>(), gid.mods.stab.Value, 1e-12, $"{idid} mods.stab");
+                if (wid["mods"]["mil"] == null || wid["mods"]["mil"].Type == JTokenType.Null) Assert.IsFalse(gid.mods.mil.HasValue, $"{idid} mods.mil null");
+                else Assert.AreEqual(wid["mods"]["mil"].Value<double>(), gid.mods.mil.Value, 1e-12, $"{idid} mods.mil");
+                if (wid["mods"]["know"] == null || wid["mods"]["know"].Type == JTokenType.Null) Assert.IsFalse(gid.mods.know.HasValue, $"{idid} mods.know null");
+                else Assert.AreEqual(wid["mods"]["know"].Value<double>(), gid.mods.know.Value, 1e-12, $"{idid} mods.know");
+                if (wid["mods"]["repro"] == null || wid["mods"]["repro"].Type == JTokenType.Null) Assert.IsFalse(gid.mods.repro.HasValue, $"{idid} mods.repro null");
+                else Assert.AreEqual(wid["mods"]["repro"].Value<double>(), gid.mods.repro.Value, 1e-12, $"{idid} mods.repro");
+                if (wid["mods"]["wear"] == null || wid["mods"]["wear"].Type == JTokenType.Null) Assert.IsFalse(gid.mods.wear.HasValue, $"{idid} mods.wear null");
+                else Assert.AreEqual(wid["mods"]["wear"].Value<double>(), gid.mods.wear.Value, 1e-12, $"{idid} mods.wear");
             }
         }
 

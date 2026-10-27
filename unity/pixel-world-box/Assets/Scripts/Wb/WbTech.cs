@@ -233,5 +233,60 @@ namespace PixelWorldBox.Wb
                 }
             }
         }
+
+        // ---------------- 涌现社会理念发明器（M-U3f：emergence.ts L435-470 逐行机械翻译，纪律①） ----------------
+
+        /// WbIdeaBodyDef —— emergence.ts L437（mods optional 语义 → double?）
+        public class WbIdeaBodyDef
+        {
+            public string name;
+            public string desc;
+            public double? gold, stab, mil, know, repro, wear;
+        }
+
+        /// emergence.ts L435 IDEA_PRE / L436 IDEA_POST / L437-446 IDEA_BODY（逐字保真）
+        public static readonly string[] IdeaPre = { "军功爵", "重商", "垦荒", "天工", "航海", "民本", "格物", "荣耀", "万学", "大同", "无为", "铁律" };
+        public static readonly string[] IdeaPost = { "主义", "律令", "学会", "改革", "之道", "运动" };
+        public static readonly WbIdeaBodyDef[] IdeaBody = new WbIdeaBodyDef[]
+        {
+            new WbIdeaBodyDef { name = "重商", desc = "商路即国脉", gold = 0.18 },
+            new WbIdeaBodyDef { name = "军功爵", desc = "斩首授田，武士阶层的上升阶梯", mil = 0.06, stab = -1 },
+            new WbIdeaBodyDef { name = "民本", desc = "民为邦本，本固邦宁", stab = 3, repro = 0.05 },
+            new WbIdeaBodyDef { name = "格物", desc = "致知在格物", know = 0.22 },
+            new WbIdeaBodyDef { name = "垦荒", desc = "寸土不荒", repro = 0.08, gold = 0.06 },
+            new WbIdeaBodyDef { name = "偃武", desc = "铸剑为犁", wear = -0.15, mil = -0.05 },
+            new WbIdeaBodyDef { name = "铁律", desc = "令行禁止", stab = 4, gold = -0.05 },
+            new WbIdeaBodyDef { name = "万学", desc = "百花齐放", know = 0.15, stab = 1 },
+        };
+
+        /// emergence.ts inventIdea L449-470：本体 × 后缀 ×（20% 变体前缀）—— 8×6×12 组合 + 效果微扰
+        public static WbIdea InventIdea(WbWorld w, int seq)
+        {
+            WbIdeaBodyDef body = IdeaBody[(int)(w.Rng() * IdeaBody.Length)];
+            string post = IdeaPost[(int)(w.Rng() * IdeaPost.Length)];
+            string pre = w.Rng() < 0.2 ? IdeaPre[(int)(w.Rng() * IdeaPre.Length)] : "";
+            WbIdeaMods mods = new WbIdeaMods();
+            mods.gold = Jitter(w, body.gold, 0.08);
+            mods.stab = body.stab.HasValue ? WbMath.JsRound(body.stab.Value + (w.Rng() - 0.5) * 1.5) : (double?)null;
+            mods.mil = Jitter(w, body.mil, 0.02);
+            mods.know = Jitter(w, body.know, 0.08);
+            mods.repro = Jitter(w, body.repro, 0.03);
+            mods.wear = Jitter(w, body.wear, 0.06);
+            var effBits = new List<string>();
+            if (mods.gold.GetValueOrDefault() != 0) effBits.Add($"收入 +{WbMath.JsRound(mods.gold.Value * 100)}%");
+            if (mods.stab.GetValueOrDefault() != 0) effBits.Add($"稳定 {(mods.stab.Value > 0 ? "+" : "")}{mods.stab.Value}");
+            if (mods.mil.GetValueOrDefault() != 0) effBits.Add($"军国倾向 {(mods.mil.Value > 0 ? "+" : "")}{WbMath.JsRound(mods.mil.Value * 100)}/十年");
+            if (mods.know.GetValueOrDefault() != 0) effBits.Add($"知识 +{WbMath.JsRound(mods.know.Value * 100)}%");
+            if (mods.repro.GetValueOrDefault() != 0) effBits.Add($"繁衍 +{WbMath.JsRound(mods.repro.Value * 100)}%");
+            if (mods.wear.GetValueOrDefault() != 0) effBits.Add($"厌战 {(mods.wear.Value > 0 ? "+" : "")}{WbMath.JsRound(mods.wear.Value * 100)}%");
+            return new WbIdea { key = $"id{seq}", name = $"{pre}{body.name}{post}", desc = $"{body.desc} —— {string.Join("，", effBits)}", mods = mods };
+        }
+
+        /// emergence.ts jitter L452：v === undefined → undefined；否则 round((v + (rng-0.5)*amt)*1000)/1000
+        private static double? Jitter(WbWorld w, double? v, double amt)
+        {
+            if (!v.HasValue) return null;
+            return WbMath.JsRound((v.Value + (w.Rng() - 0.5) * amt) * 1000.0) / 1000.0;
+        }
     }
 }
