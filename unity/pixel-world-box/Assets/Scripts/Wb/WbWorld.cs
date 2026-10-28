@@ -104,8 +104,12 @@ namespace PixelWorldBox.Wb
         public double hp, maxHp, dmg = 1, speed = 1;
         public int age, maxAge = 9999, kills, cd, trait, job, king, infected, flip;
         public string name;
-        public int hurt, breath, parity, dead, boat, boatTTL, caravan;
-        public int wep, arm, hlm, shd, bts, rng, amu;
+        public int hurt, breath, parity, dead, boat, boatTTL, caravan, atk;
+        // wep: civ 层镜像 TS Unit.wep 字符串 key（items.ts ItemKind）—— int 0 = 无装备占位；
+        // 战斗树（WbUnits）读 arena OFF_UGEAR int 索引，不经此字段（M-U3g IsRangedMember 消费 string 语义）
+        public object wep;
+        public int arm, hlm, shd, bts, rng, amu;
+        public double lx, ly;                // engine Unit.lx/ly（leadAim 弹道预测 vx = x - lx）
         public double? tDmg, tHp;        // engine u.tDmg/u.tHp（undefined ?? 1 语义 → null；completeTech retro 记账）
         public object army;
         public object gene;
@@ -182,6 +186,27 @@ namespace PixelWorldBox.Wb
         public double tx, ty;             // engine 行军目标（M-U3f 夹具协议）
         public int? clashWith;
         public string state;             // 'march' | 'battle' | ...
+        // —— M-U3g 军团状态机字段（engine types.ts Army L607 全集机械翻译） ——
+        public bool naval;                // 舰队渡海模式（armyEmbark 置位 / armyDisembark 复位）
+        public bool ambush;               // 林间伏击标记（armyMarch 森林起行 / declareClash 首击 +10）
+        public long formedTick;           // 组建 tick（armyRally waited = tickCount - formedTick）
+        public int size0;                 // 组建兵力（伤亡过半士气滑落分母）
+        public int? battleSize0;          // 会战开局兵力基准（伤亡崩溃判定；undefined 语义 null）
+        public long evalTick;             // 上次烈度评估 tick（armyBattle >25 门 / armySiege >30 门）
+        public int targetCiv = -1;        // 目标敌国 id
+        public double rot;                // 环形方阵相位（tryFormArmy rng()*2π）
+        public long? marchPushTick;       // 上次战线渗透 tick（armyMarch >25 门；undefined ?? 0）
+        public bool supplyWarned;         // 补给告警已发（一次性纪事）
+        public int? reinforced;           // 增援调度次数（undefined 语义 null）
+        public long? battleSince;         // 会战开始 tick（落幕纪事 >50 门；undefined 语义 null）
+    }
+
+    /// 尸体 —— engine addCorpse L2871（decalsTick 老化宿主侧，M-U3g 只落 push+cap）
+    public class WbCorpse
+    {
+        public double x, y;
+        public double age;
+        public bool stone, undead;
     }
 
     /// 终极世界大战最小态（M-U3c eliminateCiv/mergeCivs 读端；phase 恒 idle —— 大战域 M-U 后续切片）
@@ -325,6 +350,15 @@ namespace PixelWorldBox.Wb
         public Dictionary<string, double> raceRel = new Dictionary<string, double>();       // 种族关系 f64（shiftRaceRel 写入）
         public int statWars;                                                                 // 新战争建档计数
         public List<WbArmy> armies = new List<WbArmy>();
+        // —— M-U3g 军团域宿主态（engine.ts L529-547/L615/L2871 机械翻译） ——
+        public int armySeq = 1;                                    // engine armySeq = 1（L529）
+        public Dictionary<int, int> armyNameSeq = new Dictionary<int, int>();  // civId → 序号（armyNameByJobs roman 后缀）
+        public long lastClashEventTick = 0;                        // engine lastClashEventTick（L543）
+        public long lastReinforceEventTick = 0;                    // engine lastReinforceEventTick（L545）
+        public long lastVolleyEventTick = 0;                       // engine lastVolleyEventTick（L547）
+        public int? killCredit = null;                             // engine killCredit（L615；涌现武器战绩归属——军团域恒 null）
+        public double shake = 0;                                   // engine shake（L931；declareClash/rout 震屏）
+        public List<WbCorpse> corpses = new List<WbCorpse>();      // engine corpses（L2871 addCorpse）
         public WbWorldWar worldWar = new WbWorldWar();
         public Dictionary<int, int> allianceOf = new Dictionary<int, int>();                // civId → allianceId
         public Dictionary<int, long> allianceWarCd = new Dictionary<int, long>();

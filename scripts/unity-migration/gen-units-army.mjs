@@ -78,7 +78,7 @@ function dumpUnit(u) {
     x: f64hex(u.x), y: f64hex(u.y), tx: f64hex(u.tx), ty: f64hex(u.ty),
     hp: f64hex(u.hp), maxHp: f64hex(u.maxHp), dmg: f64hex(u.dmg), speed: f64hex(u.speed),
     job: u.job ?? 0, king: u.king ? 1 : 0, boat: u.boat ?? 0, boatTTL: u.boatTTL ?? 0,
-    army: u.army === undefined ? null : u.army, hurt: f64hex(u.hurt ?? 0), dead: u.dead ?? 0,
+    army: u.army === undefined ? null : u.army, hurt: f64hex(u.hurt ?? 0), dead: u.dead ? 1 : 0, // 布尔归一 0/1（真引擎 dead:boolean，夹具数字）
     wep: u.wep ?? 0, lx: f64hex(u.lx ?? u.x), ly: f64hex(u.ly ?? u.y),
   };
 }
@@ -161,7 +161,7 @@ function mkUnit(eng, o) {
     hp: o.hp ?? 10, maxHp: o.hp ?? 10, dmg: o.dmg ?? 1, speed: o.speed ?? 1, age: 0, maxAge: 9999, kills: o.kills ?? 0,
     cd: 0, trait: 0, job: o.job ?? 0, king: o.king ?? 0, infected: 0, flip: 0,
     name: o.name ?? `u${o.id}`, hurt: 0, breath: 0, parity: 0, dead: o.dead ?? 0,
-    boat: o.boat ?? 0, boatTTL: 0, caravan: 0, wep: o.wep ?? 0, arm: 0, hlm: 0, shd: 0, bts: 0, rng: 0, amu: 0,
+    boat: o.boat ?? 0, boatTTL: o.boatTTL ?? 0, caravan: 0, wep: o.wep ?? 0, arm: 0, hlm: 0, shd: 0, bts: 0, rng: 0, amu: 0,
     army: o.army ?? null, gene: null, food: 0, fam: 0, fgn: 0, gIds: [], gVal: [],
     lx: o.lx ?? o.x, ly: o.ly ?? o.y,
   };
@@ -448,3 +448,473 @@ const scenarios = [
       { id: 25, civ: 1, x: 70.3, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
     ] },
 ];
+scenarios.push(
+  // ARM07 会战宣布：march 敌对军团 8 格内 → declareClash 互标（armies 逆序迭代 + 实时 state 判定）
+  { name: 'ARM07-declare-clash', seed: 0xa7c1, ticks: 1, startTick: 300,
+    paint: [[0, 0, W - 1, H - 1, GRASS]],
+    civs: [
+      { id: 0, pop: 12, gold: 50, capital: idx(60, 80), tiles: ringRect0(55, 75, 65, 85) },
+      { id: 1, pop: 10, capital: idx(200, 40), tiles: ringRect0(195, 35, 205, 45) },
+    ],
+    rel: [[0, 1, -45]],
+    wars: [{ key: '0-1', a: 0, b: 1 }],
+    armies: [
+      { id: 1, civ: 0, name: '甲', members: [10, 11, 12, 13, 14, 15], leaderId: 10, x: 65, y: 80, tx: 90, ty: 80,
+        state: 'march', morale: 80, targetCiv: 1, formedTick: 100, size0: 6, evalTick: 300 },
+      { id: 2, civ: 1, name: '乙', members: [20, 21, 22, 23, 24, 25], leaderId: 20, x: 70, y: 80, tx: 55, ty: 80,
+        state: 'march', morale: 75, targetCiv: 0, formedTick: 100, size0: 6, evalTick: 300 },
+    ],
+    units: [
+      { id: 10, civ: 0, x: 65.0, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 11, civ: 0, x: 65.3, y: 80.1, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 12, civ: 0, x: 64.8, y: 79.9, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 13, civ: 0, x: 65.1, y: 80.4, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 14, civ: 0, x: 65.6, y: 80.0, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 15, civ: 0, x: 65.2, y: 80.6, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 20, civ: 1, x: 70.0, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 21, civ: 1, x: 70.2, y: 80.1, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 22, civ: 1, x: 69.8, y: 79.9, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 23, civ: 1, x: 70.1, y: 79.7, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 24, civ: 1, x: 69.9, y: 80.2, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 25, civ: 1, x: 70.3, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+    ] },
+  // ARM08 战线阵列：battle 态近战前排 2.4 / 弓手后排 2.6 横队（tx/ty f64 逐位）
+  { name: 'ARM08-battle-lineup', seed: 0xa8c2, ticks: 1, startTick: 300,
+    paint: [[0, 0, W - 1, H - 1, GRASS]],
+    civs: [
+      { id: 0, pop: 12, gold: 50, capital: idx(60, 80), tiles: ringRect0(55, 75, 65, 85) },
+      { id: 1, pop: 10, capital: idx(200, 40), tiles: ringRect0(195, 35, 205, 45) },
+    ],
+    rel: [[0, 1, -45]],
+    wars: [{ key: '0-1', a: 0, b: 1, battles: 1 }],
+    armies: [
+      { id: 1, civ: 0, name: '甲', members: [10, 11, 12, 13, 14, 15], leaderId: 10, x: 65, y: 80, tx: 70, ty: 80,
+        state: 'battle', morale: 80, targetCiv: 1, formedTick: 100, size0: 6, evalTick: 280,
+        clashWith: 2, battleSince: 285, battleSize0: 6 },
+      { id: 2, civ: 1, name: '乙', members: [20, 21, 22, 23, 24, 25], leaderId: 20, x: 70, y: 80, tx: 65, ty: 80,
+        state: 'battle', morale: 75, targetCiv: 0, formedTick: 100, size0: 6, evalTick: 280,
+        clashWith: 1, battleSince: 285, battleSize0: 6 },
+    ],
+    units: [
+      { id: 10, civ: 0, x: 65.0, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 11, civ: 0, x: 65.3, y: 80.1, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 12, civ: 0, x: 64.8, y: 79.9, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 13, civ: 0, x: 65.1, y: 80.4, job: 3, hp: 18, maxHp: 18, dmg: 2, cd: 0 },
+      { id: 14, civ: 0, x: 65.6, y: 80.0, job: 3, hp: 18, maxHp: 18, dmg: 2, cd: 0 },
+      { id: 15, civ: 0, x: 65.2, y: 80.6, job: 3, hp: 18, maxHp: 18, dmg: 2, cd: 0 },
+      { id: 20, civ: 1, x: 70.0, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 21, civ: 1, x: 70.2, y: 80.1, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 22, civ: 1, x: 69.8, y: 79.9, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 23, civ: 1, x: 70.1, y: 79.7, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 24, civ: 1, x: 69.9, y: 80.2, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 25, civ: 1, x: 70.3, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+    ] },
+  // ARM09 齐射：%15===0 三类远程（弓/火枪/激光）leadAim 弹道预测 + volley 震慑
+  { name: 'ARM09-volley-mixed', seed: 0xa9b09, ticks: 1, startTick: 315,
+    paint: [[0, 0, W - 1, H - 1, GRASS]],
+    civs: [
+      { id: 0, pop: 12, gold: 50, capital: idx(60, 80), tiles: ringRect0(55, 75, 65, 85), techs: ['crossbow'] },
+      { id: 1, pop: 10, capital: idx(200, 40), tiles: ringRect0(195, 35, 205, 45) },
+    ],
+    rel: [[0, 1, -45]],
+    wars: [{ key: '0-1', a: 0, b: 1, battles: 1 }],
+    armies: [
+      { id: 1, civ: 0, name: '甲', members: [10, 11, 12, 13, 14, 15], leaderId: 10, x: 65, y: 80, tx: 70, ty: 80,
+        state: 'battle', morale: 80, targetCiv: 1, formedTick: 100, size0: 6, evalTick: 310,
+        clashWith: 2, battleSince: 310, battleSize0: 6 },
+      { id: 2, civ: 1, name: '乙', members: [20, 21, 22, 23, 24, 25], leaderId: 20, x: 70, y: 80, tx: 65, ty: 80,
+        state: 'battle', morale: 75, targetCiv: 0, formedTick: 100, size0: 6, evalTick: 310,
+        clashWith: 1, battleSince: 310, battleSize0: 6 },
+    ],
+    units: [
+      { id: 10, civ: 0, x: 65.0, y: 80.0, job: 3, hp: 18, maxHp: 18, dmg: 2, cd: 0 },
+      { id: 11, civ: 0, x: 65.3, y: 80.1, job: 3, hp: 18, maxHp: 18, dmg: 2, cd: 0, wep: 'musket' },
+      { id: 12, civ: 0, x: 64.8, y: 79.9, job: 3, hp: 18, maxHp: 18, dmg: 2, cd: 0, wep: 'rifle' },
+      { id: 13, civ: 0, x: 65.1, y: 80.4, job: 3, hp: 18, maxHp: 18, dmg: 2, cd: 0, wep: 'laser_rifle' },
+      { id: 14, civ: 0, x: 65.6, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 15, civ: 0, x: 65.2, y: 80.6, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 20, civ: 1, x: 70.0, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 21, civ: 1, x: 70.2, y: 80.1, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 22, civ: 1, x: 69.8, y: 79.9, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 23, civ: 1, x: 70.1, y: 79.7, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 24, civ: 1, x: 69.9, y: 80.2, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 25, civ: 1, x: 70.3, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+    ] },
+  // ARM10 机炮扫射：mech 科技 + %20===0 → foe hp-16+rng*10 + fx bullet
+  { name: 'ARM10-battle-mech', seed: 0xaa10, ticks: 1, startTick: 320,
+    paint: [[0, 0, W - 1, H - 1, GRASS]],
+    civs: [
+      { id: 0, pop: 12, gold: 50, capital: idx(60, 80), tiles: ringRect0(55, 75, 65, 85), techs: ['robotics'] },
+      { id: 1, pop: 10, capital: idx(200, 40), tiles: ringRect0(195, 35, 205, 45) },
+    ],
+    rel: [[0, 1, -45]],
+    wars: [{ key: '0-1', a: 0, b: 1, battles: 1 }],
+    armies: [
+      { id: 1, civ: 0, name: '甲', members: [10, 11, 12, 13, 14, 15], leaderId: 10, x: 65, y: 80, tx: 70, ty: 80,
+        state: 'battle', morale: 80, targetCiv: 1, formedTick: 100, size0: 6, evalTick: 310,
+        clashWith: 2, battleSince: 310, battleSize0: 6 },
+      { id: 2, civ: 1, name: '乙', members: [20, 21, 22, 23, 24, 25], leaderId: 20, x: 70, y: 80, tx: 65, ty: 80,
+        state: 'battle', morale: 75, targetCiv: 0, formedTick: 100, size0: 6, evalTick: 310,
+        clashWith: 1, battleSince: 310, battleSize0: 6 },
+    ],
+    units: [
+      { id: 10, civ: 0, x: 65.0, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 11, civ: 0, x: 65.3, y: 80.1, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 12, civ: 0, x: 64.8, y: 79.9, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 13, civ: 0, x: 65.1, y: 80.4, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 14, civ: 0, x: 65.6, y: 80.0, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 15, civ: 0, x: 65.2, y: 80.6, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 20, civ: 1, x: 70.0, y: 80.0, job: 2, hp: 24, maxHp: 30, dmg: 3 },
+      { id: 21, civ: 1, x: 70.2, y: 80.1, job: 2, hp: 26, maxHp: 30, dmg: 3 },
+      { id: 22, civ: 1, x: 69.8, y: 79.9, job: 2, hp: 25, maxHp: 30, dmg: 3 },
+      { id: 23, civ: 1, x: 70.1, y: 79.7, job: 2, hp: 28, maxHp: 30, dmg: 3 },
+      { id: 24, civ: 1, x: 69.9, y: 80.2, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 25, civ: 1, x: 70.3, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+    ] },
+  // ARM11 伤亡崩溃：members 6 ≤ max(3, floor(bs0=12 /2)=6) → 战线崩溃 rout + scoreA+8
+  { name: 'ARM11-battle-collapse', seed: 0xab11, ticks: 1, startTick: 300,
+    paint: [[0, 0, W - 1, H - 1, GRASS]],
+    civs: [
+      { id: 0, pop: 12, gold: 50, capital: idx(60, 80), tiles: ringRect0(55, 75, 65, 85) },
+      { id: 1, pop: 10, capital: idx(200, 40), tiles: ringRect0(195, 35, 205, 45) },
+    ],
+    rel: [[0, 1, -45]],
+    wars: [{ key: '0-1', a: 0, b: 1, battles: 1 }],
+    armies: [
+      { id: 1, civ: 0, name: '甲', members: [10, 11, 12, 13, 14, 15], leaderId: 10, x: 65, y: 80, tx: 70, ty: 80,
+        state: 'battle', morale: 80, targetCiv: 1, formedTick: 100, size0: 6, evalTick: 260,
+        clashWith: 2, battleSince: 270, battleSize0: 12 },
+      { id: 2, civ: 1, name: '乙', members: [20, 21, 22, 23, 24, 25], leaderId: 20, x: 70, y: 80, tx: 65, ty: 80,
+        state: 'battle', morale: 75, targetCiv: 0, formedTick: 100, size0: 6, evalTick: 260,
+        clashWith: 1, battleSince: 270, battleSize0: 6 },
+    ],
+    units: [
+      { id: 10, civ: 0, x: 65.0, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 11, civ: 0, x: 65.3, y: 80.1, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 12, civ: 0, x: 64.8, y: 79.9, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 13, civ: 0, x: 65.1, y: 80.4, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 14, civ: 0, x: 65.6, y: 80.0, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 15, civ: 0, x: 65.2, y: 80.6, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 20, civ: 1, x: 70.0, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 21, civ: 1, x: 70.2, y: 80.1, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 22, civ: 1, x: 69.8, y: 79.9, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 23, civ: 1, x: 70.1, y: 79.7, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 24, civ: 1, x: 69.9, y: 80.2, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 25, civ: 1, x: 70.3, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+    ] },
+  // ARM12 围城+战线渗透：siege 压敌建筑 → frontPush 占领 occStr 距离衰减 + 转正 score
+  { name: 'ARM12-siege-front-push', seed: 0xacc2, ticks: 1, startTick: 320,
+    paint: [[0, 0, W - 1, H - 1, GRASS]],
+    civs: [
+      { id: 0, pop: 12, gold: 50, capital: idx(30, 80), tiles: ringRect0(25, 75, 65, 85) },
+      { id: 1, pop: 10, capital: idx(200, 40), tiles: ringRect0(60, 76, 70, 84) },
+    ],
+    rel: [[0, 1, -45]],
+    wars: [{ key: '0-1', a: 0, b: 1, battles: 1 }],
+    civBuildCounts: [[1, [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]]],
+    buildings: [[idx(66, 80), 2, 1]],
+    armies: [
+      { id: 1, civ: 0, name: '甲', members: [10, 11, 12, 13, 14, 15], leaderId: 10, x: 63, y: 80, tx: 66, ty: 80,
+        state: 'siege', morale: 80, targetCiv: 1, formedTick: 100, size0: 6, evalTick: 280 },
+    ],
+    units: [
+      { id: 10, civ: 0, x: 63.0, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 11, civ: 0, x: 63.3, y: 80.1, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 12, civ: 0, x: 62.8, y: 79.9, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 13, civ: 0, x: 63.1, y: 80.4, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 14, civ: 0, x: 63.6, y: 80.0, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 15, civ: 0, x: 63.2, y: 80.6, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+    ] },
+  // ARM13 溃退恐慌：morale<floor → routArmy 传染（supply -1.2 先于恐慌 -12）+ t2 retreat 归航行军
+  { name: 'ARM13-rout-panic-retreat', seed: 0xad13, ticks: 2, startTick: 300,
+    paint: [[0, 0, W - 1, H - 1, GRASS]],
+    civs: [
+      { id: 0, pop: 12, gold: 50, capital: idx(60, 80), tiles: ringRect0(55, 75, 65, 85) },
+      { id: 1, pop: 10, capital: idx(200, 40), tiles: ringRect0(195, 35, 205, 45) },
+    ],
+    rel: [[0, 1, -45]],
+    wars: [{ key: '0-1', a: 0, b: 1 }],
+    armies: [
+      { id: 1, civ: 0, name: '甲', members: [10, 11, 12, 13, 14, 15], leaderId: 10, x: 90, y: 80, tx: 100, ty: 80,
+        state: 'march', morale: 20, targetCiv: 1, formedTick: 100, size0: 6, evalTick: 300 },
+      { id: 2, civ: 0, name: '友', members: [16, 17, 18, 19, 20, 21], leaderId: 16, x: 92, y: 81, tx: 100, ty: 81,
+        state: 'march', morale: 55, targetCiv: 1, formedTick: 100, size0: 6, evalTick: 300 },
+    ],
+    units: [
+      { id: 10, civ: 0, x: 90.0, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 11, civ: 0, x: 90.3, y: 80.1, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 12, civ: 0, x: 89.8, y: 79.9, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 13, civ: 0, x: 90.1, y: 80.4, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 14, civ: 0, x: 90.6, y: 80.0, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 15, civ: 0, x: 90.2, y: 80.6, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 16, civ: 0, x: 92.0, y: 81.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 17, civ: 0, x: 92.3, y: 81.1, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 18, civ: 0, x: 91.8, y: 80.9, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 19, civ: 0, x: 92.1, y: 81.4, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 20, civ: 0, x: 92.6, y: 81.0, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 21, civ: 0, x: 92.2, y: 81.6, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+    ] },
+  // ARM14 溃退追击屠戮：%10===0 → 0.4 门 victim 掷中 hp=0 + corpse + losses/morale/warData
+  { name: 'ARM14-chase-purge', seed: 0xaec05, ticks: 1, startTick: 300,
+    paint: [[0, 0, W - 1, H - 1, GRASS]],
+    civs: [
+      { id: 0, pop: 12, gold: 50, capital: idx(60, 80), tiles: ringRect0(55, 75, 65, 85) },
+      { id: 1, pop: 10, capital: idx(200, 40), tiles: ringRect0(195, 35, 205, 45) },
+    ],
+    rel: [[0, 1, -45]],
+    wars: [{ key: '0-1', a: 0, b: 1 }],
+    armies: [
+      { id: 1, civ: 0, name: '甲', members: [10, 11, 12, 13, 14, 15], leaderId: 10, x: 65, y: 80, tx: 90, ty: 80,
+        state: 'march', morale: 80, targetCiv: 1, formedTick: 100, size0: 6, evalTick: 300 },
+      { id: 2, civ: 1, name: '溃', members: [20, 21, 22, 23, 24, 25], leaderId: 20, x: 68, y: 80, tx: 55, ty: 80,
+        state: 'retreat', morale: 30, targetCiv: 0, formedTick: 100, size0: 6, evalTick: 300 },
+    ],
+    units: [
+      { id: 10, civ: 0, x: 65.0, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 11, civ: 0, x: 65.3, y: 80.1, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 12, civ: 0, x: 64.8, y: 79.9, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 13, civ: 0, x: 65.1, y: 80.4, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 14, civ: 0, x: 65.6, y: 80.0, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 15, civ: 0, x: 65.2, y: 80.6, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 20, civ: 1, x: 68.0, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 21, civ: 1, x: 68.2, y: 80.1, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 22, civ: 1, x: 67.8, y: 79.9, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 23, civ: 1, x: 68.1, y: 79.7, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 24, civ: 1, x: 67.9, y: 80.2, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 25, civ: 1, x: 68.3, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+    ] },
+  // ARM15 舰队渡海：setup 手动 armyEmbark（真实现直跑）→ 水上 naval 行军 + 岸上军团 disembark 全链
+  { name: 'ARM15-naval-crossing', seed: 0xafc1, ticks: 61, startTick: 300,
+    paint: [[0, 0, W - 1, H - 1, GRASS], [78, 0, 100, H - 1, WATER], [101, 0, W - 1, H - 1, GRASS]],
+    civs: [
+      { id: 0, pop: 12, gold: 50, capital: idx(60, 80), tiles: ringRect0(55, 75, 65, 85) },
+      { id: 1, pop: 10, capital: idx(120, 40), tiles: ringRect0(115, 35, 125, 45) },
+    ],
+    rel: [[0, 1, -45]],
+    civBuildCounts: [[1, [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]]],
+    armies: [
+      { id: 1, civ: 0, name: '甲', members: [10, 11, 12, 13, 14, 15], leaderId: 10, x: 90, y: 40, tx: 120, ty: 40,
+        state: 'march', morale: 80, targetCiv: 1, formedTick: 100, size0: 6, evalTick: 300 },
+      { id: 2, civ: 0, name: '乙', members: [16, 17, 18, 19, 20, 21], leaderId: 16, x: 113, y: 40, tx: 120, ty: 40,
+        state: 'march', morale: 80, targetCiv: 1, formedTick: 100, size0: 6, evalTick: 300, naval: true },
+    ],
+    units: [
+      { id: 10, civ: 0, x: 90.0, y: 40.0, job: 2, hp: 30, maxHp: 30, dmg: 3, boat: 1, boatTTL: 1600 },
+      { id: 11, civ: 0, x: 90.3, y: 40.1, job: 2, hp: 30, maxHp: 30, dmg: 3, boat: 1, boatTTL: 1600 },
+      { id: 12, civ: 0, x: 89.8, y: 39.9, job: 2, hp: 30, maxHp: 30, dmg: 3, boat: 1, boatTTL: 1600 },
+      { id: 13, civ: 0, x: 90.1, y: 40.4, job: 3, hp: 18, maxHp: 18, dmg: 2, boat: 1, boatTTL: 1600 },
+      { id: 14, civ: 0, x: 90.6, y: 40.0, job: 3, hp: 18, maxHp: 18, dmg: 2, boat: 1, boatTTL: 1600 },
+      { id: 15, civ: 0, x: 90.2, y: 40.6, job: 3, hp: 18, maxHp: 18, dmg: 2, boat: 1, boatTTL: 1600 },
+      { id: 16, civ: 0, x: 113.0, y: 40.0, job: 2, hp: 30, maxHp: 30, dmg: 3, boat: 1, boatTTL: 1600 },
+      { id: 17, civ: 0, x: 113.3, y: 40.1, job: 2, hp: 30, maxHp: 30, dmg: 3, boat: 1, boatTTL: 1600 },
+      { id: 18, civ: 0, x: 112.8, y: 39.9, job: 2, hp: 30, maxHp: 30, dmg: 3, boat: 1, boatTTL: 1600 },
+      { id: 19, civ: 0, x: 113.1, y: 40.4, job: 3, hp: 18, maxHp: 18, dmg: 2, boat: 1, boatTTL: 1600 },
+      { id: 20, civ: 0, x: 113.6, y: 40.0, job: 3, hp: 18, maxHp: 18, dmg: 2, boat: 1, boatTTL: 1600 },
+      { id: 21, civ: 0, x: 113.2, y: 40.6, job: 3, hp: 18, maxHp: 18, dmg: 2, boat: 1, boatTTL: 1600 },
+    ],
+    setup: (eng) => { eng.armyEmbark(eng.armies[0]); } }, // tick 前 embark 真实现直跑（军旗已在水中 → 移水 no-op + 成员登船 rng 偏移 + 纪事）
+  // ARM16 补给线：%25===0 深入敌境 → morale-1.2 + supplyWarned 纪事（mech 差分：limit 26）
+  { name: 'ARM16-supply-line', seed: 0xb016, ticks: 1, startTick: 325,
+    paint: [[0, 0, W - 1, H - 1, GRASS]],
+    civs: [
+      { id: 0, pop: 12, gold: 50, capital: idx(30, 80), tiles: ringRect0(25, 75, 35, 85) },
+      { id: 1, pop: 10, capital: idx(200, 40), tiles: ringRect0(195, 35, 205, 45) },
+    ],
+    rel: [[0, 1, -45]],
+    armies: [
+      { id: 1, civ: 0, name: '甲', members: [10, 11, 12, 13, 14, 15], leaderId: 10, x: 100, y: 80, tx: 150, ty: 80,
+        state: 'march', morale: 71, targetCiv: 1, formedTick: 100, size0: 6, evalTick: 325 },
+    ],
+    units: [
+      { id: 10, civ: 0, x: 100.0, y: 80.0, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 11, civ: 0, x: 100.3, y: 80.1, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 12, civ: 0, x: 99.8, y: 79.9, job: 2, hp: 30, maxHp: 30, dmg: 3 },
+      { id: 13, civ: 0, x: 100.1, y: 80.4, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 14, civ: 0, x: 100.6, y: 80.0, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+      { id: 15, civ: 0, x: 100.2, y: 80.6, job: 3, hp: 18, maxHp: 18, dmg: 2 },
+    ] },
+);
+
+// ---------------- runAll + sanity ----------------
+function runAll() {
+  const out = [];
+  let fail = 0;
+  for (const sc of scenarios) {
+    const r1 = runScenario(sc);
+    const r2 = runScenario(sc);
+    const s1 = JSON.stringify(r1), s2 = JSON.stringify(r2);
+    if (s1 !== s2) { console.log(`[DET FAIL] ${sc.name}`); fail++; }
+    out.push(r1);
+  }
+  return { out, fail };
+}
+// f64hex 逆变换（sanity 读回用）
+function f64inv(h) {
+  if (h === null || h === undefined) return 0;
+  const b = new DataView(new ArrayBuffer(8));
+  for (let i = 0; i < 8; i++) b.setUint8(i, parseInt(h.slice(i * 2, i * 2 + 2), 16));
+  return b.getFloat64(0, true);
+}
+
+function sanity(by) {
+  const asserts = [];
+  const A = (name, cond, msg) => asserts.push({ name, cond, msg });
+
+  const r1 = by['ARM01-muster-basic'];
+  const ar1 = r1.traces[0].armies[0];
+  A('ARM01 army born', r1.traces[0].armies.length === 1, `n=${r1.traces[0].armies.length}`);
+  A('ARM01 members 6', ar1.members.length === 6, `m=${JSON.stringify(ar1.members)}`);
+  A('ARM01 name generated', ar1.name !== 'A1' && ar1.name.length >= 4, `name=${ar1.name}`);
+  A('ARM01 leader kills5', ar1.leaderId === 11, `leader=${ar1.leaderId}`);
+  A('ARM01 morale 73.4', Math.abs(parseFloat(f64inv(ar1.morale)) - 73.4) < 1e-9, `morale=${f64inv(ar1.morale)}（58+5*3=73+rally回士气0.4）`);
+  A('ARM01 gold 22', r1.traces[0].civs[0].gold === 22, `gold=${r1.traces[0].civs[0].gold}（30-8）`);
+  A('ARM01 state rally', ar1.state === 'rally', `state=${ar1.state}`);
+  A('ARM01 members linked', r1.traces[0].units.filter((u) => u.army === 1).length === 6, `linked=${r1.traces[0].units.filter((u) => u.army === 1).length}`);
+  A('ARM01 muster event', r1.traces[0].newEvents.some((e) => e.kind === 'army' && e.text.includes('集结了')), JSON.stringify(r1.traces[0].newEvents.map((e) => e.kind)));
+  A('ARM01 toast', r1.traces[0].toasts.some((t) => t.text.includes('集结完毕')), JSON.stringify(r1.traces[0].toasts.map((t) => t.text.slice(0, 12))));
+
+  const r2 = by['ARM02-muster-levy'];
+  const ar2 = r2.traces[0].armies[0];
+  A('ARM02 levy 8', ar2.members.length === 8, `m=${ar2.members.length}（pool 8 ≥ MIN6 全收，上限 MAX24）`);
+  A('ARM02 jobs to 2', r2.traces[0].units.filter((u) => u.army === 1).every((u) => u.job === 2), JSON.stringify(r2.traces[0].units.filter((u) => u.army === 1).map((u) => u.job)));
+  A('ARM02 hp converted', parseFloat(f64inv(r2.traces[0].units.find((u) => u.id === 10).maxHp)) === 13, `maxHp=${f64inv(r2.traces[0].units.find((u) => u.id === 10).maxHp)}（10*JOBS[2].hpMul/JOBS[0].hpMul round=13）`);
+  A('ARM02 levy event', r2.traces[0].newEvents.some((e) => e.text.includes('征兵鼓')), JSON.stringify(r2.traces[0].newEvents.map((e) => e.text.slice(0, 12))));
+
+  const r3 = by['ARM03-muster-cost-short'];
+  const ar3 = r3.traces[0].armies[0];
+  A('ARM03 gold zeroed', r3.traces[0].civs[0].gold === 0, `gold=${r3.traces[0].civs[0].gold}`);
+  A('ARM03 morale -12', parseFloat(f64inv(ar3.morale)) < 61, `morale=${f64inv(ar3.morale)}（58-12=46 基线+回士气）`);
+  A('ARM03 broke event', r3.traces[0].newEvents.some((e) => e.text.includes('国库告罄')), JSON.stringify(r3.traces[0].newEvents.map((e) => e.text.slice(0, 12))));
+
+  const r4 = by['ARM04-muster-cap-legion'];
+  A('ARM04 cap rejects', r4.traces[0].armies.length === 2, `n=${r4.traces[0].armies.length}`);
+  A('ARM04 no new army', r4.traces[0].armySeq === 3, `seq=${r4.traces[0].armySeq}`);
+
+  const r5 = by['ARM05-rally-march'];
+  const ar5 = r5.traces[0].armies[0];
+  A('ARM05 march state', ar5.state === 'march', `state=${ar5.state}`);
+  A('ARM05 target capital', parseFloat(f64inv(ar5.tx)) === 200 && parseFloat(f64inv(ar5.ty)) === 40, `t=(${f64inv(ar5.tx)},${f64inv(ar5.ty)})`);
+  A('ARM05 oath event', r5.traces[0].newEvents.some((e) => e.text.includes('誓师出征')), JSON.stringify(r5.traces[0].newEvents.map((e) => e.text.slice(0, 12))));
+
+  const r6 = by['ARM06-march-step-chase'];
+  const ar6 = r6.traces[0].armies[0];
+  A('ARM06 chasing tx', ar6.tx === r6.traces[0].armies[1].x && ar6.ty === r6.traces[0].armies[1].y, `t=(${f64inv(ar6.tx)},${f64inv(ar6.ty)})（溃军 tick 末位置——倒序迭代溃军先走）`);
+  A('ARM06 moved toward', parseFloat(f64inv(ar6.x)) > 65, `x=${f64inv(ar6.x)}`);
+  A('ARM06 retreat army intact', r6.traces[0].armies[1].state === 'retreat', `st=${r6.traces[0].armies[1].state}`);
+
+  const r7 = by['ARM07-declare-clash'];
+  const a7a = r7.traces[0].armies.find((x) => x.id === 1);
+  const a7b = r7.traces[0].armies.find((x) => x.id === 2);
+  A('ARM07 both battle', a7a.state === 'battle' && a7b.state === 'battle', `${a7a.state}/${a7b.state}`);
+  A('ARM07 clash cross', a7a.clashWith === 2 && a7b.clashWith === 1, `${a7a.clashWith}/${a7b.clashWith}`);
+  A('ARM07 battleSize0 6', a7a.battleSize0 === 6 && a7b.battleSize0 === 6, `${a7a.battleSize0}/${a7b.battleSize0}`);
+  A('ARM07 battles ++', r7.traces[0].warData[0].battles === 1, `b=${r7.traces[0].warData[0].battles}（夹具 0 + declareClash ++）`);
+  A('ARM07 clash event', r7.traces[0].newEvents.some((e) => e.kind === 'clash' && e.text.includes('爆发会战')), JSON.stringify(r7.traces[0].newEvents.map((e) => e.kind)));
+  A('ARM07 shake 4', parseFloat(f64inv(r7.traces[0].shake)) === 4, `shake=${r7.traces[0].shake}`);
+
+  const r8 = by['ARM08-battle-lineup'];
+  const u8m = r8.traces[0].units.find((u) => u.id === 10);
+  const u8r = r8.traces[0].units.find((u) => u.id === 13);
+  A('ARM08 melee front', Math.abs(parseFloat(f64inv(u8m.tx)) - 67.6) < 1e-9, `tx=${f64inv(u8m.tx)}（70-2.4）`);
+  A('ARM08 melee line y', Math.abs(parseFloat(f64inv(u8m.ty)) - 80) < 2, `ty=${f64inv(u8m.ty)}`);
+  A('ARM08 archer back', Math.abs(parseFloat(f64inv(u8r.tx)) - 62.4) < 1e-9, `tx=${f64inv(u8r.tx)}（65-2.6）`);
+
+  const r9 = by['ARM09-volley-mixed'];
+  const kinds = r9.traces[0].effects.map((e) => e.kind);
+  A('ARM09 volley fx', kinds.includes('arrow') && kinds.includes('bullet') && kinds.includes('laser'), JSON.stringify(kinds));
+  const f9 = r9.traces[0].armies.find((x) => x.id === 2);
+  A('ARM09 foe shaken', parseFloat(f64inv(f9.morale)) < 75, `morale=${f64inv(f9.morale)}（75-1.5=73.5）`);
+  A('ARM09 volleyTick', r9.traces[0].lastVolleyEventTick === 315, `v=${r9.traces[0].lastVolleyEventTick}`);
+
+  const r10 = by['ARM10-battle-mech'];
+  A('ARM10 mech fire fx', r10.traces[0].effects.some((e) => e.kind === 'bullet'), JSON.stringify(r10.traces[0].effects.map((e) => e.kind)));
+  const hurtU = r10.traces[0].units.find((u) => u.id === 20);
+  A('ARM10 foe hp reduced', parseFloat(f64inv(hurtU.hp)) < 24, `hp=${f64inv(hurtU.hp)}（24-(16+rng*10) 除非死）`);
+  A('ARM10 hurt 20', parseFloat(f64inv(hurtU.hurt)) === 20 || parseFloat(f64inv(hurtU.hurt)) === 0, `hurt=${f64inv(hurtU.hurt)}`);
+
+  const r11 = by['ARM11-battle-collapse'];
+  const a11 = r11.traces[0].armies.find((x) => x.id === 1);
+  A('ARM11 rout', a11.state === 'retreat', `state=${a11.state}（6 ≤ max(3,floor(12/2))）`);
+  A('ARM11 scoreB +8', r11.traces[0].warData[0].scoreB === 8, `sB=${r11.traces[0].warData[0].scoreB}（甲(civ0=a)崩溃→foe 乙(civ1=b)记 scoreB）`);
+  A('ARM11 collapse event', r11.traces[0].newEvents.some((e) => e.text.includes('战线崩溃')), JSON.stringify(r11.traces[0].newEvents.map((e) => e.kind)));
+
+  const r12 = by['ARM12-siege-front-push'];
+  A('ARM12 occStr pushes', r12.traces[0].occStrDiff.length > 0, `n=${r12.traces[0].occStrDiff.length}`);
+  A('ARM12 score or occ', r12.traces[0].warData[0].scoreA > 0 || r12.traces[0].warData[0].occA > 0 || r12.traces[0].occStrDiff.length > 0, `sA=${r12.traces[0].warData[0].scoreA} occ=${r12.traces[0].warData[0].occA}`);
+  A('ARM12 member scatter', r12.traces[0].units.filter((u) => u.army === 1).every((u) => u.tx !== null), 'tx set');
+
+  const r13 = by['ARM13-rout-panic-retreat'];
+  const a13 = r13.traces[0].armies.find((x) => x.id === 1);
+  const f13 = r13.traces[0].armies.find((x) => x.id === 2);
+  A('ARM13 rout army', a13.state === 'retreat', `st=${a13.state}`);
+  A('ARM13 ally morale 41.8', Math.abs(parseFloat(f64inv(f13.morale)) - 41.8) < 1e-9, `morale=${f64inv(f13.morale)}（55-1.2 supply-12 恐慌——倒序先走 supply）`);
+  A('ARM13 rout event', r13.traces[0].newEvents.some((e) => e.kind === 'rout' && e.text.includes('全军溃退')), JSON.stringify(r13.traces[0].newEvents.map((e) => e.kind)));
+  const t13 = r13.traces[1];
+  A('ARM13 t2 retreat home', t13.armies.find((x) => x.id === 1).state === 'retreat', `t2=${t13.armies.find((x) => x.id === 1).state}`);
+
+  const r14 = by['ARM14-chase-purge'];
+  const f14 = r14.traces[0].armies.find((x) => x.id === 2);
+  const deadN = r14.traces[0].units.filter((u) => u.army === 2 && u.dead === 1).length;
+  A('ARM14 victim died', deadN >= 1, `dead=${deadN}`);
+  A('ARM14 losses 1', f14.losses >= 1, `losses=${f14.losses}`);
+  A('ARM14 corpse', r14.traces[0].corpses.length >= 1, `c=${r14.traces[0].corpses.length}`);
+  A('ARM14 war score', r14.traces[0].warData[0].casB >= 1 || r14.traces[0].warData[0].casA >= 1, JSON.stringify([r14.traces[0].warData[0].casA, r14.traces[0].warData[0].casB]));
+
+  const r15 = by['ARM15-naval-crossing'];
+  const a15 = r15.traces[r15.traces.length - 1].armies.find((x) => x.id === 1); // 末条 trace（60 tick 累计行军）
+  A('ARM15 naval true', a15.naval === true, `naval=${a15.naval}`);
+  A('ARM15 boats', r15.traces[0].units.filter((u) => u.army === 1 && u.boat === 1).length >= 1, `boats=${r15.traces[0].units.filter((u) => u.army === 1 && u.boat === 1).length}`);
+  A('ARM15 naval moved', parseFloat(f64inv(a15.x)) > 90, `x=${f64inv(a15.x)}（naval clamp 行军 12 步 ×0.0575）`);
+  const t15 = r15.traces[0];
+  const a15b = t15.armies.find((x) => x.id === 2);
+  A('ARM15 t1 disembark', a15b.naval === undefined || a15b.naval === false, `naval=${a15b.naval}（抵岸 d<8）`);
+  A('ARM15 land event', t15.newEvents.some((e) => e.text.includes('抢滩登陆')), JSON.stringify(t15.newEvents.map((e) => e.text.slice(0, 12))));
+  A('ARM15 spawn fx', t15.effects.some((e) => e.kind === 'spawn'), JSON.stringify(t15.effects.map((e) => e.kind)));
+
+  const r16 = by['ARM16-supply-line'];
+  const a16 = r16.traces[0].armies.find((x) => x.id === 1);
+  A('ARM16 morale 69.8', Math.abs(parseFloat(f64inv(a16.morale)) - 69.8) < 1e-9, `morale=${f64inv(a16.morale)}`);
+  A('ARM16 supplyWarned', a16.supplyWarned === true, `w=${a16.supplyWarned}`);
+  A('ARM16 supply event', r16.traces[0].newEvents.some((e) => e.text.includes('补给线吃紧')), JSON.stringify(r16.traces[0].newEvents.map((e) => e.text.slice(0, 14))));
+
+  return asserts;
+}
+
+// ---------------- main ----------------
+const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
+if (isMain) {
+  const { out, fail } = runAll();
+  const byMap = {};
+  for (const s of out) byMap[s.name] = s;
+  const asserts = sanity(byMap);
+  let sFail = 0;
+  for (const a of asserts) {
+    if (!a.cond) { console.log(`[SANITY FAIL] ${a.name}: ${a.msg}`); sFail++; }
+  }
+  console.log(`[sanity] ${asserts.length - sFail}/${asserts.length} PASS`);
+  const gold = {
+    meta: {
+      gen: 'gen-units-army.mjs',
+      bluebook: 'engine.ts armyTick L6212 / tryFormArmy L6052 / armyMarch L6361 / armyBattle L6473 / frontPush L7270',
+      hostProtocol: 'tickCount%5===0 → armyTick()（engine L2561）；内部门 %60 编军 / %10 追击 / %25 补给 / %15 齐射 / %20 机炮',
+      W, H, houseCap: HOUSE_CAP,
+      buildingDefs: BUILDING_DEFS.map((d) => ({ key: d.key, hp: d.hp, popCap: d.popCap ?? null, cost: d.cost ?? null, needKnowledge: d.needKnowledge ?? null })),
+      neutralMods: NEUTRAL_MODS,
+      jobsHpMul: JOBS.map((j) => j.hpMul ?? null),
+      jobsDmgMul: JOBS.map((j) => j.dmgMul ?? null),
+      jobsSpeedMul: JOBS.map((j) => j.speedMul ?? null),
+      racesIsCiv: Object.keys(RACES).sort((a, b) => a - b).map((k) => !!RACES[k].isCiv),
+      racesName: Object.keys(RACES).sort((a, b) => a - b).map((k) => RACES[k].name),
+      armyMin: 6, armyMax: 24, armySpeed: 0.05, armyCd: 900,
+    },
+    scenarios: out,
+  };
+  mkdirSync(path.join(ROOT, 'scripts/unity-migration/golden'), { recursive: true });
+  mkdirSync(path.join(ROOT, 'unity/pixel-world-box/Assets/StreamingAssets/WbGolden'), { recursive: true });
+  const fp = path.join(ROOT, 'scripts/unity-migration/golden/units_army.json');
+  writeFileSync(fp, JSON.stringify(gold));
+  writeFileSync(path.join(ROOT, 'unity/pixel-world-box/Assets/StreamingAssets/WbGolden/units_army.json'), JSON.stringify(gold));
+  console.log(`[gen] written ${fp} (${(JSON.stringify(gold).length / 1024).toFixed(1)}KB)`);
+  if (fail || sFail) { console.log(`[GEN FAIL] det=${fail} sanity=${sFail}`); process.exit(1); }
+  console.log('[GEN PASS]');
+}

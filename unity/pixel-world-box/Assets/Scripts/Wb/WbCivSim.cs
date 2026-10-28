@@ -3010,5 +3010,1222 @@ namespace PixelWorldBox.Wb
             if (ratio <= 0.8 && (aggr.militarism ?? 30) >= 52 && greed >= 0.6) return ("plunder", aggr, vic2);
             return ("border", aggr, vic2);
         }
+
+        // ================================================================
+        // M-U3g 军团域（armyTick 状态机全链）
+        // 蓝本: engine.ts tryFormArmy L6052-6140 / civRallyPoint L6143-6154 /
+        //   pickWarEnemy L6157-6176 / nearestStandable L6179-6191 / formationPos L6194-6209 /
+        //   armyTick L6212-6304 / electLeader L6307-6316 / armyRally L6318-6337 /
+        //   armyMarchTarget L6340-6359 / armyMarch L6361-6471 / armyBattle L6473-6643 /
+        //   armySiege L6645-6697 / armyRetreat L6699-6735 / declareClash L6738-6757 /
+        //   nearestEnemyArmy L6760-6769 / nearestEnemyBuildingOf L6772-6782 /
+        //   crossesWater L6785-6799 / armyEmbark L6802-6825 / armyDisembark L6828-6847 /
+        //   routArmy L6850-6873 / disbandArmy L6876-6898 / frontPush L7270-7303 /
+        //   frontSolidify L7306-7316 / leadAim L4351-4358 / isRangedMember L4361-4365 /
+        //   castArrow L4368-4370 / castBullet L4374-4377 / castBeam L4381-4393 /
+        //   launchMech L9551-9556 / setJob L1482 / addCorpse L2871 / wwCountKill L8690
+        // 宿主协议: tickCount%5===0 → ArmyTick()（engine L2561）
+        // ================================================================
+
+        /// engine GameEngine.ARMY_MIN/MAX/SPEED/CD（L6044-6049）
+        public const int ARMY_MIN = 6;
+        public const int ARMY_MAX = 24;
+        public const double ARMY_SPEED = 0.05;
+        public const int ARMY_CD = 900;
+        public const int CORPSE_MAX = 240;   // engine GameEngine.CORPSE_MAX（L2857）
+
+        private static bool WalkableT(int t) => t != WbWorld.T_DEEP && t != WbWorld.T_WATER && t != WbWorld.T_MOUNTAIN && t != WbWorld.T_LAVA;  // constants.ts L73-76
+        private static int IdxOf(int x, int y) => y * WbWorld.W + x;                                    // constants.ts 同款
+        private static int TileX(int i) => i % WbWorld.W;                                               // engine L1548
+        private static int TileY(int i) => i / WbWorld.W;                                               // engine L1549
+
+        /// engine tryFormArmy L6052-6140（M-U3d 前半保留 + M-U3g 编成全量补全）
+        public static WbArmy TryFormArmy(WbWorld w, WbCiv civ, int? targetCiv)
+        {
+            // WBB.touchMeta() —— army 列 wasm 镜像写点（civ 层 no-op）
+            if (civ == null || !civ.alive || civ.pop < 10) return null;
+            if (w.tickCount < (civ.armyCd ?? 0)) return null;
+            int legionParam = 2;
+            WbDirective leg = ActiveDirective(w, civ.id, "legion");
+            if (leg != null) legionParam = System.Math.Max(3, leg.param);
+            double aggr = RaceAggrOf(civ.race);
+            int armyCap = (int)System.Math.Round((legionParam + TechModsOf(w, civ.id).armyMax + (GovOf(w, civ.id) == 4 ? 1 : 0)) * (0.75 + aggr * 0.5));
+            armyCap = System.Math.Max(1, armyCap);
+            int own = 0;
+            foreach (WbArmy a in w.armies) if (a.civ == civ.id) own++;
+            if (own >= armyCap) return null;
+            // 目标敌国：指定或取交战中最近且尚有建筑者（L6058-6064）
+            int enemyId = targetCiv ?? -1;
+            if (enemyId < 0)
+            {
+                WbCiv e = PickWarEnemy(w, civ.id);
+                if (e == null) return null;
+                enemyId = e.id;
+            }
+            else
+            {
+                WbCiv ec0 = CivAt(w, enemyId);
+                if (ec0 == null || !ec0.alive || !AtWar(w, civ.id, enemyId)) return null;
+            }
+            // 兵员：集结点 24 格内的无军团战士/弓手；不足编时回退全国征召（L6065-6080）
+            (double rx, double ry)? centerN = CivRallyPoint(w, civ);
+            if (centerN == null) return null;
+            (double x, double y) center = centerN.Value;
+            List<WbU> near = new List<WbU>();
+            List<WbU> far = new List<WbU>();
+            foreach (WbU u in w.units)
+            {
+                if (u.dead != 0 || u.civ != civ.id || u.boat != 0 || u.army != null) continue;
+                int job = u.job;
+                if (job != 2 && job != 3) continue;
+                if (WbMath.FdHypot(u.x - center.x, u.y - center.y) <= 24) near.Add(u); else far.Add(u);
+            }
+            if (near.Count < ARMY_MIN)
+            {
+                far.Sort((a, b) => WbMath.FdHypot(a.x - center.x, a.y - center.y).CompareTo(WbMath.FdHypot(b.x - center.x, b.y - center.y)));
+                int take = System.Math.Min(far.Count, ARMY_MAX - near.Count);
+                for (int i = 0; i < take; i++) near.Add(far[i]);
+            }
+            // —— 战时紧急征召（levy）：兵源不足时征募集结点附近的平民执戈（L6081-6097）——
+            if (near.Count < ARMY_MIN && CivAtWar(w, civ.id))
+            {
+                List<WbU> levy = new List<WbU>();
+                foreach (WbU u in w.units)
+                {
+                    if (levy.Count >= ARMY_MIN + 4) break;
+                    if (u.dead != 0 || u.civ != civ.id || u.boat != 0 || u.army != null) continue;
+                    if (u.job != 0) continue;
+                    if (WbMath.FdHypot(u.x - center.x, u.y - center.y) > 20) continue;
+                    levy.Add(u);
+                }
+                foreach (WbU u in levy) SetJob(w, u, 2);
+                if (levy.Count > 0)
+                {
+                    w.AddEvent("army", $"「{civ.name}」敲响征兵鼓——{levy.Count} 名平民放下锄头拿起长矛", civ.colorHex, center.x, center.y);
+                }
+                near.AddRange(levy);
+            }
+            List<WbU> pool = near;
+            if (pool.Count < ARMY_MIN) return null;
+            // 就近入列（集结快），上限 ARMY_MAX（L6100-6102）
+            pool.Sort((a, b) => WbMath.FdHypot(a.x - center.x, a.y - center.y).CompareTo(WbMath.FdHypot(b.x - center.x, b.y - center.y)));
+            int memberN = System.Math.Min(pool.Count, ARMY_MAX);
+            List<WbU> members = pool.GetRange(0, memberN);
+            // 指挥官 = 击杀最多者（宿将执旗；严格大于——平局保首见，L6103-6105）
+            WbU leader = members[0];
+            foreach (WbU m in members) if (m.kills > leader.kills) leader = m;
+            int seq = (w.armyNameSeq.TryGetValue(civ.id, out int sv) ? sv : 0) + 1;
+            w.armyNameSeq[civ.id] = seq;
+            int archerN = 0;
+            foreach (WbU m in members) if (m.job == 3) archerN++;
+            double archerRatio = (double)archerN / members.Count;
+            string name = WbNames.ArmyNameByJobs(w, seq, archerRatio);   // rng ×2（pre/mid）
+            // 军旗落点 = 兵员质心（就近可站立地块，L6110-6114）
+            double sx = 0, sy = 0;
+            foreach (WbU m in members) { sx += m.x; sy += m.y; }
+            (int fx, int fy) flag = NearestStandable(w, (int)System.Math.Round(sx / members.Count), (int)System.Math.Round(sy / members.Count));
+            WbArmy a2 = new WbArmy
+            {
+                id = w.armySeq++, civ = civ.id, name,
+                members = members.ConvertAll((m) => m.id), leaderId = leader.id,
+                x = flag.fx, y = flag.fy, tx = flag.fx, ty = flag.fy,
+                state = "rally", formedTick = w.tickCount, size0 = members.Count,
+                morale = System.Math.Min(95, 58 + leader.kills * 3),
+                targetCiv = enemyId, rot = w.Rng() * System.Math.PI * 2,
+                kills = 0, losses = 0, evalTick = w.tickCount,
+            };
+            foreach (WbU m in members) m.army = a2.id;
+            // —— 组建军费（Task 34 经济闭环）：征召集结耗资；国库不足时仓促成军士气受挫（L6125-6135）——
+            {
+                int musterCost = 6 + (int)System.Math.Round(members.Count * 0.35);
+                if ((civ.gold ?? 0) >= musterCost)
+                {
+                    civ.gold = (civ.gold ?? 0) - musterCost;
+                }
+                else
+                {
+                    civ.gold = 0;
+                    a2.morale = System.Math.Max(20, a2.morale - 12);
+                    w.AddEvent("army", $"「{civ.name}」国库告罄，{name}仓促成军——粮草不济，士气低落", civ.colorHex, a2.x, a2.y);
+                }
+            }
+            w.armies.Add(a2);
+            w.AddEvent("army", $"「{civ.name}」集结了{name}（{members.Count} 人，宿将 {leader.name} 执旗）", civ.colorHex, a2.x, a2.y);
+            w.Toast($"「{civ.name}」的{name}集结完毕", "war");
+            return a2;
+        }
+
+        /// engine civRallyPoint L6143-6154 —— 军团集结点：王都优先，回退国民质心
+        public static (double x, double y)? CivRallyPoint(WbWorld w, WbCiv civ)
+        {
+            if (civ.capital >= 0) return (TileX(civ.capital), TileY(civ.capital));
+            double sx = 0, sy = 0;
+            int n = 0;
+            foreach (WbU u in w.units)
+            {
+                if (u.dead != 0 || u.civ != civ.id) continue;
+                sx += u.x; sy += u.y; n++;
+            }
+            if (n == 0) return null;
+            return (sx / n, sy / n);
+        }
+
+        /// engine pickWarEnemy L6157-6176 —— 交战国中距本国最近且尚有建筑的敌国
+        public static WbCiv PickWarEnemy(WbWorld w, int civId)
+        {
+            WbCiv me = CivAt(w, civId);
+            if (me == null || !me.alive) return null;
+            double px = me.capital >= 0 ? TileX(me.capital) : WbWorld.W / 2.0;
+            double py = me.capital >= 0 ? TileY(me.capital) : WbWorld.H / 2.0;
+            WbCiv best = null;
+            double bestD = double.PositiveInfinity;
+            foreach (WbCiv o in w.civs)
+            {
+                if (o == null || !o.alive || o.id == civId || !AtWar(w, civId, o.id)) continue;
+                if (!w.civBuildCounts.TryGetValue(o.id, out int[] cnt) || cnt == null) continue;
+                bool hasB = false;
+                for (int k = 1; k < cnt.Length; k++) if (cnt[k] > 0) { hasB = true; break; }
+                if (!hasB) continue;
+                double d = o.capital >= 0 ? WbMath.FdHypot(TileX(o.capital) - px, TileY(o.capital) - py) : 100;
+                if (d < bestD) { bestD = d; best = o; }
+            }
+            return best;
+        }
+
+        /// engine nearestStandable L6179-6191 —— 最近可站立地块（军旗落点/登陆用；只扫环）
+        public static (int x, int y) NearestStandable(WbWorld w, int x, int y)
+        {
+            for (int r = 0; r < 6; r++)
+            {
+                for (int dy = -r; dy <= r; dy++)
+                {
+                    for (int dx = -r; dx <= r; dx++)
+                    {
+                        if (System.Math.Abs(dx) != r && System.Math.Abs(dy) != r) continue; // 只扫环
+                        int xx = System.Math.Max(0, System.Math.Min(WbWorld.W - 1, x + dx));
+                        int yy = System.Math.Max(0, System.Math.Min(WbWorld.H - 1, y + dy));
+                        if (WalkableT(w.terrain[IdxOf(xx, yy)])) return (xx, yy);
+                    }
+                }
+            }
+            return (x, y);
+        }
+
+        /// engine formationPos L6194-6209 —— 编队阵位：行军=纵队（3 列拖后），其余=环形方阵（指挥官贴旗）
+        public static (double x, double y) FormationPos(WbWorld w, WbArmy a, int k)
+        {
+            int n = a.members.Count;
+            if (a.state == "march" || a.state == "retreat")
+            {
+                double dirAng = WbMath.FdAtan2(a.ty - a.y, a.tx - a.x);
+                int per = 3;
+                int row = k / per;
+                int col = (k % per) - 1;
+                double back = 0.9 + row * 1.15;
+                double px = -WbMath.FdCos(dirAng) * back + WbMath.FdCos(dirAng + System.Math.PI / 2) * col * 1.0;
+                double py = -WbMath.FdSin(dirAng) * back + WbMath.FdSin(dirAng + System.Math.PI / 2) * col * 1.0;
+                return (System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, a.x + px)), System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, a.y + py)));
+            }
+            double ang = (k / (double)System.Math.Max(1, n)) * System.Math.PI * 2 + a.rot;
+            double r = k == 0 ? 0.7 : 1.5 + (k % 3) * 0.55;
+            return (System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, a.x + WbMath.FdCos(ang) * r)), System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, a.y + WbMath.FdSin(ang) * r)));
+        }
+
+        /// engine armyTick L6212-6304 —— 军团状态机主循环（每 5 tick；armies 倒序迭代 + 实时 state 判定）
+        public static void ArmyTick(WbWorld w)
+        {
+            // WBB.touchMeta() —— army/boat meta 列收口（civ 层 no-op）
+            // 战时文明周期性组建军团（L6215-6220）
+            if (w.tickCount % 60 == 0)
+            {
+                foreach (WbCiv civ in w.civs)
+                {
+                    if (civ == null || !civ.alive || !CivAtWar(w, civ.id)) continue;
+                    if (w.Rng() < 0.5) TryFormArmy(w, civ, null);
+                }
+            }
+            for (int i = w.armies.Count - 1; i >= 0; i--)
+            {
+                WbArmy a = w.armies[i];
+                WbCiv civ = CivAt(w, a.civ);
+                if (civ == null || !civ.alive) { DisbandArmy(w, a, true); continue; }
+                // —— 成员清点：死亡/离散者出列，士气折损（L6225-6236）——
+                bool leaderDead = false;
+                for (int k = a.members.Count - 1; k >= 0; k--)
+                {
+                    WbU u = w.unitById.TryGetValue(a.members[k], out WbU uu) ? uu : null;
+                    if (u == null || u.dead != 0 || u.civ != a.civ || !object.Equals(u.army, (object)a.id))
+                    {
+                        int uid = a.members[k];
+                        a.members.RemoveAt(k);
+                        a.losses++;
+                        a.morale -= 4;
+                        if (uid == a.leaderId) leaderDead = true;
+                    }
+                }
+                if (leaderDead) ElectLeader(w, a);
+                // 残部不足 → 解散（L6238-6239）
+                if (a.members.Count < 4) { DisbandArmy(w, a, true); continue; }
+                // —— 补给线：深入敌境的军团士气缓降（机械化军团自持补给，半径更大，L6240-6258）——
+                if (a.state != "retreat" && w.tickCount % 25 == 0)
+                {
+                    bool mech = TechModsOf(w, a.civ).mech > 0;
+                    int limit = mech ? 26 : 15;
+                    double near = double.PositiveInfinity;
+                    foreach (WbBuilding b in w.buildings)
+                    {
+                        if (b.civ != a.civ) continue;
+                        double d = WbMath.FdHypot(b.x - a.x, b.y - a.y);
+                        if (d < near) near = d;
+                        if (near < limit) break;
+                    }
+                    if (near > limit)
+                    {
+                        a.morale -= 1.2;
+                        if (!a.supplyWarned && a.morale < 72)
+                        {
+                            a.supplyWarned = true;
+                            w.AddEvent("army", $"{a.name} 深入敌境，补给线吃紧——士卒疲惫，士气日渐消磨", civ.colorHex, a.x, a.y);
+                        }
+                    }
+                    else if (a.supplyWarned) a.supplyWarned = false;
+                }
+                // —— 溃退追击（Task 36）：溃退敌军进入我军锋线 6 格 → 追亡逐北（L6259-6282）——
+                if (a.state != "retreat" && w.tickCount % 10 == 0)
+                {
+                    foreach (WbArmy o in w.armies)
+                    {
+                        if (o == a || o.civ == a.civ || o.state != "retreat" || !AtWar(w, a.civ, o.civ)) continue;
+                        if (WbMath.FdHypot(o.x - a.x, o.y - a.y) > 6) continue;
+                        if (w.Rng() < 0.4 && o.members.Count > 0)
+                        {
+                            WbU victim = w.unitById.TryGetValue(o.members[(int)(w.Rng() * o.members.Count)], out WbU vv) ? vv : null;
+                            if (victim != null && victim.dead == 0)
+                            {
+                                victim.hp = 0;
+                                victim.dead = 1;
+                                AddCorpse(w, victim.x, victim.y, false, false);
+                                WwCountKill(w, victim);
+                                o.losses++;
+                                o.morale = System.Math.Max(5, o.morale - 3);
+                                WbWarData wd = w.warData.TryGetValue(WbWorld.PairKey(a.civ, o.civ), out WbWarData wd0) ? wd0 : null;
+                                if (wd != null)
+                                {
+                                    if (a.civ == wd.a) { wd.casB++; wd.scoreA += 0.5; } else { wd.casA++; wd.scoreB += 0.5; }
+                                }
+                                if (w.Rng() < 0.12) w.AddEvent("clash", $"{a.name} 追亡逐北，溃军沿途折损（{o.name} 尚存 {o.members.Count} 人）", civ.colorHex, o.x, o.y);
+                            }
+                        }
+                    }
+                }
+                // 士气崩塌 → 溃退（会战大失败的收场；方阵战术科技让军队更顽强，L6283-6285）
+                double moraleFloor = 35 + TechModsOf(w, a.civ).morale;
+                if (a.morale < moraleFloor && a.state != "retreat") { RoutArmy(w, a, false, false); continue; }
+                // 战争结束/敌国已灭 → 凯旋归国（L6286-6291）
+                WbCiv enemy = CivAt(w, a.targetCiv);
+                if (a.state != "retreat" && ((enemy == null || !enemy.alive) || !AtWar(w, a.civ, a.targetCiv)))
+                {
+                    RoutArmy(w, a, true, false);
+                    continue;
+                }
+                switch (a.state)
+                {
+                    case "rally": ArmyRally(w, a, civ); break;
+                    case "march": ArmyMarch(w, a, civ); break;
+                    case "battle": ArmyBattle(w, a, civ); break;
+                    case "siege": ArmySiege(w, a, civ); break;
+                    case "retreat": ArmyRetreat(w, a, civ); break;
+                }
+                // 非战斗状态缓慢回士气（整编/归途；战术/军团科技加速重整，L6299-6300）
+                if (a.state == "rally" || a.state == "retreat") a.morale = System.Math.Min(100, a.morale + 0.4 + TechModsOf(w, a.civ).morale * 0.015);
+                // 伤亡过半 → 士气持续下滑（惨重代价，L6301-6302）
+                if (a.members.Count < a.size0 * 0.5 && (a.state == "march" || a.state == "siege")) a.morale -= 0.4;
+            }
+        }
+
+        /// engine electLeader L6307-6316 —— 选举新指挥官（旧将阵亡；kills 最多者接旗）
+        public static void ElectLeader(WbWorld w, WbArmy a)
+        {
+            WbU leader = null;
+            foreach (int id in a.members)
+            {
+                WbU u = w.unitById.TryGetValue(id, out WbU uu) ? uu : null;
+                if (u != null && (leader == null || u.kills > leader.kills)) leader = u;
+            }
+            a.leaderId = leader != null ? leader.id : -1;
+            a.morale = System.Math.Max(20, a.morale - 8); // 主将阵亡军心动摇
+            if (leader != null) w.AddEvent("army", $"{a.name} 主将阵亡，{leader.name} 接过军旗", CivAt(w, a.civ)?.colorHex, a.x, a.y);
+        }
+
+        /// engine armyRally L6318-6337 —— 集结：成员就位率 + 等待时长 → 誓师出征
+        public static void ArmyRally(WbWorld w, WbArmy a, WbCiv civ)
+        {
+            int gathered = 0;
+            for (int k = 0; k < a.members.Count; k++)
+            {
+                WbU u = w.unitById.TryGetValue(a.members[k], out WbU uu) ? uu : null;
+                if (u == null) continue;
+                (double fx, double fy) fp = FormationPos(w, a, k);
+                u.tx = fp.fx; u.ty = fp.fy;
+                if (WbMath.FdHypot(u.x - a.x, u.y - a.y) < 3.5) gathered++;
+            }
+            double ratio = (double)gathered / a.members.Count;
+            long waited = w.tickCount - a.formedTick;
+            if ((ratio >= 0.8 && waited > 40) || waited > 300)
+            {
+                (double x, double y)? tgt = ArmyMarchTarget(w, a);
+                if (tgt != null)
+                {
+                    a.tx = tgt.Value.x; a.ty = tgt.Value.y;
+                    a.state = "march";
+                    w.AddEvent("army", $"{a.name} 誓师出征（{a.members.Count} 人）", civ.colorHex, a.x, a.y);
+                }
+            }
+        }
+
+        /// engine armyMarchTarget L6340-6359 —— 行军目标：敌国王都优先 → 最近敌建筑 → 敌土质心
+        public static (double x, double y)? ArmyMarchTarget(WbWorld w, WbArmy a)
+        {
+            WbCiv e = CivAt(w, a.targetCiv);
+            if (e == null || !e.alive) return null;
+            if (e.capital >= 0) return (TileX(e.capital), TileY(e.capital));
+            WbBuilding best = null;
+            double bestD = double.PositiveInfinity;
+            foreach (WbBuilding b in w.buildings)
+            {
+                if (b.civ != a.targetCiv) continue;
+                double d = WbMath.FdHypot(b.x - a.x, b.y - a.y);
+                if (d < bestD) { bestD = d; best = b; }
+            }
+            if (best != null) return (best.x, best.y);
+            // —— 终极回退：敌境已无建筑 → 敌国剩余领土质心（修复 rally 卡死，L6352-6357）——
+            if (e.tiles.Count > 0)
+            {
+                double sx = 0, sy = 0;
+                foreach (int t in e.tiles) { sx += t % WbWorld.W; sy += (t / WbWorld.W) | 0; }
+                return (sx / e.tiles.Count, sy / e.tiles.Count);
+            }
+            return null;
+        }
+
+        /// engine armyMarch L6361-6471 —— 行军：伏击标记/合击/咬定溃军/会战/登陆/渗透/军旗推进/编队跟随
+        public static void ArmyMarch(WbWorld w, WbArmy a, WbCiv civ)
+        {
+            // WBB.touchMeta() —— 行军涉水登船 boat 列收口（civ 层 no-op）
+            // —— 林间伏击：行军于森林的军团进入潜伏（接战首击士气加成，L6363-6365）——
+            int hereTile = w.terrain[IdxOf((int)System.Math.Floor(a.x), (int)System.Math.Floor(a.y))];
+            a.ambush = hereTile == WbWorld.T_FOREST;
+            // —— 合击战术（Task 35）：附近友军已与敌接战 → 就近压上夹击（L6366-6375）——
+            foreach (WbArmy o in w.armies)
+            {
+                if (o.civ != a.civ || o.id == a.id || o.state != "battle" || o.clashWith == null) continue;
+                WbArmy f2 = null;
+                foreach (WbArmy x in w.armies) if (x.id == o.clashWith.Value) { f2 = x; break; }
+                if (f2 == null || !AtWar(w, a.civ, f2.civ)) continue;
+                if (WbMath.FdHypot(f2.x - a.x, f2.y - a.y) < 11)
+                {
+                    DeclareClash(w, a, f2, civ);
+                    return;
+                }
+            }
+            // —— 溃退追击（Task 36）：优先咬住 10 格内的溃退敌军（追击不接战，L6376-6392）——
+            bool chasing = false;
+            {
+                WbArmy routedFoe = null;
+                double routedD = 10;
+                foreach (WbArmy o in w.armies)
+                {
+                    if (o.civ == a.civ || o.state != "retreat" || !AtWar(w, a.civ, o.civ)) continue;
+                    double dd = WbMath.FdHypot(o.x - a.x, o.y - a.y);
+                    if (dd < routedD) { routedD = dd; routedFoe = o; }
+                }
+                if (routedFoe != null && !a.naval)
+                {
+                    chasing = true;
+                    a.tx = routedFoe.x;
+                    a.ty = routedFoe.y;
+                }
+            }
+            // —— 敌军团逼近 → 会战（战术 AI 深劣势则战术转移，L6393-6403）——
+            WbArmy foe = NearestEnemyArmy(w, a);
+            if (foe != null && foe.state != "retreat" && WbMath.FdHypot(foe.x - a.x, foe.y - a.y) < 8)
+            {
+                bool ai = TechModsOf(w, a.civ).ai > 0;
+                if (ai && foe.members.Count > a.members.Count * 1.8 && a.morale < 60)
+                {
+                    RoutArmy(w, a, false, true); // 战术智能：避其锋芒，后撤再战
+                    return;
+                }
+                DeclareClash(w, a, foe, civ);
+                return;
+            }
+            double d = WbMath.FdHypot(a.tx - a.x, a.ty - a.y);
+            // —— 舰队抵达敌岸 → 登陆（L6405-6412）——
+            if (a.naval)
+            {
+                bool onLand = WalkableT(w.terrain[IdxOf((int)System.Math.Floor(a.x), (int)System.Math.Floor(a.y))]);
+                if (onLand && d < 8) { ArmyDisembark(w, a); a.state = "siege"; a.evalTick = w.tickCount; return; }
+            }
+            else if (d < 3 && !chasing)
+            {
+                a.state = "siege"; a.evalTick = w.tickCount;
+                return;
+            }
+            // —— 行军渗透：途经敌境留下占领脚印（弱功率；战线随军推进，L6413-6417）——
+            if (!a.naval && w.tickCount - (a.marchPushTick ?? 0) > 25)
+            {
+                a.marchPushTick = w.tickCount;
+                FrontPush(w, a, 2, 3);
+            }
+
+            // —— 军旗推进（步频 × 士气加成 × 机械化履带加速 × 追击提速；8 向贪心绕障，L6419-6446）——
+            double step = ARMY_SPEED * (0.75 + a.morale / 200) * (TechModsOf(w, a.civ).mech > 0 ? 1.4 : 1) * (chasing ? 1.5 : 1);
+            if (a.naval)
+            {
+                a.x = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, a.x + ((a.tx - a.x) / d) * step));
+                a.y = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, a.y + ((a.ty - a.y) / d) * step));
+            }
+            else
+            {
+                double bas = WbMath.FdAtan2(a.ty - a.y, a.tx - a.x);
+                bool moved = false;
+                double[] offs = { 0, 0.45, -0.45, 0.95, -0.95, 1.7, -1.7, System.Math.PI };
+                foreach (double off in offs)
+                {
+                    double ang2 = bas + off;
+                    double nx = a.x + WbMath.FdCos(ang2) * step;
+                    double ny = a.y + WbMath.FdSin(ang2) * step;
+                    if (nx < 1 || ny < 1 || nx > WbWorld.W - 2 || ny > WbWorld.H - 2) continue;
+                    if (!WalkableT(w.terrain[IdxOf((int)System.Math.Floor(nx), (int)System.Math.Floor(ny))])) continue;
+                    a.x = nx; a.y = ny;
+                    moved = true;
+                    break;
+                }
+                if (!moved)
+                {
+                    // 四周全堵：直行前方是水且跨海 → 舰队渡海；否则原地等待（下轮重试，L6437-6445）
+                    int ax = (int)System.Math.Floor(a.x + WbMath.FdCos(bas) * 1.5);
+                    int ay = (int)System.Math.Floor(a.y + WbMath.FdSin(bas) * 1.5);
+                    if (ax >= 0 && ay >= 0 && ax < WbWorld.W && ay < WbWorld.H && WbWorld.IsWater(w.terrain[IdxOf(ax, ay)]) && CrossesWater(w, a.x, a.y, a.tx, a.ty))
+                    {
+                        ArmyEmbark(w, a);
+                        return;
+                    }
+                }
+            }
+            // —— 成员跟随编队（行军纵队阵位，L6447-6470）——
+            for (int k = 0; k < a.members.Count; k++)
+            {
+                WbU u = w.unitById.TryGetValue(a.members[k], out WbU uu) ? uu : null;
+                if (u == null) continue;
+                (double fx, double fy) fp = FormationPos(w, a, k);
+                u.tx = fp.fx; u.ty = fp.fy;
+                if (a.naval)
+                {
+                    bool inWater = WbWorld.IsWater(w.terrain[IdxOf((int)System.Math.Floor(u.x), (int)System.Math.Floor(u.y))]);
+                    if (u.boat == 0 && inWater) { u.boat = 1; u.boatTTL = 1600; }
+                    if (u.boat != 0)
+                    {
+                        u.boatTTL = System.Math.Max(u.boatTTL, 200); // 舰队补给：不海难
+                        // 落后的旱鸭子跳上旗舰（距旗 < 3 直接登船）
+                        if (inWater == false && WbMath.FdHypot(u.x - a.x, u.y - a.y) < 3)
+                        {
+                            (double wx, double wy)? ww = FindWaterNear(w, a.x, a.y, 3);
+                            if (ww != null) { u.boat = 1; u.boatTTL = 1600; u.x = ww.Value.wx; u.y = ww.Value.wy; u.lx = ww.Value.wx; u.ly = ww.Value.wy; }
+                        }
+                    }
+                }
+                else if (u.boat != 0 && WbMath.FdHypot(u.x - a.x, u.y - a.y) < 4)
+                {
+                    // 已转陆路但仍有成员漂着 → 靠岸归队
+                    u.boat = 0; u.boatTTL = 0;
+                    (int sx, int sy) spos = NearestStandable(w, (int)System.Math.Floor(u.x), (int)System.Math.Floor(u.y));
+                    u.x = spos.sx; u.y = spos.sy; u.lx = spos.sx; u.ly = spos.sy;
+                }
+            }
+        }
+
+        /// engine armyBattle L6473-6643 —— 会战：落幕/崩溃/机炮/战线阵列/齐射/烈度/包围/增援/战术撤退
+        public static void ArmyBattle(WbWorld w, WbArmy a, WbCiv civ)
+        {
+            WbArmy foe = a.clashWith != null ? w.armies.Find((x) => x.id == a.clashWith.Value) : null;
+            // —— 会战结束：对手溃散/解散/脱离（L6475-6491）——
+            if (foe == null || !w.armies.Contains(foe) || foe.state != "battle" || WbMath.FdHypot(foe.x - a.x, foe.y - a.y) > 12)
+            {
+                bool won = foe != null ? (foe.state == "retreat" || a.members.Count >= foe.members.Count) : true;
+                a.morale = System.Math.Min(100, a.morale + (won ? 12 : 2));
+                WbWarData wd = foe != null ? (w.warData.TryGetValue(WbWorld.PairKey(a.civ, foe.civ), out WbWarData wd1) ? wd1 : null) : null;
+                if (wd != null && won)
+                {
+                    if (a.civ == wd.a) wd.scoreA += 10; else wd.scoreB += 10;
+                }
+                if (w.tickCount - (a.battleSince ?? w.tickCount) > 50)
+                {
+                    w.AddEvent("clash", $"{a.name} {(won ? $"击溃了敌军（斩获 {a.kills}）" : "且战且退")}，会战落幕", civ.colorHex, a.x, a.y);
+                }
+                a.clashWith = null;
+                a.battleSince = null;
+                if (won) a.state = "march";
+                else RoutArmy(w, a, false, false); // 败方溃退（guard 去重）
+                return;
+            }
+            WbTechMods tmA = TechModsOf(w, a.civ);
+            bool ai2 = tmA.ai > 0;
+            bool mech = tmA.mech > 0;
+            // —— 伤亡崩溃：阵亡过半 → 战线崩溃全线溃退（L6495-6506）——
+            int bs0 = a.battleSize0 ?? a.members.Count;
+            if (a.members.Count <= System.Math.Max(3, bs0 / 2))
+            {
+                w.AddEvent("clash", $"{a.name} 伤亡过半，战线崩溃——残部溃散", civ.colorHex, a.x, a.y);
+                WbWarData wd0 = w.warData.TryGetValue(WbWorld.PairKey(a.civ, foe.civ), out WbWarData wd2) ? wd2 : null;
+                if (wd0 != null)
+                {
+                    if (foe.civ == wd0.a) wd0.scoreA += 8;
+                    else wd0.scoreB += 8; // 歼灭战果：会战胜利直接折算战争分数
+                }
+                RoutArmy(w, a, false, false);
+                return;
+            }
+            // —— 机械化军团：机炮周期扫射敌军团阵地（超视距火力压制，L6507-6523）——
+            if (mech && w.tickCount % 20 == 0)
+            {
+                int hits = 0;
+                foreach (int id in foe.members)
+                {
+                    WbU u = w.unitById.TryGetValue(id, out WbU uu) ? uu : null;
+                    if (u == null || u.dead != 0) continue;
+                    if (WbMath.FdHypot(u.x - foe.x, u.y - foe.y) < 3.5)
+                    {
+                        u.hp -= 16 + w.Rng() * 10;
+                        u.hurt = 20;
+                        hits++;
+                        if (u.hp <= 0) { u.dead = 1; WwCountKill(w, u); }
+                    }
+                }
+                if (hits > 0)
+                {
+                    double fx = foe.x + w.Rng() * 2 - 1, fy = foe.y + w.Rng() * 2 - 1;
+                    WbFx e = w.Fx("bullet", fx, fy, 5, 0, a.civ);
+                    if (e != null) { e.x0 = a.x; e.y0 = a.y; }
+                }
+            }
+            // —— 战线阵列（Task 35）：近战前排压向敌旗 2.4 格列横队，弓手后排距敌 5.5 格展开（L6524-6558）——
+            double fAng = WbMath.FdAtan2(foe.y - a.y, foe.x - a.x);
+            double ppx = -WbMath.FdSin(fAng);
+            double ppy = WbMath.FdCos(fAng);
+            List<WbU> foes = new List<WbU>();
+            foreach (int id in foe.members)
+            {
+                WbU u = w.unitById.TryGetValue(id, out WbU uu) ? uu : null;
+                if (u != null && u.dead == 0) foes.Add(u);
+            }
+            int mCount = 0, rCount = 0;
+            bool[] rangedFlags = new bool[a.members.Count];
+            for (int k = 0; k < a.members.Count; k++)
+            {
+                WbU u = w.unitById.TryGetValue(a.members[k], out WbU uu) ? uu : null;
+                bool r = u != null ? IsRangedMember(w, u) : false;
+                rangedFlags[k] = r;
+                if (r) rCount++;
+                else mCount++;
+            }
+            int mi = 0, ri = 0;
+            for (int k = 0; k < a.members.Count; k++)
+            {
+                WbU u = w.unitById.TryGetValue(a.members[k], out WbU uu) ? uu : null;
+                if (u == null) continue;
+                if (rangedFlags[k])
+                {
+                    // 远程后排：本旗后方 2.6 格列队（避开近战线，持续输出）
+                    double off = (ri - (rCount - 1) / 2.0) * 1.1;
+                    ri++;
+                    u.tx = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, a.x - WbMath.FdCos(fAng) * 2.6 + ppx * off));
+                    u.ty = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, a.y - WbMath.FdSin(fAng) * 2.6 + ppy * off));
+                }
+                else
+                {
+                    // 近战前排：压向敌旗 2.4 格接触线（横队展开）
+                    double off = (mi - (mCount - 1) / 2.0) * 1.05;
+                    mi++;
+                    u.tx = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, foe.x - WbMath.FdCos(fAng) * 2.4 + ppx * off));
+                    u.ty = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, foe.y - WbMath.FdSin(fAng) * 2.4 + ppy * off));
+                }
+            }
+            // —— 齐射（Task 35）：后排按口令集火敌阵（弹道预测 + 同时开火，L6559-6585）——
+            if (foes.Count > 0 && w.tickCount % 15 == 0)
+            {
+                int volleyN = 0;
+                for (int k = 0; k < a.members.Count; k++)
+                {
+                    WbU u = w.unitById.TryGetValue(a.members[k], out WbU uu) ? uu : null;
+                    if (u == null || u.dead != 0 || u.cd > 0 || !rangedFlags[k]) continue;
+                    string wepKey = u.wep as string;
+                    bool gun = wepKey == "musket" || wepKey == "rifle";
+                    bool beam = wepKey == "laser_rifle";
+                    WbU t = foes[(int)(w.Rng() * foes.Count)];
+                    (double ax, double ay) aim = LeadAim(w, t, beam ? 8 : gun ? 5 : 12);
+                    double mul = IsCivRace(u.race) && a.civ >= 0 ? tmA.archer : 1;
+                    if (beam) CastBeam(w, u, aim.ax, aim.ay, u.dmg * 0.75 * mul);
+                    else if (gun) CastBullet(w, u, aim.ax, aim.ay, u.dmg * mul);
+                    else CastArrow(w, u, aim.ax, aim.ay, u.dmg * mul);
+                    u.cd = beam ? 12 : gun ? 15 : 18;
+                    u.atk = 10;
+                    volleyN++;
+                }
+                if (volleyN >= 4)
+                {
+                    // —— 齐射震慑（Task 36）：箭如飞蝗不只是伤害（L6577-6584）——
+                    foe.morale = System.Math.Max(5, foe.morale - 1.5);
+                    if (w.tickCount - w.lastVolleyEventTick > 200 && w.Rng() < 0.25)
+                    {
+                        w.lastVolleyEventTick = w.tickCount;
+                        w.AddEvent("clash", $"{a.name} 一声令下，{volleyN} 名弓手齐射——箭如飞蝗", civ.colorHex, a.x, a.y);
+                    }
+                }
+            }
+            // —— 会战烈度：兵力对比消耗士气 + 包围/增援/战术撤退（L6586-6642）——
+            if (w.tickCount - a.evalTick > 25)
+            {
+                a.evalTick = w.tickCount;
+                double myPow = a.members.Count * (1 + a.morale / 100);
+                double foePow = foe.members.Count * (1 + foe.morale / 100);
+                a.morale += myPow > foePow ? 2 : -4;
+                // —— 伤亡-士气耦合（Task 36）——
+                int bs0c = a.battleSize0 ?? a.members.Count;
+                double frac = a.members.Count / (double)System.Math.Max(1, bs0c);
+                if (frac < 0.8) a.morale -= (0.8 - frac) * 4;
+                // —— 包围判定：≥2 支己方军团压向敌旗 → 被围方士气加速崩落 ——
+                int surrounders = 0;
+                foreach (WbArmy o in w.armies)
+                {
+                    if (o.civ != a.civ || o.state == "retreat" || o.id == a.id) continue;
+                    if (WbMath.FdHypot(o.x - foe.x, o.y - foe.y) < 14) surrounders++;
+                }
+                if (surrounders >= 1 && WbMath.FdHypot(a.x - foe.x, a.y - foe.y) < 8)
+                {
+                    foe.morale = System.Math.Max(5, foe.morale - 3); // 身陷重围：士气持续崩落
+                    a.morale = System.Math.Min(100, a.morale + 1);
+                    if (w.Rng() < 0.06)
+                    {
+                        w.AddEvent("clash", $"{a.name}{(surrounders >= 2 ? $" 与 {surrounders} 支友军" : "")}完成合围——{foe.name} 身陷重围，军心动摇", civ.colorHex, foe.x, foe.y);
+                    }
+                }
+                // —— 增援调度：劣势方呼叫本国未接战军团驰援（L6609-6631）——
+                if (myPow < foePow * 0.75 && (ai2 || w.Rng() < 0.25))
+                {
+                    WbArmy best = null;
+                    double bestD = 26;
+                    foreach (WbArmy o in w.armies)
+                    {
+                        if (o.civ != a.civ || o.id == a.id) continue;
+                        if (o.state == "battle" || o.state == "retreat") continue;
+                        if (o.targetCiv != foe.civ && TechModsOf(w, o.civ).ai <= 0) continue; // 非 AI 军团只驰援同战线
+                        double dd = WbMath.FdHypot(o.x - a.x, o.y - a.y);
+                        if (dd < bestD) { bestD = dd; best = o; }
+                    }
+                    if (best != null)
+                    {
+                        best.targetCiv = foe.civ;
+                        best.tx = a.x;
+                        best.ty = a.y;
+                        if (best.state == "rally") best.state = "march";
+                        a.reinforced = (a.reinforced ?? 0) + 1;
+                        if (w.tickCount - w.lastReinforceEventTick > 240)
+                        {
+                            w.lastReinforceEventTick = w.tickCount;
+                            w.AddEvent("army", $"{best.name} 奉令驰援 {a.name}——合击会战之敌", civ.colorHex, a.x, a.y);
+                        }
+                    }
+                }
+                // —— 战术 AI：深劣势且军心不稳 → 战术撤退（保存建制，L6632-6636）——
+                if (ai2 && myPow < foePow * 0.55 && a.morale < 55)
+                {
+                    RoutArmy(w, a, false, true);
+                    return;
+                }
+                // 惨烈消耗 → 战争疲乏（加速终战，L6637-6641）
+                WbWarData wdx = w.warData.TryGetValue(WbWorld.PairKey(a.civ, foe.civ), out WbWarData wd3) ? wd3 : null;
+                if (wdx != null)
+                {
+                    wdx.exA += 1; wdx.exB += 1;
+                }
+            }
+        }
+
+        /// engine armySiege L6645-6697 —— 围城：迎战敌援 / 机甲突击 / 兵员散布 / 军旗压近 / 战线渗透 / 转向下一个敌国
+        public static void ArmySiege(WbWorld w, WbArmy a, WbCiv civ)
+        {
+            if (w.tickCount - a.evalTick <= 30)
+            {
+                // 敌援军来袭 → 迎战
+                WbArmy foe = NearestEnemyArmy(w, a);
+                if (foe != null && WbMath.FdHypot(foe.x - a.x, foe.y - a.y) < 7) DeclareClash(w, a, foe, civ);
+                return;
+            }
+            a.evalTick = w.tickCount;
+            // 围城目标：旗周 12 格内最近敌建筑（L6653-6676）
+            WbBuilding tgt = NearestEnemyBuildingOf(w, a);
+            if (tgt != null)
+            {
+                // —— 机械化军团：放出机甲突击拆毁敌建筑（大型双足机甲推进 + 机炮扫射）——
+                if (TechModsOf(w, a.civ).mech > 0 && w.Rng() < 0.35)
+                {
+                    LaunchMech(w, civ, a.x, a.y, tgt.x + 0.5, tgt.y + 0.5);
+                }
+                foreach (int id in a.members)
+                {
+                    WbU u = w.unitById.TryGetValue(id, out WbU uu) ? uu : null;
+                    if (u == null) continue;
+                    u.tx = tgt.x + w.Rng() * 3 - 1.5;
+                    u.ty = tgt.y + w.Rng() * 3 - 1.5;
+                }
+                double dd = WbMath.FdHypot(tgt.x - a.x, tgt.y - a.y);
+                if (dd > 5) { a.tx = tgt.x; a.ty = tgt.y; a.state = "march"; return; }
+                // 军旗压近
+                double step = ARMY_SPEED * 1.5;
+                double nx = a.x + ((tgt.x - a.x) / dd) * step;
+                double ny = a.y + ((tgt.y - a.y) / dd) * step;
+                if (WalkableT(w.terrain[IdxOf((int)System.Math.Floor(nx), (int)System.Math.Floor(ny))]) || a.naval) { a.x = nx; a.y = ny; }
+                // 围城本身也在蚕食周边敌土（战线语义：压境即渗透）
+                FrontPush(w, a, 2, 4);
+                return;
+            }
+            // —— 动态战线：敌境纵深渗透（战时虚国界渐进推进，L6677-6696）——
+            int pushed = FrontPush(w, a, 3, a.state == "siege" ? 6 : 8);
+            if (pushed > 0)
+            {
+                if (w.Rng() < 0.2)
+                {
+                    w.AddEvent("occupy", $"{a.name} 的战线向敌境推进（渗透 {pushed} 格）", civ.colorHex, a.x, a.y);
+                }
+                // 继续向敌国内陆推进
+                (double x, double y)? next = ArmyMarchTarget(w, a);
+                if (next != null && WbMath.FdHypot(next.Value.x - a.x, next.Value.y - a.y) > 6) { a.tx = next.Value.x; a.ty = next.Value.y; a.state = "march"; }
+            }
+            else
+            {
+                // 无可占领 → 转向下一个敌国（或凯旋）
+                WbCiv next2 = PickWarEnemy(w, a.civ);
+                if (next2 != null)
+                {
+                    a.targetCiv = next2.id;
+                    (double x, double y)? t = ArmyMarchTarget(w, a);
+                    if (t != null) { a.tx = t.Value.x; a.ty = t.Value.y; a.state = "march"; }
+                }
+                else
+                {
+                    RoutArmy(w, a, true, false); // 凯旋归国
+                }
+            }
+        }
+
+        /// engine armyRetreat L6699-6735 —— 溃退/凯旋归途：直航或 8 向绕障（可泅渡涉水）+ 编队跟随
+        public static void ArmyRetreat(WbWorld w, WbArmy a, WbCiv civ)
+        {
+            (double x, double y)? homeN = CivRallyPoint(w, civ);
+            if (homeN == null) { DisbandArmy(w, a, true); return; }
+            (double x, double y) home = homeN.Value;
+            a.tx = home.x; a.ty = home.y;
+            double d = WbMath.FdHypot(home.x - a.x, home.y - a.y);
+            if (d < 3)
+            {
+                if (a.naval) ArmyDisembark(w, a); // 归航舰队靠岸
+                DisbandArmy(w, a, false);
+                return;
+            }
+            double step = ARMY_SPEED * 1.3;
+            if (a.naval)
+            {
+                // 舰队归航：直航；抵达本国海岸 → 登陆走陆路归营
+                a.x = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, a.x + ((home.x - a.x) / d) * step));
+                a.y = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, a.y + ((home.y - a.y) / d) * step));
+                if (WalkableT(w.terrain[IdxOf((int)System.Math.Floor(a.x), (int)System.Math.Floor(a.y))]) && d < 10) ArmyDisembark(w, a);
+            }
+            else
+            {
+                // 溃军归途：8 向贪心绕障（可泅渡涉水）
+                double bas = WbMath.FdAtan2(home.y - a.y, home.x - a.x);
+                double[] offs = { 0, 0.45, -0.45, 0.95, -0.95, 1.7, -1.7, System.Math.PI };
+                foreach (double off in offs)
+                {
+                    double ang = bas + off;
+                    double nx = a.x + WbMath.FdCos(ang) * step;
+                    double ny = a.y + WbMath.FdSin(ang) * step;
+                    if (nx < 1 || ny < 1 || nx > WbWorld.W - 2 || ny > WbWorld.H - 2) continue;
+                    int t = w.terrain[IdxOf((int)System.Math.Floor(nx), (int)System.Math.Floor(ny))];
+                    if (!WalkableT(t) && !WbWorld.IsWater(t)) continue;
+                    a.x = nx; a.y = ny;
+                    break;
+                }
+            }
+            for (int k = 0; k < a.members.Count; k++)
+            {
+                WbU u = w.unitById.TryGetValue(a.members[k], out WbU uu) ? uu : null;
+                if (u == null) continue;
+                (double fx, double fy) fp = FormationPos(w, a, k);
+                u.tx = fp.fx; u.ty = fp.fy;
+            }
+        }
+
+        /// engine declareClash L6738-6757 —— 宣布会战（两军团相互标记，纪事播报 + 战争档案会战计数）
+        public static void DeclareClash(WbWorld w, WbArmy a, WbArmy foe, WbCiv civ)
+        {
+            // —— 溃退之军不接战（Task 35 修复）：追击交给单位层战斗——
+            if (a.state == "retreat" || foe.state == "retreat") return;
+            // —— 林间伏击首击：伏击方先声夺人（士气 +10，一次性，L6742-6744）——
+            if (a.ambush) { a.morale = System.Math.Min(100, a.morale + 10); a.ambush = false; }
+            if (foe.ambush) { foe.morale = System.Math.Min(100, foe.morale + 10); foe.ambush = false; }
+            a.state = "battle"; a.battleSince = w.tickCount; a.clashWith = foe.id;
+            foe.state = "battle"; foe.battleSince = w.tickCount; foe.clashWith = a.id;
+            a.battleSize0 = a.members.Count; // 会战开局兵力基准（伤亡崩溃判定）
+            foe.battleSize0 = foe.members.Count;
+            WbWarData wd = w.warData.TryGetValue(WbWorld.PairKey(a.civ, foe.civ), out WbWarData wd0) ? wd0 : null;
+            if (wd != null) wd.battles++;
+            if (w.tickCount - w.lastClashEventTick > 180)
+            {
+                w.lastClashEventTick = w.tickCount;
+                string field = WbNames.BattleFieldName(w);
+                w.AddEvent("clash", $"{a.name}（{CivAt(w, a.civ)?.name}）与 {foe.name}（{CivAt(w, foe.civ)?.name}）于{field}爆发会战", civ.colorHex, (a.x + foe.x) / 2, (a.y + foe.y) / 2);
+                w.shake = System.Math.Max(w.shake, 4);
+            }
+        }
+
+        /// engine nearestEnemyArmy L6760-6769 —— 最近的敌军团
+        public static WbArmy NearestEnemyArmy(WbWorld w, WbArmy a)
+        {
+            WbArmy best = null;
+            double bestD = double.PositiveInfinity;
+            foreach (WbArmy o in w.armies)
+            {
+                if (o.civ == a.civ || !AtWar(w, a.civ, o.civ)) continue;
+                double d = WbMath.FdHypot(o.x - a.x, o.y - a.y);
+                if (d < bestD) { bestD = d; best = o; }
+            }
+            return best;
+        }
+
+        /// engine nearestEnemyBuildingOf L6772-6782 —— 旗周 12 格内最近的敌国建筑
+        public static WbBuilding NearestEnemyBuildingOf(WbWorld w, WbArmy a)
+        {
+            WbBuilding best = null;
+            double bestD = 12;
+            foreach (WbBuilding b in w.buildings)
+            {
+                if (b.civ != a.targetCiv && !AtWar(w, a.civ, b.civ)) continue;
+                if (b.civ == a.civ) continue;
+                double d = WbMath.FdHypot(b.x - a.x, b.y - a.y);
+                if (d < bestD) { bestD = d; best = b; }
+            }
+            return best;
+        }
+
+        /// engine crossesWater L6785-6799 —— 直线跨水率 ≥ 45%（渡海判定）
+        public static bool CrossesWater(WbWorld w, double x0, double y0, double x1, double y1)
+        {
+            double dx = x1 - x0;
+            double dy = y1 - y0;
+            double d = WbMath.FdHypot(dx, dy);
+            if (d < 4) return false;
+            int water = 0;
+            int samples = (int)System.Math.Max(1, System.Math.Floor(d));
+            for (int s = 1; s <= samples; s++)
+            {
+                int xx = (int)System.Math.Floor(x0 + (dx * s) / d);
+                int yy = (int)System.Math.Floor(y0 + (dy * s) / d);
+                if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;
+                if (WbWorld.IsWater(w.terrain[IdxOf(xx, yy)])) water++;
+            }
+            return water / (double)samples >= 0.45;
+        }
+
+        /// engine findWaterNear L5546-5570 —— 就近深水点（embark/登船用；逐环扫描 + waterN≥5 深水门）
+        public static (double x, double y)? FindWaterNear(WbWorld w, double x, double y, int r)
+        {
+            int cx = (int)System.Math.Floor(x);
+            int cy = (int)System.Math.Floor(y);
+            for (int ring = 1; ring <= r; ring++)
+            {
+                for (int dy = -ring; dy <= ring; dy++)
+                {
+                    for (int dx = -ring; dx <= ring; dx++)
+                    {
+                        if (System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dy)) != ring) continue; // 只看当前环
+                        int xx = cx + dx;
+                        int yy = cy + dy;
+                        if (xx < 1 || yy < 1 || xx >= WbWorld.W - 1 || yy >= WbWorld.H - 1) continue;
+                        int i = IdxOf(xx, yy);
+                        if (!WbWorld.IsWater(w.terrain[i])) continue;
+                        int waterN = 0;
+                        for (int ny = -1; ny <= 1; ny++)
+                        {
+                            for (int nx = -1; nx <= 1; nx++)
+                            {
+                                if (nx == 0 && ny == 0) continue;
+                                if (WbWorld.IsWater(w.terrain[IdxOf(xx + nx, yy + ny)])) waterN++;
+                            }
+                        }
+                        if (waterN >= 5) return (xx + 0.5, yy + 0.5);
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// engine armyEmbark L6802-6825 —— 舰队渡海：军旗与成员转航海模式
+        public static void ArmyEmbark(WbWorld w, WbArmy a)
+        {
+            // WBB.touchMeta() —— 舰队登船 boat 列收口（civ 层 no-op）
+            a.naval = true;
+            (double x, double y)? wpt = FindWaterNear(w, a.x, a.y, 3);
+            if (wpt != null) { a.x = wpt.Value.x; a.y = wpt.Value.y; }
+            int boarded = 0;
+            foreach (int id in a.members)
+            {
+                WbU u = w.unitById.TryGetValue(id, out WbU uu) ? uu : null;
+                if (u == null || u.boat != 0) continue;
+                if (WbMath.FdHypot(u.x - a.x, u.y - a.y) < 5)
+                {
+                    (double x, double y)? ww = FindWaterNear(w, a.x, a.y, 4);
+                    if (ww != null)
+                    {
+                        u.boat = 1; u.boatTTL = 1600;
+                        u.x = ww.Value.x + w.Rng() - 0.5; u.y = ww.Value.y + w.Rng() - 0.5;
+                        u.lx = u.x; u.ly = u.y;
+                        boarded++;
+                    }
+                }
+                // 远处成员：走陆路奔向旗（到旗边自动登船）
+            }
+            if (boarded > 0 || a.members.Count > 0)
+            {
+                w.AddEvent("army", $"{a.name} 登船渡海，远征敌国（舰队 {System.Math.Max(boarded, 1)} 艘）", CivAt(w, a.civ)?.colorHex, a.x, a.y);
+            }
+        }
+
+        /// engine armyDisembark L6828-6847 —— 舰队登陆：全员弃船上岸
+        public static void ArmyDisembark(WbWorld w, WbArmy a)
+        {
+            a.naval = false;
+            (int x, int y) land = NearestStandable(w, (int)System.Math.Floor(a.x), (int)System.Math.Floor(a.y));
+            a.x = land.x; a.y = land.y;
+            int landed = 0;
+            foreach (int id in a.members)
+            {
+                WbU u = w.unitById.TryGetValue(id, out WbU uu) ? uu : null;
+                if (u == null) continue;
+                if (u.boat != 0 || WbWorld.IsWater(w.terrain[IdxOf((int)System.Math.Floor(u.x), (int)System.Math.Floor(u.y))]))
+                {
+                    (int x, int y) s = NearestStandable(w, (int)System.Math.Floor(a.x) + (int)(w.Rng() * 6) - 3, (int)System.Math.Floor(a.y) + (int)(w.Rng() * 6) - 3);
+                    u.boat = 0; u.boatTTL = 0;
+                    u.x = s.x + 0.5; u.y = s.y + 0.5;
+                    u.lx = u.x; u.ly = u.y;
+                    landed++;
+                    w.Fx("spawn", u.x, u.y, 20);
+                }
+            }
+            a.morale = System.Math.Min(100, a.morale + 5); // 成功登陆士气大振
+            if (landed > 0) w.AddEvent("army", $"{a.name} 的远征军抢滩登陆（{landed} 人上岸）", CivAt(w, a.civ)?.colorHex, a.x, a.y);
+        }
+
+        /// engine routArmy L6850-6873 —— 溃退（triumph 凯旋；tactical 战术转移；重复调用去重 + 恐慌蔓延）
+        public static void RoutArmy(WbWorld w, WbArmy a, bool triumph, bool tactical)
+        {
+            if (a.state == "retreat") return; // 已在溃退途中：不重复触发事件/士气
+            a.state = "retreat";
+            a.clashWith = null;
+            a.battleSince = null;
+            a.morale = triumph ? System.Math.Min(100, a.morale + 10) : tactical ? System.Math.Max(45, a.morale) : System.Math.Max(30, a.morale);
+            if (triumph)
+            {
+                w.AddEvent("army", $"{a.name} 大获全胜，凯旋归国（斩获 {a.kills}，损失 {a.losses}）", CivAt(w, a.civ)?.colorHex, a.x, a.y);
+            }
+            else if (tactical)
+            {
+                // 战术撤退（战术 AI 驱动）：保存建制，择机再战
+                w.AddEvent("army", $"{a.name} 审时度势，战术转移后撤——保存建制，择机再战", CivAt(w, a.civ)?.colorHex, a.x, a.y);
+            }
+            else
+            {
+                w.AddEvent("rout", $"{a.name} 全军溃退！（尚存 {a.members.Count} 人）", CivAt(w, a.civ)?.colorHex, a.x, a.y);
+                w.shake = System.Math.Max(w.shake, 3);
+                // —— 恐慌蔓延：溃退传染周遭友军军心（L6864-6871）——
+                foreach (WbArmy o in w.armies)
+                {
+                    if (o == a || o.civ != a.civ || o.state == "retreat") continue;
+                    if (WbMath.FdHypot(o.x - a.x, o.y - a.y) < 10)
+                    {
+                        o.morale = System.Math.Max(10, o.morale - 12);
+                        if (w.Rng() < 0.25) w.AddEvent("rout", $"{a.name} 的溃败动摇了 {o.name} 的军心", CivAt(w, a.civ)?.colorHex, o.x, o.y);
+                    }
+                }
+            }
+        }
+
+        /// engine disbandArmy L6876-6898 —— 解散军团（quiet 静默；false 归营总结纪事）
+        public static void DisbandArmy(WbWorld w, WbArmy a, bool quiet)
+        {
+            // WBB.touchMeta() —— 解散 army/boat 列收口（civ 层 no-op）
+            WbCiv civ = CivAt(w, a.civ);
+            foreach (int id in a.members)
+            {
+                WbU u = w.unitById.TryGetValue(id, out WbU uu) ? uu : null;
+                if (u != null && object.Equals(u.army, (object)a.id))
+                {
+                    u.army = null;
+                    u.boat = 0; u.boatTTL = 0;
+                }
+            }
+            w.armies.Remove(a);
+            if (civ != null) civ.armyCd = (int)w.tickCount + ARMY_CD;
+            if (!quiet && civ != null)
+            {
+                string msg = a.tactical
+                    ? $"{a.name} 战术后撤归营整补（斩获 {a.kills}，损失 {a.losses}）——军旗未倒，随时再战"
+                    : $"{a.name} 解散归田（战役斩获 {a.kills}，损失 {a.losses}）";
+                a.tactical = false;
+                w.AddEvent("army", msg, civ.colorHex, a.x, a.y);
+            }
+            // 从其它军团的会战引用中摘除
+            foreach (WbArmy o in w.armies) if (o.clashWith == a.id) { o.clashWith = null; if (o.state == "battle") o.state = "march"; }
+        }
+
+        /// engine frontPush L7270-7303 —— 战线渗透：距离衰减功率占领（波纹式渐变渗透带）
+        public static int FrontPush(WbWorld w, WbArmy a, int radius, int power)
+        {
+            int cx = (int)System.Math.Floor(a.x);
+            int cy = (int)System.Math.Floor(a.y);
+            int pushed = 0;
+            for (int dy = -radius; dy <= radius; dy++)
+            {
+                for (int dx = -radius; dx <= radius; dx++)
+                {
+                    if (dx * dx + dy * dy > radius * radius + 1) continue;
+                    int xx = cx + dx;
+                    int yy = cy + dy;
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;
+                    int i = IdxOf(xx, yy);
+                    int o = w.owner[i];
+                    if (o != a.targetCiv) continue; // 只渗透当前交战敌国领土
+                    if (!WbWorld.IsLand(w.terrain[i]) || w.terrain[i] == WbWorld.T_MOUNTAIN) continue;
+                    // 距离衰减：军团脚下满功率、边缘 1/4 功率 → 波纹式战线
+                    double dist = System.Math.Sqrt(dx * dx + (double)dy * dy);
+                    int pw = (int)System.Math.Max(1, System.Math.Round(power * (1 - (dist / (radius + 1)) * 0.75)));
+                    if (w.occCiv[i] == a.civ)
+                    {
+                        int ns = (int)System.Math.Min(100, w.occStr[i] + pw + (int)System.Math.Floor(w.Rng() * 3));
+                        if (ns >= 100 && w.occStr[i] < 100) FrontSolidify(w, i, a.civ);
+                        else w.occStr[i] = (byte)ns;
+                    }
+                    else if (w.occCiv[i] == -1 || w.occStr[i] < 25)
+                    {
+                        // 新渗透（敌方控制的占领格需先打掉）
+                        w.occCiv[i] = (sbyte)a.civ;
+                        w.occStr[i] = (byte)System.Math.Max(4, System.Math.Min(30, w.occStr[i] + pw));
+                        w.occSet.Add(i);
+                    }
+                    pushed++;
+                }
+            }
+            return pushed;
+        }
+
+        /// engine frontSolidify L7306-7316 —— 占领转正：正式易帜 + 战功入账（城头变幻大王旗）
+        public static void FrontSolidify(WbWorld w, int i, int civId)
+        {
+            w.occCiv[i] = -1;
+            w.occStr[i] = 0;
+            w.occSet.Remove(i);
+            int victim = w.owner[i];
+            ClaimTile(w, i, civId);
+            WbWarData wd = w.warData.TryGetValue(WbWorld.PairKey(civId, victim), out WbWarData wd0) ? wd0 : null;
+            if (wd != null)
+            {
+                if (civId == wd.a) { wd.scoreA += 1; wd.occA += 1; } else { wd.scoreB += 1; wd.occB += 1; }
+            }
+        }
+
+        /// engine leadAim L4351-4358 —— 弹道预测：按目标当前速度取提前量（箭矢飞行期间目标会走 1 格余）
+        public static (double x, double y) LeadAim(WbWorld w, WbU enemy, int ttl)
+        {
+            double vx = enemy.x - enemy.lx;
+            double vy = enemy.y - enemy.ly;
+            return (
+                System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, enemy.x + vx * ttl + w.Rng() * 0.4 - 0.2)),
+                System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, enemy.y + vy * ttl + w.Rng() * 0.4 - 0.2))
+            );
+        }
+
+        /// engine isRangedMember L4361-4365 —— 军团成员是否为远程位
+        /// 注：装备弓分支（RACES.isCiv && gearBonus(u).ranged > 0）依赖装备域——托管 WbU 装备槽未建（M-U 后续切片），
+        /// 黄金夹具无装备 → 该分支恒 false，位等价（M-U3b 桩域门控避让同款协议）
+        public static bool IsRangedMember(WbWorld w, WbU u)
+        {
+            if (u.job == 3) return true;
+            string wepKey = u.wep as string;
+            if (wepKey == "musket" || wepKey == "rifle" || wepKey == "laser_rifle") return true;
+            return false; // 装备弓分支：黄金夹具无装备恒 false（见头注）
+        }
+
+        /// engine castArrow L4368-4370 —— 施放箭矢：命中时对单体敌人结算伤害，或轰击敌国建筑
+        public static void CastArrow(WbWorld w, WbU u, double tx, double ty, double dmg)
+        {
+            double cx = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, tx));
+            double cy = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, ty));
+            WbFx e = w.Fx("arrow", cx, cy, 12, 0, u.civ);
+            if (e != null) { e.x0 = u.x; e.y0 = u.y; }   // opts dmg 命中结算属 fx 宿主侧（黄金不 dump），rng 语义全在 Fx 内
+        }
+
+        /// engine castBullet L4374-4377 —— 步枪射击：高速曳光弹道 + 稀疏枪声（rng 门保真）
+        public static void CastBullet(WbWorld w, WbU u, double tx, double ty, double dmg)
+        {
+            double cx = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, tx));
+            double cy = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, ty));
+            WbFx e = w.Fx("bullet", cx, cy, 5, 0, u.civ);
+            if (e != null) { e.x0 = u.x; e.y0 = u.y; }
+            if (w.Rng() < 0.12) { /* onSound?.('place') —— 宿主音频回调，C# 态 no-op（rng 已抽） */ }
+        }
+
+        /// engine castBeam L4381-4393 —— 相位光束射击：贯穿激光束（略过冲 1.2 格穿射目标身后）
+        public static void CastBeam(WbWorld w, WbU u, double tx, double ty, double dmg)
+        {
+            double ex = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, tx));
+            double ey = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, ty));
+            // 光束略过冲 1.2 格：穿射目标身后的敌人（相位贯穿）
+            double dx = ex - u.x;
+            double dy = ey - u.y;
+            double dl = WbMath.FdHypot(dx, dy);
+            if (dl == 0) dl = 1;   // 蓝本 || 1
+            double ox = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, ex + (dx / dl) * 1.2));
+            double oy = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, ey + (dy / dl) * 1.2));
+            WbFx e = w.Fx("laser", ox, oy, 8, null, u.civ);   // 蓝本 opts 无 r → fx 内默认 1
+            if (e != null) { e.x0 = u.x; e.y0 = u.y; }
+            if (w.Rng() < 0.08) { /* onSound?.('place') —— 宿主音频回调 no-op（rng 已抽） */ }
+        }
+
+        /// engine launchMech L9551-9556 —— 机械化军团：放出机甲突击（fx 弹道 + rng 伤害掷）
+        public static void LaunchMech(WbWorld w, WbCiv c, double fromX, double fromY, double tx, double ty)
+        {
+            double dist = WbMath.FdHypot(tx - fromX, ty - fromY);
+            if (dist < 4) return;
+            int ttl = (int)System.Math.Max(40, System.Math.Min(110, System.Math.Round(dist * 1.2)));
+            double dmg = 40 + w.Rng() * 10;   // dmg 入 fx opts（黄金不 dump）——rng 消耗保真
+            WbFx e = w.Fx("mech", tx, ty, ttl, 2.2, c.id);
+            if (e != null) { e.x0 = fromX; e.y0 = fromY; }
+        }
+
+        /// engine addCorpse L2871-2875 —— 尸体落场（fxPrefs.corpses 默认 true；cap 语义 CORPSE_MAX）
+        public static void AddCorpse(WbWorld w, double x, double y, bool stone, bool undead)
+        {
+            // if (!this.fxPrefs.corpses) return; —— fxPrefs.corpses 默认 true（engine L271），C# 态恒 true
+            w.corpses.Add(new WbCorpse { x = x, y = y, age = 0, stone = stone, undead = undead });
+            if (w.corpses.Count > CORPSE_MAX) w.corpses.RemoveRange(0, w.corpses.Count - CORPSE_MAX);
+        }
+
+        /// engine wwCountKill L8690-8713 —— 击杀记账（killCredit 涌现武器域军团域恒 null；worldWar idle 直退）
+        public static void WwCountKill(WbWorld w, WbU victim)
+        {
+            // killCredit == null（涌现武器战绩归属——M-U 后续切片；军团域恒 null 直跳）
+            // worldWar.phase !== 'running' || victim.civ < 0 → return（M-U3c 起世界大战域恒 idle）
+        }
     }
 }

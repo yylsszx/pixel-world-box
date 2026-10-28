@@ -2462,5 +2462,295 @@ namespace PixelWorldBox.Tests
             Assert.AreEqual(want.Count, got.Count, $"{ctx} count");
             foreach (var v in want) Assert.IsTrue(got.Contains(v.Value<int>()), $"{ctx} contains {v}");
         }
+
+        // ================================================================
+        // Test10 —— M-U3g 军团域黄金回放（units_army.json 16 场景全字段逐位）
+        // 蓝本链：engine.ts armyTick 直跑（gen-units-army）→ WbCivSim.cs 机械翻译 → 本回放
+        // 平行链：army-transcript.mjs JS 镜像 16/16 ALL PASS（verify 段 10）
+        // ================================================================
+
+        private class ArmyCtx { public WbWorld w; }
+
+        [Test]
+        public void Test10_ArmyTick_Golden()
+        {
+            var golden = LoadJson<Newtonsoft.Json.Linq.JObject>("units_army.json");
+            var meta = golden["meta"];
+            Assert.AreEqual(256, meta["W"].Value<int>(), "meta W");
+            Assert.AreEqual(160, meta["H"].Value<int>(), "meta H");
+            Assert.AreEqual(6, meta["armyMin"].Value<int>(), "meta ARMY_MIN");
+            Assert.AreEqual(24, meta["armyMax"].Value<int>(), "meta ARMY_MAX");
+            var scenarios = (Newtonsoft.Json.Linq.JArray)golden["scenarios"];
+            Assert.AreEqual(16, scenarios.Count, "scenario count");
+            foreach (var sc in scenarios) RunArmyScenario(sc);
+        }
+
+        private void RunArmyScenario(Newtonsoft.Json.Linq.JObject sc)
+        {
+            string name = sc["name"].ToString();
+            var w = new WbWorld();
+            w.rngA = unchecked((uint)sc["rngA0"].Value<long>());
+            w.toastSeq = sc["toastSeq0"].Value<int>();
+            // eventSeq 归位在 setup 特判后（gen runScenario 同序：setup(embark) → eventSeq0 快照）
+
+            // terrain RLE
+            var rle = (Newtonsoft.Json.Linq.JArray)sc["terrainRle"];
+            int pos = 0;
+            for (int k = 0; k < rle.Count; k += 2)
+            {
+                byte v = (byte)rle[k].Value<int>();
+                int run = rle[k + 1].Value<int>();
+                for (int j = 0; j < run && pos < WbWorld.W * WbWorld.H; j++) w.terrain[pos++] = v;
+            }
+
+            var fx = sc["fixture"];
+            // paint
+            if (fx["paint"] != null)
+                foreach (var p in (Newtonsoft.Json.Linq.JArray)fx["paint"])
+                {
+                    int x0 = p[0].Value<int>(), y0 = p[1].Value<int>(), x1 = p[2].Value<int>(), y1 = p[3].Value<int>(), t = p[4].Value<int>();
+                    for (int y = y0; y <= y1; y++) for (int x = x0; x <= x1; x++) w.terrain[y * WbWorld.W + x] = (byte)t;
+                }
+            // civs
+            foreach (var c in (Newtonsoft.Json.Linq.JArray)fx["civs"])
+            {
+                var civ = new WbCiv
+                {
+                    id = c["id"].Value<int>(),
+                    name = c["name"]?.ToString() ?? $"C{c["id"].Value<int>()}",
+                    race = c["race"]?.Value<int>() ?? 0,
+                    pop = c["pop"]?.Value<int>() ?? 0,
+                    houses = c["houses"]?.Value<int>() ?? 0,
+                    capital = c["capital"]?.Value<int>() ?? -1,
+                    alive = c["alive"] == null || c["alive"].Value<bool>(),
+                    gold = c["gold"]?.Value<double>() ?? 0,
+                    knowledge = c["knowledge"]?.Value<double>() ?? 0,
+                    kingName = c["kingName"]?.ToString() ?? "K",
+                    banner = c["banner"]?.ToString() ?? "B",
+                    colorHex = c["colorHex"]?.ToString() ?? "#c83c3c",
+                    stability = c["stability"]?.Value<double>() ?? 70,
+                    militarism = c["militarism"]?.Value<double>() ?? 30,
+                    gov = c["gov"]?.Value<int>() ?? 0,
+                };
+                if (c["kingId"] != null && c["kingId"].Type != Newtonsoft.Json.Linq.JTokenType.Null) civ.kingId = c["kingId"].Value<int>();
+                if (c["armyCd"] != null && c["armyCd"].Type != Newtonsoft.Json.Linq.JTokenType.Null) civ.armyCd = c["armyCd"].Value<int>();
+                if (c["techs"] != null && c["techs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    foreach (var t in (Newtonsoft.Json.Linq.JArray)c["techs"]) civ.techs.Add(t.ToString());
+                foreach (var t in (Newtonsoft.Json.Linq.JArray)c["tiles"]) civ.tiles.Add(t.Value<int>());
+                w.civs.Add(civ);
+                while (w.civs.Count <= civ.id) w.civs.Add(null);
+                if (w.civs[civ.id] == null) w.civs[civ.id] = civ;
+                w.civSeq = System.Math.Max(w.civSeq, civ.id + 1);
+                foreach (int i in civ.tiles) w.owner[i] = (short)civ.id;
+            }
+            // units
+            foreach (var u in (Newtonsoft.Json.Linq.JArray)fx["units"]) PutArmyUnit(w, u);
+            // rel / buildings / civBuildCounts / directives / wars / armies
+            if (fx["rel"] != null)
+                foreach (var r in (Newtonsoft.Json.Linq.JArray)fx["rel"])
+                {
+                    int a = r[0].Value<int>(), b = r[1].Value<int>(), v = r[2].Value<int>();
+                    w.rel[a < b ? $"{a}-{b}" : $"{b}-{a}"] = v;
+                }
+            if (fx["buildings"] != null)
+                foreach (var b in (Newtonsoft.Json.Linq.JArray)fx["buildings"])
+                {
+                    int i = b[0].Value<int>(), kind = b[1].Value<int>(), civ = b[2].Value<int>();
+                    w.buildings.Add(new WbBuilding { i = i, x = i % WbWorld.W, y = i / WbWorld.W, kind = kind, civ = civ });
+                    w.building[i] = (byte)kind;
+                    w.bHp[i] = WbCivSim.BUILDING_DEFS[kind].hp;
+                    var cw = w.civs[civ];
+                    if (cw != null && kind != WbCivSim.BUILD_KINDS.WALL) cw.houses++;
+                }
+            if (fx["civBuildCounts"] != null)
+                foreach (var cb in (Newtonsoft.Json.Linq.JArray)fx["civBuildCounts"])
+                {
+                    var arr = new int[12];
+                    int k = 0;
+                    foreach (var v in (Newtonsoft.Json.Linq.JArray)cb[1]) arr[k++] = v.Value<int>();
+                    w.civBuildCounts[cb[0].Value<int>()] = arr;
+                }
+            if (fx["directives"] != null)
+                foreach (var d in (Newtonsoft.Json.Linq.JArray)fx["directives"])
+                {
+                    w.directives.Add(new WbDirective
+                    {
+                        id = d["id"]?.Value<int>() ?? w.directives.Count,
+                        civ = d["civ"].Value<int>(), kind = d["kind"].ToString(),
+                        target = (d["target"] == null || d["target"].Type == Newtonsoft.Json.Linq.JTokenType.Null) ? (int?)null : d["target"].Value<int>(),
+                        param = d["param"]?.Value<int>() ?? 0,
+                        status = d["status"]?.ToString() ?? "active",
+                        startTick = d["startTick"]?.Value<int>() ?? 0,
+                        deadlineTick = d["deadlineTick"]?.Value<int>() ?? 0,
+                        text = d["text"]?.ToString() ?? "",
+                    });
+                    w.dirSeq = System.Math.Max(w.dirSeq, (d["id"]?.Value<int>() ?? w.directives.Count) + 1);
+                }
+            if (fx["wars"] != null)
+                foreach (var wd in (Newtonsoft.Json.Linq.JArray)fx["wars"])
+                {
+                    w.warData[wd["key"].ToString()] = new WbWarData
+                    {
+                        key = wd["key"].ToString(), a = wd["a"].Value<int>(), b = wd["b"].Value<int>(),
+                        startTick = wd["startTick"]?.Value<int>() ?? 0, startYear = 0, total = false,
+                        scoreA = wd["scoreA"]?.Value<double>() ?? 0, scoreB = wd["scoreB"]?.Value<double>() ?? 0,
+                        exA = wd["exA"]?.Value<double>() ?? 0, exB = wd["exB"]?.Value<double>() ?? 0,
+                        casA = wd["casA"]?.Value<double>() ?? 0, casB = wd["casB"]?.Value<double>() ?? 0,
+                        battles = wd["battles"]?.Value<int>() ?? 0,
+                        giveUpAt = wd["giveUpAt"]?.Value<int>() ?? 0,
+                        reason = wd["reason"]?.ToString() ?? "border", reasonText = "",
+                        aggressor = wd["aggressor"]?.Value<int>() ?? 0,
+                        goal = wd["goal"]?.Value<int>() ?? 0, goalNow = 0,
+                        occA = wd["occA"]?.Value<int>() ?? 0, occB = wd["occB"]?.Value<int>() ?? 0,
+                        popA0 = wd["popA0"]?.Value<int>() ?? 0, popB0 = wd["popB0"]?.Value<int>() ?? 0,
+                        lastActiveTick = wd["lastActiveTick"]?.Value<int>() ?? 0,
+                    };
+                }
+            foreach (var ar in (Newtonsoft.Json.Linq.JArray)fx["armies"]) PutArmy(w, ar);
+            // —— setup 特判（gen 无法序列化函数 → 名称分发；ARM15 成员预置 boat → embark 零 rng）——
+            if (name == "ARM15-naval-crossing") WbCivSim.ArmyEmbark(w, w.armies[0]);
+            w.tickCount = sc["startTick"].Value<int>();
+            w.effects.Clear();
+            w.worldEvents.Clear();
+            w.eventSeq = sc["eventSeq0"].Value<int>();   // gen 同款：setup 后事件基线归位
+
+            // —— 逐 tick 驱动 + 断言 ——
+            var traces = (Newtonsoft.Json.Linq.JArray)sc["traces"];
+            for (int k = 0; k < traces.Count; k++)
+            {
+                if (w.tickCount % 5 == 0) WbCivSim.ArmyTick(w);   // 宿主协议 engine L2561
+                w.tickCount++;
+                var want = (Newtonsoft.Json.Linq.JObject)traces[k];
+                Assert.AreEqual(want["rngA"].Value<long>(), (long)w.rngA, $"{name} t{k} rngA");
+                // armies 全字段逐位
+                var wantArmies = (Newtonsoft.Json.Linq.JArray)want["armies"];
+                Assert.AreEqual(wantArmies.Count, w.armies.Count, $"{name} t{k} armies n");
+                for (int i = 0; i < wantArmies.Count; i++)
+                {
+                    var wa = (Newtonsoft.Json.Linq.JObject)wantArmies[i];
+                    var ga = FindArmy(w, wa["id"].Value<int>());
+                    Assert.IsNotNull(ga, $"{name} t{k} army {wa["id"]}");
+                    ArmyHexEq(wa["x"], ga.x, $"{name} t{k} army{i} x");
+                    ArmyHexEq(wa["y"], ga.y, $"{name} t{k} army{i} y");
+                    ArmyHexEq(wa["tx"], ga.tx, $"{name} t{k} army{i} tx");
+                    ArmyHexEq(wa["ty"], ga.ty, $"{name} t{k} army{i} ty");
+                    ArmyHexEq(wa["morale"], ga.morale, $"{name} t{k} army{i} morale");
+                    Assert.AreEqual(wa["state"].ToString(), ga.state, $"{name} t{k} army{i} state");
+                    Assert.AreEqual(wa["leaderId"].Value<int>(), ga.leaderId, $"{name} t{k} army{i} leaderId");
+                    Assert.AreEqual(wa["kills"].Value<double>(), ga.kills, $"{name} t{k} army{i} kills");
+                    Assert.AreEqual(wa["losses"].Value<double>(), ga.losses, $"{name} t{k} army{i} losses");
+                    Assert.AreEqual(wa["name"].ToString(), ga.name, $"{name} t{k} army{i} name");
+                    if (wa["naval"] != null) Assert.IsTrue(ga.naval, $"{name} t{k} army{i} naval");
+                    if (wa["supplyWarned"] != null) Assert.IsTrue(ga.supplyWarned, $"{name} t{k} army{i} supplyWarned");
+                    if (wa["battleSize0"] != null && wa["battleSize0"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                        Assert.AreEqual(wa["battleSize0"].Value<int>(), ga.battleSize0 ?? -1, $"{name} t{k} army{i} battleSize0");
+                    if (wa["clashWith"] != null && wa["clashWith"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                        Assert.AreEqual(wa["clashWith"].Value<int>(), ga.clashWith ?? -1, $"{name} t{k} army{i} clashWith");
+                }
+                // units 关键字段（编队阵位/levy 换算/boat/army 回填/dead）
+                var wantUnits = (Newtonsoft.Json.Linq.JArray)want["units"];
+                Assert.AreEqual(wantUnits.Count, w.units.Count, $"{name} t{k} units n");
+                for (int i = 0; i < wantUnits.Count; i++)
+                {
+                    var wu = (Newtonsoft.Json.Linq.JObject)wantUnits[i];
+                    var gu = w.unitById[wu["id"].Value<int>()];
+                    Assert.IsNotNull(gu, $"{name} t{k} unit {wu["id"]}");
+                    ArmyHexEq(wu["tx"], gu.tx, $"{name} t{k} unit{wu["id"]} tx");
+                    ArmyHexEq(wu["ty"], gu.ty, $"{name} t{k} unit{wu["id"]} ty");
+                    ArmyHexEq(wu["hp"], gu.hp, $"{name} t{k} unit{wu["id"]} hp");
+                    Assert.AreEqual(wu["job"].Value<int>(), gu.job, $"{name} t{k} unit{wu["id"]} job");
+                    Assert.AreEqual(wu["dead"].Value<int>(), gu.dead, $"{name} t{k} unit{wu["id"]} dead");
+                    Assert.AreEqual(wu["boat"].Value<int>(), gu.boat, $"{name} t{k} unit{wu["id"]} boat");
+                    int wantArmy = (wu["army"] == null || wu["army"].Type == Newtonsoft.Json.Linq.JTokenType.Null) ? -1 : wu["army"].Value<int>();
+                    int gotArmy = gu.army is int iv ? iv : -1;
+                    Assert.AreEqual(wantArmy, gotArmy, $"{name} t{k} unit{wu["id"]} army");
+                }
+                // 记分与事件
+                var wantWars = (Newtonsoft.Json.Linq.JArray)want["warData"];
+                Assert.AreEqual(wantWars.Count, w.warData.Count, $"{name} t{k} warData n");
+                foreach (var ww in wantWars)
+                {
+                    var gw = w.warData[ww["key"].ToString()];
+                    Assert.AreEqual(ww["scoreA"].Value<double>(), gw.scoreA, $"{name} t{k} {ww["key"]} scoreA");
+                    Assert.AreEqual(ww["scoreB"].Value<double>(), gw.scoreB, $"{name} t{k} {ww["key"]} scoreB");
+                    Assert.AreEqual(ww["battles"].Value<int>(), gw.battles, $"{name} t{k} {ww["key"]} battles");
+                }
+                var wantEv = (Newtonsoft.Json.Linq.JArray)want["newEvents"];
+                Assert.AreEqual(wantEv.Count, w.worldEvents.Count, $"{name} t{k} events n");
+                for (int i = 0; i < wantEv.Count; i++)
+                    Assert.AreEqual(wantEv[i]["kind"].ToString(), w.worldEvents[i].kind, $"{name} t{k} ev{i} kind");
+                ArmyHexEq(want["shake"], w.shake, $"{name} t{k} shake");
+                Assert.AreEqual(want["corpses"].Count(), w.corpses.Count, $"{name} t{k} corpses n");
+            }
+        }
+
+        private static WbArmy FindArmy(WbWorld w, int id)
+        {
+            foreach (var a in w.armies) if (a.id == id) return a;
+            return null;
+        }
+
+        private static void ArmyHexEq(object wantHex, double got, string ctx)
+        {
+            if (wantHex == null || wantHex.Type == Newtonsoft.Json.Linq.JTokenType.Null) return;
+            byte[] b = new byte[8];
+            for (int i = 0; i < 8; i++) b[i] = Convert.ToByte(wantHex.ToString().Substring(i * 2, 2), 16);
+            double want = BitConverter.ToDouble(b, 0);
+            Assert.AreEqual(want, got, $"{ctx}（f64 bits 逐位）");
+        }
+
+        /// gen mkUnit 同构（army 域夹具形态：wep object/boat/boatTTL/lx/ly/kills）
+        private void PutArmyUnit(WbWorld w, Newtonsoft.Json.Linq.JObject u)
+        {
+            var uu = new WbU
+            {
+                id = u["id"].Value<int>(), race = u["race"]?.Value<int>() ?? 0, civ = u["civ"]?.Value<int>() ?? -1,
+                x = u["x"].Value<double>(), y = u["y"].Value<double>(), tx = u["x"].Value<double>(), ty = u["y"].Value<double>(),
+                hp = u["hp"]?.Value<double>() ?? 10, maxHp = u["hp"]?.Value<double>() ?? 10,
+                dmg = u["dmg"]?.Value<double>() ?? 1, speed = u["speed"]?.Value<double>() ?? 1,
+                age = 0, maxAge = 9999, kills = u["kills"]?.Value<int>() ?? 0,
+                cd = 0, job = u["job"]?.Value<int>() ?? 0, king = 0, infected = 0, flip = 0,
+                name = u["name"]?.ToString() ?? $"u{u["id"].Value<int>()}",
+                hurt = 0, breath = 0, parity = 0, dead = u["dead"]?.Value<int>() ?? 0,
+                boat = u["boat"]?.Value<int>() ?? 0, boatTTL = u["boatTTL"]?.Value<int>() ?? 0, caravan = 0,
+                wep = u["wep"] != null ? (object)u["wep"].ToString() : 0,
+                lx = u["lx"]?.Value<double>() ?? u["x"].Value<double>(), ly = u["ly"]?.Value<double>() ?? u["y"].Value<double>(),
+                atk = 0, army = null, gene = null, food = 0, fam = 0, fgn = 0,
+            };
+            w.units.Add(uu);
+            w.unitById[uu.id] = uu;
+        }
+
+        /// gen mkArmy 同构（状态机扩展字段全集 + 成员 army 回填）
+        private void PutArmy(WbWorld w, Newtonsoft.Json.Linq.JObject ar)
+        {
+            var a = new WbArmy
+            {
+                id = ar["id"].Value<int>(), civ = ar["civ"].Value<int>(),
+                name = ar["name"]?.ToString() ?? $"A{ar["id"].Value<int>()}",
+                leaderId = ar["leaderId"] != null ? ar["leaderId"].Value<int>() : (ar["members"].Count() > 0 ? ar["members"][0].Value<int>() : -1),
+                x = ar["x"]?.Value<double>() ?? 0, y = ar["y"]?.Value<double>() ?? 0,
+                tx = ar["tx"]?.Value<double>() ?? (ar["x"]?.Value<double>() ?? 0), ty = ar["ty"]?.Value<double>() ?? (ar["y"]?.Value<double>() ?? 0),
+                state = ar["state"]?.ToString() ?? "rally", morale = ar["morale"]?.Value<double>() ?? 1,
+                kills = ar["kills"]?.Value<double>() ?? 0, losses = ar["losses"]?.Value<double>() ?? 0,
+                tactical = ar["tactical"]?.Value<bool>() ?? false,
+                naval = ar["naval"]?.Value<bool>() ?? false,
+                ambush = ar["ambush"]?.Value<bool>() ?? false,
+                formedTick = ar["formedTick"]?.Value<int>() ?? 0,
+                size0 = ar["size0"]?.Value<int>() ?? (ar["members"] != null ? ar["members"].Count() : 0),
+                evalTick = ar["evalTick"]?.Value<int>() ?? 0,
+                targetCiv = ar["targetCiv"]?.Value<int>() ?? -1,
+                rot = ar["rot"]?.Value<double>() ?? 0,
+            };
+            if (ar["clashWith"] != null && ar["clashWith"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.clashWith = ar["clashWith"].Value<int>();
+            if (ar["battleSize0"] != null && ar["battleSize0"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.battleSize0 = ar["battleSize0"].Value<int>();
+            if (ar["marchPushTick"] != null && ar["marchPushTick"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.marchPushTick = ar["marchPushTick"].Value<int>();
+            if (ar["battleSince"] != null && ar["battleSince"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.battleSince = ar["battleSince"].Value<int>();
+            if (ar["reinforced"] != null && ar["reinforced"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.reinforced = ar["reinforced"].Value<int>();
+            foreach (var m in (Newtonsoft.Json.Linq.JArray)ar["members"]) a.members.Add(m.Value<int>());
+            w.armies.Add(a);
+            foreach (int uid in a.members) if (w.unitById.TryGetValue(uid, out var u)) u.army = a.id;
+            w.armySeq = System.Math.Max(w.armySeq, a.id + 1);
+        }
     }
 }

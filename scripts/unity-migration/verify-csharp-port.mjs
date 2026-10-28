@@ -12,7 +12,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { mulberry32 } from '../../src/lib/game/noise.ts';
+// Node 24 原生 strip-types 对 types.ts 无后缀 bare import 解析失败（noise→types→items 链）——统一走 jiti
+const { createJiti: _cj } = await import('jiti');
+const _jiti0 = _cj(import.meta.url, { alias: { '@': path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src') } });
+const { mulberry32 } = await _jiti0.import(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/lib/game/noise.ts'));
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -473,11 +476,15 @@ console.log(`layout offs: ${layoutFail === 0 ? 'PASS' : `FAIL(${layoutFail})`} (
 // 5) M-U2c：fdlibm 六件套（WbMath.FdExp/FdExpm1/FdTanh/FdAtan/FdAtan2/FdSin/FdCos
 //    的 JS 转写 = combat-transcript 导出）vs wasm wb_math_test(op=0..4) + 战斗树转写对账
 // ============================================================
-import { ex as gex } from './gen-units-scan.mjs';
-import { unitsBatch as transcriptBatch, fdSin as tsSin, fdCos as tsCos, fdExp as tsExp, fdTanh as tsTanh, fdAtan2 as tsAtan2 } from './combat-transcript.mjs';
-import { initWorld as gInitWorld, setU8 as gSetU8, setI32 as gSetI32, setF64 as gSetF64, getF64 as gGetF64, getU32 as gGetU32, u8 as gU8, bits as gBits } from './gen-units-scan.mjs';
-import { bootTables as cbBoot, putUnitC as cbPutUnit, fillTerrainEx as cbFill } from './gen-units-combat.mjs';
-import { R as gR } from '../../src/lib/game/types.ts';
+// Node 24 下 gen-units-* 的原生 import 链（types→items 无后缀）解析失败 → 全部走 jiti 动态加载
+const mScan = await _jiti0.import(new URL('./gen-units-scan.mjs', import.meta.url).pathname);
+const mCombat = await _jiti0.import(new URL('./combat-transcript.mjs', import.meta.url).pathname);
+const mCombatGen = await _jiti0.import(new URL('./gen-units-combat.mjs', import.meta.url).pathname);
+const gex = mScan.ex;
+const transcriptBatch = mCombat.unitsBatch, tsSin = mCombat.fdSin, tsCos = mCombat.fdCos, tsExp = mCombat.fdExp, tsTanh = mCombat.fdTanh, tsAtan2 = mCombat.fdAtan2;
+const gInitWorld = mScan.initWorld, gSetU8 = mScan.setU8, gSetI32 = mScan.setI32, gSetF64 = mScan.setF64, gGetF64 = mScan.getF64, gGetU32 = mScan.getU32, gU8 = mScan.u8, gBits = mScan.bits;
+const cbBoot = mCombatGen.bootTables, cbPutUnit = mCombatGen.putUnitC, cbFill = mCombatGen.fillTerrainEx;
+const { R: gR } = await _jiti0.import(new URL('./../../src/lib/game/types.ts', import.meta.url).pathname);
 
 {
   // —— 5a. fdlibm 六件套位级对账（sin/cos/exp/tanh/atan2，hypot 段 2 已覆盖）——
@@ -706,9 +713,10 @@ import { R as gR } from '../../src/lib/game/types.ts';
 //    含 SpawnUnit/繁衍段/TryPickup/RiseSkeleton 转写）vs units_spawn.json 26 场景逐位
 //    驱动协议：USEQ 差值追踪 live + 宿主重排含新 slot + pack_end(liveN)
 // ============================================================
-import { sampleTick as spSampleTick, traitsPool as spTraits, firstPool as spFirst, putUnitSp as spPutUnit, itemIdx as spItemIdx } from './gen-units-spawn.mjs';
-import { NEUTRAL_MODS as spNeutral } from '../../src/lib/game/tech.ts';
-import { FIRST as spFirstTable } from '../../src/lib/game/names.ts';
+const mSpawn = await _jiti0.import(new URL('./gen-units-spawn.mjs', import.meta.url).pathname);
+const spSampleTick = mSpawn.sampleTick, spTraits = mSpawn.traitsPool, spFirst = mSpawn.firstPool, spPutUnit = mSpawn.putUnitSp, spItemIdx = mSpawn.itemIdx;
+const { NEUTRAL_MODS: spNeutral } = await _jiti0.import(new URL('./../../src/lib/game/tech.ts', import.meta.url).pathname);
+const { FIRST: spFirstTable } = await _jiti0.import(new URL('./../../src/lib/game/names.ts', import.meta.url).pathname);
 
 {
   const spawnGolden = JSON.parse(readFileSync(path.join(ROOT, 'scripts/unity-migration/golden/units_spawn.json'), 'utf8'));
@@ -831,11 +839,8 @@ import { FIRST as spFirstTable } from '../../src/lib/game/names.ts';
 //    vs units_civ.json 30 场景全字段逐位（布置协议与 gen-units-civ 同源 import，纪律②）
 //    ⚠ 2026-10-27 10:46 本段曾被并行 cron agent 覆写丢失，本处为重落盘（内容同源）
 // ============================================================
-import {
-  putTbhp as cvPutTbhp, fillOwnNeg1 as cvFillOwn, putCivs as cvPutCivs,
-  putBuildings as cvPutBuildings, putFires as cvPutFires, putDamaged as cvPutDamaged,
-  putCnt as cvPutCnt, civSampleTick as cvSampleTick,
-} from './gen-units-civ.mjs';
+const mCiv = await _jiti0.import(new URL('./gen-units-civ.mjs', import.meta.url).pathname);
+const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.putCivs, cvPutBuildings = mCiv.putBuildings, cvPutFires = mCiv.putFires, cvPutDamaged = mCiv.putDamaged, cvPutCnt = mCiv.putCnt, cvSampleTick = mCiv.civSampleTick;
 
 {
   const civGolden = JSON.parse(readFileSync(path.join(ROOT, 'scripts/unity-migration/golden/units_civ.json'), 'utf8'));
@@ -894,6 +899,32 @@ import {
   var civVerifyFail = cvFail;
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0;
+// ============================================================
+// 段 10：M-U3g 军团域双链（gen sanity 复跑 + army-transcript 镜像逐位）
+//   army-transcript.mjs = WbCivSim.cs 军团域的 JS 独立转写（16 场景全字段逐位）
+//   gen-units-army.mjs = 黄金生成器自带 sanity 63 断言 + det 双跑（子进程复跑防陈旧）
+// ============================================================
+{
+  const { execFileSync } = await import('node:child_process');
+  var armyVerifyFail = 0;
+  try {
+    execFileSync('node', [new URL('./army-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'] });
+    console.log('army 黄金回放 (army-transcript 镜像 vs units_army.json): PASS (16 场景 × 全字段逐位)');
+  } catch (e) {
+    armyVerifyFail++;
+    console.error('army 黄金回放 (army-transcript 镜像 vs units_army.json): FAIL');
+    console.error(String(e.stdout ?? '').split('\n').slice(0, 8).join('\n'));
+  }
+  try {
+    const out = execFileSync('node', [new URL('./gen-units-army.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'] }).toString();
+    if (!out.includes('[GEN PASS]') || !out.includes('63/63 PASS')) throw new Error(out.split('\n').slice(-4).join(' | '));
+    console.log('army gen sanity+det 复跑 (gen-units-army): PASS (63 断言 × det 双跑)');
+  } catch (e) {
+    armyVerifyFail++;
+    console.error('army gen sanity+det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);

@@ -85,5 +85,45 @@ namespace PixelWorldBox.Wb
             string banner = Banners[(int)System.Math.Floor(w.Rng() * Banners.Length)];
             return (pre + suf, banner);
         }
+
+        // ---------------- 军团命名（names.ts L40-78；M-U3g 军团域） ----------------
+        /// names.ts L40-44 六表逐字保真
+        public static readonly string[] ArmyPre = { "苍", "黑", "白", "血", "铁", "烈", "寒", "金", "银", "怒", "晨", "暮", "风", "雷", "霜", "焰" };
+        public static readonly string[] ArmyMid = { "狼", "鹰", "狮", "龙", "熊", "鸦", "虎", "鹿", "蛇", "蝎", "犀", "鲨" };
+        public static readonly string[] ArmySuf = { "军团", "方阵", "铁卫", "战团", "军团", "远征军", "兵团" };
+        /// 兵种后缀（按组建方成分量选：步卒/弓手/混编）
+        public static readonly string[] ArmyJobSuf = { "步卒军团", "箭雨方阵", "混编战团" };
+        /// 会战地名（names.ts L54-56）
+        public static readonly string[] FieldPre = { "血", "白", "黑", "灰", "赤", "金", "寒", "荒", "雾", "断" };
+        public static readonly string[] FieldSuf = { "谷", "滩", "原", "桥", "坡", "林", "渡", "丘", "河湾", "隘口" };
+
+        /// names.ts armyName L46-53 —— `{苍狼}{军团}` 式两段命名；同国多军团自然编号
+        public static string ArmyName(WbWorld w, int seq)
+        {
+            string pre = ArmyPre[(int)System.Math.Floor(w.Rng() * ArmyPre.Length)];
+            string mid = ArmyMid[(int)System.Math.Floor(w.Rng() * ArmyMid.Length)];
+            string suf = ArmySuf[(int)System.Math.Floor(w.Rng() * ArmySuf.Length)];
+            string bas = pre + mid + suf;
+            return seq <= 1 ? bas : bas + "·" + Roman(seq);
+        }
+
+        /// names.ts battleFieldName L59-61 —— 战役纪事地名（一掷 rng）
+        public static string BattleFieldName(WbWorld w)
+        {
+            return FieldPre[(int)System.Math.Floor(w.Rng() * FieldPre.Length)] + FieldSuf[(int)System.Math.Floor(w.Rng() * FieldSuf.Length)];
+        }
+
+        /// names.ts armyNameByJobs L64-77 —— 根据成员职业占比选后缀（两掷 rng + 后缀分支零 rng）
+        public static string ArmyNameByJobs(WbWorld w, int seq, double archerRatio)
+        {
+            string pre = ArmyPre[(int)System.Math.Floor(w.Rng() * ArmyPre.Length)];
+            string mid = ArmyMid[(int)System.Math.Floor(w.Rng() * ArmyMid.Length)];
+            string suf;
+            if (archerRatio > 0.66) suf = ArmyJobSuf[1];
+            else if (archerRatio < 0.25) suf = ArmyJobSuf[0];
+            else suf = ArmyJobSuf[2];
+            string bas = pre + mid + suf;
+            return seq <= 1 ? bas : bas + "·" + Roman(seq);
+        }
     }
 }
