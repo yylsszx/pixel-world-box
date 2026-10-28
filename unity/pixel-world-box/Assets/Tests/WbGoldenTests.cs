@@ -3639,5 +3639,98 @@ namespace PixelWorldBox.Tests
             }
             Assert.AreEqual(88, n, "render5 场景数（U 组 48 + F 组补测 40）");
         }
+
+        /// M-U7b 涌现视觉域黄金回放（render6.json 27 场景 → WbEmergence.VisCacheFor/InvalidateVisCache 全域逐位）
+        /// dump 协议：vis 输入面 13 字段（hue/lum/size/bulk f64hex 大端）/ vc 14 字段（size/bulk f64hex）；
+        /// out 仅对 'c' op 产出（'i' 失效 op 无 out 行——游标对齐）；hit = 引用相等协议（race → 上次返回缓存对象）。
+        [Test]
+        public void Test19_Emergence6_Golden()
+        {
+            double H6D(string h) => System.BitConverter.Int64BitsToDouble(unchecked((long)System.Convert.ToUInt64(h, 16)));
+            var gold6 = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(FindGolden2("render6.json")));
+            // SPRITE_BASE 表对照锚（meta.spriteBase 10 族 × body/dark/light 逐字）
+            var sb = (Newtonsoft.Json.Linq.JObject)gold6["meta"]["spriteBase"];
+            Assert.AreEqual(10, sb.Count, "SPRITE_BASE 10 族");
+            foreach (var kv in sb)
+            {
+                var arr = (Newtonsoft.Json.Linq.JArray)kv.Value;
+                Assert.AreEqual(WbEmergence.SPRITE_BASE[kv.Key][0], arr[0].ToString(), $"SPRITE_BASE {kv.Key} body");
+                Assert.AreEqual(WbEmergence.SPRITE_BASE[kv.Key][1], arr[1].ToString(), $"SPRITE_BASE {kv.Key} dark");
+                Assert.AreEqual(WbEmergence.SPRITE_BASE[kv.Key][2], arr[2].ToString(), $"SPRITE_BASE {kv.Key} light");
+            }
+            int n = 0;
+            foreach (var sc in (Newtonsoft.Json.Linq.JArray)gold6["scens"])
+            {
+                string name = sc["name"].ToString();
+                var ops = (Newtonsoft.Json.Linq.JArray)sc["in"]["ops"];
+                var outs = (Newtonsoft.Json.Linq.JArray)sc["out"];
+                WbEmergence.InvalidateVisCache();                        // 场景隔离（gen vcScene 首行全清）
+                var refs = new System.Collections.Generic.Dictionary<int, WbVisCache>();
+                int cur = 0;                                             // out 游标（仅 'c' op 消费）
+                foreach (var op in ops)
+                {
+                    string t = op["t"].ToString();
+                    if (t == "i")
+                    {
+                        if (op["race"] == null) WbEmergence.InvalidateVisCache();
+                        else WbEmergence.InvalidateVisCache(op["race"].Value<int>());
+                        continue;
+                    }
+                    WbVis vis = null;
+                    if (op["vis"] != null && op["vis"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    {
+                        var dv = op["vis"];
+                        vis = new WbVis
+                        {
+                            root = dv["root"].Value<int>(),
+                            hue = H6D(dv["hue"].ToString()),
+                            lum = H6D(dv["lum"].ToString()),
+                            size = H6D(dv["size"].ToString()),
+                            bulk = H6D(dv["bulk"].ToString()),
+                            horns = dv["horns"].Value<int>(),
+                            spikes = dv["spikes"].Value<int>(),
+                            mane = dv["mane"].Value<int>(),
+                            tail = dv["tail"].Value<int>(),
+                            ears = dv["ears"].Value<int>(),
+                            glow = dv["glow"].Value<int>(),
+                            pattern = dv["pattern"].Value<int>(),
+                            crest = dv["crest"].Value<int>(),
+                        };
+                    }
+                    int race = op["race"].Value<int>();
+                    string sprite = op["sprite"].ToString();
+                    var go = outs[cur++];
+                    refs.TryGetValue(race, out var prev);
+                    var vc = WbEmergence.VisCacheFor(race, vis, sprite);
+                    if (go == null || go.Type == Newtonsoft.Json.Linq.JTokenType.Null)
+                    {
+                        Assert.IsNull(vc, $"{name} op{cur - 1} vis null → null");
+                        continue;                                        // gen 协议：null 不更新 refs
+                    }
+                    Assert.IsNotNull(vc, $"{name} op{cur - 1} 应产出缓存");
+                    int hit = (prev != null && ReferenceEquals(vc, prev)) ? 1 : 0;
+                    Assert.AreEqual(go["hit"].Value<int>(), hit, $"{name} op{cur - 1} hit（引用相等协议）");
+                    refs[race] = vc;
+                    var gv = go["vc"];
+                    Assert.AreEqual(gv["body"].ToString(), vc.body, $"{name} op{cur - 1} body");
+                    Assert.AreEqual(gv["dark"].ToString(), vc.dark, $"{name} op{cur - 1} dark");
+                    Assert.AreEqual(gv["light"].ToString(), vc.light, $"{name} op{cur - 1} light");
+                    Assert.AreEqual(gv["accent"].ToString(), vc.accent, $"{name} op{cur - 1} accent");
+                    Assert.AreEqual(H6D(gv["size"].ToString()), vc.size, $"{name} op{cur - 1} size（f64hex 位级）");
+                    Assert.AreEqual(H6D(gv["bulk"].ToString()), vc.bulk, $"{name} op{cur - 1} bulk（f64hex 位级）");
+                    Assert.AreEqual(gv["horns"].Value<int>(), vc.horns, $"{name} op{cur - 1} horns");
+                    Assert.AreEqual(gv["spikes"].Value<int>(), vc.spikes, $"{name} op{cur - 1} spikes");
+                    Assert.AreEqual(gv["mane"].Value<int>(), vc.mane, $"{name} op{cur - 1} mane");
+                    Assert.AreEqual(gv["tail"].Value<int>(), vc.tail, $"{name} op{cur - 1} tail");
+                    Assert.AreEqual(gv["ears"].Value<int>(), vc.ears, $"{name} op{cur - 1} ears");
+                    Assert.AreEqual(gv["glow"].Value<int>(), vc.glow, $"{name} op{cur - 1} glow");
+                    Assert.AreEqual(gv["pattern"].Value<int>(), vc.pattern, $"{name} op{cur - 1} pattern");
+                    Assert.AreEqual(gv["crest"].Value<int>(), vc.crest, $"{name} op{cur - 1} crest");
+                }
+                Assert.AreEqual(outs.Count, cur, $"{name} out 游标耗尽对齐");
+                n++;
+            }
+            Assert.AreEqual(27, n, "render6 场景数");
+        }
     }
 }
