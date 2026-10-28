@@ -3136,5 +3136,97 @@ namespace PixelWorldBox.Tests
             if (JHas(q["trait"])) u.traitName = q["trait"].ToString();
             return u;
         }
+
+        // ============================================================
+        // Test14: M-U5c 渲染 IV 余域 —— 八新动物/建筑/掉落物/火/龙卷/涌现域（WbSprites.cs 余域扩展）
+        // 黄金: render4.json 111 场景（gen-render4.mjs 直录 sprites.ts 真实现）。
+        // ============================================================
+        [Test]
+        public void Test14_Render4_Golden()
+        {
+            var golden = LoadJson<Newtonsoft.Json.Linq.JObject>("render4.json");
+            var scens = (Newtonsoft.Json.Linq.JArray)golden["scens"];
+            Assert.AreEqual(111, scens.Count, "渲染 IV 余域场景数");
+            foreach (var sc in scens) RunRender4Scenario((Newtonsoft.Json.Linq.JObject)sc);
+        }
+
+        private static WbVisCache RebuildVisCache(Newtonsoft.Json.Linq.JObject d)
+        {
+            return new WbVisCache
+            {
+                body = d["body"].ToString(),
+                dark = d["dark"].ToString(),
+                light = d["light"].ToString(),
+                accent = d["accent"].ToString(),
+                size = JHexD(d["size"]),
+                bulk = JHexD(d["bulk"]),
+                horns = d["horns"].Value<int>(),
+                spikes = d["spikes"].Value<int>(),
+                mane = d["mane"].Value<int>(),
+                tail = d["tail"].Value<int>(),
+                ears = d["ears"].Value<int>(),
+                glow = d["glow"].Value<int>(),
+                pattern = d["pattern"].Value<int>(),
+                crest = d["crest"].Value<int>(),
+            };
+        }
+
+        private void RunRender4Scenario(Newtonsoft.Json.Linq.JObject sc)
+        {
+            string name = sc["name"].ToString();
+            string fn = sc["fn"].ToString();
+            var inp = (Newtonsoft.Json.Linq.JObject)sc["in"];
+            var L = new WbDrawList();
+            if (fn == "drawBuilding")
+            {
+                var b = (Newtonsoft.Json.Linq.JObject)inp["b"];
+                WbSprites.DrawBuilding(L, JHexD(b["x"]), JHexD(b["y"]), b["kind"].Value<int>(),
+                    inp["color"].Values<int>().ToArray(), inp["tier"].Value<int>(), JHexD(inp["hpRatio"]));
+            }
+            else if (fn == "drawItem")
+            {
+                string defSlot = null, defArt = null, main = null;
+                int defRarity = 0;
+                if (JHas(inp["def"]))
+                {
+                    var def = (Newtonsoft.Json.Linq.JObject)inp["def"];
+                    defSlot = def["slot"].ToString();
+                    defRarity = def["rarity"].Value<int>();
+                    defArt = JHas(def["art"]) ? def["art"].ToString() : null;
+                    main = JHas(inp["main"]) ? inp["main"].ToString() : null;
+                }
+                WbSprites.DrawItem(L, JHexD(inp["x"]), JHexD(inp["y"]), inp["kind"].ToString(),
+                    inp["id"].Value<int>(), inp["frame"].Value<int>(), defSlot, defRarity, defArt, main);
+            }
+            else if (fn == "drawFire")
+            {
+                WbSprites.DrawFire(L, JHexD(inp["x"]), JHexD(inp["y"]), inp["i"].Value<int>(), inp["frame"].Value<int>());
+            }
+            else if (fn == "drawTornado")
+            {
+                WbSprites.DrawTornado(L, JHexD(inp["x"]), JHexD(inp["y"]), inp["frame"].Value<int>());
+            }
+            else if (fn == "drawEmergentCreature" || fn == "drawEmergentMonster")
+            {
+                var u = RebuildSpriteU((Newtonsoft.Json.Linq.JObject)inp["u"]);
+                var vc = RebuildVisCache((Newtonsoft.Json.Linq.JObject)inp["vc"]);
+                if (fn == "drawEmergentCreature") WbSprites.DrawEmergentCreature(L, u, vc, inp["t"].Value<int>());
+                else WbSprites.DrawEmergentMonster(L, u, vc, inp["shape"].ToString(), inp["t"].Value<int>());
+            }
+            else
+            {
+                var u = RebuildSpriteU((Newtonsoft.Json.Linq.JObject)inp["u"]);
+                if (fn == "drawChicken") WbSprites.DrawChicken(L, u, inp["frame"].Value<int>());
+                else if (fn == "drawPig") WbSprites.DrawPig(L, u, inp["frame"].Value<int>());
+                else if (fn == "drawRabbit") WbSprites.DrawRabbit(L, u, inp["frame"].Value<int>());
+                else if (fn == "drawFox") WbSprites.DrawFox(L, u, inp["frame"].Value<int>());
+                else if (fn == "drawFish") WbSprites.DrawFish(L, u, inp["frame"].Value<int>());
+                else if (fn == "drawCrab") WbSprites.DrawCrab(L, u, inp["frame"].Value<int>());
+                else if (fn == "drawTurtle") WbSprites.DrawTurtle(L, u, inp["frame"].Value<int>());
+                else if (fn == "drawShark") WbSprites.DrawShark(L, u, inp["frame"].Value<int>());
+                else Assert.Fail("未知渲染 IV 函数 " + fn);
+            }
+            AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
+        }
     }
 }

@@ -1796,5 +1796,757 @@ namespace PixelWorldBox.Wb
             if (u.hp < u.maxHp * 0.4) L.Fill("#cf3f2e", px - 1, y - 5, 5, 1);
         }
 
+        // =====================================================================
+        // ============ M-U5c 渲染 IV 余域（sprites.ts L2739-3150 机械翻译） ============
+        // 覆盖：八新动物（chicken/pig/rabbit/fox/fish/crab/turtle/shark）+ drawBuilding
+        //       （9 专用 kind + house/capital 科技阶位）+ drawItem（meat 特判 + 查表上提）
+        //       + drawFire/drawTornado + 涌现域 drawEmergentCreature/drawEmergentMonster。
+        // 查表上提协议：drawItem 的 ITEM_DEFS 查表以 defSlot/defRarity/defArt/main 入参穿越宿主
+        //       边界（raceVis 同款）；涌现域 VisCache 以 WbVisCache 入参接收。
+        // JS 语义注记：Math.round 半上 → Floor(v+0.5)；(bw/2)|0 = int 整除；(i*2654435761)>>>0
+        //       = unchecked uint 低 32 位（double 乘精确整数域 mod 2^32 等价）；蓝本怪味
+        //       (f>0?1:1) 恒 1 直译（纪律①）。
+        // =====================================================================
+
+        public static readonly string[] FIRE_COLORS = { "#ff9b2d", "#ffd93d", "#cf3f2e", "#ffce6a" };
+
+        // sprites.ts mix3：hex→rgb → Math.round(a+(b-a)*t) → rgb()（值域 0-255 恒正，halfUp 等价）
+        public static string Mix3(string hex, string hex2, double t)
+        {
+            int ar = Convert.ToInt32(hex.Substring(1, 2), 16);
+            int ag = Convert.ToInt32(hex.Substring(3, 2), 16);
+            int ab = Convert.ToInt32(hex.Substring(5, 2), 16);
+            int br = Convert.ToInt32(hex2.Substring(1, 2), 16);
+            int bg = Convert.ToInt32(hex2.Substring(3, 2), 16);
+            int bb = Convert.ToInt32(hex2.Substring(5, 2), 16);
+            return Rgb(
+                (int)Math.Floor(ar + (br - ar) * t + 0.5),
+                (int)Math.Floor(ag + (bg - ag) * t + 0.5),
+                (int)Math.Floor(ab + (bb - ab) * t + 0.5));
+        }
+
+        /// 鸡：白圆身 + 褐翅斑 + 红冠橙喙 + 偶发低头啄食（(frame>>4 + id)%7 相位）
+        public static void DrawChicken(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool hurt = u.hurt > 0;
+            string body = hurt ? "#ff6b5e" : (u.infected != 0 ? "#b8e2b4" : "#f6f1e4");
+            bool moving = u.lx != null && (u.lx != u.x || u.ly != u.y);
+            bool step = ((frame >> 3) & 1) == 1;
+            L.Fill("#d9a03c", px, py + 1, 1, 1);
+            if (!(moving && step)) L.Fill("#d9a03c", px + 1, py + 1, 1, 1);
+            L.Fill(body, px - 1, py - 1, 3, 2);
+            L.Fill("#b07a3a", px - f, py, 1, 1);
+            L.Fill("#b07a3a", px - 2 * f, py - 2, 1, 1);
+            bool peck = (((frame >> 4) + u.id) % 7) == 0;
+            double hy = py - 2 + (peck ? 2 : 0);
+            L.Fill(body, px + f, hy, 1, 1);
+            L.Fill("#cf3f2e", px + f, hy - 1, 1, 1);
+            L.Fill("#e8a33c", px + 2 * f, hy + (peck ? 1 : 0), 1, 1);
+        }
+
+        /// 粉猪圆身：滚圆躯干 + 猪鼻 + 卷尾
+        public static void DrawPig(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool hurt = u.hurt > 0;
+            string body = hurt ? "#ff6b5e" : (u.infected != 0 ? "#b8e2b4" : "#e8a8a0");
+            bool step = ((frame >> 3) & 1) == 1;
+            bool moving = u.lx != null && (u.lx != u.x || u.ly != u.y);
+            L.Fill("#a86058", px - 1, py + 1, 1, 1);
+            if (!(moving && step)) L.Fill("#a86058", px + 1, py + 1, 1, 1);
+            L.Fill(body, px - 2, py - 1, 4, 2);
+            L.Fill(hurt ? "#ffc4b8" : "#f2c8c0", px - 1, py - 1, 2, 1);
+            double hx = f > 0 ? px + 2 : px - 4;
+            L.Fill(body, hx, py - 1, 2, 2);
+            L.Fill("#a86058", hx + (f > 0 ? 0 : 1), py - 2, 1, 1);
+            L.Fill("#d98a86", hx + (f > 0 ? 2 : -1), py, 1, 1);
+            L.Fill("#14100c", hx + (f > 0 ? 1 : 0), py - 1, 1, 1);
+            L.Fill("#d98a86", f > 0 ? px - 3 : px + 2, py - 1, 1, 1);
+        }
+
+        /// 灰兔长耳：竖直长耳 + 白尾 + 跳跃步态
+        public static void DrawRabbit(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool hurt = u.hurt > 0;
+            string body = hurt ? "#ff6b5e" : (u.infected != 0 ? "#b8e2b4" : "#b8b0a4");
+            bool moving = u.lx != null && (u.lx != u.x || u.ly != u.y);
+            bool hop = moving && ((frame >> 3) & 1) == 1;
+            double y0 = py - (hop ? 1 : 0);
+            if (hop) L.Fill("#6e685e", px, py + 1, 2, 1);
+            else { L.Fill("#6e685e", px - 1, py + 1, 1, 1); L.Fill("#6e685e", px + 1, py + 1, 1, 1); }
+            L.Fill(body, px - 1, y0 - 1, 2, 2);
+            L.Fill("#f2ead8", f > 0 ? px - 2 : px + 1, y0, 1, 1);
+            double hx = f > 0 ? px : px - 2;
+            L.Fill(body, hx, y0 - 3, 2, 2);
+            L.Fill(body, hx + (f > 0 ? 0 : 1), y0 - 5, 1, 2);
+            L.Fill(body, hx + (f > 0 ? 1 : 0), y0 - 4, 1, 1);
+            L.Fill("#e8a8a0", hx + (f > 0 ? 0 : 1), y0 - 4, 1, 1);
+            L.Fill("#14100c", hx + (f > 0 ? 1 : 0), y0 - 2, 1, 1);
+        }
+
+        /// 橙狐大尾：低伏身形 + 白尖大尾 + 竖耳
+        public static void DrawFox(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool hurt = u.hurt > 0;
+            string body = hurt ? "#ff6b5e" : (u.infected != 0 ? "#b8e2b4" : "#d97b3c");
+            bool step = ((frame >> 3) & 1) == 1;
+            bool moving = u.lx != null && (u.lx != u.x || u.ly != u.y);
+            L.Fill("#5a2f14", px - 1, py, 1, 1);
+            if (!(moving && step)) L.Fill("#5a2f14", px + 1, py, 1, 1);
+            L.Fill(body, px - 1, py - 1, 3, 1);
+            int wag = ((frame >> 4) & 1) == 1 ? -1 : 0;
+            double tx = f > 0 ? px - 4 : px + 2;
+            L.Fill(body, tx, py - 2 + wag, 2, 2);
+            L.Fill("#f2ead8", f > 0 ? tx : tx + 1, py - 2 + wag, 1, 1);
+            double hx = f > 0 ? px + 1 : px - 3;
+            L.Fill(body, hx, py - 2, 2, 2);
+            L.Fill("#8a4a1c", hx + (f > 0 ? 0 : 1), py - 3, 1, 1);
+            L.Fill("#8a4a1c", hx + (f > 0 ? 1 : 0), py - 3, 1, 1);
+            L.Fill("#f2ead8", hx + (f > 0 ? 2 : -1), py - 1, 1, 1);
+            L.Fill("#14100c", hx + (f > 0 ? 1 : 0), py - 2, 1, 1);
+        }
+
+        /// 青银小鱼：水中浅色影 + 尾摆 + 偶发跃出（溅水花）
+        public static void DrawFish(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool hurt = u.hurt > 0;
+            int jp = (frame + u.id * 13) % 260;
+            if (jp < 10)
+            {
+                double jt = jp / 10.0;
+                double jy = py - Math.Floor(Math.Sin(jt * Math.PI) * 3 + 0.5);
+                L.Fill(hurt ? "#ff6b5e" : "#dceef2", px, jy, 2, 1);
+                L.Fill("#9fd4d8", px - f, jy + 1, 1, 1);
+                L.Fill("#14100c", px + (f > 0 ? 1 : 0), jy, 1, 1);
+                L.Fill("rgba(224,244,255,0.8)", px - 1, py, 1, 1);
+                L.Fill("rgba(224,244,255,0.8)", px + 2, py, 1, 1);
+                return;
+            }
+            bool tailL = ((frame >> 3) & 1) == 1;
+            L.Fill(hurt ? "rgba(255,107,94,0.8)" : "rgba(200,232,240,0.55)", px - 1, py, 2, 1);
+            L.Fill(hurt ? "rgba(207,63,46,0.7)" : "rgba(150,205,220,0.7)", tailL ? px - 2 : px + 1, py, 1, 1);
+        }
+
+        /// 红蟹横行双钳：横宽身形 + 竖眼柄 + 开合双钳
+        public static void DrawCrab(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            bool hurt = u.hurt > 0;
+            string body = hurt ? "#ff6b5e" : (u.infected != 0 ? "#b8e2b4" : "#d94a3a");
+            bool st = ((frame >> 3) & 1) == 1;
+            L.Fill("#8a2418", px - 2, py + 1, 1, 1);
+            L.Fill("#8a2418", px + 1, py + 1, 1, 1);
+            if (st) L.Fill("#8a2418", px, py + 1, 1, 1);
+            L.Fill(body, px - 1, py - 1, 2, 2);
+            L.Fill("#f2ead8", px - 1, py - 2, 1, 1);
+            L.Fill("#f2ead8", px, py - 2, 1, 1);
+            L.Fill("#14100c", px - 1, py - 2, 1, 1);
+            bool pinch = ((frame >> 4) & 1) == 1;
+            L.Fill("#e86a4a", px - 3, py - 1 - (pinch ? 1 : 0), 1, 1);
+            L.Fill("#e86a4a", px + 2, py - 1 + (pinch ? 1 : 0), 1, 1);
+        }
+
+        /// 绿壳圆龟：花纹龟壳 + 伸缩头 + 划水步态
+        public static void DrawTurtle(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool hurt = u.hurt > 0;
+            string shell = hurt ? "#ff6b5e" : (u.infected != 0 ? "#b8e2b4" : "#4a7a3a");
+            bool st = ((frame >> 4) & 1) == 1;
+            L.Fill("#2e5424", px - 2, py + 1, 1, 1);
+            if (!st) L.Fill("#2e5424", px, py + 1, 1, 1);
+            L.Fill(shell, px - 2, py - 1, 3, 2);
+            L.Fill("#2e5424", px - 1, py - 1, 1, 1);
+            L.Fill("#2e5424", px, py, 1, 1);
+            L.Fill("#6a9a54", px - 1, py - 1, 2, 1);
+            bool poke = ((frame >> 5) & 3) != 3;
+            double hx = f > 0 ? px + 1 : px - 3;
+            if (poke)
+            {
+                L.Fill(hurt ? "#ff6b5e" : "#8aa860", hx, py - 1, 2, 1);
+                L.Fill("#14100c", hx + (f > 0 ? 1 : 0), py - 1, 1, 1);
+            }
+        }
+
+        /// 灰鲨：背鳍露水三角 + 水面波迹 + 水下体影
+        public static void DrawShark(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            bool hurt = u.hurt > 0;
+            string fin = hurt ? "#ff6b5e" : "#5a6a78";
+            L.Fill(fin, px, py - 3, 1, 2);
+            L.Fill(fin, px + 1, py - 2, 1, 1);
+            bool wv = ((frame >> 3) & 1) == 1;
+            L.Fill("rgba(224,244,255,0.5)", px - 2, py - 1, 2, 1);
+            if (wv) L.Fill("rgba(224,244,255,0.5)", px + 2, py - 1, 2, 1);
+            bool tailL = ((frame >> 3) & 1) == 1;
+            L.Fill(hurt ? "rgba(255,107,94,0.4)" : "rgba(30,52,70,0.45)", px - 1, py, 4, 1);
+            L.Fill(hurt ? "rgba(255,107,94,0.4)" : "rgba(30,52,70,0.45)", tailL ? px - 3 : px + 3, py, 1, 1);
+        }
+
+        /// <summary>建筑全族（4px/格基准）：9 专用 kind + house/capital 科技阶位通用段（蓝本 L503-808）</summary>
+        public static void DrawBuilding(WbDrawList L, double bxx, double byy, int kind, int[] color, int tier, double hpRatio)
+        {
+            double px = bxx * 4 - 4;
+            double py = byy * 4 - 8;
+            switch (kind)
+            {
+                case 3: // tower：石塔（雉堞 + 箭窗 + 旗）
+                    {
+                        L.Fill("#575757", px + 4, py + 4, 4, 12);
+                        L.Fill("#8d8d8d", px + 4, py + 4, 2, 12);
+                        L.Fill("#a5a5a9", px + 3, py + 2, 6, 2);
+                        L.Fill("#6e6e72", px + 3, py + 3, 6, 1);
+                        L.Fill(Rgb(color), px + 4, py, 2, 4);
+                        L.Fill("#14100c", px + 6, py + 10, 2, 4);
+                        L.Fill("#44444a", px + 3, py + 15, 6, 1);
+                        return;
+                    }
+                case 4: // farm：金色田垄（成行麦浪 + 篱笆 + 麦垛）
+                    {
+                        L.Fill("#d9b44a", px, py + 2, 12, 8);
+                        L.Fill("#b8912f", px, py + 4, 12, 2);
+                        L.Fill("#b8912f", px, py + 8, 12, 1);
+                        L.Fill("#7a5a2c", px - 2, py, 2, 12);
+                        L.Fill("#7a5a2c", px + 12, py, 2, 12);
+                        L.Fill("#7a5a2c", px - 2, py, 16, 2);
+                        L.Fill("#ffd93d", px + 2, py + 3, 1, 1);
+                        L.Fill("#ffd93d", px + 5, py + 3, 1, 1);
+                        L.Fill("#ffd93d", px + 8, py + 6, 1, 1);
+                        L.Fill("#ffd93d", px + 3, py + 6, 1, 1);
+                        L.Fill("#c9a84a", px + 10, py + 10, 3, 2);
+                        L.Fill("#a5843a", px + 10, py + 12, 3, 1);
+                        return;
+                    }
+                case 5: // barracks：暗红顶兵营 + 双旗 + 剑形门饰
+                    {
+                        L.Fill("#8c2317", px, py, 14, 4);
+                        L.Fill("#5c150d", px, py + 2, 14, 2);
+                        L.Fill("#a08662", px, py + 4, 14, 6);
+                        L.Fill("#7a6a4c", px, py + 8, 14, 2);
+                        L.Fill("#14100c", px + 6, py + 4, 2, 6);
+                        L.Fill("rgba(0,0,0,0.15)", px + 1, py + 6, 4, 1);
+                        L.Fill("rgba(0,0,0,0.15)", px + 9, py + 6, 4, 1);
+                        L.Fill("#3a342c", px - 2, py - 4, 2, 6);
+                        L.Fill("#3a342c", px + 14, py - 4, 2, 6);
+                        L.Fill(Rgb(color), px - 2, py - 4, 4, 2);
+                        L.Fill(Rgb(color), px + 14, py - 4, 4, 2);
+                        return;
+                    }
+                case 6: // castle：石砌城堡（双塔 + 城垛 + 旗）
+                    {
+                        double cx = px - 2, cy = py - 4;
+                        L.Fill("#8d8d8d", cx + 4, cy + 6, 12, 12);
+                        L.Fill("#6e6e72", cx + 4, cy + 14, 12, 2);
+                        L.Fill("#6e6e72", cx + 8, cy + 8, 2, 10);
+                        L.Fill("#a5a5a9", cx, cy + 2, 4, 16);
+                        L.Fill("#a5a5a9", cx + 16, cy + 2, 4, 16);
+                        L.Fill("#575757", cx, cy + 14, 4, 2);
+                        L.Fill("#575757", cx + 16, cy + 14, 4, 2);
+                        L.Fill("#a5a5a9", cx, cy + 1, 1, 2);
+                        L.Fill("#a5a5a9", cx + 2, cy + 1, 1, 2);
+                        L.Fill("#a5a5a9", cx + 16, cy + 1, 1, 2);
+                        L.Fill("#a5a5a9", cx + 18, cy + 1, 1, 2);
+                        L.Fill("#a5a5a9", cx + 4, cy + 4, 2, 2);
+                        L.Fill("#a5a5a9", cx + 8, cy + 4, 2, 2);
+                        L.Fill("#a5a5a9", cx + 12, cy + 4, 2, 2);
+                        L.Fill("#3a342c", cx + 8, cy - 4, 2, 6);
+                        L.Fill(Rgb(color), cx + 10, cy - 4, 6, 4);
+                        L.Fill("#14100c", cx + 8, cy + 12, 4, 6);
+                        L.Fill("#5c3a1c", cx + 9, cy + 13, 2, 5);
+                        return;
+                    }
+                case 11: // P2 wall：石砖砌块 + 垛口（灰阶三档随耐久变暗开裂）
+                    {
+                        int dmg = hpRatio < 0.3 ? 2 : hpRatio < 0.6 ? 1 : 0;
+                        string cBody = dmg == 0 ? "#8d8d8d" : dmg == 1 ? "#76767a" : "#5e5e62";
+                        string cDark = dmg == 0 ? "#6e6e72" : dmg == 1 ? "#58585c" : "#46464a";
+                        string cLight = dmg == 0 ? "#a5a5a9" : dmg == 1 ? "#8e8e92" : "#76767a";
+                        L.Fill(cLight, px + 3, py + 3, 2, 2);
+                        L.Fill(cLight, px + 6, py + 3, 2, 2);
+                        L.Fill(cLight, px + 9, py + 3, 2, 2);
+                        L.Fill(cBody, px + 3, py + 5, 8, 11);
+                        L.Fill(cLight, px + 3, py + 5, 1, 11);
+                        L.Fill(cDark, px + 3, py + 8, 8, 1);
+                        L.Fill(cDark, px + 3, py + 12, 8, 1);
+                        L.Fill(cDark, px + 7, py + 5, 1, 3);
+                        L.Fill(cDark, px + 5, py + 9, 1, 3);
+                        L.Fill(cDark, px + 9, py + 13, 1, 3);
+                        L.Fill("#44444a", px + 3, py + 15, 8, 1);
+                        if (dmg > 0)
+                        {
+                            L.Fill("#14100c", px + 6, py + 6, 1, 3);
+                            L.Fill("#14100c", px + 7, py + 9, 1, 2);
+                            if (dmg > 1)
+                            {
+                                L.Fill("#14100c", px + 4, py + 11, 1, 4);
+                                L.Fill("#14100c", px + 9, py + 7, 1, 2);
+                            }
+                        }
+                        return;
+                    }
+                case 7: // port：木质码头 + 系船桩 + 吊架货箱
+                    {
+                        L.Fill("#9c6a3c", px, py + 4, 14, 4);
+                        L.Fill("#7a4f2a", px, py + 6, 14, 2);
+                        L.Fill("#5c3a1c", px, py + 8, 2, 4);
+                        L.Fill("#5c3a1c", px + 12, py + 8, 2, 4);
+                        L.Fill("#3a342c", px + 2, py - 2, 2, 6);
+                        L.Fill("#3a342c", px + 2, py - 2, 8, 2);
+                        L.Fill("#c98d5a", px + 6, py, 4, 4);
+                        L.Fill("#a06a3c", px + 6, py + 2, 4, 2);
+                        L.Fill(Rgb(color), px + 10, py - 4, 4, 4);
+                        L.Fill("#3a342c", px + 10, py - 4, 2, 4);
+                        return;
+                    }
+                case 8: // library：蓝顶书院 + 书卷纹
+                    {
+                        L.Fill("#3a6ea5", px, py, 12, 4);
+                        L.Fill("#254d78", px, py + 2, 12, 2);
+                        L.Fill("#d8c9a3", px, py + 4, 12, 6);
+                        L.Fill("#b3a077", px, py + 8, 12, 2);
+                        L.Fill("#3a342c", px + 4, py + 4, 4, 6);
+                        L.Fill("#f2ead8", px + 2, py + 6, 2, 2);
+                        L.Fill("#f2ead8", px + 8, py + 6, 2, 2);
+                        L.Fill("#ffd93d", px + 4, py - 2, 4, 2);
+                        L.Fill("#ffd93d", px + 5, py - 3, 2, 1);
+                        return;
+                    }
+                case 9: // market：条纹篷帐集市 + 货摊
+                    {
+                        L.Fill("#cf3f2e", px, py + 2, 14, 4);
+                        L.Fill("#f2ead8", px + 2, py + 2, 2, 4);
+                        L.Fill("#f2ead8", px + 6, py + 2, 2, 4);
+                        L.Fill("#f2ead8", px + 10, py + 2, 2, 4);
+                        L.Fill("#9c6a3c", px, py + 6, 14, 4);
+                        L.Fill("#7a4f2a", px, py + 8, 14, 2);
+                        L.Fill("#ffd93d", px + 2, py + 5, 2, 2);
+                        L.Fill("#ffd93d", px + 8, py + 5, 2, 2);
+                        L.Fill("#6fd66f", px + 4, py + 5, 2, 2);
+                        L.Fill("#6fd66f", px + 10, py + 5, 2, 2);
+                        return;
+                    }
+                case 10: // temple：白石神殿（柱廊 + 金顶）
+                    {
+                        L.Fill("#ffd93d", px + 2, py - 4, 10, 4);
+                        L.Fill("#c9a02a", px + 2, py - 2, 10, 2);
+                        L.Fill("#c9a02a", px + 6, py - 6, 2, 2);
+                        L.Fill("#f2ead8", px - 2, py, 18, 2);
+                        L.Fill("#e8e0cc", px, py + 2, 2, 8);
+                        L.Fill("#e8e0cc", px + 4, py + 2, 2, 8);
+                        L.Fill("#e8e0cc", px + 8, py + 2, 2, 8);
+                        L.Fill("#e8e0cc", px + 12, py + 2, 2, 8);
+                        L.Fill("rgba(255,240,190,0.85)", px + 2, py + 4, 10, 6);
+                        L.Fill("#c9bfa3", px - 2, py + 10, 18, 2);
+                        return;
+                    }
+            }
+            // ---- house(1) / capital(2)：科技阶位外观（0 茅屋 / 1 石屋 / 2 堡垒宅 / 3 哥特庄园） ----
+            bool big = kind == 2;
+            double w = big ? 16 : 12;
+            double ox = px - (big ? 2 : 0);
+            string wallTop = tier >= 3 ? "#e8e0cc" : tier >= 1 ? "#a5a5a9" : "#c98d5a";
+            string wallLow = tier >= 3 ? "#c9bfa3" : tier >= 1 ? "#6e6e72" : "#9c6a3c";
+            L.Fill(Rgb(color), ox, py, w, 4);
+            L.Fill(Rgb(Mix(color, new[] { 0, 0, 0 }, 0.35)), ox, py + 2, w, 2);
+            if (tier >= 3)
+            {
+                L.Fill("#ffd93d", ox + 2, py - 2, 2, 2);
+                L.Fill("#ffd93d", ox + w - 4, py - 2, 2, 2);
+                L.Fill("#ffd93d", ox + Math.Floor(w / 2) - 1, py - 4, 2, 4);
+            }
+            L.Fill(wallTop, ox, py + 4, w, 4);
+            L.Fill(wallLow, ox, py + 6, w, 2);
+            if (tier == 1 || tier == 2)
+            {
+                L.Fill("rgba(0,0,0,0.18)", ox + 4, py + 4, 2, 2);
+                L.Fill("rgba(0,0,0,0.18)", ox + w - 6, py + 6, 2, 2);
+                L.Fill("rgba(0,0,0,0.18)", ox + 8, py + 4, 2, 2);
+            }
+            if (tier == 2)
+            {
+                L.Fill("#a5a5a9", ox, py - 2, 2, 2);
+                L.Fill("#a5a5a9", ox + Math.Floor(w / 2) - 1, py - 2, 2, 2);
+                L.Fill("#a5a5a9", ox + w - 2, py - 2, 2, 2);
+                L.Fill("#575757", ox + 2, py - 2, 2, 2);
+                L.Fill("#575757", ox + w - 4, py - 2, 2, 2);
+            }
+            L.Fill("#3a2a18", ox + Math.Floor(w / 2) - 2, py + 4, 3, 4);
+            L.Fill(tier >= 3 ? "#ffd93d" : "#ffdba0", ox + 2, py + 4, 2, 2);
+            L.Fill(tier >= 3 ? "#ffd93d" : "#ffdba0", ox + w - 4, py + 4, 2, 2);
+            L.Fill("rgba(0,0,0,0.3)", ox, py + 8, w, 2);
+            if (big)
+            {
+                L.Fill("#3a342c", ox + w, py - 4, 2, 6);
+                L.Fill(Rgb(color), ox + w + 2, py - 4, 4, 2);
+            }
+        }
+
+        /// <summary>掉落物（蓝本 L2022-2143）：meat 特判 + 查表上提（defSlot=null → 未知 kind 静默）+ 稀有度闪烁</summary>
+        public static void DrawItem(WbDrawList L, double ix, double iy, string kind, int id, int frame,
+            string defSlot, int defRarity, string defArt, string main)
+        {
+            double px = Math.Floor(ix * 2 + 0.5);   // Math.round
+            double py = Math.Floor(iy * 2 + 0.5);
+            int bob = (int)Math.Floor(frame / 12.0) % 2;
+            double y = py - bob;
+            if (kind == "meat")
+            {
+                L.Fill("rgba(0,0,0,0.22)", px - 1, py + 2, 3, 1);
+                L.Fill("#9a5a2c", px - 1, y - 1, 2, 2);
+                L.Fill("#b56f3a", px - 1, y - 1, 1, 1);
+                L.Fill("#f2ead8", px + 1, y, 1, 1);
+                L.Fill("#f2ead8", px + 1, y - 1, 1, 1);
+                return;
+            }
+            if (defSlot == null) return;   // ITEM_DEFS 查表缺失 → 静默
+            string accent = defRarity >= 3 ? "#ffd93d" : defRarity == 2 ? "#e8f0ff" : "#8a9098";
+            switch (defSlot)
+            {
+                case "wep":
+                    {
+                        if (defArt == "bow")
+                        {
+                            L.Fill(main, px - 1, y - 2, 1, 4);
+                            L.Fill(main, px, y - 3, 1, 1);
+                            L.Fill(main, px, y + 2, 1, 1);
+                            L.Fill(accent, px + 1, y - 2, 1, 4);
+                        }
+                        else if (defArt == "staff")
+                        {
+                            L.Fill("#6e4a2b", px, y - 3, 1, 5);
+                            L.Fill(main, px, y - 4, 1, 1);
+                            L.Fill(main, px - 1, y - 3, 1, 1);
+                            L.Fill(main, px + 1, y - 3, 1, 1);
+                        }
+                        else
+                        {
+                            L.Fill(main, px, y - 3, 1, 3);
+                            L.Fill(main, px + 1, y - 2, 1, 1);
+                            L.Fill(accent, px - 1, y, 3, 1);
+                            L.Fill("#6e4a2b", px, y + 1, 1, 1);
+                        }
+                        break;
+                    }
+                case "arm":
+                    L.Fill(main, px - 1, y - 2, 3, 2);
+                    L.Fill(main, px, y, 2, 1);
+                    L.Fill(accent, px - 1, y, 1, 1);
+                    break;
+                case "hlm":
+                    L.Fill(main, px - 1, y - 2, 3, 2);
+                    L.Fill(accent, px, y - 3, 1, 1);
+                    break;
+                case "shd":
+                    L.Fill(main, px - 1, y - 2, 3, 3);
+                    L.Fill(accent, px, y - 1, 1, 1);
+                    break;
+                case "bts":
+                    L.Fill(main, px - 1, y - 1, 1, 2);
+                    L.Fill(main, px + 1, y - 1, 1, 2);
+                    L.Fill(accent, px - 1, y + 1, 2, 1);
+                    break;
+                case "rng":
+                    L.Fill(main, px, y - 1, 1, 1);
+                    L.Fill(main, px - 1, y, 1, 1);
+                    L.Fill(main, px + 1, y, 1, 1);
+                    L.Fill(main, px, y + 1, 1, 1);
+                    L.Fill(accent, px, y - 2, 1, 1);
+                    break;
+                case "amu":
+                    L.Fill(main, px, y - 2, 1, 1);
+                    L.Fill(main, px - 1, y - 1, 3, 1);
+                    L.Fill(main, px, y, 1, 1);
+                    L.Fill(accent, px, y - 1, 1, 1);
+                    break;
+            }
+            int sparkleEvery = defRarity >= 3 ? 10 : defRarity == 2 ? 18 : 28;
+            if ((frame + id * 3) % sparkleEvery < 4)
+            {
+                L.Fill(defRarity >= 3 ? "rgba(255,220,120,0.95)" : "rgba(255,240,200,0.85)", px + 2, y - 4, 1, 1);
+                if (defRarity >= 4) L.Fill(defRarity >= 3 ? "rgba(255,220,120,0.95)" : "rgba(255,240,200,0.85)", px - 2, y - 2, 1, 1);
+            }
+            L.Fill("rgba(0,0,0,0.22)", px - 1, py + 2, 3, 1);
+        }
+
+        /// 火（u32 哈希相位；蓝本 L2274-2287）
+        public static void DrawFire(WbDrawList L, double x, double y, int i, int frame)
+        {
+            double px = x * 2;
+            double py = y * 2;
+            uint h = unchecked((uint)((long)i * 2654435761L));   // (i*2654435761)>>>0
+            for (int dy = 0; dy < 2; dy++)
+            {
+                for (int dx = 0; dx < 2; dx++)
+                {
+                    long f = (h + (long)((frame * 7) << 8) + dx * 3 + dy * 11) % 11;
+                    if (f < 7)
+                    {
+                        L.Fill(FIRE_COLORS[f % 4], px + dx, py + dy - ((f > 3 && dy == 0) ? 1 : 0), 1, 1);
+                    }
+                }
+            }
+        }
+
+        /// 龙卷（9 段旋涡 + debris；蓝本 L2290-2305）
+        public static void DrawTornado(WbDrawList L, double ex, double ey, int frame)
+        {
+            double px = ex * 2;
+            double py = ey * 2;
+            for (int s = 0; s < 9; s++)
+            {
+                double yy = py - s * 2;
+                double w = 1 + Math.Floor(s / 2.0);
+                int spin = (int)Math.Floor(frame / 3.0 + s) % 3;
+                L.Fill(s < 3 ? "rgba(120,115,105,0.95)" : "rgba(160,155,145,0.8)", px - w + spin, yy, w * 2 - 1, 1);
+            }
+            int df = frame % 5;
+            L.Fill("#3a342c", px - 3 + df, py - 2, 1, 1);
+            L.Fill("#3a342c", px + 3 - df, py - 5, 1, 1);
+        }
+
+        /// <summary>涌现生物（VisCache 全门控 + 缩放变换；蓝本 L323-429）。
+        /// isMoving 语义 = u.lx!=null && (u.lx!=u.x || u.ly!=u.y)——ly null 时 lifted != 为 true（JS undefined !== y 同构）。</summary>
+        public static void DrawEmergentCreature(WbDrawList L, WbU u, WbVisCache vc, int t)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool isMoving = u.lx != null && (u.lx != u.x || u.ly != u.y);
+            int step = isMoving ? ((t >> 2) & 1) : 0;
+            bool hurt = u.hurt > 0;
+            string body = hurt ? "#ff6b5e" : (u.infected != 0 ? "#9fd68f" : vc.body);
+            string dark = hurt ? "#cf3f2e" : vc.dark;
+            string light = hurt ? "#ffc4b8" : vc.light;
+            string accent = hurt ? "#ffd93d" : vc.accent;
+            double scale = Math.Max(0.8, Math.Min(1.45, vc.size));
+            bool scaled = Math.Abs(scale - 1) > 0.06;
+            if (scaled)
+            {
+                L.Tag("save");
+                L.Tag("translate", px, py + 2);
+                L.Tag("scale", scale, scale);
+                L.Tag("translate", -px, -(py + 2));
+            }
+            int bw = 3 + (vc.bulk >= 0.55 ? 1 : 0) + (vc.size >= 1.25 ? 1 : 0);
+            int bh = 1 + (vc.bulk >= 0.82 ? 1 : 0);
+            double bx = px - (bw / 2) - (f > 0 ? 0 : 1);
+            double by = py - 1;
+            L.Fill(body, bx, by, bw, bh);
+            if (bh >= 2) L.Fill(light, bx + 1, by + bh - 1, bw - 2, 1);
+            L.Fill(dark, bx + 1, by, bw - 2 > 1 ? bw - 3 : 1, 1);
+            if (vc.pattern == 1)
+            {
+                L.Fill(dark, bx + 1, by, 1, bh);
+                if (bw >= 4) L.Fill(dark, bx + 3, by, 1, bh);
+            }
+            else if (vc.pattern == 2)
+            {
+                L.Fill(accent, bx + (bw >> 1), by, 1, 1);
+                if (bw >= 4 && bh >= 2) L.Fill(accent, bx + 1, by + bh - 1, 1, 1);
+            }
+            if (vc.spikes != 0)
+            {
+                int sn = bw >= 4 ? 3 : 2;
+                for (int si = 0; si < sn; si++) L.Fill(dark, bx + 1 + si, by - 1, 1, 1);
+            }
+            if (vc.mane != 0)
+            {
+                L.Fill(light, bx + (f > 0 ? bw - 2 : 1) - f, by - 1, 2, 1);
+            }
+            double hx = f > 0 ? bx + bw : bx - 1;
+            L.Fill(body, hx, by, 1, bh >= 2 ? 2 : 1);
+            L.Fill(body, hx + f, by + (bh >= 2 ? 1 : 0), 1, 1);
+            L.Fill(vc.glow != 0 ? "#7df9ff" : dark, hx, by, 1, 1);
+            if (vc.ears == 1)
+            {
+                L.Fill(body, hx - f, by - 1, 1, 1);
+            }
+            else if (vc.ears == 2)
+            {
+                L.Fill(dark, hx - 2 * f, by - 1, 2, 1);
+            }
+            if (vc.horns >= 1)
+            {
+                L.Fill(light, hx - f, by - 1, 1, 1);
+                if (vc.horns >= 2) L.Fill(light, hx, by - 2, 1, 1);
+            }
+            if (vc.crest != 0)
+            {
+                L.Fill(accent, hx - f, by - (vc.horns >= 2 ? 3 : 2), 2, 1);
+            }
+            if (vc.tail >= 1)
+            {
+                double tx = f > 0 ? bx - 1 : bx + bw;
+                int wag = ((t >> 3) & 1) == 1 ? -1 : 0;
+                L.Fill(body, tx, by, 1, 1);
+                if (vc.tail >= 2) L.Fill(body, tx - f, by + wag, 1, 1);
+            }
+            if (isMoving)
+            {
+                if (step == 1)
+                {
+                    L.Fill(dark, bx + 1, by + bh, 1, 1);
+                    L.Fill(dark, bx + bw - 2, by + bh, 1, 2);
+                }
+                else
+                {
+                    L.Fill(dark, bx + 1, by + bh, 1, 2);
+                    L.Fill(dark, bx + bw - 2, by + bh, 1, 1);
+                }
+            }
+            else
+            {
+                L.Fill(dark, bx + 1, by + bh, 1, 1);
+                L.Fill(dark, bx + bw - 2, by + bh, 1, 1);
+            }
+            if (scaled) L.Tag("restore");
+        }
+
+        /// <summary>涌现巨怪三形态（aquatic 触手环 / worm 分节蠕体 / serpent S 蜿蜒；蓝本 L2993-3142）。
+        /// 蓝本怪味 (f&gt;0?1:1) 恒 1 直译（worm 头节眼）。</summary>
+        public static void DrawEmergentMonster(WbDrawList L, WbU u, WbVisCache vc, string shape, int t)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool hurt = u.hurt > 0;
+            string body = hurt ? "#ff6b5e" : (u.infected != 0 ? "#9fd68f" : vc.body);
+            string dark = hurt ? "#cf3f2e" : vc.dark;
+            string light = hurt ? "#ffc4b8" : vc.light;
+            string accent = hurt ? "#ffd93d" : vc.accent;
+            double scale = Math.Max(0.9, Math.Min(1.5, vc.size));
+            bool scaled = Math.Abs(scale - 1) > 0.06;
+            if (scaled)
+            {
+                L.Tag("save");
+                L.Tag("translate", px, py + 2);
+                L.Tag("scale", scale, scale);
+                L.Tag("translate", -px, -(py + 2));
+            }
+
+            if (shape == "aquatic")
+            {
+                L.Fill("rgba(0,0,20,0.25)", px - 3, py + 2, 7, 1);
+                L.Fill(body, px - 2, py - 4, 5, 2);
+                L.Fill(body, px - 1, py - 5, 3, 1);
+                L.Fill(light, px - 1, py - 5, 2, 1);
+                if (vc.horns >= 1)
+                {
+                    L.Fill(light, px - 2, py - 6, 1, 1);
+                    L.Fill(light, px + 2, py - 6, 1, 1);
+                }
+                if (vc.spikes != 0)
+                {
+                    L.Fill(dark, px - 1, py - 6, 1, 1);
+                }
+                L.Fill(vc.glow != 0 ? "#7df9ff" : dark, px - 1, py - 3, 1, 1);
+                L.Fill(vc.glow != 0 ? "#7df9ff" : dark, px + 1, py - 3, 1, 1);
+                if (vc.pattern == 1)
+                {
+                    L.Fill(dark, px - 2, py - 4, 1, 1);
+                    L.Fill(dark, px + 2, py - 4, 1, 1);
+                }
+                else if (vc.pattern == 2)
+                {
+                    L.Fill(accent, px, py - 4, 1, 1);
+                }
+                for (int i = 0; i < 8; i++)
+                {
+                    int side = i < 4 ? -1 : 1;
+                    int k = i % 4;
+                    int curl = (((t >> 3) + i) % 4) < 2 ? 1 : 0;
+                    double bxp = px + side * (2 + (k >> 1));
+                    L.Fill(dark, bxp, py - 2, 1, 2 + (k & 1));
+                    if (curl != 0) L.Fill(dark, bxp + side, py + (k & 1), 1, 1);
+                }
+            }
+            else if (shape == "worm")
+            {
+                L.Fill("rgba(80,60,30,0.3)", px - 4, py + 2, 9, 1);
+                int segs = 4 + (vc.bulk >= 0.6 ? 1 : 0);
+                bool maw = ((t >> 3) & 1) == 1;
+                for (int i = 0; i < segs; i++)
+                {
+                    double w = i == 0 ? 4 : 3 - Math.Min(1, i >> 1);
+                    double sx = f > 0 ? px - i * 2 : px - w + 2 + i * 2 - 2;
+                    double sy = py - 2 - (i == 0 ? 1 : 0) + (i % 2 == 1 ? 1 : 0);
+                    L.Fill(i == 0 ? body : Mix3(body, dark, 0.12 * i), sx, sy, w, 3 - (i >> 1));
+                    if (i > 0) L.Fill(dark, sx, sy, 1, 3 - (i >> 1));
+                }
+                double hxx = f > 0 ? px : px - 4;
+                L.Fill(vc.glow != 0 ? "#7df9ff" : dark, hxx + 1, py - 3, 1, 1);
+                L.Fill("#1c0f08", hxx + (f > 0 ? 2 : -1), py - 2, 2, maw ? 2 : 1);
+                if (maw)
+                {
+                    L.Fill("#f2ead8", hxx + (f > 0 ? 2 : -1), py - 2, 1, 1);
+                    L.Fill("#f2ead8", hxx + (f > 0 ? 3 : 0), py - 1, 1, 1);
+                }
+                if (vc.spikes != 0)
+                {
+                    L.Fill(dark, px - 1, py - 4, 1, 1);
+                    L.Fill(dark, px - 3, py - 3, 1, 1);
+                }
+                if (vc.crest != 0)
+                {
+                    L.Fill(accent, px, py - 4, 2, 1);
+                }
+            }
+            else
+            {
+                L.Fill("rgba(0,0,0,0.22)", px - 4, py + 2, 8, 1);
+                L.Fill(body, px - 4, py + 1, 4, 1);
+                L.Fill(body, px - 2, py, 3, 1);
+                L.Fill(body, px - 1, py - 1, 3, 1);
+                L.Fill(body, px, py - 2, 3, 2);
+                L.Fill(body, px + 1, py - 4, 2, 2);
+                L.Fill(light, px + 1, py - 4, 2, 1);
+                if (vc.crest != 0 || vc.horns >= 1)
+                {
+                    L.Fill(Mix3(body, dark, 0.35), px - 1, py - 4, 2, 2);
+                }
+                L.Fill(vc.glow != 0 ? "#7df9ff" : "#ffd93d", px + 2, py - 4, 1, 1);
+                if (((t >> 4) & 1) == 1)
+                {
+                    L.Fill("#e05a5a", px + 3, py - 3, 1, 1);
+                }
+                if (vc.pattern == 1)
+                {
+                    L.Fill(dark, px - 3, py + 1, 1, 1);
+                    L.Fill(dark, px - 1, py, 1, 1);
+                    L.Fill(dark, px + 1, py - 1, 1, 1);
+                }
+                else if (vc.pattern == 2)
+                {
+                    L.Fill(accent, px - 2, py + 1, 1, 1);
+                    L.Fill(accent, px, py - 1, 1, 1);
+                }
+                if (vc.spikes != 0)
+                {
+                    L.Fill(dark, px - 3, py, 1, 1);
+                    L.Fill(dark, px - 1, py - 1, 1, 1);
+                    L.Fill(dark, px + 1, py - 2, 1, 1);
+                }
+                L.Fill(Mix3(body, dark, 0.2), px - 5, py + 1, 1, 1);
+            }
+            if (scaled) L.Tag("restore");
+        }
+
+    }
+
+    /// <summary>emergence.ts VisCache（涌现域 14 字段；bool 语义 int 0/1——JSON 契约见 gen-render4 dumpVc）</summary>
+    public class WbVisCache
+    {
+        public string body, dark, light, accent;
+        public double size, bulk;
+        public int horns, spikes, ears, pattern, tail, mane, crest, glow;
     }
 }

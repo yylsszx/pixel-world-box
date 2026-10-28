@@ -1015,6 +1015,36 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   }
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0;
+// ============================================================
+// 段 14：M-U5c 渲染 IV 余域双链（render4-transcript 镜像逐位 + gen-render4 sanity/det 复跑）
+//   render4-transcript.mjs = WbSprites.cs 余域扩展的 JS 独立转写（八新动物/建筑/掉落物/火/龙卷/涌现域）
+//   gen-render4.mjs = 黄金生成器自带 sanity 52 断言 + det 文件对比；黄金 111 场景
+// ============================================================
+{
+  const { execFileSync } = await import('node:child_process');
+  const { createHash } = await import('node:crypto');
+  var render4VerifyFail = 0;
+  try {
+    execFileSync('node', [new URL('./render4-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'] });
+    console.log('render4 黄金回放 (render4-transcript 镜像 vs render4.json): PASS (111 场景 × 逐 op 逐位)');
+  } catch (e) {
+    render4VerifyFail++;
+    console.error('render4 黄金回放 (render4-transcript 镜像 vs render4.json): FAIL');
+    console.error(String(e.stdout ?? '').split('\n').slice(0, 10).join('\n'));
+  }
+  try {
+    const goldenPath = new URL('./golden/render4.json', import.meta.url).pathname;
+    const h0 = createHash('md5').update(await (await import('node:fs')).promises.readFile(goldenPath)).digest('hex');
+    execFileSync('node', [new URL('./gen-render4.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const h1 = createHash('md5').update(await (await import('node:fs')).promises.readFile(goldenPath)).digest('hex');
+    if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
+    console.log('render4 gen sanity+det 复跑 (gen-render4): PASS (52 断言 × det 字节级双跑)');
+  } catch (e) {
+    render4VerifyFail++;
+    console.error('render4 gen sanity+det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);
