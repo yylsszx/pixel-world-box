@@ -50,7 +50,7 @@ C# 代码只允许从下列蓝本**机械翻译**，禁止从记忆重写：
 | M-O1 | 神谕 AI：dsh 五包最小闭环冒烟（主线二，见 docs/deepseek-harness-adaptation.md） | dsh 源码 | ✅ 98cb7b1 |
 | M-U3g | 军团域全量切片（重定界）：armyTick 状态机全链 C# 机械翻译 + 黄金 16 场景 + mirror/verify/NUnit 四链 | engine.ts | ✅ 60103d6 |
 | M-U3h | 文明余域盘点：商队结算/殖民建城/船单位等 bail 稀疏路径的宿主侧对齐（原 M-U3g 未覆盖余量） | engine.ts | ⬜ 待盘点 |
-| M-U4 | 渲染 I：地形/单位绘制管线（flushDirty 8×8 RGBA 烘焙 / flushProps 命令流 / render 单位决策链+清屏机 / sprites bail 契约；精灵内部像素画 = M-U5） | render.ts + engine.ts | ✅ M-U4 提交 |
+| M-U4 | 渲染 I：地形/单位绘制管线（flushDirty 8×8 RGBA 烘焙 / flushProps 命令流 / render 单位决策链+清屏机 / sprites bail 契约；精灵内部像素画 = M-U5） | render.ts + engine.ts | ✅ 8c820b3 |
 | M-U5 | 渲染 II：生物外形/动作精细化（sprites、动画帧、朝向 flip、特效层） | sprites.ts / render.ts | ⬜ |
 | M-U6 | 存档兼容：saveSafe/version 迁移（TS 存档可被 Unity 读） | saveSafe.ts | ⬜ |
 | M-U7 | 集成打磨：Unity 工程整合、性能（Jobs/Burst 可选，位精确优先）、QA | — | ⬜ |
