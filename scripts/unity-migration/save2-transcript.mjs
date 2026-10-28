@@ -11,6 +11,9 @@ const L = gold.lifted; // 查表上提（C# WbSaveHost 同源）
 
 // ---------------- JS 语义助手（转写 C# JNumOr/JInt/JRound/JClamp 语义） ----------------
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+// JS Number(s) 字符串转换（emT effects/emI mods csv 值域——'0.1'→0.1；''→0；'abc'→NaN）
+const numJs = (s) => { if (s == null) return NaN; if (String(s).trim().length === 0) return 0; const n = Number(s); return n; };
+const numJs0 = (s) => { const n = numJs(s); return Number.isNaN(n) ? 0 : n; };   // Number(v) || 0
 function numOr(v, d) { const n = typeof v === 'string' ? NaN : v; return isNum(n) ? n : d; } // Number(v)||d 的 JS 直写（JToken 域无字符串转换需求——gen 黄金均为 JSON 数）
 const num0 = (v) => numOr(v, 0);
 const jint = (v) => (isNum(v) ? Math.trunc(v) : 0); // x|0 域内
@@ -123,7 +126,7 @@ function ApplySave2(data, host) {
   // emT/emI
   for (const row of data.emT ?? []) {
     if (!Array.isArray(row) || row.length < 6) continue;
-    const effects = String(row[5]).split(',').filter((s) => s.includes(':')).map((s) => { const [k, v] = s.split(':'); return { k, v: numOr(v, 0) }; });
+    const effects = String(row[5]).split(',').filter((s) => s.includes(':')).map((s) => { const [k, v] = s.split(':'); return { k, v: numJs0(v) }; });
     const catIdx = jint(row[2]);
     const ci = Math.max(0, Math.min(host.techCats.length - 1, catIdx));
     st.emTechs.set(String(row[0]), { key: String(row[0]), name: String(row[1]), cat: host.techCats[ci], cost: Math.max(10, numOr(row[3], 120)), gen: Math.max(1, numOr(row[4], 1)), effects, desc: '' });
@@ -136,7 +139,7 @@ function ApplySave2(data, host) {
     for (const seg of String(row[3]).split(',')) {
       if (!seg.includes(':')) continue;
       const [k, v] = seg.split(':');
-      const n = numOr(v, 0);
+      const n = numJs0(v);
       if (k === 'gold' || k === 'mil' || k === 'know' || k === 'repro' || k === 'wear') mods[k] = n;
       else if (k === 'stab') mods.stab = jround(n);
     }
@@ -786,12 +789,16 @@ function cmpRaw(label, a, b) {
 }
 
 // ---------------- 逐位对账主循环 ----------------
+const isMainST2 = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
+if (isMainST2) runMirror2();
+
 function unitsToRows2(units) {
   const rows = [[...UNIT_FIELDS]];
   for (const u of units) rows.push(UNIT_FIELDS.map((f) => (u[f] === undefined ? null : u[f])));
   return rows;
 }
 
+function runMirror2() {
 for (const scen of gold.scenarios) {
   const input = gold.inputs[scen.name];
   const host = mkHost(scen);
@@ -863,4 +870,7 @@ for (const scen of gold.scenarios) {
 console.log(`M-U6b 镜像逐位对账: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);
 console.log('M-U6b MIRROR PASS');
+}
+
+export { ApplySave2, mkHost, unitsToRows2, rowToTrigger, isNum, numOr, num0, jint, jround, jclamp, deepSort, L as LIFTED_L };
 

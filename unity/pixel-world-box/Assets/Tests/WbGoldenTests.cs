@@ -3536,5 +3536,35 @@ namespace PixelWorldBox.Tests
                 Assert.AreEqual(scenByName[name]["threw"].ToString(), caught.Message, $"{name} 文案逐字");
             }
         }
+
+        /// M-U6c serialize 全档组装黄金回放（save3.json 6 场景 → ApplySave → WbSave3.Serialize → 全档逐位）
+        /// lifted 查表与 save2.json 同源（MkHost 复用）；hostNat 钩子注入（plateCx/Cy/boundaryStress/hotspotsHost）
+        [Test]
+        public void Test17_Save3_Golden()
+        {
+            var gold3 = JObject.Parse(System.IO.File.ReadAllText(FindGolden2("save3.json")));
+            int n = 0;
+            foreach (var sc in (JArray)gold3["scenarios"])
+            {
+                string name = (string)sc["name"];
+                var host = MkHost();
+                var hn = sc["hostNat"];
+                host.HookPlateCx = ((JArray)hn["plateCx"]).Select(t => t.Value<double>()).ToArray();
+                host.HookPlateCy = ((JArray)hn["plateCy"]).Select(t => t.Value<double>()).ToArray();
+                foreach (var t in (JArray)hn["boundaryStress"]) host.BoundaryStress.Add((int)t);
+                if (hn["hotspotsHost"] != null && hn["hotspotsHost"].Type == JTokenType.Array)
+                    host.HotspotsHost = ((JArray)hn["hotspotsHost"]).Select(t => ((JArray)t).Select(x => x.Value<double>()).ToArray()).ToArray();
+                var input = (JObject)sc["input"].DeepClone();   // 黄金 inputs 重放契约（行序真相源）
+                var st = WbSave2.ApplySave(input, host);
+                var outSave = WbSave3.Serialize(st, host, input);
+                Assert.IsTrue(JToken.DeepEquals(sc["save"], outSave), $"{name} serialize 全档逐位（DeepEquals 键序无关）");
+                // 协议字段锚：savedAt 剥离 0 / source='manual' / variant=''（v2 重算语义）
+                Assert.AreEqual(0, outSave["savedAt"].Value<int>(), $"{name} savedAt 协议");
+                Assert.AreEqual("manual", outSave["source"].ToString(), $"{name} source 协议");
+                Assert.AreEqual("", outSave["variant"].ToString(), $"{name} variant 剔除");
+                n++;
+            }
+            Assert.AreEqual(6, n, "save3 场景数");
+        }
     }
 }

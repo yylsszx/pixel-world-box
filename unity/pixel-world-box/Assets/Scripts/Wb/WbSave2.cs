@@ -52,6 +52,7 @@ namespace PixelWorldBox.Wb
         public double[] HookPlateCx = new double[0];
         public double[] HookPlateCy = new double[0];
         public HashSet<int> BoundaryStress = new HashSet<int>();
+        public double[][] HotspotsHost;               // M-U6c：serialize nat.hot 的宿主钩子上提（恢复分支未命中时 initPlates 真相 [x,y,heat]；命中 = null，C# 从状态袋自算）
 
         public bool IsWater(int t)
         {
@@ -179,6 +180,15 @@ namespace PixelWorldBox.Wb
         }
         /// <summary>JS Math.round 半上（域内无负半界时 Floor(v+0.5) 全域等价——含 -0.5→0/-1.5→-1，M-U5a 已验证）</summary>
         private static double JRound(double v) => Math.Floor(v + 0.5);
+        /// <summary>JS Number(s) 字符串转换（emT effects/emI mods csv 值域——"0.1"→0.1；""→0；"abc"→NaN）</summary>
+        private static double JNumJs(string s)
+        {
+            if (s == null) return double.NaN;
+            if (s.Trim().Length == 0) return 0;   // JS Number('') === 0
+            return double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v) ? v : double.NaN;
+        }
+        /// <summary>Number(v) || 0（csv 值域）</summary>
+        private static double JsNum0(string s) { var v = JNumJs(s); return double.IsNaN(v) ? 0 : v; }
         /// <summary>Math.max(0, Math.min(hi, v)) 链</summary>
         private static double JClamp(double v, double lo, double hi) => Math.Max(lo, Math.Min(hi, v));
         private static JObject JClone(JToken t) => t == null ? null : (JObject)t.DeepClone();
@@ -189,6 +199,44 @@ namespace PixelWorldBox.Wb
 
         /// <summary>JS Math.floor(yearF)（startYear 兜底）</summary>
         private static int JFloor(double v) => (int)Math.Floor(v);
+
+        /// <summary>rowToTrigger（engine.ts L45-63 机械翻译）——字段校验，损坏行抛错（InvalidOperationException = 调用方捕获 toast）</summary>
+        public static JObject RowToTrigger(JToken tok, WbSaveHost h)
+        {
+            if (!(tok is JArray row) || row.Count != 13) throw new InvalidOperationException("存档触发器行损坏");
+            JObject cond;
+            try
+            {
+                var condText = row[2] == null || row[2].Type == JTokenType.Null ? null : row[2].ToString(Newtonsoft.Json.Formatting.None);
+                cond = condText == null ? null : Newtonsoft.Json.JsonConvert.DeserializeObject<JObject>(condText);
+            }
+            catch { throw new InvalidOperationException("存档触发器条件损坏"); }
+            // JSON.parse 成功但非对象/缺 kind/非 string → 同文案（JS typeof cond.kind !== 'string'）
+            if (cond == null || cond["kind"] == null || cond["kind"].Type != JTokenType.String)
+                throw new InvalidOperationException("存档触发器条件损坏");
+            string action = row[3] == null ? null : row[3].ToString();
+            if (string.IsNullOrEmpty(action) || !h.ToolIds.Contains(action))
+                throw new InvalidOperationException($"存档触发器动作无效: {action ?? "undefined"}");
+            JIsNum(row[12], out double nfy);
+            bool nfyFin = row[12] != null && row[12].Type != JTokenType.Null && JIsNum(row[12], out nfy)
+                && !double.IsNaN(nfy) && !double.IsInfinity(nfy);
+            return new JObject
+            {
+                ["id"] = JInt(row[0]),
+                ["name"] = row[1] == null ? "" : row[1].ToString(),
+                ["cond"] = cond,
+                ["action"] = action,
+                ["brush"] = row[4] ?? JValue.CreateNull(),
+                ["x"] = row[5] ?? JValue.CreateNull(),
+                ["y"] = row[6] ?? JValue.CreateNull(),
+                ["r"] = row[7] ?? JValue.CreateNull(),
+                ["enabled"] = JTruthy(row[8]),
+                ["once"] = JTruthy(row[9]),
+                ["fired"] = JInt(row[10]),
+                ["cd"] = JInt(row[11]),
+                ["nextFireYear"] = nfyFin ? nfy : 0,
+            };
+        }
 
         // ============================================================
         // ApplySave 容器恢复全链（applySave L15309-15911 机械翻译）
@@ -264,7 +312,7 @@ namespace PixelWorldBox.Wb
                     {
                         if (!seg.Contains(':')) continue;
                         var kv = seg.Split(':');
-                        effs.Add(new JObject { ["k"] = kv[0], ["v"] = JNumOr(kv.Length > 1 ? (JToken)kv[1] : null, 0) });
+                        effs.Add(new JObject { ["k"] = kv[0], ["v"] = JsNum0(kv.Length > 1 ? kv[1] : null) });
                     }
                     int ci = Math.Max(0, Math.Min(h.TechCats.Count - 1, catIdx));
                     string cat = h.TechCats.Count > 0 ? h.TechCats[ci] : "";
@@ -288,7 +336,7 @@ namespace PixelWorldBox.Wb
                         if (!seg.Contains(':')) continue;
                         var kv = seg.Split(':');
                         string k = kv[0];
-                        double num = JNumOr(kv.Length > 1 ? (JToken)kv[1] : null, 0);
+                        double num = JsNum0(kv.Length > 1 ? kv[1] : null);
                         if (k == "gold" || k == "mil" || k == "know" || k == "repro" || k == "wear") mods[k] = num;
                         else if (k == "stab") mods["stab"] = JRound(num);
                     }
