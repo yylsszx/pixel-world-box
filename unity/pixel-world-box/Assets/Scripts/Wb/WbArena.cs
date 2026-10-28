@@ -333,6 +333,20 @@ namespace PixelWorldBox.Wb
                 SetU32Raw(cc + (int)c * 4, dst + 1);
                 SetU32Raw(ci + (int)dst * 4, s);
             }
+            // Stage 2 pack 尾工：BIDX 重建（tile→建筑行号；lib.rs L941-953）
+            int bn = Math.Max(I32At(WbConstants.OFF_BLDN, 0), 0);
+            for (int i = 0; i < WbConstants.TILES; i++) SetI32(WbConstants.OFF_BIDX, i, -1);
+            for (int r = 0; r < Math.Min(bn, WbConstants.MAX_BLD); r++)
+            {
+                int t = I32At(WbConstants.OFF_BLDI, r);
+                if (t >= 0 && t < WbConstants.TILES) SetI32(WbConstants.OFF_BIDX, t, r);
+            }
+            // 脏表 / 动作清零（新 tick 开始；lib.rs L955-968）
+            SetI32(WbConstants.OFF_ACTN, 0, 0);
+            SetI32(WbConstants.OFF_DLISTN, 0, 0);
+            SetI32(WbConstants.OFF_BAILK, 0, 0);
+            int dirty = Offs[WbConstants.OFF_DIRTY];
+            for (int i = 0; i < (WbConstants.MAX_UNITS + 7) / 8; i++) Arena[dirty + i] = 0;
         }
 
         private void SetU32Raw(int byteOff, uint v)

@@ -164,6 +164,13 @@ namespace PixelWorldBox.Wb
             if (t.Type == JTokenType.Float) { v = (double)t; return true; }
             return false;
         }
+
+        /// <summary>raceDefOf（save2-transcript L497）：动态注册表优先 → 宿主静态注册表回退</summary>
+        private static JObject RaceDefOf(WbSaveState st, WbSaveHost h, int race)
+        {
+            if (st.RacesOut.TryGetValue(race, out var r)) return r;
+            return h.Races.TryGetValue(race.ToString(), out var r2) ? r2 : null;
+        }
         /// <summary>Number(v) || d —— 0/NaN/缺失 → d（JS 真值链）</summary>
         private static double JNumOr(JToken t, double d)
         {
@@ -183,9 +190,9 @@ namespace PixelWorldBox.Wb
         /// <summary>JS Number(s) 字符串转换（emT effects/emI mods csv 值域——"0.1"→0.1；""→0；"abc"→NaN）</summary>
         private static double JNumJs(string s)
         {
-            if (s == null) return double.NaN;
+            if (s == null) return WbMath.JsNaN;
             if (s.Trim().Length == 0) return 0;   // JS Number('') === 0
-            return double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v) ? v : double.NaN;
+            return double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v) ? v : WbMath.JsNaN;
         }
         /// <summary>Number(v) || 0（csv 值域）</summary>
         private static double JsNum0(string s) { var v = JNumJs(s); return double.IsNaN(v) ? 0 : v; }
@@ -318,7 +325,7 @@ namespace PixelWorldBox.Wb
                     string cat = h.TechCats.Count > 0 ? h.TechCats[ci] : "";
                     st.EmTechs[key] = new JObject { ["key"] = key, ["name"] = name, ["cat"] = cat, ["cost"] = Math.Max(10, cost), ["gen"] = Math.Max(1, gen), ["effects"] = effs, ["desc"] = "" };
                     // emTechSeq = Math.max(emTechSeq, Number(gen) + 1)——NaN 传播语义（JS Math.max(NaN)→NaN）
-                    double seqV = JNumOr(row[4], double.NaN) + 1;
+                    double seqV = JNumOr(row[4], WbMath.JsNaN) + 1;
                     if (!double.IsNaN(seqV)) st.EmTechSeq = (int)Math.Max(st.EmTechSeq, seqV);
                 }
             }
@@ -475,7 +482,7 @@ namespace PixelWorldBox.Wb
             if (data["events"] is JArray evs)
                 foreach (var t in evs) st.Events.Add(JClone(t));
             if (data["eventSeq"] != null && data["eventSeq"].Type != JTokenType.Null) st.EventSeq = JInt(data["eventSeq"]);
-            else st.EventSeq = (st.Events.Count > 0 && JIsNum(st.Events[0]["id"], out int e0) ? e0 : 0) + 1;
+            else st.EventSeq = (st.Events.Count > 0 && JIsNum(st.Events[0]["id"], out double e0) ? (int)e0 : 0) + 1;
             bool hasZombie = false;
             foreach (var e in st.Events) if ((string)e["kind"] == "zombie") { hasZombie = true; break; }
             st.WildCount.TryGetValue(h.ZombieR, out int zc);

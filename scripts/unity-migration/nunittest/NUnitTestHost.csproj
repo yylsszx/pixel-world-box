@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>PixelWorldBox.Core.NUnitTests</AssemblyName>
+    <RootNamespace>PixelWorldBox.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../../unity/pixel-world-box/Assets/Scripts/Core/**/*.cs" Link="Core/%(Filename)%(Extension)" />
+    <Compile Include="../../../unity/pixel-world-box/Assets/Scripts/Simulation/**/*.cs" Link="Simulation/%(Filename)%(Extension)" />
+    <Compile Include="../../../unity/pixel-world-box/Assets/Tests/Editor/WbGoldenTests.cs" Link="WbGoldenTests.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <!-- NUnit 3.x：Unity Test Runner 内置即 3.x（Assert.AreEqual 经典断言）——钉 3 系保 Unity 兼容 -->
+    <PackageReference Include="NUnit" Version="3.14.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+</Project>

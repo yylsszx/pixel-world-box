@@ -1,0 +1,10 @@
+<Project>
+  <!--
+    T2 工程壳：dotnet 侧双项目隔离中间目录（Directory.Build.props 在 Microsoft.Common.props
+    之前导入，MSB3539 合规位）。仅影响 Wb.Core.csproj / Wb.Tests.csproj，Unity 工程不受影响。
+  -->
+  <PropertyGroup>
+    <BaseIntermediateOutputPath Condition="'$(MSBuildProjectName)' == 'Wb.Core'">obj-core/</BaseIntermediateOutputPath>
+    <BaseIntermediateOutputPath Condition="'$(MSBuildProjectName)' == 'Wb.Tests'">obj-tests/</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>

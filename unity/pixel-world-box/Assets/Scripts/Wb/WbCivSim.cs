@@ -225,7 +225,7 @@ namespace PixelWorldBox.Wb
                 WbTechDef? def0 = WbTech.ByKey(pick);
                 WbEmTech em0 = null;
                 w.emTechs.TryGetValue(pick, out em0);
-                w.AddEvent("tech", $"「{c.name}」的学者们开始研究「{def0.HasValue ? def0.Value.name : (em0 != null ? em0.name : pick)}」", c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+                w.AddEvent("tech", $"「{c.name}」的学者们开始研究「{(def0.HasValue ? def0.Value.name : (em0 != null ? em0.name : pick))}」", c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
             }
             WbTechDef? defN = WbTech.ByKey(c.research);
             if (!defN.HasValue && !w.emTechs.ContainsKey(c.research)) { c.research = null; return 0; }
@@ -284,11 +284,11 @@ namespace PixelWorldBox.Wb
                     }
                 }
             }
-            w.AddEvent("tech", $"「{c.name}」研发出「{def.HasValue ? def.Value.name : (em != null ? em.name : key)}」—— {def.HasValue ? def.Value.desc : (em != null ? em.desc : "")}", c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
+            w.AddEvent("tech", $"「{c.name}」研发出「{(def.HasValue ? def.Value.name : (em != null ? em.name : key))}」—— {(def.HasValue ? def.Value.desc : (em != null ? em.desc : ""))}", c.colorHex, CivCenterX(w, c), CivCenterY(w, c));
             // 大科技里程碑提示（涌现科技每 5 项提示一次，防刷屏）
             if ((def.HasValue && def.Value.era >= 2) || (em != null && em.gen % 5 == 0))
             {
-                w.Toast($"「{c.name}」掌握了「{def.HasValue ? def.Value.name : (em != null ? em.name : key)}」", "info");
+                w.Toast($"「{c.name}」掌握了「{(def.HasValue ? def.Value.name : (em != null ? em.name : key))}」", "info");
                 // onSound('era') —— 纪元跃迁钟声（M-U4 域）
             }
             // 现有建筑随工程科技升级耐久上限（老房加固——立即重建受损映射）
@@ -909,7 +909,7 @@ namespace PixelWorldBox.Wb
             {
                 alFall.cohesion = System.Math.Max(0, alFall.cohesion - 18);
                 LeaveAlliance(w, civ.id, "fallen");
-                w.AddEvent("alliance", $"「{civ.name}」的覆灭震动了盟邦——「{alFall.members.Count >= 2 ? alFall.name : "其盟友"}」为亡者降下半旗", alFall.colorHex);
+                w.AddEvent("alliance", $"「{civ.name}」的覆灭震动了盟邦——「{(alFall.members.Count >= 2 ? alFall.name : "其盟友")}」为亡者降下半旗", alFall.colorHex);
             }
             // —— 终极世界大战：参战国覆灭追记（逐面旗帜倒下）——
             if (w.worldWar.phase == "running" && w.worldWar.belligerents.Contains(civ.id) && !w.worldWar.fallen.Exists((f) => f.id == civ.id))
@@ -1266,9 +1266,6 @@ namespace PixelWorldBox.Wb
             ["wisdom"] = "启智令", ["populate"] = "人口令", ["legion"] = "军团令", ["build"] = "建城令",
             ["unify"] = "统一令", ["mobilize"] = "总动员令", ["alliance"] = "联盟令", ["temple"] = "信仰令",
         };
-
-        /// ARMY_CD（engine L6049）
-        public const int ARMY_CD = 900;
 
         // ---------------- setJob（engine L1482-1492） ----------------
         public static void SetJob(WbWorld w, WbU u, int job)
@@ -2111,7 +2108,7 @@ namespace PixelWorldBox.Wb
             int temples = counts != null ? counts[BUILD_KINDS.TEMPLE] : 0;
             bool canMonarchy = gov < 1 && c.pop >= 25;
             bool canTheocracy = gov < 2 && temples >= 1 && owned.Contains("theology") && c.culture > 50;
-            bool canRepublic = gov != 3 && c.pop >= 60 && (owned.Contains("law") || owned.Contains("printing")) && (c.knowledge ?? 0) >= 40 && (c.stability ?? 70) < 55;
+            bool canRepublic = gov != 3 && c.pop >= 60 && (owned.Contains("law") || owned.Contains("printing")) && (c.knowledge ?? 0) >= 40 && (c.stability) < 55;
             bool canEmpire = gov != 4 && c.pop >= 120 && (c.militarism ?? 30) >= 55 && (owned.Contains("legion") || owned.Contains("tactics"));
             if (canEmpire && w.Rng() < 0.25)
             {
@@ -2290,7 +2287,7 @@ namespace PixelWorldBox.Wb
                     }
                     al.leader = best;
                     WbCiv bc = CivAt(w, best);
-                    w.AddEvent("alliance", $"「{al.name}」盟主易位，「{bc != null ? bc.name : "?"}」执掌盟务", al.colorHex);
+                    w.AddEvent("alliance", $"「{al.name}」盟主易位，「{(bc != null ? bc.name : "?")}」执掌盟务", al.colorHex);
                 }
             }
             List<WbCiv> alive = new List<WbCiv>();
@@ -2588,32 +2585,6 @@ namespace PixelWorldBox.Wb
             }
         }
 
-        /// tryFormArmy 门控段（engine L6052-6068）—— M-U3e 军团域桩：集结/征召/编成段 TODO
-        /// 位等价保障：golden 场景 pop<10 或敌国门早退；pickWarEnemy 段蓝本纯扫描零 rng，桩 null 位等
-        public static WbArmy TryFormArmy(WbWorld w, WbCiv civ, int? targetCiv)
-        {
-            // WBB.touchMeta() —— army 列 wasm 镜像写点（civ 层 no-op）
-            if (civ == null || !civ.alive || civ.pop < 10) return null;
-            if (w.tickCount < (civ.armyCd ?? 0)) return null;
-            int legionParam = 2;
-            WbDirective leg = ActiveDirective(w, civ.id, "legion");
-            if (leg != null) legionParam = System.Math.Max(3, leg.param);
-            double aggr = RaceAggrOf(civ.race);
-            int armyCap = (int)System.Math.Round((legionParam + TechModsOf(w, civ.id).armyMax + (GovOf(w, civ.id) == 4 ? 1 : 0)) * (0.75 + aggr * 0.5));
-            armyCap = System.Math.Max(1, armyCap);
-            int own = 0;
-            foreach (WbArmy a in w.armies) if (a.civ == civ.id) own++;
-            if (own >= armyCap) return null;
-            // 目标敌国：指定或取交战中最近且尚有建筑者
-            int enemyId = targetCiv ?? -1;
-            if (enemyId < 0) return null; // TODO(M-U3e 军团域): pickWarEnemy（纯扫描零 rng）+ 集结/征召/编成段（engine L6069-6139）
-            WbCiv ec = CivAt(w, enemyId);
-            if (ec == null || !ec.alive || !AtWar(w, civ.id, enemyId)) return null;
-            // 兵员集结（civRallyPoint L6143-6154）：王都优先，回退国民质心
-            // TODO(M-U3e 军团域): near/far 兵源 + levy 征召 + 编成/军名/军旗/军费（蓝本 return Army）
-            return null;
-        }
-
         /// makePeace 哨兵（engine L7607-7663）—— settleFront/割地/阵营停战依赖（M-U3e 战争结算域）
         /// 位等价保障：golden CVT36 rel=10 ≥ -20 恒走 else 支路；本桩可达即爆 = 桩域外行为不可静默漂移
         public static void MakePeace(WbWorld w, int a, int b, string text, int postRel = 25)
@@ -2634,7 +2605,7 @@ namespace PixelWorldBox.Wb
                     continue;
                 }
                 WbCiv civ = CivAt(w, d.civ);
-                if (civ == null || !civ.alive) { FinishDirective(w, d, "failed", $"「{civ != null ? civ.name : ""}」覆灭，宏图化为泡影"); continue; }
+                if (civ == null || !civ.alive) { FinishDirective(w, d, "failed", $"「{(civ != null ? civ.name : "")}」覆灭，宏图化为泡影"); continue; }
                 (bool done, string msg) r = EvalDirective(w, d, civ);
                 if (r.done) { FinishDirective(w, d, "success", r.msg); continue; }
                 if (d.deadlineTick > 0 && w.tickCount > d.deadlineTick) { FinishDirective(w, d, "failed", r.msg); continue; }
@@ -2651,12 +2622,12 @@ namespace PixelWorldBox.Wb
                         WbCiv t = d.target != null ? CivAt(w, d.target.Value) : null;
                         bool gone = t == null || !t.alive;
                         // 注：t=null 时蓝本模板渲染 "undefined"（JS 语义）——golden 恒 target != null，桩域外
-                        return (gone, gone ? $"「{t != null ? t.name : null}」已被从大地上抹去" : $"期限已至，「{t.name}」仍在顽抗，灭国宏业功亏一篑");
+                        return (gone, gone ? $"「{(t != null ? t.name : null)}」已被从大地上抹去" : $"期限已至，「{t.name}」仍在顽抗，灭国宏业功亏一篑");
                     }
                 case "conquer":
                     {
                         WbCiv t = d.target != null ? CivAt(w, d.target.Value) : null;
-                        if (t == null || !t.alive) return (true, $"「{t != null ? t.name : null}」已亡国，王都早已易主");
+                        if (t == null || !t.alive) return (true, $"「{(t != null ? t.name : null)}」已亡国，王都早已易主");
                         WbWarData wd;
                         double s = 0;
                         if (w.warData.TryGetValue(WbWorld.PairKey(d.civ, d.target.Value), out wd) && wd != null)
@@ -2768,39 +2739,6 @@ namespace PixelWorldBox.Wb
                 }
             }
         }
-
-        /// disbandArmy（engine L6876-6900）—— 军团解散（mergeCivs 超编荣散/eliminateCiv 静默覆灭消费端）
-        public static void DisbandArmy(WbWorld w, WbArmy a, bool quiet)
-        {
-            // WBB.touchMeta() —— army/boat 列 wasm 镜像写点（civ 层 no-op）
-            WbCiv civ = CivAt(w, a.civ);
-            foreach (int id in a.members)
-            {
-                WbU u;
-                if (w.unitById.TryGetValue(id, out u) && u != null && u.army is int ai && ai == a.id)
-                {
-                    u.army = null;
-                    u.boat = 0; u.boatTTL = 0;
-                }
-            }
-            w.armies.Remove(a);
-            if (civ != null) civ.armyCd = w.tickCount + ARMY_CD;
-            if (!quiet && civ != null)
-            {
-                string msg = a.tactical
-                    ? $"{a.name} 战术后撤归营整补（斩获 {WbNum(a.kills)}，损失 {WbNum(a.losses)}）——军旗未倒，随时再战"
-                    : $"{a.name} 解散归田（战役斩获 {WbNum(a.kills)}，损失 {WbNum(a.losses)}）";
-                a.tactical = false;
-                w.AddEvent("army", msg, civ.colorHex, a.x, a.y);
-            }
-            // 从其它军团的会战引用中摘除
-            foreach (WbArmy o in w.armies)
-            {
-                if (o.clashWith == a.id) { o.clashWith = null; if (o.state == "battle") o.state = "march"; }
-            }
-        }
-        /// JS number→string 模板语义（整数不带小数点）
-        private static string WbNum(double v) => v == System.Math.Floor(v) && !double.IsInfinity(v) ? ((long)v).ToString() : v.ToString();
 
         // ---------------- ensureWarData（engine L7209-7236） ----------------
         public static WbWarData EnsureWarData(WbWorld w, int a, int b)
@@ -3126,7 +3064,7 @@ namespace PixelWorldBox.Wb
             (int fx, int fy) flag = NearestStandable(w, (int)System.Math.Round(sx / members.Count), (int)System.Math.Round(sy / members.Count));
             WbArmy a2 = new WbArmy
             {
-                id = w.armySeq++, civ = civ.id, name,
+                id = w.armySeq++, civ = civ.id, name = name,
                 members = members.ConvertAll((m) => m.id), leaderId = leader.id,
                 x = flag.fx, y = flag.fy, tx = flag.fx, ty = flag.fy,
                 state = "rally", formedTick = w.tickCount, size0 = members.Count,
@@ -3938,38 +3876,7 @@ namespace PixelWorldBox.Wb
             return water / (double)samples >= 0.45;
         }
 
-        /// engine findWaterNear L5546-5570 —— 就近深水点（embark/登船用；逐环扫描 + waterN≥5 深水门）
-        public static (double x, double y)? FindWaterNear(WbWorld w, double x, double y, int r)
-        {
-            int cx = (int)System.Math.Floor(x);
-            int cy = (int)System.Math.Floor(y);
-            for (int ring = 1; ring <= r; ring++)
-            {
-                for (int dy = -ring; dy <= ring; dy++)
-                {
-                    for (int dx = -ring; dx <= ring; dx++)
-                    {
-                        if (System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dy)) != ring) continue; // 只看当前环
-                        int xx = cx + dx;
-                        int yy = cy + dy;
-                        if (xx < 1 || yy < 1 || xx >= WbWorld.W - 1 || yy >= WbWorld.H - 1) continue;
-                        int i = IdxOf(xx, yy);
-                        if (!WbWorld.IsWater(w.terrain[i])) continue;
-                        int waterN = 0;
-                        for (int ny = -1; ny <= 1; ny++)
-                        {
-                            for (int nx = -1; nx <= 1; nx++)
-                            {
-                                if (nx == 0 && ny == 0) continue;
-                                if (WbWorld.IsWater(w.terrain[IdxOf(xx + nx, yy + ny)])) waterN++;
-                            }
-                        }
-                        if (waterN >= 5) return (xx + 0.5, yy + 0.5);
-                    }
-                }
-            }
-            return null;
-        }
+        // （findWaterNear 首译保留于 M-U3d 段 L1515，IdxOf 等价重复份已并入）
 
         /// engine armyEmbark L6802-6825 —— 舰队渡海：军旗与成员转航海模式
         public static void ArmyEmbark(WbWorld w, WbArmy a)

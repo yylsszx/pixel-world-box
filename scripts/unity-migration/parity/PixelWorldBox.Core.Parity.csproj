@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable><NoWarn>$(NoWarn);CS8632;CS8321</NoWarn>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AssemblyName>PixelWorldBox.Core.Parity</AssemblyName>
+    <RootNamespace>PixelWorldBox.Core.Parity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- 链接 unity/ 正典工程（unity/pixel-world-box）内的同一份源文件 —— 对账通过即代表将进 Unity 的代码正确。
+         Tests/ 不纳入：NUnit 需 nuget 还原，对账台保持零外部依赖离线可跑。 -->
+    <Compile Include="../../../unity/pixel-world-box/Assets/Scripts/Core/**/*.cs" Link="Core/%(Filename)%(Extension)" />
+    <Compile Include="../../../unity/pixel-world-box/Assets/Scripts/Simulation/**/*.cs" Link="Simulation/%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

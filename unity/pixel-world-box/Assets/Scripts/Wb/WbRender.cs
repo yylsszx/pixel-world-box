@@ -936,7 +936,7 @@ namespace PixelWorldBox.Wb
                     if (lod != null)
                     {
                         double w = lod.w, h = lod.h;
-                        double hw = w >> 1;
+                        double hw = ((int)w) >> 1;
                         double bx = px - hw, by = py - h;
                         double f = u.flip != 0 ? -1 : 1;
                         bool moving = u.lx.HasValue && (u.lx.Value != u.x || !u.ly.HasValue || u.ly.Value != u.y);
@@ -1006,7 +1006,7 @@ namespace PixelWorldBox.Wb
                     // P2：未知精灵安全回退 —— 走 ANIMAL_LOD 色块（新种族接线遗漏时单位不消失、不崩溃）
                     var lod = WbRenderTables.ANIMAL_LOD.ContainsKey(def.sprite) ? WbRenderTables.ANIMAL_LOD[def.sprite] : null;
                     double lw = lod != null ? lod.w : 2, lh = lod != null ? lod.h : 2;
-                    L.Fill(hurt ? "#ff6b5e" : lod != null ? lod.body : "#9a8460", px - (int)(lw >> 1), py - lh, lw, lh);
+                    L.Fill(hurt ? "#ff6b5e" : lod != null ? lod.body : "#9a8460", px - ((int)lw >> 1), py - lh, lw, lh);
                     break;
                 }
             }

@@ -481,7 +481,7 @@ namespace PixelWorldBox.Wb
             var arr = new JArray();
             foreach (var n in st.EvoNodes)
             {
-                int kindIdx = EvoKinds.IndexOf(n["kind"] == null ? "" : n["kind"].ToString());
+                int kindIdx = System.Array.IndexOf(EvoKinds, n["kind"] == null ? "" : n["kind"].ToString());
                 double year = JNum0(n["year"]);
                 object parent = n["parent"] == null || n["parent"].Type == JTokenType.Null ? (object)(-1) : (object)JInt(n["parent"]);
                 string stat = n["stat"] == null || n["stat"].Type == JTokenType.Null ? "" : n["stat"].ToString();

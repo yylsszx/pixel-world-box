@@ -322,9 +322,9 @@ namespace PixelWorldBox.Wb
                 ctx.ActF64(q.Value + 24, x);
                 ctx.ActF64(q.Value + 32, y);
                 ctx.ActF64(q.Value + 40, r);
-                ctx.ActF64(q.Value + 48, hasOpts ? x0 : double.NaN);
-                ctx.ActF64(q.Value + 56, hasOpts ? y0 : double.NaN);
-                ctx.ActF64(q.Value + 64, hasOpts ? dmg : double.NaN);
+                ctx.ActF64(q.Value + 48, hasOpts ? x0 : WbMath.JsNaN);
+                ctx.ActF64(q.Value + 56, hasOpts ? y0 : WbMath.JsNaN);
+                ctx.ActF64(q.Value + 64, hasOpts ? dmg : WbMath.JsNaN);
             }
             return true;
         }
@@ -1395,8 +1395,8 @@ namespace PixelWorldBox.Wb
             A.SetI32(WbConstants.OFF_UGLN, s, -1);
             A.SetI32(WbConstants.OFF_UFAM, s, -1);
             A.SetI32(WbConstants.OFF_UFGN, s, -1);
-            A.SetF64(WbConstants.OFF_UFD, s, double.NaN);
-            A.SetF64(WbConstants.OFF_UCVN, s, double.NaN);
+            A.SetF64(WbConstants.OFF_UFD, s, WbMath.JsNaN);
+            A.SetF64(WbConstants.OFF_UCVN, s, WbMath.JsNaN);
             A.SetI32(WbConstants.OFF_UARMY, s, -1);
             A.SetU8(WbConstants.OFF_UHASPANIC, s, 0);
             A.SetU8(WbConstants.OFF_UBOAT, s, 0);
@@ -1404,15 +1404,15 @@ namespace PixelWorldBox.Wb
             A.SetU32(WbConstants.OFF_UCELL, s, CalcCell(x, y, ctx.Bw, ctx.Bh));                      // L1961
             // 瞬态字段清零（行可能残留上一世界数据）                                        // L1962-1972
             A.SetI32(WbConstants.OFF_USTK, s, int.MinValue); // undefined 哨兵
-            A.SetF64(WbConstants.OFF_UATK, s, double.NaN);
-            A.SetF64(WbConstants.OFF_UCHILL, s, double.NaN);
-            A.SetF64(WbConstants.OFF_UFLEET, s, double.NaN);
-            A.SetF64(WbConstants.OFF_UBLESS, s, double.NaN);
-            A.SetF64(WbConstants.OFF_UCURSE, s, double.NaN);
-            A.SetF64(WbConstants.OFF_UFERT, s, double.NaN);
-            A.SetF64(WbConstants.OFF_UDETOUR, s, double.NaN);
-            A.SetF64(WbConstants.OFF_USXK, s, double.NaN);
-            A.SetF64(WbConstants.OFF_USYK, s, double.NaN);
+            A.SetF64(WbConstants.OFF_UATK, s, WbMath.JsNaN);
+            A.SetF64(WbConstants.OFF_UCHILL, s, WbMath.JsNaN);
+            A.SetF64(WbConstants.OFF_UFLEET, s, WbMath.JsNaN);
+            A.SetF64(WbConstants.OFF_UBLESS, s, WbMath.JsNaN);
+            A.SetF64(WbConstants.OFF_UCURSE, s, WbMath.JsNaN);
+            A.SetF64(WbConstants.OFF_UFERT, s, WbMath.JsNaN);
+            A.SetF64(WbConstants.OFF_UDETOUR, s, WbMath.JsNaN);
+            A.SetF64(WbConstants.OFF_USXK, s, WbMath.JsNaN);
+            A.SetF64(WbConstants.OFF_USYK, s, WbMath.JsNaN);
 
             if (civ >= 0 && civ < System.Math.Max(A.I32At(WbConstants.OFF_CIVN, 0), 0))              // L1976
             {
@@ -1614,7 +1614,7 @@ namespace PixelWorldBox.Wb
         private static int PruneFamilies()                                                         // L877-923
         {
             int n = A.I32At(WbConstants.OFF_FAMN, 0);
-            if (n <= 240) return;
+            if (n <= 240) return 0;
             var dead = new System.Collections.Generic.List<int>(); // row 序（sort by id 稳定键）
             var deadIds = new System.Collections.Generic.List<int>();
             for (int i = 0; i < System.Math.Max(n, 0); i++)
@@ -1657,6 +1657,7 @@ namespace PixelWorldBox.Wb
                 }
             }
             A.SetI32(WbConstants.OFF_FAMN, 0, w);
+            return 0; // 蓝本裸 return（undefined），调用方不消费返回值
         }
 
         private static int NewFamily(WbCtx ctx, int race, int founderSlot)                          // L925-958
@@ -3069,7 +3070,7 @@ namespace PixelWorldBox.Wb
                     while (bx <= hx + 6)
                     {
                         if (bx < 0 || bx >= (int)A.Bw) { bx += 1; continue; }
-                        int cell = by * A.Bw + bx;
+                        int cell = (int)(by * A.Bw + bx);
                         int start = A.I32At(WbConstants.OFF_CELL_START, cell);
                         int end = A.I32At(WbConstants.OFF_CELL_START, cell + 1);
                         int k = start;

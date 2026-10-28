@@ -81,7 +81,7 @@ namespace PixelWorldBox.Wb
                     int y = i / W;
                     int px = x * 4;
                     int py = y * 4;
-                    int alId = h.allianceOf != null && h.allianceOf.TryGetValue(o, out var a2) ? a2 : (int?)null;
+                    int? alId = h.allianceOf != null && h.allianceOf.TryGetValue(o, out var a2) ? a2 : (int?)null;
                     string fill = alId.HasValue ? (alColor.TryGetValue(alId.Value, out var c2) ? c2 : "#71717a") : "#52525b";
                     L.Fill(fill, px, py, 4, 4);
                     int g = groupId(o);

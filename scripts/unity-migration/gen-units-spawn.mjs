@@ -469,6 +469,8 @@ function main() {
       snd: { coin: SND_COIN },
       races: { sheep: R_SHEEP, wolf: R_WOLF, zombie: R_ZOMBIE, skeleton: R_SKELETON },
       boot: null,
+      trn: Object.keys(TRAITS).length,           // TRAITS 池长（spawn_unit trait pick 依赖；黄金 meta 必须携带——首轮 T2 NUnit 因缺此表 C# TRN=0 少掷 pick 导致 RNG 流分歧）
+      traits: Object.keys(TRAITS).map((k) => [TRAITS[k].dmgMul ?? 1, TRAITS[k].hpMul ?? 1, TRAITS[k].speedMul ?? 1]),
       firstPool: FIRST,          // FIRST 名池真表（C# NUnit UTF8 编码 24B 条目用；纪律②随黄金分发零手抄）
       neutralMods: NEUTRAL_MODS, // CVTECH 中性基线（C# NUnit 布置 civs 用）
       note: 'f64 全 bits(hex)。boot 表复用 gen-units-combat（meta.boot 见 units_combat.json）；新增 TRAITS 真表键序 + FIRST 名池 24B 条目灌入。驱动协议 live 追踪 = USEQ 差值（spawn 成功恰好 +1）。蓝本 units.rs L1813-2041 spawn_unit + L3267-3340 繁衍 + L3429-3539 try_pickup + L737-985 家族族。',

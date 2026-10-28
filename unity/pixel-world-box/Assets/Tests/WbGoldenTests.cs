@@ -89,11 +89,29 @@ namespace PixelWorldBox.Tests
 
         public static GoldenFile Load() => LoadFile<GoldenFile>("units_move.json");
 
+        /// input.* 提升到 scenario 顶层（gen dump 嵌套 → 测试扁平模型兼容桥；顶层已有键不覆盖）。
+        /// 背景：units_move/units_scan/units_combat 黄金 scenario.input 嵌套，而类型模型按扁平字段
+        /// 反序列化（Newtonsoft 对缺字段静默置零 → T2 NUnit 首跑全家族 NRE）。此桥零改测试体。
+        public static void FlattenScenarioInputs(JObject root)
+        {
+            var scens = root["scenarios"] as JArray;
+            if (scens == null) return;
+            foreach (var sc in scens)
+            {
+                var inp = sc["input"] as JObject;
+                if (inp == null) continue;
+                foreach (var kv in inp)
+                    if (sc[kv.Key] == null) sc[kv.Key] = kv.Value;
+            }
+        }
+
         public static T LoadFile<T>(string fileName)
         {
             string path = FindGolden(fileName);
             Assert.IsTrue(File.Exists(path), $"golden json not found: {path}");
-            return JsonConvert.DeserializeObject<T>(File.ReadAllText(path));
+            var root = JObject.Parse(File.ReadAllText(path));
+            FlattenScenarioInputs(root);
+            return JsonConvert.DeserializeObject<T>(root.ToString(Newtonsoft.Json.Formatting.None));
         }
 
         private static string FindGolden(string fileName)
@@ -121,7 +139,9 @@ namespace PixelWorldBox.Tests
             string path = candidates[0];
             foreach (var c in candidates) if (File.Exists(c)) { path = c; break; }
             Assert.IsTrue(File.Exists(path), $"golden json not found: {path}");
-            return JsonConvert.DeserializeObject<T>(File.ReadAllText(path));
+            var root = JObject.Parse(File.ReadAllText(path));
+            FlattenScenarioInputs(root);
+            return JsonConvert.DeserializeObject<T>(root.ToString(Newtonsoft.Json.Formatting.None));
         }
 
         // UnityEngine.Application.dataPath（EditMode TestRunner cwd = 工程根）
@@ -202,7 +222,7 @@ namespace PixelWorldBox.Tests
             A.SetF64(WbConstants.OFF_UDMG, u.slot, 5);
             A.SetF64(WbConstants.OFF_UCHILL, u.slot, u.chill ?? 0);
             A.SetF64(WbConstants.OFF_UCURSE, u.slot, u.curse ?? 0);
-            A.SetF64(WbConstants.OFF_UFD, u.slot, u.food ?? double.NaN);
+            A.SetF64(WbConstants.OFF_UFD, u.slot, u.food ?? WbMath.JsNaN);
             A.SetF64(WbConstants.OFF_UCVN, u.slot, u.cvn ?? 0);
             A.SetF64(WbConstants.OFF_UFLEET, u.slot, u.fleet ?? 0);
             A.SetF64(WbConstants.OFF_UBLESS, u.slot, 0);
@@ -673,7 +693,9 @@ namespace PixelWorldBox.Tests
         {
             string path = FindGolden();
             Assert.IsTrue(File.Exists(path), $"scan golden json not found: {path}");
-            _golden = JsonConvert.DeserializeObject<ScanGoldenFile>(File.ReadAllText(path));
+            var scanRoot = JObject.Parse(File.ReadAllText(path));
+            WbGoldenFixture.FlattenScenarioInputs(scanRoot);
+            _golden = scanRoot.ToObject<ScanGoldenFile>();
         }
 
         private static string FindGolden()
@@ -797,7 +819,7 @@ namespace PixelWorldBox.Tests
     }
     public class CombatRectIn { public int t, x0, y0, x1, y1; }
     public class CombatTerrainIn { public int? @base; public List<CombatRectIn> rects; public List<List<int>> fire; public List<List<int>> road; }
-    public class CombatCivIn { public int? mkt, plague, archer, range; }
+    public class CombatCivIn { public int? mkt; public double? plague, archer, range; }
     public class CombatInput
     {
         public long seed; public int ticks; public int? fxp, laws, nctl; public double? dayph;
@@ -839,7 +861,9 @@ namespace PixelWorldBox.Tests
         {
             string path = FindGolden();
             Assert.IsTrue(File.Exists(path), $"combat golden json not found: {path}");
-            _golden = JsonConvert.DeserializeObject<CombatGoldenFile>(File.ReadAllText(path));
+            var combatRoot = JObject.Parse(File.ReadAllText(path));
+            WbGoldenFixture.FlattenScenarioInputs(combatRoot);
+            _golden = combatRoot.ToObject<CombatGoldenFile>();
         }
 
         private static string FindGolden()
@@ -851,6 +875,13 @@ namespace PixelWorldBox.Tests
             };
             foreach (var c in candidates) if (File.Exists(c)) return c;
             return candidates[0];
+        }
+
+        /// [临时探针 T2] JsNaN 位型哨兵
+        [Test]
+        public void Probe_C01_FoodBits()
+        {
+            Assert.That(WbMath.JsNaN, Is.EqualTo(WbMath.FromBits(0x7ff8000000000000UL)), "JsNaN 位型哨兵");
         }
 
         [SetUp]
@@ -905,7 +936,7 @@ namespace PixelWorldBox.Tests
             A.SetF64(WbConstants.OFF_UATK, u.slot, 0);
             A.SetF64(WbConstants.OFF_UCD, u.slot, u.cd ?? 0);
             A.SetF64(WbConstants.OFF_UBREATH, u.slot, u.breath ?? 0);
-            A.SetF64(WbConstants.OFF_UFD, u.slot, u.food ?? double.NaN);
+            A.SetF64(WbConstants.OFF_UFD, u.slot, u.food ?? WbMath.JsNaN);
             A.SetF64(WbConstants.OFF_UCVN, u.slot, u.cvn ?? 0);
             A.SetF64(WbConstants.OFF_UFLEET, u.slot, u.fleet ?? 0);
             A.SetI32(WbConstants.OFF_UCIV, u.slot, u.civ ?? -1);
@@ -921,8 +952,8 @@ namespace PixelWorldBox.Tests
             A.SetU8(WbConstants.OFF_UINF, u.slot, (byte)(u.inf == true ? 1 : 0));
             A.SetU8(WbConstants.OFF_UBOAT, u.slot, (byte)(u.boat == true ? 1 : 0));
             A.SetU8(WbConstants.OFF_UFLIP, u.slot, 0);
-            A.SetF64(WbConstants.OFF_ULX, u.slot, double.NaN); // 出生未移动语义（gen putUnitC 同款）
-            A.SetF64(WbConstants.OFF_ULY, u.slot, double.NaN);
+            A.SetF64(WbConstants.OFF_ULX, u.slot, WbMath.JsNaN); // 出生未移动语义（gen putUnitC 同款）
+            A.SetF64(WbConstants.OFF_ULY, u.slot, WbMath.JsNaN);
             for (int g = 0; g < 4; g++) A.SetF64(WbConstants.OFF_UGENE, u.slot * 4 + g, 1);
             for (int g = 0; g < 7; g++) A.SetI32(WbConstants.OFF_UGEAR, u.slot * 7 + g, u.gear != null && g < u.gear.Count ? u.gear[g] : -1);
             for (int g = 0; g < 8; g++) { A.SetI32(WbConstants.OFF_UGIDS, u.slot * 8 + g, -1); A.SetF64(WbConstants.OFF_UGVAL, u.slot * 8 + g, 0); }
@@ -1103,19 +1134,35 @@ namespace PixelWorldBox.Tests
 
         private static double BitsOf(string hex) => BitConverter.Int64BitsToDouble(unchecked((long)Convert.ToUInt64(hex.Replace("0x", ""), 16)));
 
+        /// [临时探针 T2] JsNaN 位型哨兵（double.NaN=0xfff8 vs V8 0x7ff8 分歧的永久回归哨兵）
+        [Test]
+        public void Probe_SP01_RngSites()
+        {
+            Assert.That(WbMath.JsNaN, Is.EqualTo(WbMath.FromBits(0x7ff8000000000000UL)), "JsNaN 位型哨兵");
+        }
+
+        /// 黄金字段双格式读取：f64 位串（"0x..."）或普通 JSON 数字（spawn 采样新位姿为数字）
+        private static ulong BitsOfAny(JToken v) => v.Type == JTokenType.String
+            ? Convert.ToUInt64(((string)v).Replace("0x", ""), 16)
+            : unchecked((ulong)BitConverter.DoubleToInt64Bits(v.Value<double>()));
+
         private void ApplyTraits(JObject meta)
         {
             var A = _fx.Arena;
             // TRAITS 真表键序（meta.traits = [[dmg,hp,spd]×n]；fill(1) 后覆写 = wbspatial L977-994）
             for (int i = 0; i < 32; i++) { A.SetF64(WbConstants.OFF_TRDMG, i, 1); A.SetF64(WbConstants.OFF_TRHP, i, 1); A.SetF64(WbConstants.OFF_TRSPD, i, 1); }
-            var traits = (JArray)meta["traits"];
-            for (int i = 0; i < traits.Count; i++)
+            // units_spawn 黄金无 traits 键（gen 未覆写）→ 保持 fill(1) 默认表 + TRN=0
+            var traits = meta["traits"] as JArray;
+            if (traits != null)
             {
-                A.SetF64(WbConstants.OFF_TRDMG, i, traits[i][0].Value<double>());
-                A.SetF64(WbConstants.OFF_TRHP, i, traits[i][1].Value<double>());
-                A.SetF64(WbConstants.OFF_TRSPD, i, traits[i][2].Value<double>());
+                for (int i = 0; i < traits.Count; i++)
+                {
+                    A.SetF64(WbConstants.OFF_TRDMG, i, traits[i][0].Value<double>());
+                    A.SetF64(WbConstants.OFF_TRHP, i, traits[i][1].Value<double>());
+                    A.SetF64(WbConstants.OFF_TRSPD, i, traits[i][2].Value<double>());
+                }
             }
-            A.SetI32(WbConstants.OFF_TRN, 0, traits.Count);
+            A.SetI32(WbConstants.OFF_TRN, 0, traits?.Count ?? 0);
         }
 
         private void ApplyFirstPool(JObject meta)
@@ -1146,10 +1193,10 @@ namespace PixelWorldBox.Tests
 
         private void SetupWorld(JObject inp)
         {
-            var A = _fx.Arena;
             var meta = (JObject)_golden["meta"];
             _fx.InitWorld(inp["seed"].Value<int>(), inp["fxp"]?.Value<int>() ?? 0);
             _fx.SetEps(meta["eps"].ToObject<List<double>>());
+            var A = _fx.Arena;   // Arena 在 InitWorld 内惰性创建，捕获必须后置
             A.SetI32(WbConstants.OFF_MISC, 0, 4096);
             A.SetI32(WbConstants.OFF_MISC, 1, 4096); // wild 预算（gen initWorldSp 同款）
             for (int r = 0; r < 512; r++) A.SetI32(WbConstants.OFF_WILDCAP, r, 4096); // cap 放开（测试基建）
@@ -1161,8 +1208,8 @@ namespace PixelWorldBox.Tests
                 var tr = new GoldenTerrain { @base = inp["terrain"]["base"].Value<int>() };
                 if (inp["terrain"]["rects"] != null)
                     tr.rects = inp["terrain"]["rects"].ToObject<List<GoldenRect>>();
-                if (inp["terrain"]["fire"] != null) tr.fire = inp["terrain"]["fire"].ToObject<List<int[]>>();
-                if (inp["terrain"]["road"] != null) tr.road = inp["terrain"]["road"].ToObject<List<int[]>>();
+                if (inp["terrain"]["fire"] != null) tr.fire = inp["terrain"]["fire"].ToObject<List<List<int>>>();
+                if (inp["terrain"]["road"] != null) tr.road = inp["terrain"]["road"].ToObject<List<List<int>>>();
                 _fx.FillTerrain(tr);
             }
             // boot 表复用 units_combat（TBR/RACE_FLAGS/TBF/TBJ/TBI 全槽真值——C# 无法 import TS）
@@ -1175,7 +1222,7 @@ namespace PixelWorldBox.Tests
             foreach (var kv in (JObject)boot["raceFlags"]) A.SetU8(WbConstants.OFF_RACE_FLAGS, int.Parse(kv.Key), (byte)kv.Value.Value<int>());
             foreach (var kv in (JObject)boot["tbf0"]) A.SetU8(WbConstants.OFF_TBF, int.Parse(kv.Key) * 2, (byte)kv.Value.Value<int>());
             foreach (var kv in (JObject)boot["tbf1"]) A.SetU8(WbConstants.OFF_TBF, int.Parse(kv.Key) * 2 + 1, (byte)kv.Value.Value<int>());
-            var tbj = (JArray)boot["tbj"];
+            var tbj = (boot["tbj"] as JArray ?? new JArray());
             for (int c = 0; c < tbj.Count; c++) A.SetF64(WbConstants.OFF_TBJ, c, tbj[c].Value<double>());
             foreach (var kv in (JObject)boot["tbi"])
                 for (int c = 0; c < 12; c++)
@@ -1287,7 +1334,7 @@ namespace PixelWorldBox.Tests
             A.SetF64(WbConstants.OFF_UATK, slot, 0);
             A.SetF64(WbConstants.OFF_UCD, slot, u["cd"]?.Value<double>() ?? 0);
             A.SetF64(WbConstants.OFF_UBREATH, slot, u["breath"]?.Value<double>() ?? 0);
-            A.SetF64(WbConstants.OFF_UFD, slot, u["food"] != null ? u["food"].Value<double>() : double.NaN);
+            A.SetF64(WbConstants.OFF_UFD, slot, u["food"] != null ? u["food"].Value<double>() : WbMath.JsNaN);
             A.SetF64(WbConstants.OFF_UCVN, slot, u["cvn"]?.Value<double>() ?? 0);
             A.SetF64(WbConstants.OFF_UFLEET, slot, u["fleet"]?.Value<double>() ?? 0);
             A.SetI32(WbConstants.OFF_UCIV, slot, u["civ"]?.Value<int>() ?? -1);
@@ -1298,11 +1345,11 @@ namespace PixelWorldBox.Tests
             A.SetU8(WbConstants.OFF_UDEAD, slot, 0);
             A.SetU8(WbConstants.OFF_UHASPANIC, slot, (byte)(u["panic"] != null ? 1 : 0));
             if (u["panic"] != null) A.SetF64(WbConstants.OFF_UPANIC, slot, u["panic"].Value<double>());
-            A.SetU8(WbConstants.OFF_UINF, slot, (byte)(u["inf"] == true ? 1 : 0));
-            A.SetU8(WbConstants.OFF_UBOAT, slot, (byte)(u["boat"] == true ? 1 : 0));
+            A.SetU8(WbConstants.OFF_UINF, slot, (byte)((bool?)u["inf"] == true ? 1 : 0));
+            A.SetU8(WbConstants.OFF_UBOAT, slot, (byte)((bool?)u["boat"] == true ? 1 : 0));
             A.SetU8(WbConstants.OFF_UFLIP, slot, 0);
-            A.SetF64(WbConstants.OFF_ULX, slot, double.NaN);
-            A.SetF64(WbConstants.OFF_ULY, slot, double.NaN);
+            A.SetF64(WbConstants.OFF_ULX, slot, WbMath.JsNaN);
+            A.SetF64(WbConstants.OFF_ULY, slot, WbMath.JsNaN);
             if (u["gene"] != null) { for (int g = 0; g < 4; g++) A.SetF64(WbConstants.OFF_UGENE, slot * 4 + g, u["gene"][g].Value<double>()); }
             else { for (int g = 0; g < 4; g++) A.SetF64(WbConstants.OFF_UGENE, slot * 4 + g, 1); }
             for (int g = 0; g < 7; g++) A.SetI32(WbConstants.OFF_UGEAR, slot * 7 + g, u["gear"] != null && g < u["gear"].Count() ? u["gear"][g].Value<int>() : -1);
@@ -1316,12 +1363,12 @@ namespace PixelWorldBox.Tests
             for (int g = 0; g < 8; g++) { A.SetI32(WbConstants.OFF_UGIDS, slot * 8 + g, -1); A.SetF64(WbConstants.OFF_UGVAL, slot * 8 + g, 0); }
             if (u["grudges"] != null)
             {
-                for (int g = 0; g < ((JArray)u["grudges"]).Count && g < 8; g++)
+                for (int g = 0; g < ((u["grudges"] as JArray ?? new JArray())).Count && g < 8; g++)
                 {
                     A.SetI32(WbConstants.OFF_UGIDS, slot * 8 + g, u["grudges"][g]["oid"].Value<int>());
                     A.SetF64(WbConstants.OFF_UGVAL, slot * 8 + g, u["grudges"][g]["gv"].Value<double>());
                 }
-                A.SetI32(WbConstants.OFF_UGLN, slot, Math.Min(((JArray)u["grudges"]).Count, 8));
+                A.SetI32(WbConstants.OFF_UGLN, slot, Math.Min(((u["grudges"] as JArray ?? new JArray())).Count, 8));
             }
             else A.SetI32(WbConstants.OFF_UGLN, slot, -1);
             A.SetI32(WbConstants.OFF_UFAM, slot, u["fam"]?.Value<int>() ?? -1);
@@ -1352,7 +1399,7 @@ namespace PixelWorldBox.Tests
             uint useq0 = A.U32At(WbConstants.OFF_USEQ, 0);
             int liveN = n0;
             A.PackEnd((uint)liveN);
-            var ticks = (JArray)sc["output"];
+            var ticks = (sc["output"] as JArray ?? new JArray());
             for (int t = 0; t < ticks.Count; t++)
             {
                 var want = (JObject)ticks[t];
@@ -1362,52 +1409,52 @@ namespace PixelWorldBox.Tests
                 liveN = n0 + spawned;
                 Assert.AreEqual(want["rc"].Value<int>(), rc, $"{name} tick{t} rc");
                 Assert.AreEqual(want["spawned"].Value<int>(), spawned, $"{name} tick{t} spawned(USEQ 差值)");
-                Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 0), $"{name} tick{t} RNG");
-                Assert.AreEqual((ulong)want["tick"].Value<uint>(), A.U64At(WbConstants.OFF_TICK, 0), $"{name} tick{t} TICK");
+                                Assert.AreEqual((ulong)want["tick"].Value<uint>(), A.U64At(WbConstants.OFF_TICK, 0), $"{name} tick{t} TICK");
                 Assert.AreEqual((ulong)want["useq"].Value<uint>(), A.U64At(WbConstants.OFF_USEQ, 0), $"{name} tick{t} USEQ");
                 Assert.AreEqual((int)want["actN"], A.I32At(WbConstants.OFF_ACTN, 0), $"{name} tick{t} ACTN");
                 Assert.AreEqual((int)want["dlistN"], A.I32At(WbConstants.OFF_DLISTN, 0), $"{name} tick{t} DLISTN");
                 Assert.AreEqual(want["batchR"].Value<uint>(), A.U32At(WbConstants.OFF_BATCHR, 0), $"{name} tick{t} BATCHR");
                 Assert.AreEqual(want["bailK"].Value<uint>(), A.U32At(WbConstants.OFF_BAILK, 0), $"{name} tick{t} BAILK");
                 for (int k = 0; k < 5; k++)
-                    Assert.AreEqual(BitsOf(want["bailP"][k].ToString()), A.U64At(WbConstants.OFF_BAILP, k), $"{name} tick{t} BAILP[{k}]");
+                    Assert.AreEqual(BitsOfAny(want["bailP"][k]), A.U64At(WbConstants.OFF_BAILP, k), $"{name} tick{t} BAILP[{k}]");
                 Assert.AreEqual(want["famn"].Value<int>(), A.I32At(WbConstants.OFF_FAMN, 0), $"{name} tick{t} FAMN");
                 Assert.AreEqual(want["famseq"].Value<int>(), A.I32At(WbConstants.OFF_FMSEQ, 0), $"{name} tick{t} FMSEQ");
                 Assert.AreEqual(want["itmn"].Value<int>(), A.I32At(WbConstants.OFF_ITMN, 0), $"{name} tick{t} ITMN");
-                Assert.AreEqual(BitsOf(want["cvpop0"].ToString()), A.U64At(WbConstants.OFF_CVPOP, 0), $"{name} tick{t} CVPOP[0]");
-                Assert.AreEqual(BitsOf(want["cnt4"].ToString()), A.U64At(WbConstants.OFF_CNT, 4), $"{name} tick{t} CNT[4]");
-                Assert.AreEqual(BitsOf(want["cnt5"].ToString()), A.U64At(WbConstants.OFF_CNT, 5), $"{name} tick{t} CNT[5]");
-                Assert.AreEqual(BitsOf(want["grass"].ToString()), A.U64At(WbConstants.OFF_GRASS, 0), $"{name} tick{t} GRASS");
+                Assert.AreEqual(BitsOfAny(want["cvpop0"]), A.U64At(WbConstants.OFF_CVPOP, 0), $"{name} tick{t} CVPOP[0]");
+                Assert.AreEqual(BitsOfAny(want["cnt4"]), A.U64At(WbConstants.OFF_CNT, 4), $"{name} tick{t} CNT[4]");
+                Assert.AreEqual(BitsOfAny(want["cnt5"]), A.U64At(WbConstants.OFF_CNT, 5), $"{name} tick{t} CNT[5]");
+                Assert.AreEqual(BitsOfAny(want["grass"]), A.U64At(WbConstants.OFF_GRASS, 0), $"{name} tick{t} GRASS");
                 Assert.AreEqual(want["wildSheep"].Value<int>(), A.I32At(WbConstants.OFF_WILD, 6), $"{name} tick{t} WILD[sheep]");
                 Assert.AreEqual(want["wildZombie"].Value<int>(), A.I32At(WbConstants.OFF_WILD, 5), $"{name} tick{t} WILD[zombie]");
                 Assert.AreEqual(want["wildSkeleton"].Value<int>(), A.I32At(WbConstants.OFF_WILD, 16), $"{name} tick{t} WILD[skeleton]");
+Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 0), $"{name} tick{t} RNG");
                 // 家族表逐位
-                var wantFams = (JArray)want["fams"];
+                var wantFams = (want["fams"] as JArray ?? new JArray());
                 for (int r = 0; r < wantFams.Count; r++)
                 {
                     var wf = (JObject)wantFams[r];
                     Assert.AreEqual(wf["id"].Value<int>(), A.I32At(WbConstants.OFF_FMID, r), $"{name} tick{t} FM[{r}] id");
                     Assert.AreEqual(wf["race"].Value<int>(), A.I32At(WbConstants.OFF_FMRACE, r), $"{name} tick{t} FM[{r}] race");
                     for (int k = 0; k < 6; k++)
-                        Assert.AreEqual(BitsOf(wf["num"][k].ToString()), A.U64At(WbConstants.OFF_FMNUM, r * 6 + k), $"{name} tick{t} FM[{r}] num[{k}]");
+                        Assert.AreEqual(BitsOfAny(wf["num"][k]), A.U64At(WbConstants.OFF_FMNUM, r * 6 + k), $"{name} tick{t} FM[{r}] num[{k}]");
                     Assert.AreEqual((ushort)wf["name"][0].Value<int>(), A.U16At(WbConstants.OFF_FMNAME, r * 2), $"{name} tick{t} FM[{r}] pre");
                     Assert.AreEqual((ushort)wf["name"][1].Value<int>(), A.U16At(WbConstants.OFF_FMNAME, r * 2 + 1), $"{name} tick{t} FM[{r}] post");
                 }
                 // 物品表逐位
-                var wantItems = (JArray)want["items"];
+                var wantItems = (want["items"] as JArray ?? new JArray());
                 for (int i = 0; i < wantItems.Count; i++)
                 {
                     var wi = (JObject)wantItems[i];
                     Assert.AreEqual(wi["k"].Value<int>(), A.I32At(WbConstants.OFF_ITMK, i), $"{name} tick{t} ITM[{i}] k");
-                    Assert.AreEqual(BitsOf(wi["x"].ToString()), A.U64At(WbConstants.OFF_ITMXY, i * 2), $"{name} tick{t} ITM[{i}] x");
-                    Assert.AreEqual(BitsOf(wi["y"].ToString()), A.U64At(WbConstants.OFF_ITMXY, i * 2 + 1), $"{name} tick{t} ITM[{i}] y");
+                    Assert.AreEqual(BitsOfAny(wi["x"]), A.U64At(WbConstants.OFF_ITMXY, i * 2), $"{name} tick{t} ITM[{i}] x");
+                    Assert.AreEqual(BitsOfAny(wi["y"]), A.U64At(WbConstants.OFF_ITMXY, i * 2 + 1), $"{name} tick{t} ITM[{i}] y");
                 }
                 // ACT 缓冲
                 var actBase = A.Offs[WbConstants.OFF_ACT];
                 int actLen = Math.Min((int)want["actN"], 1024);
                 Assert.AreEqual(want["actHex"]?.Value<string>() ?? "", WbGoldenFixture.Hex(A.Arena, actBase, actLen), $"{name} tick{t} ACT bytes");
                 // 单位全字段逐位（初始 + 新 spawn slot）
-                var wantUnits = (JArray)want["units"];
+                var wantUnits = (want["units"] as JArray ?? new JArray());
                 foreach (var eu in wantUnits)
                 {
                     int s = eu["slot"].Value<int>();
@@ -1428,25 +1475,25 @@ namespace PixelWorldBox.Tests
                     Assert.AreEqual(eu["army"].Value<int>(), A.I32At(WbConstants.OFF_UARMY, s), $"{name} tick{t} u{s} army");
                     Assert.AreEqual(eu["cell"].Value<uint>(), A.U32At(WbConstants.OFF_UCELL, s), $"{name} tick{t} u{s} cell");
                     Assert.AreEqual(eu["stx"].Value<int>(), A.I32At(WbConstants.OFF_USTK, s), $"{name} tick{t} u{s} stx");
-                    foreach (var fld in new[]
+                    foreach (object[] fld in new object[]
                     {
-                        new[] { "x", WbConstants.OFF_UX }, new[] { "y", WbConstants.OFF_UY },
-                        new[] { "tx", WbConstants.OFF_UTX }, new[] { "ty", WbConstants.OFF_UTY },
-                        new[] { "lx", WbConstants.OFF_ULX }, new[] { "ly", WbConstants.OFF_ULY },
-                        new[] { "hp", WbConstants.OFF_UHP }, new[] { "maxhp", WbConstants.OFF_UMAXHP },
-                        new[] { "dmg", WbConstants.OFF_UDMG }, new[] { "speed", WbConstants.OFF_USPEED },
-                        new[] { "age", WbConstants.OFF_UAGE }, new[] { "maxage", WbConstants.OFF_UMAXAGE },
-                        new[] { "kills", WbConstants.OFF_UKILLS }, new[] { "cd", WbConstants.OFF_UCD },
-                        new[] { "breath", WbConstants.OFF_UBREATH }, new[] { "hurt", WbConstants.OFF_UHURT },
-                        new[] { "food", WbConstants.OFF_UFD }, new[] { "cvn", WbConstants.OFF_UCVN },
-                        new[] { "fleet", WbConstants.OFF_UFLEET }, new[] { "bless", WbConstants.OFF_UBLESS },
-                        new[] { "curse", WbConstants.OFF_UCURSE }, new[] { "fert", WbConstants.OFF_UFERT },
-                        new[] { "detour", WbConstants.OFF_UDETOUR }, new[] { "atk", WbConstants.OFF_UATK },
-                        new[] { "chill", WbConstants.OFF_UCHILL },
+                        new object[] { "x", WbConstants.OFF_UX }, new object[] { "y", WbConstants.OFF_UY },
+                        new object[] { "tx", WbConstants.OFF_UTX }, new object[] { "ty", WbConstants.OFF_UTY },
+                        new object[] { "lx", WbConstants.OFF_ULX }, new object[] { "ly", WbConstants.OFF_ULY },
+                        new object[] { "hp", WbConstants.OFF_UHP }, new object[] { "maxhp", WbConstants.OFF_UMAXHP },
+                        new object[] { "dmg", WbConstants.OFF_UDMG }, new object[] { "speed", WbConstants.OFF_USPEED },
+                        new object[] { "age", WbConstants.OFF_UAGE }, new object[] { "maxage", WbConstants.OFF_UMAXAGE },
+                        new object[] { "kills", WbConstants.OFF_UKILLS }, new object[] { "cd", WbConstants.OFF_UCD },
+                        new object[] { "breath", WbConstants.OFF_UBREATH }, new object[] { "hurt", WbConstants.OFF_UHURT },
+                        new object[] { "food", WbConstants.OFF_UFD }, new object[] { "cvn", WbConstants.OFF_UCVN },
+                        new object[] { "fleet", WbConstants.OFF_UFLEET }, new object[] { "bless", WbConstants.OFF_UBLESS },
+                        new object[] { "curse", WbConstants.OFF_UCURSE }, new object[] { "fert", WbConstants.OFF_UFERT },
+                        new object[] { "detour", WbConstants.OFF_UDETOUR }, new object[] { "atk", WbConstants.OFF_UATK },
+                        new object[] { "chill", WbConstants.OFF_UCHILL },
                     })
-                        Assert.AreEqual(BitsOf(eu[fld[0]].ToString()), A.U64At(fld[1], s), $"{name} tick{t} u{s} {fld[0]}");
+                        Assert.AreEqual(BitsOfAny(eu[(string)fld[0]]), A.U64At(Convert.ToUInt32(fld[1]), s), $"{name} tick{t} u{s} {fld[0]}");
                     for (int g = 0; g < 4; g++)
-                        Assert.AreEqual(BitsOf(eu["gene"][g].ToString()), A.U64At(WbConstants.OFF_UGENE, s * 4 + g), $"{name} tick{t} u{s} gene[{g}]");
+                        Assert.AreEqual(BitsOfAny(eu["gene"][g]), A.U64At(WbConstants.OFF_UGENE, s * 4 + g), $"{name} tick{t} u{s} gene[{g}]");
                     for (int g = 0; g < 32; g++)
                         Assert.AreEqual(eu["name"][g].Value<int>(), A.U8At(WbConstants.OFF_UNAME, s * 32 + g), $"{name} tick{t} u{s} name[{g}]");
                     for (int g = 0; g < 7; g++)
@@ -1501,12 +1548,22 @@ namespace PixelWorldBox.Tests
 
         private static double BitsOf(string hex) => BitConverter.Int64BitsToDouble(unchecked((long)Convert.ToUInt64(hex.Replace("0x", ""), 16)));
 
+        /// 黄金字段双格式读取：f64 位串（"0x..."）或普通 JSON 数字（spawn 采样新位姿为数字）
+        private static ulong BitsOfAny(JToken v) => v.Type == JTokenType.String
+            ? Convert.ToUInt64(((string)v).Replace("0x", ""), 16)
+            : unchecked((ulong)BitConverter.DoubleToInt64Bits(v.Value<double>()));
+
         private void SetupWorld(JObject inp)
         {
-            var A = _fx.Arena;
             var meta = (JObject)_golden["meta"];
             _fx.InitWorld(inp["seed"].Value<int>(), inp["fxp"]?.Value<int>() ?? 0);
-            _fx.SetEps(meta["eps"].ToObject<List<double>>());
+            var epsTok = meta["eps"];
+            // units_civ 黄金 eps 为 dict（值序 = 规范 epKeys 序，已对照 spawn/combat 列表序一致）；其它黄金为列表
+            List<double> epsList = epsTok is JArray
+                ? epsTok.ToObject<List<double>>()
+                : epsTok.ToObject<JObject>().Properties().Select(p => p.Value.Value<double>()).ToList();
+            _fx.SetEps(epsList);
+            var A = _fx.Arena;   // Arena 在 InitWorld 内惰性创建，捕获必须后置
             if (inp["terrain"] != null)
             {
                 var tr = new GoldenTerrain { @base = inp["terrain"]["base"].Value<int>() };
@@ -1523,7 +1580,7 @@ namespace PixelWorldBox.Tests
             foreach (var kv in (JObject)boot["raceFlags"]) A.SetU8(WbConstants.OFF_RACE_FLAGS, int.Parse(kv.Key), (byte)kv.Value.Value<int>());
             foreach (var kv in (JObject)boot["tbf0"]) A.SetU8(WbConstants.OFF_TBF, int.Parse(kv.Key) * 2, (byte)kv.Value.Value<int>());
             foreach (var kv in (JObject)boot["tbf1"]) A.SetU8(WbConstants.OFF_TBF, int.Parse(kv.Key) * 2 + 1, (byte)kv.Value.Value<int>());
-            var tbj = (JArray)boot["tbj"];
+            var tbj = (boot["tbj"] as JArray ?? new JArray());
             for (int c = 0; c < tbj.Count; c++) A.SetF64(WbConstants.OFF_TBJ, c, tbj[c].Value<double>());
             foreach (var kv in (JObject)boot["tbi"])
                 for (int c = 0; c < 12; c++)
@@ -1620,7 +1677,7 @@ namespace PixelWorldBox.Tests
             A.SetF64(WbConstants.OFF_UATK, slot, 0);
             A.SetF64(WbConstants.OFF_UCD, slot, u["cd"]?.Value<double>() ?? 0);
             A.SetF64(WbConstants.OFF_UBREATH, slot, u["breath"]?.Value<double>() ?? 0);
-            A.SetF64(WbConstants.OFF_UFD, slot, u["food"] != null ? u["food"].Value<double>() : double.NaN);
+            A.SetF64(WbConstants.OFF_UFD, slot, u["food"] != null ? u["food"].Value<double>() : WbMath.JsNaN);
             A.SetF64(WbConstants.OFF_UCVN, slot, u["cvn"]?.Value<double>() ?? 0);
             A.SetF64(WbConstants.OFF_UFLEET, slot, u["fleet"]?.Value<double>() ?? 0);
             A.SetI32(WbConstants.OFF_UCIV, slot, u["civ"]?.Value<int>() ?? -1);
@@ -1633,22 +1690,22 @@ namespace PixelWorldBox.Tests
             A.SetU8(WbConstants.OFF_UDEAD, slot, 0);
             A.SetU8(WbConstants.OFF_UHASPANIC, slot, (byte)(u["panic"] != null ? 1 : 0));
             if (u["panic"] != null) A.SetF64(WbConstants.OFF_UPANIC, slot, u["panic"].Value<double>());
-            A.SetU8(WbConstants.OFF_UINF, slot, (byte)(u["inf"] == true ? 1 : 0));
-            A.SetU8(WbConstants.OFF_UBOAT, slot, (byte)(u["boat"] == true ? 1 : 0));
+            A.SetU8(WbConstants.OFF_UINF, slot, (byte)((bool?)u["inf"] == true ? 1 : 0));
+            A.SetU8(WbConstants.OFF_UBOAT, slot, (byte)((bool?)u["boat"] == true ? 1 : 0));
             A.SetU8(WbConstants.OFF_UFLIP, slot, 0);
-            A.SetF64(WbConstants.OFF_ULX, slot, double.NaN);
-            A.SetF64(WbConstants.OFF_ULY, slot, double.NaN);
+            A.SetF64(WbConstants.OFF_ULX, slot, WbMath.JsNaN);
+            A.SetF64(WbConstants.OFF_ULY, slot, WbMath.JsNaN);
             for (int g = 0; g < 4; g++) A.SetF64(WbConstants.OFF_UGENE, slot * 4 + g, 1);
             for (int g = 0; g < 7; g++) A.SetI32(WbConstants.OFF_UGEAR, slot * 7 + g, u["gear"] != null && g < u["gear"].Count() ? u["gear"][g].Value<int>() : -1);
             for (int g = 0; g < 8; g++) { A.SetI32(WbConstants.OFF_UGIDS, slot * 8 + g, -1); A.SetF64(WbConstants.OFF_UGVAL, slot * 8 + g, 0); }
             if (u["grudges"] != null)
             {
-                for (int g = 0; g < ((JArray)u["grudges"]).Count && g < 8; g++)
+                for (int g = 0; g < ((u["grudges"] as JArray ?? new JArray())).Count && g < 8; g++)
                 {
                     A.SetI32(WbConstants.OFF_UGIDS, slot * 8 + g, u["grudges"][g]["oid"].Value<int>());
                     A.SetF64(WbConstants.OFF_UGVAL, slot * 8 + g, u["grudges"][g]["gv"].Value<double>());
                 }
-                A.SetI32(WbConstants.OFF_UGLN, slot, Math.Min(((JArray)u["grudges"]).Count, 8));
+                A.SetI32(WbConstants.OFF_UGLN, slot, Math.Min(((u["grudges"] as JArray ?? new JArray())).Count, 8));
             }
             else A.SetI32(WbConstants.OFF_UGLN, slot, -1);
         }
@@ -1666,7 +1723,7 @@ namespace PixelWorldBox.Tests
             var name = sc["name"].Value<string>();
             SetupWorld(inp);
             var A = _fx.Arena;
-            var ticks = (JArray)sc["output"];
+            var ticks = (sc["output"] as JArray ?? new JArray());
             for (int t = 0; t < ticks.Count; t++)
             {
                 var want = (JObject)ticks[t];
@@ -1685,13 +1742,13 @@ namespace PixelWorldBox.Tests
                         Assert.AreEqual((int)want["fireG"][k], A.U8At(WbConstants.OFF_FIREG, inp["fireProbe"][k].Value<int>()), $"{name} tick{t} FIREG[{k}]");
                 // 建筑表逐位
                 Assert.AreEqual(want["bldn"].Value<int>(), A.I32At(WbConstants.OFF_BLDN, 0), $"{name} tick{t} BLDN");
-                var wantBlds = (JArray)want["blds"];
+                var wantBlds = (want["blds"] as JArray ?? new JArray());
                 for (int r = 0; r < wantBlds.Count; r++)
                 {
                     var wb2 = (JObject)wantBlds[r];
                     Assert.AreEqual(wb2["tile"].Value<int>(), A.I32At(WbConstants.OFF_BLDI, r), $"{name} tick{t} BLD[{r}] tile");
                     Assert.AreEqual(wb2["civ"].Value<int>(), A.I32At(WbConstants.OFF_BLDC, r), $"{name} tick{t} BLD[{r}] civ");
-                    Assert.AreEqual(BitsOf(wb2["hp"].ToString()), A.U64At(WbConstants.OFF_BLDHP, r), $"{name} tick{t} BLD[{r}] hp");
+                    Assert.AreEqual(BitsOfAny(wb2["hp"]), A.U64At(WbConstants.OFF_BLDHP, r), $"{name} tick{t} BLD[{r}] hp");
                 }
                 // BIDX 探针
                 if (want["bidx"] != null)
@@ -1703,16 +1760,16 @@ namespace PixelWorldBox.Tests
                     Assert.AreEqual(want["dmgl"][k].Value<int>(), A.I32At(WbConstants.OFF_DMGL, k), $"{name} tick{t} DMGL[{k}]");
                 // CNT 计数器
                 for (int k = 0; k < 4; k++)
-                    Assert.AreEqual(BitsOf(want["cnt"][k].ToString()), A.U64At(WbConstants.OFF_CNT, k), $"{name} tick{t} CNT[{k}]");
+                    Assert.AreEqual(BitsOfAny(want["cnt"][k]), A.U64At(WbConstants.OFF_CNT, k), $"{name} tick{t} CNT[{k}]");
                 // 文明财富
-                Assert.AreEqual(BitsOf(want["cvgld0"].ToString()), A.U64At(WbConstants.OFF_CVGLD, 0), $"{name} tick{t} CVGLD[0]");
-                Assert.AreEqual(BitsOf(want["cvgld1"].ToString()), A.U64At(WbConstants.OFF_CVGLD, 1), $"{name} tick{t} CVGLD[1]");
+                Assert.AreEqual(BitsOfAny(want["cvgld0"]), A.U64At(WbConstants.OFF_CVGLD, 0), $"{name} tick{t} CVGLD[0]");
+                Assert.AreEqual(BitsOfAny(want["cvgld1"]), A.U64At(WbConstants.OFF_CVGLD, 1), $"{name} tick{t} CVGLD[1]");
                 // ACT 缓冲
                 var actBase = A.Offs[WbConstants.OFF_ACT];
                 int actLen = Math.Min((int)want["actN"], 512);
                 Assert.AreEqual(want["actHex"]?.Value<string>() ?? "", WbGoldenFixture.Hex(A.Arena, actBase, actLen), $"{name} tick{t} ACT bytes");
                 // 单位字段逐位
-                var wantUnits = (JArray)want["units"];
+                var wantUnits = (want["units"] as JArray ?? new JArray());
                 foreach (var eu in wantUnits)
                 {
                     int s = eu["slot"].Value<int>();
@@ -1720,15 +1777,15 @@ namespace PixelWorldBox.Tests
                     Assert.AreEqual(eu["dead"].Value<int>(), A.U8At(WbConstants.OFF_UDEAD, s), $"{name} tick{t} u{s} dead");
                     Assert.AreEqual(eu["job"].Value<int>(), A.I32At(WbConstants.OFF_UJOB, s), $"{name} tick{t} u{s} job");
                     Assert.AreEqual(eu["flip"].Value<int>(), A.U8At(WbConstants.OFF_UFLIP, s), $"{name} tick{t} u{s} flip");
-                    foreach (var fld in new[]
+                    foreach (object[] fld in new object[]
                     {
-                        new[] { "x", WbConstants.OFF_UX }, new[] { "y", WbConstants.OFF_UY },
-                        new[] { "tx", WbConstants.OFF_UTX }, new[] { "ty", WbConstants.OFF_UTY },
-                        new[] { "cd", WbConstants.OFF_UCD }, new[] { "atk", WbConstants.OFF_UATK },
-                        new[] { "cvn", WbConstants.OFF_UCVN }, new[] { "dmg", WbConstants.OFF_UDMG },
-                        new[] { "hp", WbConstants.OFF_UHP },
+                        new object[] { "x", WbConstants.OFF_UX }, new object[] { "y", WbConstants.OFF_UY },
+                        new object[] { "tx", WbConstants.OFF_UTX }, new object[] { "ty", WbConstants.OFF_UTY },
+                        new object[] { "cd", WbConstants.OFF_UCD }, new object[] { "atk", WbConstants.OFF_UATK },
+                        new object[] { "cvn", WbConstants.OFF_UCVN }, new object[] { "dmg", WbConstants.OFF_UDMG },
+                        new object[] { "hp", WbConstants.OFF_UHP },
                     })
-                        Assert.AreEqual(BitsOf(eu[fld[0]].ToString()), A.U64At(fld[1], s), $"{name} tick{t} u{s} {fld[0]}");
+                        Assert.AreEqual(BitsOfAny(eu[(string)fld[0]]), A.U64At(Convert.ToUInt32(fld[1]), s), $"{name} tick{t} u{s} {fld[0]}");
                 }
                 // 宿主协议步进（parity 翻转 + UCELL/UPAR 重排 + PackEnd）
                 A.SetU8(WbConstants.OFF_PAR, 0, (byte)(A.U8At(WbConstants.OFF_PAR, 0) ^ 1));
@@ -1795,7 +1852,7 @@ namespace PixelWorldBox.Tests
             Assert.AreEqual(4, meta["houseCap"].Value<int>(), "meta HOUSE_CAP");
             var scenarios = (JArray)golden["scenarios"];
             Assert.AreEqual(57, scenarios.Count, "scenario count");
-            foreach (var sc in scenarios) RunScenario(sc);
+            foreach (var sc in scenarios) RunScenario((JObject)sc);
         }
 
         private void RunScenario(JObject sc)
@@ -1810,7 +1867,7 @@ namespace PixelWorldBox.Tests
             w.toastSeq = sc["toastSeq0"].Value<int>();
 
             // —— terrain RLE 解码（generate 底图 + paint 夹具）——
-            var rle = (JArray)sc["terrainRle"];
+            var rle = sc["terrainRle"] as JArray ?? new JArray();
             int pos = 0;
             for (int k = 0; k < rle.Count; k += 2)
             {
@@ -1827,7 +1884,7 @@ namespace PixelWorldBox.Tests
             w.laws.rebels = laws["rebels"].Value<bool>();
 
             // —— civ 夹具（gen mkCiv 同构）——
-            var civs = (JArray)sc["fixture"]["civs"];
+            var civs = sc["fixture"]["civs"] as JArray ?? new JArray();
             foreach (var c in civs)
             {
                 var civ = new WbCiv
@@ -1857,14 +1914,14 @@ namespace PixelWorldBox.Tests
                 if (c["research"] != null && c["research"].Type != JTokenType.Null) civ.research = c["research"].ToString();
                 if (c["researchP"] != null && c["researchP"].Type != JTokenType.Null) civ.researchP = c["researchP"].Value<double>();
                 if (c["techs"] != null && c["techs"].Type != JTokenType.Null)
-                    foreach (var t in (JArray)c["techs"]) civ.techs.Add(t.ToString());
+                    foreach (var t in (c["techs"] as JArray ?? new JArray())) civ.techs.Add(t.ToString());
                 if (c["ideas"] != null && c["ideas"].Type != JTokenType.Null)
                 {
                     civ.ideas = new List<string>();
-                    foreach (var t in (JArray)c["ideas"]) civ.ideas.Add(t.ToString());
+                    foreach (var t in (c["ideas"] as JArray ?? new JArray())) civ.ideas.Add(t.ToString());
                 }
-                if (c["tiles"] != null) foreach (var t in (JArray)c["tiles"]) civ.tiles.Add(t.Value<int>());
-                if (c["frontier"] != null) foreach (var f in (JArray)c["frontier"]) civ.frontier.Add(f.Value<int>());
+                if (c["tiles"] != null) foreach (var t in (c["tiles"] as JArray ?? new JArray())) civ.tiles.Add(t.Value<int>());
+                if (c["frontier"] != null) foreach (var f in (c["frontier"] as JArray ?? new JArray())) civ.frontier.Add(f.Value<int>());
                 w.civs.Add(civ);
                 while (w.civs.Count <= civ.id) w.civs.Add(null); // dense 补洞
                 if (w.civs[civ.id] == null) w.civs[civ.id] = civ; // dense 直索引（engine L1595 同构）
@@ -1874,8 +1931,8 @@ namespace PixelWorldBox.Tests
             }
 
             // —— units 夹具 ——
-            var units = (JArray)sc["fixture"]["units"];
-            foreach (var u in units) PutWorldUnit(w, u);
+            var units = sc["fixture"]["units"] as JArray ?? new JArray();
+            foreach (var u in units) PutWorldUnit(w, (JObject)u);
 
             // —— 在位王补夹具（gen runScenario 同构：pop>0 alive 且无王 → id 1000+ 殿后；noAutoKing 场景跳过）——
             if (sc["fixture"]["noAutoKing"] == null || sc["fixture"]["noAutoKing"].Type == JTokenType.Null || !sc["fixture"]["noAutoKing"].Value<bool>())
@@ -1901,7 +1958,7 @@ namespace PixelWorldBox.Tests
 
             // —— directives/alliances/wars 夹具（M-U3c）——
             if (sc["fixture"]["directives"] != null)
-                foreach (var d in (JArray)sc["fixture"]["directives"])
+                foreach (var d in (sc["fixture"]["directives"] as JArray ?? new JArray()))
                 {
                     w.directives.Add(new WbDirective
                     {
@@ -1918,7 +1975,7 @@ namespace PixelWorldBox.Tests
                     w.dirSeq = System.Math.Max(w.dirSeq, d["id"]?.Value<int>() != null ? d["id"].Value<int>() + 1 : w.directives.Count); // gen mkDirective 游标同步
                 }
             if (sc["fixture"]["alliances"] != null)
-                foreach (var al in (JArray)sc["fixture"]["alliances"])
+                foreach (var al in (sc["fixture"]["alliances"] as JArray ?? new JArray()))
                 {
                     var a2 = new WbAlliance
                     {
@@ -1937,7 +1994,7 @@ namespace PixelWorldBox.Tests
                     foreach (int m in a2.members) w.allianceOf[m] = a2.id;
                 }
             if (sc["fixture"]["wars"] != null)
-                foreach (var wd in (JArray)sc["fixture"]["wars"])
+                foreach (var wd in (sc["fixture"]["wars"] as JArray ?? new JArray()))
                     w.warData[wd["key"].ToString()] = new WbWarData
                     {
                         key = wd["key"].ToString(),
@@ -1957,7 +2014,7 @@ namespace PixelWorldBox.Tests
 
             // —— M-U3f armies/emIdeas/homogeneity/seasonOffset 夹具（gen runScenario 同构）——
             if (sc["fixture"]["armies"] != null)
-                foreach (var ar in (JArray)sc["fixture"]["armies"])
+                foreach (var ar in (sc["fixture"]["armies"] as JArray ?? new JArray()))
                 {
                     var a = new WbArmy
                     {
@@ -1975,7 +2032,7 @@ namespace PixelWorldBox.Tests
                     w.armies.Add(a);
                 }
             if (sc["fixture"]["emIdeas"] != null)
-                foreach (var id_ in (JArray)sc["fixture"]["emIdeas"])
+                foreach (var id_ in (sc["fixture"]["emIdeas"] as JArray ?? new JArray()))
                 {
                     var idea = new WbIdea { key = id_["key"].ToString(), name = id_["name"]?.ToString() ?? $"I{id_["key"]}", desc = id_["desc"]?.ToString() ?? "", mods = new WbIdeaMods() };
                     var md = id_["mods"];
@@ -1993,28 +2050,28 @@ namespace PixelWorldBox.Tests
                         w.ideaSeq = System.Math.Max(w.ideaSeq, nId + 1);
                 }
             if (sc["fixture"]["homogeneity"] != null)
-                foreach (var h in (JArray)sc["fixture"]["homogeneity"])
+                foreach (var h in (sc["fixture"]["homogeneity"] as JArray ?? new JArray()))
                     w.civHomogeneity[h[0].Value<int>()] = h[1].Value<double>();
             if (sc["fixture"]["seasonOffset"] != null && sc["fixture"]["seasonOffset"].Type != JTokenType.Null)
                 w.seasonOffset = sc["fixture"]["seasonOffset"].Value<int>();
 
             // —— rel/tension/met/buildings 夹具 ——
             if (sc["fixture"]["rel"] != null)
-                foreach (var r in (JArray)sc["fixture"]["rel"])
+                foreach (var r in (sc["fixture"]["rel"] as JArray ?? new JArray()))
                 {
                     int a = r[0].Value<int>(), b = r[1].Value<int>(), v = r[2].Value<int>();
                     w.rel[WbWorld.PairKey(a, b)] = v;
                 }
             if (sc["fixture"]["tension"] != null)
-                foreach (var r in (JArray)sc["fixture"]["tension"])
+                foreach (var r in (sc["fixture"]["tension"] as JArray ?? new JArray()))
                 {
                     int a = r[0].Value<int>(), b = r[1].Value<int>(), v = r[2].Value<int>();
                     w.tension[WbWorld.PairKey(a, b)] = v;
                 }
             if (sc["fixture"]["met"] != null)
-                foreach (var m in (JArray)sc["fixture"]["met"]) w.met.Add(m.ToString());
+                foreach (var m in (sc["fixture"]["met"] as JArray ?? new JArray())) w.met.Add(m.ToString());
             if (sc["fixture"]["buildings"] != null)
-                foreach (var b in (JArray)sc["fixture"]["buildings"])
+                foreach (var b in (sc["fixture"]["buildings"] as JArray ?? new JArray()))
                 {
                     // gen mkBuilding0 同构（不经 buildBuilding：rng/连路无扰动，黄金基线由夹具定）
                     int i = b[0].Value<int>(), kind = b[1].Value<int>(), civId = b[2].Value<int>();
@@ -2029,9 +2086,9 @@ namespace PixelWorldBox.Tests
 
             // —— 驱动 + 逐 tick 断言 ——
             w.tickCount = sc["startTick"].Value<int>();
-            var traces = (JArray)sc["traces"];
+            var traces = (sc["traces"] as JArray ?? new JArray());
             bool hostTicks = sc["fixture"]["hostTicks"] != null && sc["fixture"]["hostTicks"].Type != JTokenType.Null && sc["fixture"]["hostTicks"].Value<bool>();
-            var issues = (JArray)(sc["fixture"]["issue"] ?? new JArray());
+            var issues = sc["fixture"]["issue"] as JArray ?? new JArray();
             var funds = (JArray)(sc["fixture"]["fund"] ?? new JArray());
             for (int t = 0; t < traces.Count; t++)
             {
@@ -2091,7 +2148,7 @@ namespace PixelWorldBox.Tests
             Assert.AreEqual(want["statCivsFallen"].Value<int>(), w.statCivsFallen, $"{ctx} statCivsFallen");
 
             // civs 全字段（数组序 + tiles/frontier 逐元素）
-            var wantCivs = (JArray)want["civs"];
+            var wantCivs = (want["civs"] as JArray ?? new JArray());
             var liveCivs = new List<WbCiv>();
             foreach (var c in w.civs) if (c != null) liveCivs.Add(c);
             Assert.AreEqual(wantCivs.Count, liveCivs.Count, $"{ctx} civs count");
@@ -2099,7 +2156,7 @@ namespace PixelWorldBox.Tests
             {
                 var wc = (JObject)wantCivs[c];
                 var gc = liveCivs[c];
-                Assert.AreEqual(wc["id"].Value<int>(), gc.id, $"{ctx} civ{id} id");
+                Assert.AreEqual(wc["id"].Value<int>(), gc.id, $"{ctx} civ{c} id");
                 string cid = $"{ctx} civ{gc.id}";
                 Assert.AreEqual(wc["pop"].Value<int>(), gc.pop, $"{cid} pop");
                 Assert.AreEqual(wc["houses"].Value<int>(), gc.houses, $"{cid} houses");
@@ -2147,7 +2204,7 @@ namespace PixelWorldBox.Tests
             }
 
             // buildings 全量
-            var wantB = (JArray)want["buildings"];
+            var wantB = (want["buildings"] as JArray ?? new JArray());
             Assert.AreEqual(wantB.Count, w.buildings.Count, $"{ctx} buildings count");
             for (int b = 0; b < wantB.Count; b++)
             {
@@ -2158,13 +2215,13 @@ namespace PixelWorldBox.Tests
             }
 
             // bHp / civBuildCounts / marketIdx
-            var wantHp = (JArray)want["bHp"];
+            var wantHp = (want["bHp"] as JArray ?? new JArray());
             Assert.AreEqual(wantHp.Count, w.bHp.Count, $"{ctx} bHp count");
             var hpSorted = new List<KeyValuePair<int, double>>(w.bHp);
             hpSorted.Sort((a, b) => a.Key.CompareTo(b.Key)); // JS Map 迭代序 = 插入序；C# Dict 无序 → 键序对账（黄金插入序即键增序近似——回放重放插入序）
             for (int k = 0; k < wantHp.Count; k++)
                 Assert.AreEqual(wantHp[k][0].Value<int>(), hpSorted[k].Key, $"{ctx} bHp[{k}] key");
-            var wantCounts = (JArray)want["civBuildCounts"];
+            var wantCounts = (want["civBuildCounts"] as JArray ?? new JArray());
             Assert.AreEqual(wantCounts.Count, w.civBuildCounts.Count, $"{ctx} civBuildCounts count");
             foreach (var kv in WantCountsDict(want))
             {
@@ -2172,7 +2229,7 @@ namespace PixelWorldBox.Tests
                 Assert.IsTrue(w.civBuildCounts.TryGetValue(int.Parse(kv.Key), out arr), $"{ctx} civBuildCounts[{kv.Key}] exists");
                 for (int k = 0; k < kv.Value.Count; k++) Assert.AreEqual(kv.Value[k].Value<int>(), arr[k], $"{ctx} civBuildCounts[{kv.Key}][{k}]");
             }
-            var wantMkt = (JArray)want["marketIdx"];
+            var wantMkt = (want["marketIdx"] as JArray ?? new JArray());
             Assert.AreEqual(wantMkt.Count, w.marketIdx.Count, $"{ctx} marketIdx count");
 
             // 数组 diff（owner/building/road/occCiv）
@@ -2182,11 +2239,11 @@ namespace PixelWorldBox.Tests
             AssertDiff(want["occCivDiff"], i => w.occCiv[i], $"{ctx} occCivDiff");
 
             // dirty/propsDirty
-            AssertSet((JArray)want["dirty"], w.dirty, $"{ctx} dirty");
-            AssertSet((JArray)want["propsDirty"], w.propsDirty, $"{ctx} propsDirty");
+            AssertSet((want["dirty"] as JArray ?? new JArray()), w.dirty, $"{ctx} dirty");
+            AssertSet((want["propsDirty"] as JArray ?? new JArray()), w.propsDirty, $"{ctx} propsDirty");
 
             // effects 全字段（f64 hex 逐位）
-            var wantFx = (JArray)want["effects"];
+            var wantFx = (want["effects"] as JArray ?? new JArray());
             Assert.AreEqual(wantFx.Count, w.effects.Count, $"{ctx} effects count");
             for (int e = 0; e < wantFx.Count; e++)
             {
@@ -2201,7 +2258,7 @@ namespace PixelWorldBox.Tests
             }
 
             // newEvents（id/year/kind/text/colorHex/x/y bits）
-            var wantEv = (JArray)want["newEvents"];
+            var wantEv = (want["newEvents"] as JArray ?? new JArray());
             Assert.AreEqual(wantEv.Count, w.worldEvents.Count, $"{ctx} newEvents count");
             for (int e = 0; e < wantEv.Count; e++)
             {
@@ -2216,7 +2273,7 @@ namespace PixelWorldBox.Tests
             }
 
             // toasts
-            var wantToast = (JArray)want["toasts"];
+            var wantToast = (want["toasts"] as JArray ?? new JArray());
             Assert.AreEqual(wantToast.Count, w.toasts.Count, $"{ctx} toasts count");
             for (int e = 0; e < wantToast.Count; e++)
             {
@@ -2228,16 +2285,16 @@ namespace PixelWorldBox.Tests
             w.toasts.Clear(); // onToast 回调每 tick 清空语义（gen toasts.splice(0)）
 
             // tension/rel/met
-            var wantTen = (JArray)want["tension"];
+            var wantTen = (want["tension"] as JArray ?? new JArray());
             Assert.AreEqual(wantTen.Count, w.tension.Count, $"{ctx} tension count");
-            var wantRel = (JArray)want["rel"];
+            var wantRel = (want["rel"] as JArray ?? new JArray());
             Assert.AreEqual(wantRel.Count, w.rel.Count, $"{ctx} rel count");
             foreach (var r in wantRel)
             {
                 Assert.IsTrue(w.rel.ContainsKey(r[0].ToString()), $"{ctx} rel[{r[0]}] exists");
                 Assert.AreEqual(r[1].Value<double>(), w.rel[r[0].ToString()], 1e-12, $"{ctx} rel[{r[0]}] value(f64)");
             }
-            var wantMet = (JArray)want["met"];
+            var wantMet = (want["met"] as JArray ?? new JArray());
             Assert.AreEqual(wantMet.Count, w.met.Count, $"{ctx} met count");
 
             // —— M-U3c 扩展段 ——
@@ -2256,7 +2313,7 @@ namespace PixelWorldBox.Tests
             }
 
             // units 全字段（f64 hex 逐位）
-            var wantUnits = (JArray)want["units"];
+            var wantUnits = (want["units"] as JArray ?? new JArray());
             Assert.AreEqual(wantUnits.Count, w.units.Count, $"{ctx} units count");
             for (int u = 0; u < wantUnits.Count; u++)
             {
@@ -2283,7 +2340,7 @@ namespace PixelWorldBox.Tests
             }
 
             // warData（键序对账——JS Map 插入序 vs C# Dict 无序）
-            var wantWars = (JArray)want["warData"];
+            var wantWars = (want["warData"] as JArray ?? new JArray());
             Assert.AreEqual(wantWars.Count, w.warData.Count, $"{ctx} warData count");
             var warKeys = new List<string>(w.warData.Keys);
             warKeys.Sort(string.CompareOrdinal);
@@ -2307,7 +2364,7 @@ namespace PixelWorldBox.Tests
             }
 
             // raceRel（f64 逐位；键序对账）
-            var wantRaceRel = (JArray)want["raceRel"];
+            var wantRaceRel = (want["raceRel"] as JArray ?? new JArray());
             Assert.AreEqual(wantRaceRel.Count, w.raceRel.Count, $"{ctx} raceRel count");
             var rrKeys = new List<string>(w.raceRel.Keys);
             rrKeys.Sort(string.CompareOrdinal);
@@ -2319,18 +2376,18 @@ namespace PixelWorldBox.Tests
             }
 
             // totalWars/warHistory/statWars/civSeq
-            var wantTotal = ((JArray)want["totalWars"]).Select(x => x.ToString()).OrderBy(x => x, string.CompareOrdinal).ToList();
-            var gotTotal = w.totalWars.OrderBy(x => x, string.CompareOrdinal).ToList();
+            var wantTotal = ((want["totalWars"] as JArray ?? new JArray())).Select(x => x.ToString()).OrderBy(x => x, StringComparer.Ordinal).ToList();
+            var gotTotal = w.totalWars.OrderBy(x => x, StringComparer.Ordinal).ToList();
             Assert.AreEqual(wantTotal.Count, gotTotal.Count, $"{ctx} totalWars count");
             for (int k = 0; k < wantTotal.Count; k++) Assert.AreEqual(wantTotal[k], gotTotal[k], $"{ctx} totalWars[{k}]");
-            var wantHist = (JArray)want["warHistory"];
+            var wantHist = (want["warHistory"] as JArray ?? new JArray());
             Assert.AreEqual(wantHist.Count, w.warHistory.Count, $"{ctx} warHistory count");
             for (int k = 0; k < wantHist.Count; k++) Assert.AreEqual(wantHist[k].Value<int>(), w.warHistory[k], $"{ctx} warHistory[{k}]");
             Assert.AreEqual(want["statWars"].Value<int>(), w.statWars, $"{ctx} statWars");
             Assert.AreEqual(want["civSeq"].Value<int>(), w.civSeq, $"{ctx} civSeq");
 
             // alliances 全字段
-            var wantAl = (JArray)want["alliances"];
+            var wantAl = (want["alliances"] as JArray ?? new JArray());
             Assert.AreEqual(wantAl.Count, w.alliances.Count, $"{ctx} alliances count");
             var alOrder = w.alliances.OrderBy((a) => a.id).ToList();
             for (int k = 0; k < wantAl.Count; k++)
@@ -2351,7 +2408,7 @@ namespace PixelWorldBox.Tests
             }
 
             // directives 全字段（含 finishDirective 结算态）
-            var wantDir = (JArray)want["directives"];
+            var wantDir = (want["directives"] as JArray ?? new JArray());
             Assert.AreEqual(wantDir.Count, w.directives.Count, $"{ctx} directives count");
             var dirOrder = w.directives.OrderBy((d) => d.id).ToList();
             for (int k = 0; k < wantDir.Count; k++)
@@ -2374,7 +2431,7 @@ namespace PixelWorldBox.Tests
             }
 
             // evoNodes（society/物种图谱——id 序对账）
-            var wantEvo = (JArray)want["evoNodes"];
+            var wantEvo = (want["evoNodes"] as JArray ?? new JArray());
             Assert.AreEqual(wantEvo.Count, w.evoNodes.Count, $"{ctx} evoNodes count");
             var evoOrder = w.evoNodes.OrderBy((n) => n.id).ToList();
             for (int k = 0; k < wantEvo.Count; k++)
@@ -2393,7 +2450,7 @@ namespace PixelWorldBox.Tests
             }
 
             // —— M-U3e 扩展段：emTechs（涌现科技注册表全字段）——
-            var wantEm = (JArray)want["emTechs"];
+            var wantEm = (want["emTechs"] as JArray ?? new JArray());
             Assert.AreEqual(wantEm.Count, w.emTechs.Count, $"{ctx} emTechs count");
             var emOrder = w.emTechs.Values.OrderBy((t) => t.gen).ToList();
             for (int k = 0; k < wantEm.Count; k++)
@@ -2416,7 +2473,7 @@ namespace PixelWorldBox.Tests
             }
 
             // —— M-U3f 扩展段：armies（economyTick 军饷/欠饷消费域）——
-            var wantAr = (JArray)want["armies"];
+            var wantAr = (want["armies"] as JArray ?? new JArray());
             Assert.AreEqual(wantAr.Count, w.armies.Count, $"{ctx} armies count");
             for (int k = 0; k < wantAr.Count; k++)
             {
@@ -2433,7 +2490,7 @@ namespace PixelWorldBox.Tests
             }
 
             // —— M-U3f 扩展段：emIdeas（涌现理念注册表全字段）——
-            var wantId = (JArray)want["emIdeas"];
+            var wantId = (want["emIdeas"] as JArray ?? new JArray());
             Assert.AreEqual(wantId.Count, w.emIdeas.Count, $"{ctx} emIdeas count");
             for (int k = 0; k < wantId.Count; k++)
             {
@@ -2487,6 +2544,27 @@ namespace PixelWorldBox.Tests
 
         private class ArmyCtx { public WbWorld w; }
 
+        // —— 类内共享助手（LoadJson/Hex 与主类 WbGoldenTests 同构；dotnet/Unity 双域可编译）——
+        private static T LoadJson<T>(string fileName)
+        {
+            string[] candidates =
+            {
+                "Assets/StreamingAssets/WbGolden/" + fileName,
+                System.IO.Path.Combine(NUnit.Framework.TestContext.CurrentContext.TestDirectory, "Assets/StreamingAssets/WbGolden/" + fileName),
+                System.IO.Path.Combine(System.IO.Directory.GetParent("Assets").FullName, "Assets/StreamingAssets/WbGolden/" + fileName),
+            };
+            string path = candidates[0];
+            foreach (var c in candidates) if (System.IO.File.Exists(c)) { path = c; break; }
+            Assert.IsTrue(System.IO.File.Exists(path), $"golden json not found: {path}");
+            return Newtonsoft.Json.JsonConvert.DeserializeObject<T>(System.IO.File.ReadAllText(path));
+        }
+        private static string Hex(byte[] a, int off, int n)
+        {
+            var sb = new System.Text.StringBuilder(n * 2);
+            for (int i = 0; i < n; i++) sb.Append(a[off + i].ToString("x2"));
+            return sb.ToString();
+        }
+
         [Test]
         public void Test10_ArmyTick_Golden()
         {
@@ -2498,7 +2576,7 @@ namespace PixelWorldBox.Tests
             Assert.AreEqual(24, meta["armyMax"].Value<int>(), "meta ARMY_MAX");
             var scenarios = (Newtonsoft.Json.Linq.JArray)golden["scenarios"];
             Assert.AreEqual(16, scenarios.Count, "scenario count");
-            foreach (var sc in scenarios) RunArmyScenario(sc);
+            foreach (var sc in scenarios) RunArmyScenario((Newtonsoft.Json.Linq.JObject)sc);
         }
 
         private void RunArmyScenario(Newtonsoft.Json.Linq.JObject sc)
@@ -2510,7 +2588,7 @@ namespace PixelWorldBox.Tests
             // eventSeq 归位在 setup 特判后（gen runScenario 同序：setup(embark) → eventSeq0 快照）
 
             // terrain RLE
-            var rle = (Newtonsoft.Json.Linq.JArray)sc["terrainRle"];
+            var rle = (sc["terrainRle"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray());
             int pos = 0;
             for (int k = 0; k < rle.Count; k += 2)
             {
@@ -2522,13 +2600,13 @@ namespace PixelWorldBox.Tests
             var fx = sc["fixture"];
             // paint
             if (fx["paint"] != null)
-                foreach (var p in (Newtonsoft.Json.Linq.JArray)fx["paint"])
+                foreach (var p in (fx["paint"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                 {
                     int x0 = p[0].Value<int>(), y0 = p[1].Value<int>(), x1 = p[2].Value<int>(), y1 = p[3].Value<int>(), t = p[4].Value<int>();
                     for (int y = y0; y <= y1; y++) for (int x = x0; x <= x1; x++) w.terrain[y * WbWorld.W + x] = (byte)t;
                 }
             // civs
-            foreach (var c in (Newtonsoft.Json.Linq.JArray)fx["civs"])
+            foreach (var c in (fx["civs"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
             {
                 var civ = new WbCiv
                 {
@@ -2551,8 +2629,8 @@ namespace PixelWorldBox.Tests
                 if (c["kingId"] != null && c["kingId"].Type != Newtonsoft.Json.Linq.JTokenType.Null) civ.kingId = c["kingId"].Value<int>();
                 if (c["armyCd"] != null && c["armyCd"].Type != Newtonsoft.Json.Linq.JTokenType.Null) civ.armyCd = c["armyCd"].Value<int>();
                 if (c["techs"] != null && c["techs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
-                    foreach (var t in (Newtonsoft.Json.Linq.JArray)c["techs"]) civ.techs.Add(t.ToString());
-                foreach (var t in (Newtonsoft.Json.Linq.JArray)c["tiles"]) civ.tiles.Add(t.Value<int>());
+                    foreach (var t in (c["techs"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray())) civ.techs.Add(t.ToString());
+                foreach (var t in (c["tiles"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray())) civ.tiles.Add(t.Value<int>());
                 w.civs.Add(civ);
                 while (w.civs.Count <= civ.id) w.civs.Add(null);
                 if (w.civs[civ.id] == null) w.civs[civ.id] = civ;
@@ -2560,16 +2638,16 @@ namespace PixelWorldBox.Tests
                 foreach (int i in civ.tiles) w.owner[i] = (short)civ.id;
             }
             // units
-            foreach (var u in (Newtonsoft.Json.Linq.JArray)fx["units"]) PutArmyUnit(w, u);
+            foreach (var u in (fx["units"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray())) PutArmyUnit(w, (Newtonsoft.Json.Linq.JObject)u);
             // rel / buildings / civBuildCounts / directives / wars / armies
             if (fx["rel"] != null)
-                foreach (var r in (Newtonsoft.Json.Linq.JArray)fx["rel"])
+                foreach (var r in (fx["rel"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                 {
                     int a = r[0].Value<int>(), b = r[1].Value<int>(), v = r[2].Value<int>();
                     w.rel[a < b ? $"{a}-{b}" : $"{b}-{a}"] = v;
                 }
             if (fx["buildings"] != null)
-                foreach (var b in (Newtonsoft.Json.Linq.JArray)fx["buildings"])
+                foreach (var b in (fx["buildings"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                 {
                     int i = b[0].Value<int>(), kind = b[1].Value<int>(), civ = b[2].Value<int>();
                     w.buildings.Add(new WbBuilding { i = i, x = i % WbWorld.W, y = i / WbWorld.W, kind = kind, civ = civ });
@@ -2579,7 +2657,7 @@ namespace PixelWorldBox.Tests
                     if (cw != null && kind != WbCivSim.BUILD_KINDS.WALL) cw.houses++;
                 }
             if (fx["civBuildCounts"] != null)
-                foreach (var cb in (Newtonsoft.Json.Linq.JArray)fx["civBuildCounts"])
+                foreach (var cb in (fx["civBuildCounts"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                 {
                     var arr = new int[12];
                     int k = 0;
@@ -2587,7 +2665,7 @@ namespace PixelWorldBox.Tests
                     w.civBuildCounts[cb[0].Value<int>()] = arr;
                 }
             if (fx["directives"] != null)
-                foreach (var d in (Newtonsoft.Json.Linq.JArray)fx["directives"])
+                foreach (var d in (fx["directives"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                 {
                     w.directives.Add(new WbDirective
                     {
@@ -2603,7 +2681,7 @@ namespace PixelWorldBox.Tests
                     w.dirSeq = System.Math.Max(w.dirSeq, (d["id"]?.Value<int>() ?? w.directives.Count) + 1);
                 }
             if (fx["wars"] != null)
-                foreach (var wd in (Newtonsoft.Json.Linq.JArray)fx["wars"])
+                foreach (var wd in (fx["wars"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                 {
                     w.warData[wd["key"].ToString()] = new WbWarData
                     {
@@ -2622,7 +2700,7 @@ namespace PixelWorldBox.Tests
                         lastActiveTick = wd["lastActiveTick"]?.Value<int>() ?? 0,
                     };
                 }
-            foreach (var ar in (Newtonsoft.Json.Linq.JArray)fx["armies"]) PutArmy(w, ar);
+            foreach (var ar in (fx["armies"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray())) PutArmy(w, (Newtonsoft.Json.Linq.JObject)ar);
             // —— setup 特判（gen 无法序列化函数 → 名称分发；ARM15 成员预置 boat → embark 零 rng）——
             if (name == "ARM15-naval-crossing") WbCivSim.ArmyEmbark(w, w.armies[0]);
             w.tickCount = sc["startTick"].Value<int>();
@@ -2631,7 +2709,7 @@ namespace PixelWorldBox.Tests
             w.eventSeq = sc["eventSeq0"].Value<int>();   // gen 同款：setup 后事件基线归位
 
             // —— 逐 tick 驱动 + 断言 ——
-            var traces = (Newtonsoft.Json.Linq.JArray)sc["traces"];
+            var traces = (sc["traces"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray());
             for (int k = 0; k < traces.Count; k++)
             {
                 if (w.tickCount % 5 == 0) WbCivSim.ArmyTick(w);   // 宿主协议 engine L2561
@@ -2639,7 +2717,7 @@ namespace PixelWorldBox.Tests
                 var want = (Newtonsoft.Json.Linq.JObject)traces[k];
                 Assert.AreEqual(want["rngA"].Value<long>(), (long)w.rngA, $"{name} t{k} rngA");
                 // armies 全字段逐位
-                var wantArmies = (Newtonsoft.Json.Linq.JArray)want["armies"];
+                var wantArmies = (want["armies"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray());
                 Assert.AreEqual(wantArmies.Count, w.armies.Count, $"{name} t{k} armies n");
                 for (int i = 0; i < wantArmies.Count; i++)
                 {
@@ -2664,7 +2742,7 @@ namespace PixelWorldBox.Tests
                         Assert.AreEqual(wa["clashWith"].Value<int>(), ga.clashWith ?? -1, $"{name} t{k} army{i} clashWith");
                 }
                 // units 关键字段（编队阵位/levy 换算/boat/army 回填/dead）
-                var wantUnits = (Newtonsoft.Json.Linq.JArray)want["units"];
+                var wantUnits = (want["units"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray());
                 Assert.AreEqual(wantUnits.Count, w.units.Count, $"{name} t{k} units n");
                 for (int i = 0; i < wantUnits.Count; i++)
                 {
@@ -2682,7 +2760,7 @@ namespace PixelWorldBox.Tests
                     Assert.AreEqual(wantArmy, gotArmy, $"{name} t{k} unit{wu["id"]} army");
                 }
                 // 记分与事件
-                var wantWars = (Newtonsoft.Json.Linq.JArray)want["warData"];
+                var wantWars = (want["warData"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray());
                 Assert.AreEqual(wantWars.Count, w.warData.Count, $"{name} t{k} warData n");
                 foreach (var ww in wantWars)
                 {
@@ -2691,8 +2769,8 @@ namespace PixelWorldBox.Tests
                     Assert.AreEqual(ww["scoreB"].Value<double>(), gw.scoreB, $"{name} t{k} {ww["key"]} scoreB");
                     Assert.AreEqual(ww["battles"].Value<int>(), gw.battles, $"{name} t{k} {ww["key"]} battles");
                 }
-                var wantEv = (Newtonsoft.Json.Linq.JArray)want["newEvents"];
-                Assert.AreEqual(wantEv.Count, w.worldEvents.Count, $"{name} t{k} events n");
+                var wantEv = (want["newEvents"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray());
+                Assert.AreEqual(wantEv.Count, w.worldEvents.Count, $"{name} t{k} events n got=[{string.Join(",", w.worldEvents.Select(e => e.kind))}]");
                 for (int i = 0; i < wantEv.Count; i++)
                     Assert.AreEqual(wantEv[i]["kind"].ToString(), w.worldEvents[i].kind, $"{name} t{k} ev{i} kind");
                 ArmyHexEq(want["shake"], w.shake, $"{name} t{k} shake");
@@ -2706,7 +2784,7 @@ namespace PixelWorldBox.Tests
             return null;
         }
 
-        private static void ArmyHexEq(object wantHex, double got, string ctx)
+        private static void ArmyHexEq(Newtonsoft.Json.Linq.JToken wantHex, double got, string ctx)
         {
             if (wantHex == null || wantHex.Type == Newtonsoft.Json.Linq.JTokenType.Null) return;
             byte[] b = new byte[8];
@@ -2786,7 +2864,9 @@ namespace PixelWorldBox.Tests
         private static double JHexD(Newtonsoft.Json.Linq.JToken tok)
         {
             if (tok == null || tok.Type == Newtonsoft.Json.Linq.JTokenType.Null) return 0;
-            return HexToF64(tok.ToString());
+            // 双格式：f64 bits hex 串（主流黄金）或普通 JSON 数字（gen 采样数字位姿）
+            if (tok.Type == Newtonsoft.Json.Linq.JTokenType.String) return HexToF64(tok.ToString());
+            return tok.Value<double>();
         }
 
         private static void AssertOpsEqual(Newtonsoft.Json.Linq.JArray want, WbDrawList got, string ctx)
@@ -2814,7 +2894,7 @@ namespace PixelWorldBox.Tests
                     for (int j = 0; j < sarr.Count; j++)
                     {
                         if (sarr[j].Type == Newtonsoft.Json.Linq.JTokenType.String)
-                            Assert.AreEqual(sarr[j].ToString(), (string)gop.s[j], ctx + $" op[{k}].s[{j}] 样式串");
+                            Assert.AreEqual(sarr[j].ToString(), gop.s[j] is string sstr ? sstr : Convert.ToString(gop.s[j], System.Globalization.CultureInfo.InvariantCulture), ctx + $" op[{k}].s[{j}] 样式串");
                         else
                             Assert.AreEqual(sarr[j].Value<double>(), (double)gop.s[j], ctx + $" op[{k}].s[{j}] lineWidth");
                     }
@@ -2865,7 +2945,7 @@ namespace PixelWorldBox.Tests
         private void RunTerrainScenario(Newtonsoft.Json.Linq.JObject sc)
         {
             string name = sc["name"].ToString();
-            var tiles = (Newtonsoft.Json.Linq.JArray)sc["tiles"];
+            var tiles = (sc["tiles"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray());
             var st = NewRenderState();
             foreach (var tl in tiles)
             {
@@ -2927,8 +3007,8 @@ namespace PixelWorldBox.Tests
             st.season = inp["season"].Value<int>();
             var L = new WbDrawList();
             WbRender.PropsBake(st, i, L);
-            AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
-            AssertBailsEqual((Newtonsoft.Json.Linq.JArray)sc["bails"], L, name);
+            AssertOpsEqual((sc["ops"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), L, name);
+            AssertBailsEqual((sc["bails"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), L, name);
         }
 
         private void RunUnitScenario(Newtonsoft.Json.Linq.JObject sc)
@@ -2945,7 +3025,7 @@ namespace PixelWorldBox.Tests
             st.fxHpBars = inp["fxPrefs"]["hpBars"].Value<bool>();
             st.selectedId = inp["selectedId"].Value<int>();
             if (inp["civs"] != null && inp["civs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
-                foreach (var c in (Newtonsoft.Json.Linq.JArray)inp["civs"])
+                foreach (var c in (inp["civs"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                 {
                     int cid = c["id"].Value<int>();
                     while (st.civs.Count <= cid) st.civs.Add(null);
@@ -2959,7 +3039,7 @@ namespace PixelWorldBox.Tests
                     };
                 }
             var units = new List<WbU>();
-            foreach (var q in (Newtonsoft.Json.Linq.JArray)inp["units"])
+            foreach (var q in (inp["units"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
             {
                 var u = new WbU
                 {
@@ -2991,8 +3071,8 @@ namespace PixelWorldBox.Tests
             }
             var L = new WbDrawList();
             WbRender.UnitScene(st, units, L);
-            AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
-            AssertBailsEqual((Newtonsoft.Json.Linq.JArray)sc["bails"], L, name);
+            AssertOpsEqual((sc["ops"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), L, name);
+            AssertBailsEqual((sc["bails"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), L, name);
         }
 
         // ============================================================
@@ -3050,7 +3130,7 @@ namespace PixelWorldBox.Tests
                 else if (fn == "drawDeer") WbSprites.DrawDeer(L, u);
                 else Assert.Fail("未知精灵函数 " + fn);
             }
-            AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
+            AssertOpsEqual((sc["ops"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), L, name);
         }
 
         // ============================================================
@@ -3098,7 +3178,7 @@ namespace PixelWorldBox.Tests
             else if (fn == "drawHydra") WbSprites.DrawHydra(L, u, frame);
             else if (fn == "drawMage") WbSprites.DrawMage(L, u, frame);
             else Assert.Fail("未知物种函数 " + fn);
-            AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
+            AssertOpsEqual((sc["ops"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), L, name);
         }
 
         // render2.json in.u 重建（dumpU 逆变换；f64 hex → double；渲染域字段映射 WbU）
@@ -3226,7 +3306,7 @@ namespace PixelWorldBox.Tests
                 else if (fn == "drawShark") WbSprites.DrawShark(L, u, inp["frame"].Value<int>());
                 else Assert.Fail("未知渲染 IV 函数 " + fn);
             }
-            AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
+            AssertOpsEqual((sc["ops"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), L, name);
         }
 
         // ============================================================
@@ -3266,9 +3346,9 @@ namespace PixelWorldBox.Tests
                         Assert.AreEqual(sv, enc, $"{name} {f} RleEncode round-trip");
                     }
                     // 列式单位行：RowsToUnits 协议 + round-trip 重建 == 黄金 u
-                    var uArr = (Newtonsoft.Json.Linq.JArray)save["u"];
+                    var uArr = (save["u"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray());
                     var units = WbSave.RowsToUnits(uArr);
-                    var units41 = (Newtonsoft.Json.Linq.JArray)sc["units41"];
+                    var units41 = (sc["units41"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray());
                     Assert.AreEqual(units41.Count, units.Count, $"{name} rowsToUnits 行数");
                     var rebuilt = new Newtonsoft.Json.Linq.JArray();
                     var headerArr = new Newtonsoft.Json.Linq.JArray();
@@ -3278,7 +3358,7 @@ namespace PixelWorldBox.Tests
                     {
                         var row = new Newtonsoft.Json.Linq.JArray();
                         foreach (var hf in ufields)
-                            row.Add(dict.ContainsKey(hf) ? (JToken)dict[hf] : JToken.Parse("null"));
+                            row.Add(dict.ContainsKey(hf) ? JToken.FromObject(dict[hf]) : JToken.Parse("null"));
                         rebuilt.Add(row);
                     }
                     Assert.AreEqual(save["u"].ToString(Formatting.None), rebuilt.ToString(Formatting.None), $"{name} rows round-trip 逐位");
@@ -3299,11 +3379,11 @@ namespace PixelWorldBox.Tests
                     // cam 谓词 + clamp
                     var camIn = sc["camIn"];
                     bool finite = camIn != null && camIn.Type == JTokenType.Object
-                        && WbSave.CamFinite(JHexD(camIn["x"]), JHexD(camIn["y"]), camIn["zoom"].ToString() == "NaN" ? double.NaN : JHexD(camIn["zoom"]));
+                        && WbSave.CamFinite(JHexD(camIn["x"]), JHexD(camIn["y"]), camIn["zoom"].ToString() == "NaN" ? WbMath.JsNaN : JHexD(camIn["zoom"]));
                     Assert.AreEqual(sc["camApplied"].Value<bool>(), finite, $"{name} CamFinite 谓词");
                     if (finite && sc["camApplied"].Value<bool>())
                     {
-                        double rawZoom = camIn["zoom"].ToString() == "NaN" ? double.NaN : JHexD(camIn["zoom"]);
+                        double rawZoom = camIn["zoom"].ToString() == "NaN" ? WbMath.JsNaN : JHexD(camIn["zoom"]);
                         Assert.AreEqual(sc["cam"]["zoom"].ToString(), F64Hex(WbSave.CamZoomClamp(rawZoom)), $"{name} CamZoomClamp");
                     }
                     // occ clamp 逐行（注入表与 gen-save 硬编码同源；civ 存活 = 0/1 两文明）
@@ -3311,7 +3391,7 @@ namespace PixelWorldBox.Tests
                     {
                         int[][] injected = new[] { new[] { 0, 0, 0 }, new[] { 1, 0, 1 }, new[] { 2, 0, 50 }, new[] { 3, 0, 99 }, new[] { 4, 0, 100 }, new[] { 5, 0, 150 }, new[] { 6, 9, 10 }, new[] { 7, 0, -5 }, new[] { -1, 0, 10 }, new[] { W * H, 0, 10 }, new[] { 8, 1, 3 }, new[] { 9, 0, 98 } };
                         var goldOcc = new Dictionary<int, int[]>();
-                        foreach (var r in (Newtonsoft.Json.Linq.JArray)sc["occ"])
+                        foreach (var r in (sc["occ"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                         {
                             var row = (Newtonsoft.Json.Linq.JArray)r;
                             goldOcc[row[0].Value<int>()] = new[] { row[0].Value<int>(), row[1].Value<int>(), row[2].Value<int>() };
@@ -3331,13 +3411,13 @@ namespace PixelWorldBox.Tests
                 }
                 else if (name == "H-math")
                 {
-                    foreach (var r in (Newtonsoft.Json.Linq.JArray)sc["hash2"])
+                    foreach (var r in (sc["hash2"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                     {
                         var row = (Newtonsoft.Json.Linq.JArray)r;
                         double got = WbSave.Hash2(row[0].Value<int>(), row[1].Value<int>(), row[2].Value<int>());
                         Assert.AreEqual(row[3].ToString(), F64Hex(got), $"hash2({row[0]},{row[1]},{row[2]}) f64 逐位");
                     }
-                    foreach (var r in (Newtonsoft.Json.Linq.JArray)sc["reseed"])
+                    foreach (var r in (sc["reseed"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                     {
                         var row = (Newtonsoft.Json.Linq.JArray)r;
                         uint got = WbSave.ReseedRng(row[0].Value<int>(), row[1].Value<int>());
@@ -3346,7 +3426,7 @@ namespace PixelWorldBox.Tests
                 }
                 else if (name == "V-validate")
                 {
-                    foreach (var cT in (Newtonsoft.Json.Linq.JArray)sc["cases"])
+                    foreach (var cT in (sc["cases"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                     {
                         var c = (Newtonsoft.Json.Linq.JObject)cT;
                         string got = WbSave.ValidateSaveData(c["input"]);
@@ -3386,6 +3466,60 @@ namespace PixelWorldBox.Tests
             };
             foreach (var p in candidates) if (System.IO.File.Exists(p)) return p;
             throw new System.IO.FileNotFoundException("黄金文件未找到: " + fileName);
+        }
+
+        // —— 渲染系 Test19-22 共享助手（与 WbCivTickGoldenTests 同构；跨类不可见故类内副本）——
+        private static double HexToF64(string hex)
+        {
+            byte[] b = new byte[8];
+            for (int i = 0; i < 8; i++) b[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
+            return BitConverter.ToDouble(b, 0);
+        }
+        private static double JHexD(Newtonsoft.Json.Linq.JToken tok)
+        {
+            if (tok == null || tok.Type == Newtonsoft.Json.Linq.JTokenType.Null) return 0;
+            // 双格式：f64 bits hex 串（主流黄金）或普通 JSON 数字（gen 采样数字位姿）
+            if (tok.Type == Newtonsoft.Json.Linq.JTokenType.String) return HexToF64(tok.ToString());
+            return tok.Value<double>();
+        }
+        private static string JHex(JToken tok) => tok == null || tok.Type == JTokenType.Null ? WbRender.F64Hex(0) : tok.ToString();
+        private WbRenderState NewRenderState()
+        {
+            var st = new WbRenderState();
+            for (int i = 0; i < WbRender.W * WbRender.H; i++) st.owner[i] = -1;
+            return st;
+        }
+        private static void AssertOpsEqual(Newtonsoft.Json.Linq.JArray want, WbDrawList got, string ctx)
+        {
+            Assert.AreEqual(want.Count, got.ops.Count, ctx + " op 数");
+            for (int k = 0; k < want.Count; k++)
+            {
+                var wop = want[k];
+                var gop = got.ops[k];
+                Assert.AreEqual(wop["o"].ToString(), gop.o, ctx + $" op[{k}] opcode");
+                var wa = (Newtonsoft.Json.Linq.JArray)wop["a"];
+                Assert.AreEqual(wa.Count, gop.a.Length, ctx + $" op[{k}] 参数数");
+                for (int j = 0; j < wa.Count; j++)
+                    Assert.AreEqual(JHex(wa[j]), WbRender.F64Hex(gop.a[j]), ctx + $" op[{k}].a[{j}]（f64 bits）");
+                var ws = wop["s"];
+                if (ws == null || ws.Type == Newtonsoft.Json.Linq.JTokenType.Null)
+                {
+                    Assert.IsNull(gop.s, ctx + $" op[{k}] s=null");
+                }
+                else
+                {
+                    Assert.IsNotNull(gop.s, ctx + $" op[{k}] s 非空");
+                    var sarr = (Newtonsoft.Json.Linq.JArray)ws;
+                    Assert.AreEqual(sarr.Count, gop.s.Length, ctx + $" op[{k}] s 元素数");
+                    for (int j = 0; j < sarr.Count; j++)
+                    {
+                        if (sarr[j].Type == Newtonsoft.Json.Linq.JTokenType.String)
+                            Assert.AreEqual(sarr[j].ToString(), gop.s[j] is string sstr ? sstr : Convert.ToString(gop.s[j], System.Globalization.CultureInfo.InvariantCulture), ctx + $" op[{k}].s[{j}] 样式串");
+                        else
+                            Assert.AreEqual(sarr[j].Value<double>(), (double)gop.s[j], ctx + $" op[{k}].s[{j}] lineWidth");
+                    }
+                }
+            }
         }
 
         [OneTimeSetUp]
@@ -3453,7 +3587,7 @@ namespace PixelWorldBox.Tests
             CollectionAssert.AreEqual(new[] { 100, 101, 102 }, dynIds, "dyn races 重注册集（103 父种丢失丢弃）");
             Assert.IsTrue(stL.CivRaces.Contains(102), "102 文明亚种入 CIV_RACES");
             Assert.AreEqual("#a0ff8f", stL.RacesOut[102]["dynTint"].ToString(), "tintIdx 9 → clamp 7");
-            Assert.IsTrue(JToken.DeepEquals(gL["dyn"]["races"][2]["def"]["vis"], WbSave2.VisToTuple(stL.RacesOut[102]["vis"])), "102 vis 元组逐位");
+            Assert.IsTrue(JToken.DeepEquals(gL["dyn"]["races"][2]["def"]["vis"], WbSave2.VisToTuple((JObject)stL.RacesOut[102]["vis"])), "102 vis 元组逐位");
             Assert.IsNotNull(stL.RacesOut[101]["vis"]["root"], "101 缺 vis → visFromGene 兜底");
             Assert.AreEqual(2, (int)stL.EmergentWeapons[5]["pl"], "武器 5 dtype1 fire>0.4 → pl 2");
             Assert.AreEqual(6, (int)stL.EmergentWeapons[6]["pl"], "武器 6 dtype 9→4 → pl 6");
@@ -3588,7 +3722,7 @@ namespace PixelWorldBox.Tests
                 st.fxHpBars = inp["fxPrefs"]["hpBars"].Value<bool>();
                 st.selectedId = inp["selectedId"].Value<int>();
                 if (inp["civs"] != null && inp["civs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
-                    foreach (var c in (Newtonsoft.Json.Linq.JArray)inp["civs"])
+                    foreach (var c in (inp["civs"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                     {
                         int cid = c["id"].Value<int>();
                         while (st.civs.Count <= cid) st.civs.Add(null);
@@ -3602,7 +3736,7 @@ namespace PixelWorldBox.Tests
                         };
                     }
                 var units = new System.Collections.Generic.List<WbU>();
-                foreach (var q in (Newtonsoft.Json.Linq.JArray)inp["units"])
+                foreach (var q in (inp["units"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                 {
                     var u = new WbU
                     {
@@ -3634,7 +3768,7 @@ namespace PixelWorldBox.Tests
                 }
                 var L = new WbDrawList();
                 WbRender.UnitScene(st, units, L);
-                AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);   // 全展开无 bails（直调语义）
+                AssertOpsEqual((sc["ops"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), L, name);   // 全展开无 bails（直调语义）
                 n++;
             }
             Assert.AreEqual(88, n, "render5 场景数（U 组 48 + F 组补测 40）");
@@ -3662,8 +3796,8 @@ namespace PixelWorldBox.Tests
             foreach (var sc in (Newtonsoft.Json.Linq.JArray)gold6["scens"])
             {
                 string name = sc["name"].ToString();
-                var ops = (Newtonsoft.Json.Linq.JArray)sc["in"]["ops"];
-                var outs = (Newtonsoft.Json.Linq.JArray)sc["out"];
+                var ops = (sc["in"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray())["ops"];
+                var outs = (sc["out"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray());
                 WbEmergence.InvalidateVisCache();                        // 场景隔离（gen vcScene 首行全清）
                 var refs = new System.Collections.Generic.Dictionary<int, WbVisCache>();
                 int cur = 0;                                             // out 游标（仅 'c' op 消费）
@@ -3755,7 +3889,7 @@ namespace PixelWorldBox.Tests
                 st.fxHpBars = inp["fxPrefs"]["hpBars"].Value<bool>();
                 st.selectedId = inp["selectedId"].Value<int>();
                 if (inp["civs"] != null && inp["civs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
-                    foreach (var c in (Newtonsoft.Json.Linq.JArray)inp["civs"])
+                    foreach (var c in (inp["civs"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                     {
                         int cid = c["id"].Value<int>();
                         while (st.civs.Count <= cid) st.civs.Add(null);
@@ -3802,7 +3936,7 @@ namespace PixelWorldBox.Tests
                     }
                 st.RdefHost = (race) => dynDefs.TryGetValue(race, out var rd) ? rd : null;
                 var units = new System.Collections.Generic.List<WbU>();
-                foreach (var q in (Newtonsoft.Json.Linq.JArray)inp["units"])
+                foreach (var q in (inp["units"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                 {
                     var u = new WbU
                     {
@@ -3834,7 +3968,7 @@ namespace PixelWorldBox.Tests
                 }
                 var L = new WbDrawList();
                 WbRender.UnitScene(st, units, L);
-                AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);   // 涌现分支全展开 op 流逐位
+                AssertOpsEqual((sc["ops"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), L, name);   // 涌现分支全展开 op 流逐位
                 n++;
             }
             Assert.AreEqual(19, n, "render7 场景数（E 组 10 + M 组 5 + G 组 4）");
@@ -3863,14 +3997,14 @@ namespace PixelWorldBox.Tests
             }
             var gold = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(FindGolden2("overlay.json")));
             int n = 0;
-            foreach (var sc in (Newtonsoft.Json.Linq.JArray)gold["scens"])
+            foreach (var sc in (gold["scens"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
             {
                 string name = sc["name"].ToString();
                 var st = NewRenderState();
-                st.owner = RleI((Newtonsoft.Json.Linq.JArray)sc["ownerRle"], 256 * 160, -1);
-                st.terrain = RleB((Newtonsoft.Json.Linq.JArray)sc["terrainRle"], 256 * 160, 3);
+                st.owner = RleI((sc["ownerRle"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), 256 * 160, -1);
+                st.terrain = RleB((sc["terrainRle"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), 256 * 160, 3);
                 if (sc["civs"] != null && sc["civs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
-                    foreach (var c in (Newtonsoft.Json.Linq.JArray)sc["civs"])
+                    foreach (var c in (sc["civs"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                     {
                         int cid = c["id"].Value<int>();
                         while (st.civs.Count <= cid) st.civs.Add(null);
@@ -3887,22 +4021,22 @@ namespace PixelWorldBox.Tests
                     mode = sc["mode"].ToString(),
                     alliances = new System.Collections.Generic.List<WbAl>(),
                     allianceOf = new System.Collections.Generic.Dictionary<int, int>(),
-                    tempOverlay = RleB((Newtonsoft.Json.Linq.JArray)sc["tempRle"], 256 * 160, 128),
-                    moistMap = RleB((Newtonsoft.Json.Linq.JArray)sc["moistRle"], 256 * 160, 128),
+                    tempOverlay = RleB((sc["tempRle"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), 256 * 160, 128),
+                    moistMap = RleB((sc["moistRle"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), 256 * 160, 128),
                 };
                 if (sc["alliances"] != null && sc["alliances"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
-                    foreach (var a in (Newtonsoft.Json.Linq.JArray)sc["alliances"])
+                    foreach (var a in (sc["alliances"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                         host.alliances.Add(new WbAl { id = a["id"].Value<int>(), colorHex = a["colorHex"].ToString() });
                 if (sc["allianceOf"] != null && sc["allianceOf"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
-                    foreach (var t in (Newtonsoft.Json.Linq.JArray)sc["allianceOf"])
+                    foreach (var t in (sc["allianceOf"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                         host.allianceOf[t[0].Value<int>()] = t[1].Value<int>();
                 var units = new System.Collections.Generic.List<WbU>();
                 if (sc["units"] != null && sc["units"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
-                    foreach (var u in (Newtonsoft.Json.Linq.JArray)sc["units"])
+                    foreach (var u in (sc["units"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                         units.Add(new WbU { x = LeD(u["x"].ToString()), y = LeD(u["y"].ToString()), dead = u["dead"].Value<int>() });
                 var L = new WbDrawList();
                 WbOverlay.RedrawOverlay(st, units, host, L);
-                AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
+                AssertOpsEqual((sc["ops"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), L, name);
                 n++;
             }
             Assert.AreEqual(10, n, "overlay 场景数（O 组 3 + A 组 3 + D 组 1 + B 组 1 + T 组 2）");
@@ -3917,7 +4051,7 @@ namespace PixelWorldBox.Tests
             double LeD(string h) { var b = new byte[8]; for (int i = 0; i < 8; i++) b[i] = Convert.ToByte(h.Substring(i * 2, 2), 16); return BitConverter.ToDouble(b, 0); }
             var gold = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(FindGolden2("minimap.json")));
             int n = 0;
-            foreach (var sc in (Newtonsoft.Json.Linq.JArray)gold["scens"])
+            foreach (var sc in (gold["scens"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
             {
                 string name = sc["name"].ToString();
                 var st = NewRenderState();
@@ -3925,7 +4059,7 @@ namespace PixelWorldBox.Tests
                 st.camY = LeD(sc["cam"]["y"].ToString());
                 st.camZoom = LeD(sc["cam"]["zoom"].ToString());
                 if (sc["civs"] != null && sc["civs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
-                    foreach (var c in (Newtonsoft.Json.Linq.JArray)sc["civs"])
+                    foreach (var c in (sc["civs"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                     {
                         // 数组序即 id（gen dump：eng.civs.map(c => c ? {colorHex, alive} : null)）
                         st.civs.Add(c == null || c.Type == Newtonsoft.Json.Linq.JTokenType.Null ? null : new WbCiv
@@ -3937,7 +4071,7 @@ namespace PixelWorldBox.Tests
                 if (sc["rdefs"] != null && sc["rdefs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
                 {
                     var dyn = new System.Collections.Generic.Dictionary<int, WbRenderTables.RDef>();
-                    foreach (var r in (Newtonsoft.Json.Linq.JArray)sc["rdefs"])
+                    foreach (var r in (sc["rdefs"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                         dyn[r["id"].Value<int>()] = new WbRenderTables.RDef("wolf", 40, false, false) { isCiv = r["isCiv"].Value<int>() == 1 };
                     st.RdefHost = (race) => dyn.TryGetValue(race, out var d) ? d : null;
                 }
@@ -3959,12 +4093,12 @@ namespace PixelWorldBox.Tests
                 if (sc["buildings"] != null && sc["buildings"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
                 {
                     host.buildings = new System.Collections.Generic.List<double[]>();
-                    foreach (var b in (Newtonsoft.Json.Linq.JArray)sc["buildings"])
+                    foreach (var b in (sc["buildings"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                         host.buildings.Add(new[] { LeD(b["x"].ToString()), LeD(b["y"].ToString()) });
                 }
                 var units = new System.Collections.Generic.List<WbU>();
                 if (sc["units"] != null && sc["units"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
-                    foreach (var u in (Newtonsoft.Json.Linq.JArray)sc["units"])
+                    foreach (var u in (sc["units"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                         units.Add(new WbU
                         {
                             race = u["race"].Value<int>(),
@@ -3976,7 +4110,7 @@ namespace PixelWorldBox.Tests
                         });
                 var L = new WbDrawList();
                 WbMinimap.RenderMinimap(st, units, host, L);
-                AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
+                AssertOpsEqual((sc["ops"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()), L, name);
                 n++;
             }
             Assert.AreEqual(15, n, "minimap 场景数（M01-M14 含 zoom 两档 15 条）");

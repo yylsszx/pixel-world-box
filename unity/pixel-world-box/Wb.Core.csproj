@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    dotnet 侧编译验证壳（T1/T2）：与 Unity asmdef PixelWorldBox.Wb 同源同集。
+    源码集 = Assets/Scripts/Wb/**/*.cs（17 文件），零 UnityEngine 依赖（已勘察）。
+    Unity 侧等价程序集 = com.unity.nuget.newtonsoft-json 3.2.1 (Newtonsoft.Json 13.0.2)。
+    本文件不进 Unity 编译管线（Unity 只认 Assets 下内容），仅用于 CI/dotnet build 验证。
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>PixelWorldBox.Wb</AssemblyName>
+    <RootNamespace>PixelWorldBox.Wb</RootNamespace>
+    <NoWarn>CS0649;CS0169;CS0414;CS0067</NoWarn>
+    <OutputPath>bin/</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Assets/Scripts/Wb/**/*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+</Project>

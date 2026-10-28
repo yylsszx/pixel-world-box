@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    dotnet 侧 NUnit 验证壳（T2）：与 Unity Assets/Tests/Wb.Tests.asmdef 同源同集。
+    黄金加载路径回退链已在 WbGoldenTests.cs 内建：cwd 相对 "Assets/..." 命中工程根，
+    或 TestDirectory（bin-tests/）下同名副本（下方 None 拷贝项提供，dotnet test 实际命中后者）。
+    运行：cd unity/pixel-world-box && dotnet test Wb.Tests.csproj
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>Wb.Tests</AssemblyName>
+    <RootNamespace>PixelWorldBox.Wb.Tests</RootNamespace>
+    <OutputPath>bin-tests/</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Assets/Tests/**/*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="Wb.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- 黄金随测试产物拷贝（保留 Assets/StreamingAssets/WbGolden 相对结构，命中回退链候选 2） -->
+    <None Include="Assets/StreamingAssets/WbGolden/**/*.json" CopyToOutputDirectory="PreserveNewest" Link="Assets/StreamingAssets/WbGolden/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
+    <PackageReference Include="NUnit" Version="3.14.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.5.0" />
+  </ItemGroup>
+</Project>

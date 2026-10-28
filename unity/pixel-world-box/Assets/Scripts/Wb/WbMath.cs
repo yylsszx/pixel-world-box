@@ -16,8 +16,14 @@ namespace PixelWorldBox.Wb
     public static class WbMath
     {
         // ---------------- 位操作（jsmath.rs L9-33） ----------------
-        public static ulong Bits(double x) => BitConverter.DoubleToInt64Bits(x);
+        public static ulong Bits(double x) => unchecked((ulong)BitConverter.DoubleToInt64Bits(x));
         public static double FromBits(ulong b) => BitConverter.Int64BitsToDouble(unchecked((long)b));
+
+        /// JS 规范 NaN 位型 0x7ff8000000000000（V8 ToNumber(undefined)/Number.NaN/NaN 字面量）。
+        /// ⚠ 本机 x86-64 .NET JIT 把 double.NaN 物化为硬件 indefinite 0xfff8…（符号位 1），
+        /// 与 V8 位型分歧——位精确对账（黄金 344 处 NaN 全为 0x7ff8）必须显式位型常量，
+        /// 核心与测试禁用 double.NaN 字面量作 NaN 源（IsNaN 检测符号无关，不受影响）。
+        public static readonly double JsNaN = BitConverter.Int64BitsToDouble(unchecked((long)0x7ff8000000000000UL));
 
         /// jsmath.rs L10-13
         public static int Hi(double x) => unchecked((int)((uint)(Bits(x) >> 32)));
@@ -60,7 +66,7 @@ namespace PixelWorldBox.Wb
                     {
                         w = a;
                     }
-                    if (((uint)hb ^ 0x7ff00000u) | Lo(b) == 0)
+                    if ((((uint)hb ^ 0x7ff00000u) | Lo(b)) == 0)
                     {
                         w = b;
                     }
@@ -76,7 +82,7 @@ namespace PixelWorldBox.Wb
             {
                 if (hb <= 0x000fffff)
                 {
-                    if ((uint)hb | Lo(b) == 0)
+                    if (((uint)hb | Lo(b)) == 0)
                     {
                         return a;
                     }
@@ -124,14 +130,14 @@ namespace PixelWorldBox.Wb
         /// JS Math.min（NaN 传染）—— jsmath.rs L708-716
         public static double JsMin(double a, double b)
         {
-            if (double.IsNaN(a) || double.IsNaN(b)) return double.NaN;
+            if (double.IsNaN(a) || double.IsNaN(b)) return WbMath.JsNaN;
             return a < b ? a : b;
         }
 
         /// JS Math.max（NaN 传染）—— jsmath.rs L719-727
         public static double JsMax(double a, double b)
         {
-            if (double.IsNaN(a) || double.IsNaN(b)) return double.NaN;
+            if (double.IsNaN(a) || double.IsNaN(b)) return WbMath.JsNaN;
             return a > b ? a : b;
         }
 
@@ -247,7 +253,7 @@ namespace PixelWorldBox.Wb
         {
             double y;
             int k;
-            long bhx = Bits(x);
+            long bhx = unchecked((long)Bits(x));
             int xsb = unchecked((int)((ulong)bhx >> 63)) & 1;   // hx & 0x80000000 → 符号位
             y = xsb == 0 ? x : -x;
             int hx = (int)((uint)bhx >> 32) & 0x7fffffff;
