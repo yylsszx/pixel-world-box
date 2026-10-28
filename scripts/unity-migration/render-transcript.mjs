@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { mrrDrawPerson, mrrDrawPersonFine, mrrDrawQuadFine, mrrDrawBoat, mrrDrawCaravan, mrrDrawSheep, mrrDrawWolf, mrrDrawSnowWolf, mrrDrawBear, mrrDrawDeer } from './render2-transcript.mjs';
 import { mrrDrawDragon, mrrDrawPenguin, mrrDrawCamel, mrrDrawScorpion, mrrDrawSnake, mrrDrawSkeleton, mrrDrawDemon, mrrDrawAngel, mrrDrawPhoenix, mrrDrawEnt, mrrDrawLich, mrrDrawHydra, mrrDrawMage, mrrDrawTroll, mrrDrawOgre, mrrDrawWhiteWalker, mrrDrawVampire, mrrDrawKraken, mrrDrawSandworm, mrrDrawBasilisk } from './render3-transcript.mjs';
 import { mrrDrawChicken, mrrDrawPig, mrrDrawRabbit, mrrDrawFox, mrrDrawFish, mrrDrawCrab, mrrDrawTurtle, mrrDrawShark } from './render4-transcript.mjs';
+import { mrrDrawEmergentCreature, mrrDrawEmergentMonster } from './render4-transcript.mjs';
+import { visCacheFor as visCacheFor6 } from './render6-transcript.mjs';   // M-U7c：涌现缓存生产镜像（WbEmergence.cs 语义同源）
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const GOLD = JSON.parse(readFileSync(path.join(ROOT, 'scripts/unity-migration/golden/render.json'), 'utf-8'));
@@ -416,6 +418,13 @@ function sunState(p) {
   const len = 0.6 + 2.2 * (1 - level);
   return { level, sx, sy, len };
 }
+// 动态种族 def 宿主协议（M-U7c）：RDEF 基表 41 静态族；种化/读档动态种由驱动端 setDynRdef 注入（蓝本 RACES 单一注册表的分体等价）
+const DYN_RDEF = new Map();
+export function setDynRdef(m) {
+  DYN_RDEF.clear();
+  if (m) for (const k of Object.keys(m)) DYN_RDEF.set(Number(k), m[k]);
+}
+
 function sunCached(frameCount) {
   if (sunCacheFrame !== frameCount) {
     const p = (frameCount % 2400) / 2400;
@@ -516,7 +525,7 @@ function unitScene(inp, direct = false) {
 
 function drawUnitSprite(L, u, inp, cam, fc, sun, civColor, civHex, direct = false) {
   if (u.boat) { if (direct) { mrrDrawBoat(L, u, civColor, fc); return; } L.bail('drawBoat', [f64hex(u.x), f64hex(u.y), f64hex(fc)]); return; }   // M-U7a：direct→mrr 直调（蓝本 drawBoat(wc,u,civColor,fc)）
-  const def = RDEF[u.race];
+  const def = RDEF[u.race] ?? DYN_RDEF.get(u.race);
   if ((u.caravan ?? 0) > 0) { if (direct) { mrrDrawCaravan(L, u, civColor, fc); return; } L.bail('drawCaravan', [f64hex(u.x), f64hex(u.y), f64hex(fc)]); return; }
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
@@ -597,7 +606,7 @@ function drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex, direct = false)
         L.ops.push({ o: 'save', a: [], s: null });
         L.ops.push({ o: 'scale', a: [f64hex(0.5), f64hex(0.5)], s: null });
         L.ops.push({ o: 'translate', a: [f64hex(tx), f64hex(ty)], s: null });
-        if (direct) mrrDrawPersonFine(L, u, null, civColor, fc, king);   // M-U7a：direct→直调（蓝本 drawPersonFine(wc,u,civColor,fc,king)）
+        if (direct) mrrDrawPersonFine(L, u, def.vis || null, civColor, fc, king);   // M-U7a：direct→直调；M-U7c：vis=def.vis（蓝本 drawPersonFine 内部 RACES 自查的镜像上提，静态 false→null）
         else L.bail('drawPersonFine', [f64hex(u.x), f64hex(u.y), f64hex(fc), f64hex(king ? 1 : 0)]);
         L.ops.push({ o: 'restore', a: [], s: null });
         fin = true;
@@ -680,7 +689,13 @@ function drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex, direct = false)
       }
     }
   }
-  // vis 涌现域 = M-U5+ 桩域（场景不含 vis 单位；蓝本走 visCacheFor→drawEmergent* sprites 域）
+  // v3 涌现物种（视觉基因组）：动态种化的非人形物种走程序化生物绘制 —— 外观随进化真实变化（M-U7c 接线；蓝本 render.ts L2319-2331）
+  if (def.vis && def.sprite !== 'person') {
+    const mShape = def.aquatic ? 'aquatic' : def.sandswim ? 'worm' : (def.sprite === 'basilisk' || def.sprite === 'snake' || def.sprite === 'dragon') ? 'serpent' : null;
+    const vc = visCacheFor6(u.race, def.vis, def.sprite);
+    if (mShape && vc) { if (direct) { mrrDrawEmergentMonster(L, u, vc, mShape, fc); return; } L.bail('drawEmergentMonster', [f64hex(u.x), f64hex(u.y), f64hex(fc)]); return; }
+    if (vc) { if (direct) { mrrDrawEmergentCreature(L, u, vc, fc); return; } L.bail('drawEmergentCreature', [f64hex(u.x), f64hex(u.y), f64hex(fc)]); return; }
+  }
   // 全绘档 switch → sprites.ts 域（M-U5）→ bail 契约
   const BAIL_FNS = {
     person: 'drawPerson', sheep: 'drawSheep', wolf: 'drawWolf', snowwolf: 'drawSnowWolf', bear: 'drawBear',
@@ -699,7 +714,7 @@ function drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex, direct = false)
   } else if (direct) {
     // M-U7a：direct→mrr* 直调（蓝本 render.ts L2333 switch 逐字序）
     switch (def.sprite) {
-      case 'person': mrrDrawPerson(L, u, null, civColor, fc); break;
+      case 'person': mrrDrawPerson(L, u, def.vis || null, civColor, fc); break;   // M-U7c：vis=def.vis（蓝本 drawPerson 内部 RACES 自查的镜像上提）
       case 'sheep': mrrDrawSheep(L, u); break;
       case 'wolf': mrrDrawWolf(L, u); break;
       case 'snowwolf': mrrDrawSnowWolf(L, u); break;

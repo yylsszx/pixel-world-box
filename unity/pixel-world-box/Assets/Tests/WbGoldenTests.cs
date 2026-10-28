@@ -3732,5 +3732,112 @@ namespace PixelWorldBox.Tests
             }
             Assert.AreEqual(27, n, "render6 场景数");
         }
+
+        /// M-U7c 渲染接线 II 黄金回放（render7.json 19 场景 → UnitScene 涌现分支接线全档逐位）
+        /// 重建协议：Test18 同构（f64hex 小端 JHexD）+ RdefHost 动态种 def 注入
+        /// （rdefs 重放契约：vis = JSON 原始数字串 → JObject.Parse → WbVis；aquatic/sandswim/flying 0/1 → bool）
+        [Test]
+        public void Test20_Render7_Golden()
+        {
+            var gold7 = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(FindGolden2("render7.json")));
+            int n = 0;
+            foreach (var sc in (Newtonsoft.Json.Linq.JArray)gold7["scenarios"])
+            {
+                string name = sc["name"].ToString();
+                var inp = sc["in"];
+                var st = NewRenderState();
+                st.terrainAt = (byte)inp["terrainAt"].Value<int>();
+                st.camX = JHexD(inp["cam"]["x"]);
+                st.camY = JHexD(inp["cam"]["y"]);
+                st.camZoom = JHexD(inp["cam"]["zoom"]);
+                st.frameCount = inp["frameCount"].Value<long>();
+                st.fxDayNight = inp["fxPrefs"]["dayNight"].Value<bool>();
+                st.fxHpBars = inp["fxPrefs"]["hpBars"].Value<bool>();
+                st.selectedId = inp["selectedId"].Value<int>();
+                if (inp["civs"] != null && inp["civs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    foreach (var c in (Newtonsoft.Json.Linq.JArray)inp["civs"])
+                    {
+                        int cid = c["id"].Value<int>();
+                        while (st.civs.Count <= cid) st.civs.Add(null);
+                        st.civs[cid] = new WbCiv
+                        {
+                            id = cid,
+                            color = c["color"] != null && c["color"].Type != Newtonsoft.Json.Linq.JTokenType.Null
+                                ? c["color"].Values<int>().ToArray() : new[] { 0, 0, 0 },
+                            colorHex = c["colorHex"]?.ToString() ?? "#000000",
+                            alive = c["alive"] == null || c["alive"].Value<bool>(),
+                        };
+                    }
+                // 动态种族 def 宿主注入（RdefHost 协议；蓝本 RACES[race] 单表分体等价）
+                var dynDefs = new System.Collections.Generic.Dictionary<int, WbRenderTables.RDef>();
+                if (sc["rdefs"] != null && sc["rdefs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    foreach (var kv in (Newtonsoft.Json.Linq.JObject)sc["rdefs"])
+                    {
+                        var d = kv.Value;
+                        WbVis wv = null;
+                        if (d["vis"] != null && d["vis"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                        {
+                            var gv = Newtonsoft.Json.Linq.JObject.Parse(d["vis"].ToString());
+                            wv = new WbVis
+                            {
+                                root = gv["root"].Value<int>(),
+                                hue = gv["hue"].Value<double>(),
+                                lum = gv["lum"].Value<double>(),
+                                size = gv["size"].Value<double>(),
+                                bulk = gv["bulk"].Value<double>(),
+                                horns = gv["horns"].Value<int>(),
+                                spikes = gv["spikes"].Value<int>(),
+                                mane = gv["mane"].Value<int>(),
+                                tail = gv["tail"].Value<int>(),
+                                ears = gv["ears"].Value<int>(),
+                                glow = gv["glow"].Value<int>(),
+                                pattern = gv["pattern"].Value<int>(),
+                                crest = gv["crest"].Value<int>(),
+                            };
+                        }
+                        dynDefs[int.Parse(kv.Key)] = new WbRenderTables.RDef(
+                            d["sprite"].ToString(), d["maxAge"].Value<int>(),
+                            d["aquatic"].Value<int>() != 0, d["flying"].Value<int>() != 0)
+                        { vis = wv != null, visG = wv, sandswim = d["sandswim"].Value<int>() != 0 };
+                    }
+                st.RdefHost = (race) => dynDefs.TryGetValue(race, out var rd) ? rd : null;
+                var units = new System.Collections.Generic.List<WbU>();
+                foreach (var q in (Newtonsoft.Json.Linq.JArray)inp["units"])
+                {
+                    var u = new WbU
+                    {
+                        id = q["id"].Value<int>(),
+                        race = q["race"].Value<int>(),
+                        civ = q["civ"].Value<int>(),
+                        x = JHexD(q["x"]),
+                        y = JHexD(q["y"]),
+                        flip = q["flip"].Value<int>(),
+                        atk = (int)JHexD(q["atk"]),
+                        age = q["age"].Value<int>(),
+                        hurt = q["hurt"].Value<int>(),
+                        hp = JHexD(q["hp"]),
+                        maxHp = JHexD(q["maxHp"]),
+                        boat = q["boat"].Value<int>(),
+                        caravan = q["caravan"].Value<int>(),
+                        king = q["king"].Value<int>(),
+                    };
+                    if (q["rx"] != null && q["rx"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.rx = JHexD(q["rx"]);
+                    if (q["ry"] != null && q["ry"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.ry = JHexD(q["ry"]);
+                    if (q["dpx"] != null && q["dpx"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.dpx = JHexD(q["dpx"]);
+                    if (q["dpy"] != null && q["dpy"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.dpy = JHexD(q["dpy"]);
+                    if (q["lx"] != null && q["lx"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.lx = JHexD(q["lx"]);
+                    if (q["ly"] != null && q["ly"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.ly = JHexD(q["ly"]);
+                    if (q["panic"] != null && q["panic"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.panic = JHexD(q["panic"]);
+                    if (q["wep"] != null && q["wep"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.wep = q["wep"].ToString();
+                    if (q["trait"] != null && q["trait"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.traitName = q["trait"].ToString();
+                    units.Add(u);
+                }
+                var L = new WbDrawList();
+                WbRender.UnitScene(st, units, L);
+                AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);   // 涌现分支全展开 op 流逐位
+                n++;
+            }
+            Assert.AreEqual(19, n, "render7 场景数（E 组 10 + M 组 5 + G 组 4）");
+        }
     }
 }

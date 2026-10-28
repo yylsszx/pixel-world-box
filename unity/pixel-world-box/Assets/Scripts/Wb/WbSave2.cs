@@ -573,6 +573,7 @@ namespace PixelWorldBox.Wb
             st.CivRaces = new List<int>(h.BaseCivRaces);
             // 注册表克隆（宿主 base 表防跨场景污染；rmods 补丁写克隆）
             foreach (var kv in h.Races) st.RacesOut[int.Parse(kv.Key)] = JClone(kv.Value);
+            WbEmergence.InvalidateVisCache();   // 蓝本 engine.ts L15534：读档失效涌现渲染缓存（动态种重注册前全清）
             var dynSave = data["dyn"] as JObject;
             if (isV2 && dynSave != null && dynSave["races"] is JArray dynRaces)
             {

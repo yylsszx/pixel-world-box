@@ -92,7 +92,7 @@ function spriteBaseOf(sprite) {
 // ================= visCacheMap + VisCacheFor（WbEmergence.cs 语义转写） =================
 const visCacheMap = new Map(); // race → vc（模块级缓存；场景首行全清）
 
-function visCacheFor(race, vis, sprite) {
+export function visCacheFor(race, vis, sprite) {   // export（M-U7c：render-transcript unitScene 涌现分支复用本镜像语义）
   if (vis == null) return null;
   const hit = visCacheMap.get(race);
   if (hit) return hit;

@@ -73,7 +73,9 @@ namespace PixelWorldBox.Wb
             { "wolf", "wolf" }, { "snowwolf", "snowwolf" }, { "sheep", "sheep" }, { "bear", "bear" }, { "deer", "deer" },
         };
         // RACES 渲染域子集（types.ts RACES 41 族机械镜像；vis/dynTint = 涌现域，基表全 false/null）
+        // M-U7b+：visG = 涌现视觉基因组（蓝本 def.vis 本体——动态种 def 由宿主 RdefHost 注入，vis=true 且 visG!=null）
         public class RDef { public string sprite; public int maxAge; public bool aquatic, flying, vis; public string dynTint;
+            public WbVis visG; public bool sandswim;   // 蓝本 def.sandswim（沙虫族系巨怪形态锚）
             public RDef(string s, int ma, bool aq, bool fl, bool vis = false, string dt = null)
             { sprite = s; maxAge = ma; aquatic = aq; flying = fl; this.vis = vis; dynTint = dt; } }
         public static readonly Dictionary<int, RDef> RDEF = new Dictionary<int, RDef> {
@@ -169,6 +171,9 @@ namespace PixelWorldBox.Wb
         public bool fxDayNight, fxHpBars;
         public int selectedId;
         public byte terrainAt;       // 单位所在 tile（水面门控；黄金场景单 tile 直灌）
+        // 动态种族 def 宿主协议（M-U7c）：RDEF 基表只含 41 静态族；种化/读档产生的动态种族 def
+        // （sprite/vis 基因组/aquatic/sandswim/flying）由宿主注入——蓝本 RACES[u.race] 单一注册表的 C# 分体等价
+        public Func<int, WbRenderTables.RDef> RdefHost;
 
         public WbRenderState()
         {
@@ -722,7 +727,14 @@ namespace PixelWorldBox.Wb
         static void DrawUnitSprite(WbDrawList L, WbU u, WbRenderState st, double zoom, bool dayNight, WbCiv civ)
         {
             if (u.boat != 0) { WbSprites.DrawBoat(L, u, CivColorOf(civ), (int)st.frameCount); return; }   // M-U7a 接线：bail→WbSprites 直调（蓝本 drawBoat(wc, u, civ&&civ.alive?civ.color:null, fc)）
-            var def = WbRenderTables.RDEF[u.race];
+            // def 解析（蓝本 RACES[u.race]）：基表 41 静态族优先，动态种族落 RdefHost（M-U7c 接线）
+            WbRenderTables.RDef def;
+            if (!WbRenderTables.RDEF.TryGetValue(u.race, out def))
+            {
+                if (st.RdefHost == null) throw new KeyNotFoundException($"RDEF missing race {u.race} (no RdefHost)");
+                def = st.RdefHost(u.race);
+                if (def == null) throw new KeyNotFoundException($"RdefHost returned null for race {u.race}");
+            }
             if (u.caravan > 0) { WbSprites.DrawCaravan(L, u, CivColorOf(civ), (int)st.frameCount); return; } // TS (u.caravan ?? 0) > 0；WbU.caravan int 镜像恒值等价
             double px = u.dpx ?? (u.rx ?? u.x) * 2;
             double py = u.dpy ?? (u.ry ?? u.y) * 2;
@@ -832,7 +844,7 @@ namespace PixelWorldBox.Wb
                         L.Tag("save");
                         L.Tag("scale", 0.5, 0.5);
                         L.Tag("translate", tx, ty);
-                        WbSprites.DrawPersonFine(L, u, null, CivColorOf(civ), (int)st.frameCount, king);   // M-U7a：bail→直调（蓝本 drawPersonFine(wc, u, civColor, fc, king)）
+                        WbSprites.DrawPersonFine(L, u, def.visG, CivColorOf(civ), (int)st.frameCount, king);   // M-U7a：bail→直调；M-U7c：raceVis=def.visG（蓝本 drawPersonFine 内部 RACES[race]?.vis 自查的宿主上提，静态域 null 同义）
                         L.Tag("restore");
                         fin = true;
                     }
@@ -931,11 +943,18 @@ namespace PixelWorldBox.Wb
                     }
                 }
             }
-            // vis 涌现域 = M-U5+ 桩域（基表全 vis=false；黄金场景不含 vis 单位）
+            // v3 涌现物种（视觉基因组）：动态种化的非人形物种走程序化生物绘制 —— 外观随进化真实变化（M-U7c 接线；蓝本 render.ts L2319-2331）
+            if (def.vis && def.sprite != "person")
+            {
+                string mShape = def.aquatic ? "aquatic" : def.sandswim ? "worm" : (def.sprite == "basilisk" || def.sprite == "snake" || def.sprite == "dragon") ? "serpent" : null;
+                var vc = WbEmergence.VisCacheFor(u.race, def.visG, def.sprite);
+                if (mShape != null && vc != null) { WbSprites.DrawEmergentMonster(L, u, vc, mShape, (int)st.frameCount); return; }
+                if (vc != null) { WbSprites.DrawEmergentCreature(L, u, vc, (int)st.frameCount); return; }
+            }
             // 全绘档 switch → WbSprites 直调（M-U7a 接线：bail 契约翻转；蓝本 render.ts L2333 switch 逐字序）
             switch (def.sprite)
             {
-                case "person": WbSprites.DrawPerson(L, u, null, CivColorOf(civ), (int)st.frameCount); break;
+                case "person": WbSprites.DrawPerson(L, u, def.visG, CivColorOf(civ), (int)st.frameCount); break;   // M-U7c：raceVis=def.visG（蓝本 drawPerson 内部 RACES[race]?.vis 自查的宿主上提）
                 case "sheep": WbSprites.DrawSheep(L, u); break;
                 case "wolf": WbSprites.DrawWolf(L, u); break;
                 case "snowwolf": WbSprites.DrawSnowWolf(L, u); break;
