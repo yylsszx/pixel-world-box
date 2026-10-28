@@ -3566,5 +3566,78 @@ namespace PixelWorldBox.Tests
             }
             Assert.AreEqual(6, n, "save3 场景数");
         }
+
+        /// M-U7a 渲染接线 I 黄金回放（render5.json 88 场景 → UnitScene bail→WbSprites 直调全展开 op 流逐位）
+        /// 重建协议与 Test11 RunUnitScenario 同构（f64hex→double / civs color int[3] / terrainAt 门控 tile）
+        [Test]
+        public void Test18_Render5_Golden()
+        {
+            var gold5 = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(FindGolden2("render5.json")));
+            int n = 0;
+            foreach (var sc in (Newtonsoft.Json.Linq.JArray)gold5["scenarios"])
+            {
+                string name = sc["name"].ToString();
+                var inp = sc["in"];
+                var st = NewRenderState();
+                st.terrainAt = (byte)inp["terrainAt"].Value<int>();
+                st.camX = JHexD(inp["cam"]["x"]);
+                st.camY = JHexD(inp["cam"]["y"]);
+                st.camZoom = JHexD(inp["cam"]["zoom"]);
+                st.frameCount = inp["frameCount"].Value<long>();
+                st.fxDayNight = inp["fxPrefs"]["dayNight"].Value<bool>();
+                st.fxHpBars = inp["fxPrefs"]["hpBars"].Value<bool>();
+                st.selectedId = inp["selectedId"].Value<int>();
+                if (inp["civs"] != null && inp["civs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    foreach (var c in (Newtonsoft.Json.Linq.JArray)inp["civs"])
+                    {
+                        int cid = c["id"].Value<int>();
+                        while (st.civs.Count <= cid) st.civs.Add(null);
+                        st.civs[cid] = new WbCiv
+                        {
+                            id = cid,
+                            color = c["color"] != null && c["color"].Type != Newtonsoft.Json.Linq.JTokenType.Null
+                                ? c["color"].Values<int>().ToArray() : new[] { 0, 0, 0 },
+                            colorHex = c["colorHex"]?.ToString() ?? "#000000",
+                            alive = c["alive"] == null || c["alive"].Value<bool>(),
+                        };
+                    }
+                var units = new System.Collections.Generic.List<WbU>();
+                foreach (var q in (Newtonsoft.Json.Linq.JArray)inp["units"])
+                {
+                    var u = new WbU
+                    {
+                        id = q["id"].Value<int>(),
+                        race = q["race"].Value<int>(),
+                        civ = q["civ"].Value<int>(),
+                        x = JHexD(q["x"]),
+                        y = JHexD(q["y"]),
+                        flip = q["flip"].Value<int>(),
+                        atk = (int)JHexD(q["atk"]),
+                        age = q["age"].Value<int>(),
+                        hurt = q["hurt"].Value<int>(),
+                        hp = JHexD(q["hp"]),
+                        maxHp = JHexD(q["maxHp"]),
+                        boat = q["boat"].Value<int>(),
+                        caravan = q["caravan"].Value<int>(),
+                        king = q["king"].Value<int>(),
+                    };
+                    if (q["rx"] != null && q["rx"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.rx = JHexD(q["rx"]);
+                    if (q["ry"] != null && q["ry"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.ry = JHexD(q["ry"]);
+                    if (q["dpx"] != null && q["dpx"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.dpx = JHexD(q["dpx"]);
+                    if (q["dpy"] != null && q["dpy"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.dpy = JHexD(q["dpy"]);
+                    if (q["lx"] != null && q["lx"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.lx = JHexD(q["lx"]);
+                    if (q["ly"] != null && q["ly"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.ly = JHexD(q["ly"]);
+                    if (q["panic"] != null && q["panic"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.panic = JHexD(q["panic"]);
+                    if (q["wep"] != null && q["wep"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.wep = q["wep"].ToString();
+                    if (q["trait"] != null && q["trait"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.traitName = q["trait"].ToString();
+                    units.Add(u);
+                }
+                var L = new WbDrawList();
+                WbRender.UnitScene(st, units, L);
+                AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);   // 全展开无 bails（直调语义）
+                n++;
+            }
+            Assert.AreEqual(88, n, "render5 场景数（U 组 48 + F 组补测 40）");
+        }
     }
 }

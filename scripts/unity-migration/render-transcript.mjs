@@ -5,6 +5,10 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+// M-U7a：直调模式的 sprites 镜像（mrr* 家族——render2/3/4-transcript 已验证语义，同源复用先例同 save3→save2）
+import { mrrDrawPerson, mrrDrawPersonFine, mrrDrawQuadFine, mrrDrawBoat, mrrDrawCaravan, mrrDrawSheep, mrrDrawWolf, mrrDrawSnowWolf, mrrDrawBear, mrrDrawDeer } from './render2-transcript.mjs';
+import { mrrDrawDragon, mrrDrawPenguin, mrrDrawCamel, mrrDrawScorpion, mrrDrawSnake, mrrDrawSkeleton, mrrDrawDemon, mrrDrawAngel, mrrDrawPhoenix, mrrDrawEnt, mrrDrawLich, mrrDrawHydra, mrrDrawMage, mrrDrawTroll, mrrDrawOgre, mrrDrawWhiteWalker, mrrDrawVampire, mrrDrawKraken, mrrDrawSandworm, mrrDrawBasilisk } from './render3-transcript.mjs';
+import { mrrDrawChicken, mrrDrawPig, mrrDrawRabbit, mrrDrawFox, mrrDrawFish, mrrDrawCrab, mrrDrawTurtle, mrrDrawShark } from './render4-transcript.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const GOLD = JSON.parse(readFileSync(path.join(ROOT, 'scripts/unity-migration/golden/render.json'), 'utf-8'));
@@ -306,6 +310,10 @@ class DrawList {
   clear(x, y, w, h) { this.ops.push({ o: 'clearRect', a: [f64hex(x), f64hex(y), f64hex(w), f64hex(h)], s: null }); }
   stroke(style, lw, x, y, w, h) { this.ops.push({ o: 'strokeRect', a: [f64hex(x), f64hex(y), f64hex(w), f64hex(h)], s: [style, lw] }); }
   bail(fn, a) { this.bails.push({ fn, a }); }
+  // —— M-U7a：mrr* C# 风格适配层（WbDrawList 等价面；a 一律 f64hex，fillRect s=[style]，strokeRect s=[style, lw 数字]）——
+  Fill(style, x, y, w, h) { this.fill(style, x, y, w, h); }
+  Stroke(style, lw, x, y, w, h) { this.stroke(style, typeof lw === 'number' ? lw : h2f(lw), x, y, w, h); }
+  Tag(o, ...a) { this.ops.push({ o, a: a.map((v) => (typeof v === 'number' ? f64hex(v) : v)), s: null }); }
 }
 function propsBake(inp) {
   const { i, t, variant, road, snowman, season } = inp;
@@ -425,7 +433,7 @@ function drawCrown(L, cx, baseY) {
   L.fill('#ffe9a8', cx, baseY - 1, 1, 1);
 }
 
-function unitScene(inp) {
+function unitScene(inp, direct = false) {
   const cam = { x: h2f(inp.cam.x), y: h2f(inp.cam.y), zoom: h2f(inp.cam.zoom) };
   const fc = inp.frameCount, cw = inp.cw, ch = inp.ch;
   const L = new DrawList();
@@ -457,16 +465,19 @@ function unitScene(inp) {
       id: q.id, race: q.race, civ: q.civ, x: h2f(q.x), y: h2f(q.y),
       rx: q.rx == null ? undefined : h2f(q.rx), ry: q.ry == null ? undefined : h2f(q.ry),
       dpx: q.dpx == null ? undefined : h2f(q.dpx), dpy: q.dpy == null ? undefined : h2f(q.dpy),
-      flip: !!q.flip, lx: q.lx == null ? undefined : h2f(q.lx), ly: q.ly == null ? undefined : h2f(q.ly),
+      flip: q.flip, lx: q.lx == null ? undefined : h2f(q.lx), ly: q.ly == null ? undefined : h2f(q.ly),
       wep: q.wep, atk: h2f(q.atk), trait: q.trait, age: q.age, hurt: q.hurt,
       hp: h2f(q.hp), maxHp: h2f(q.maxHp), panic: q.panic == null ? undefined : h2f(q.panic),
       boat: !!q.boat, caravan: q.caravan, king: !!q.king,
+      // M-U7a：mrr* 消费字段补齐（对齐 rebuildU 形态——黄金场景无此字段时按健康缺省；infected 缺省 0 防 undefined!==0 误判）
+      infected: q.infected ?? 0, traitName: q.trait ?? null, armS: null, hlmS: null,
+      maxAge: q.maxAge ?? 60, job: q.job ?? 0,
     };
     if (u.x < x0 || u.x > x1 || u.y < y0 || u.y > y1) continue;
     const civ = u.civ >= 0 && inp.civs ? inp.civs.find((c) => c.id === u.civ) : null;
     const civColor = civ && civ.alive !== false ? civ.color : null;
     const civHex = civ && civ.alive !== false ? civ.colorHex : null;
-    drawUnitSprite(L, u, inp, cam, fc, sun, civColor, civHex);
+    drawUnitSprite(L, u, inp, cam, fc, sun, civColor, civHex, direct);
     // hp 条
     if (inp.fxPrefs.hpBars && cam.zoom >= 6 && u.hp < u.maxHp && !u.boat) {
       const px = u.dpx ?? (u.rx ?? u.x) * 2;
@@ -503,10 +514,10 @@ function unitScene(inp) {
   return L;
 }
 
-function drawUnitSprite(L, u, inp, cam, fc, sun, civColor, civHex) {
-  if (u.boat) { L.bail('drawBoat', [f64hex(u.x), f64hex(u.y), f64hex(fc)]); return; }
+function drawUnitSprite(L, u, inp, cam, fc, sun, civColor, civHex, direct = false) {
+  if (u.boat) { if (direct) { mrrDrawBoat(L, u, civColor, fc); return; } L.bail('drawBoat', [f64hex(u.x), f64hex(u.y), f64hex(fc)]); return; }   // M-U7a：direct→mrr 直调（蓝本 drawBoat(wc,u,civColor,fc)）
   const def = RDEF[u.race];
-  if ((u.caravan ?? 0) > 0) { L.bail('drawCaravan', [f64hex(u.x), f64hex(u.y), f64hex(fc)]); return; }
+  if ((u.caravan ?? 0) > 0) { if (direct) { mrrDrawCaravan(L, u, civColor, fc); return; } L.bail('drawCaravan', [f64hex(u.x), f64hex(u.y), f64hex(fc)]); return; }
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
   if (!def.aquatic && !def.flying && u.trait !== 'giant') {
@@ -531,7 +542,7 @@ function drawUnitSprite(L, u, inp, cam, fc, sun, civColor, civHex) {
       L.ops.push({ o: 'translate', a: [f64hex(px), f64hex(py + 3)], s: null });
       L.ops.push({ o: 'scale', a: [f64hex(jk), f64hex(jk)], s: null });
       L.ops.push({ o: 'translate', a: [f64hex(-px), f64hex(-(py + 3))], s: null });
-      drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex);
+      drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex, direct);
       L.ops.push({ o: 'restore', a: [], s: null });
       return;
     }
@@ -541,7 +552,7 @@ function drawUnitSprite(L, u, inp, cam, fc, sun, civColor, civHex) {
     L.ops.push({ o: 'translate', a: [f64hex(px), f64hex(py + 3)], s: null });
     L.ops.push({ o: 'scale', a: [f64hex(0.72), f64hex(0.72)], s: null });
     L.ops.push({ o: 'translate', a: [f64hex(-px), f64hex(-(py + 3))], s: null });
-    drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex);
+    drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex, direct);
     L.ops.push({ o: 'restore', a: [], s: null });
     return;
   }
@@ -552,11 +563,11 @@ function drawUnitSprite(L, u, inp, cam, fc, sun, civColor, civHex) {
     L.ops.push({ o: 'translate', a: [f64hex(px), f64hex(py + 3)], s: null });
     L.ops.push({ o: 'scale', a: [f64hex(1 + 0.22 * k), f64hex(1 - 0.26 * k)], s: null });
     L.ops.push({ o: 'translate', a: [f64hex(-px), f64hex(-(py + 3))], s: null });
-    drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex);
+    drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex, direct);
     L.ops.push({ o: 'restore', a: [], s: null });
     return;
   }
-  drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex);
+  drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex, direct);
 }
 
 function onWaterTile(inp, u, beachOk) {
@@ -565,7 +576,7 @@ function onWaterTile(inp, u, beachOk) {
   return beachOk && t === T.SAND;
 }
 
-function drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex) {
+function drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex, direct = false) {
   const zoom = cam.zoom;
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
@@ -586,7 +597,8 @@ function drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex) {
         L.ops.push({ o: 'save', a: [], s: null });
         L.ops.push({ o: 'scale', a: [f64hex(0.5), f64hex(0.5)], s: null });
         L.ops.push({ o: 'translate', a: [f64hex(tx), f64hex(ty)], s: null });
-        L.bail('drawPersonFine', [f64hex(u.x), f64hex(u.y), f64hex(fc), f64hex(king ? 1 : 0)]);
+        if (direct) mrrDrawPersonFine(L, u, null, civColor, fc, king);   // M-U7a：direct→直调（蓝本 drawPersonFine(wc,u,civColor,fc,king)）
+        else L.bail('drawPersonFine', [f64hex(u.x), f64hex(u.y), f64hex(fc), f64hex(king ? 1 : 0)]);
         L.ops.push({ o: 'restore', a: [], s: null });
         fin = true;
       }
@@ -596,7 +608,8 @@ function drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex) {
         L.ops.push({ o: 'save', a: [], s: null });
         L.ops.push({ o: 'scale', a: [f64hex(0.5), f64hex(0.5)], s: null });
         L.ops.push({ o: 'translate', a: [f64hex(tx), f64hex(ty)], s: null });
-        L.bail('drawQuadFine', [f64hex(u.x), f64hex(u.y), f64hex(fc), f64hex(king ? 1 : 0)]);
+        if (direct) mrrDrawQuadFine(L, u, def.sprite, fc, king);   // M-U7a：direct→直调（蓝本 drawQuadFine(wc,u,quad,fc,king)）
+        else L.bail('drawQuadFine', [f64hex(u.x), f64hex(u.y), f64hex(fc), f64hex(king ? 1 : 0)]);
         L.ops.push({ o: 'restore', a: [], s: null });
         fin = true;
       }
@@ -679,10 +692,54 @@ function drawUnitBody(L, u, def, inp, cam, fc, civColor, civHex) {
     fish: 'drawFish', crab: 'drawCrab', turtle: 'drawTurtle', shark: 'drawShark',
   };
   const bf = BAIL_FNS[def.sprite];
-  if (bf) {
+  if (bf && !direct) {
     // 精灵调用签名：sheep/wolf/snowwolf/bear/deer 无 fc 参（drawXxx(wc,u)）→ 第三参 null；其余 drawXxx(wc,u,fc)
     const noFc = def.sprite === 'sheep' || def.sprite === 'wolf' || def.sprite === 'snowwolf' || def.sprite === 'bear' || def.sprite === 'deer';
     L.bail(bf, [f64hex(u.x), f64hex(u.y), noFc ? null : f64hex(fc)]);
+  } else if (direct) {
+    // M-U7a：direct→mrr* 直调（蓝本 render.ts L2333 switch 逐字序）
+    switch (def.sprite) {
+      case 'person': mrrDrawPerson(L, u, null, civColor, fc); break;
+      case 'sheep': mrrDrawSheep(L, u); break;
+      case 'wolf': mrrDrawWolf(L, u); break;
+      case 'snowwolf': mrrDrawSnowWolf(L, u); break;
+      case 'bear': mrrDrawBear(L, u); break;
+      case 'deer': mrrDrawDeer(L, u); break;
+      case 'penguin': mrrDrawPenguin(L, u, fc); break;
+      case 'camel': mrrDrawCamel(L, u, fc); break;
+      case 'scorpion': mrrDrawScorpion(L, u, fc); break;
+      case 'snake': mrrDrawSnake(L, u, fc); break;
+      case 'dragon': mrrDrawDragon(L, u, fc); break;
+      case 'skeleton': mrrDrawSkeleton(L, u, fc); break;
+      case 'demon': mrrDrawDemon(L, u, fc); break;
+      case 'angel': mrrDrawAngel(L, u, fc); break;
+      case 'phoenix': mrrDrawPhoenix(L, u, fc); break;
+      case 'ent': mrrDrawEnt(L, u, fc); break;
+      case 'lich': mrrDrawLich(L, u, fc); break;
+      case 'hydra': mrrDrawHydra(L, u, fc); break;
+      case 'mage': mrrDrawMage(L, u, fc); break;
+      case 'troll': mrrDrawTroll(L, u, fc); break;
+      case 'ogre': mrrDrawOgre(L, u, fc); break;
+      case 'whitewalker': mrrDrawWhiteWalker(L, u, fc); break;
+      case 'vampire': mrrDrawVampire(L, u, fc); break;
+      case 'kraken': mrrDrawKraken(L, u, fc); break;
+      case 'sandworm': mrrDrawSandworm(L, u, fc); break;
+      case 'basilisk': mrrDrawBasilisk(L, u, fc); break;
+      case 'chicken': mrrDrawChicken(L, u, fc); break;
+      case 'pig': mrrDrawPig(L, u, fc); break;
+      case 'rabbit': mrrDrawRabbit(L, u, fc); break;
+      case 'fox': mrrDrawFox(L, u, fc); break;
+      case 'fish': mrrDrawFish(L, u, fc); break;
+      case 'crab': mrrDrawCrab(L, u, fc); break;
+      case 'turtle': mrrDrawTurtle(L, u, fc); break;
+      case 'shark': mrrDrawShark(L, u, fc); break;
+      default: {
+        const lod = ANIMAL_LOD[def.sprite];
+        const lw = lod ? lod[2] : 2, lh = lod ? lod[3] : 2;
+        L.fill(u.hurt > 0 ? '#ff6b5e' : lod ? lod[0] : '#9a8460', px - (lw >> 1), py - lh, lw, lh);
+        break;
+      }
+    }
   } else {
     const lod = ANIMAL_LOD[def.sprite];
     const lw = lod ? lod[2] : 2, lh = lod ? lod[3] : 2;
@@ -715,6 +772,11 @@ function cmp(label, a, b) {
     }
   }
 }
+// 直接运行：node render-transcript.mjs（import 时只加载函数不跑主循环——M-U7a 双模式改造）
+const isMainRT = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
+if (isMainRT) runRenderTranscript();
+
+function runRenderTranscript() {
 for (const sc of GOLD.terrain) {
   for (let k = 0; k < sc.tiles.length; k++) {
     const got = terrainBake(sc.tiles[k].in);
@@ -733,3 +795,6 @@ for (const sc of GOLD.units) {
 }
 console.log(`render-transcript: ${total - fail}/${total} ${fail === 0 ? 'ALL PASS' : 'FAIL'}`);
 if (fail > 0) process.exit(1);
+}
+
+export { unitScene };

@@ -558,7 +558,7 @@ export function mrrDrawHydra(L, u, frame) {
   const px = Px2(u), py = Py2(u);
   const f = u.flip !== 0 ? -1 : 1;
   const isMoving = IsMoving(u);
-  const gen = u.gen;
+  const gen = u.gen ?? 0;   // M-U7a：蓝本 u.gen ?? 0（C# WbU.gen int 默认 0 同构——render5 场景 dump 无 gen 字段时走缺省）
   const GEN_TABLE = [3, 2, 1];
   const heads = gen >= 0 && gen < 3 ? GEN_TABLE[gen] : 1;
   const bodyH = heads;

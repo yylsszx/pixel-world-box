@@ -716,11 +716,14 @@ namespace PixelWorldBox.Wb
             L.Tag("restore");
         }
 
+        /// <summary>蓝本 civ && civ.alive ? civ.color : null（UnitScene 外层已按 u.civ 索引取 civ，alive 双重判定语义保真）</summary>
+        static int[] CivColorOf(WbCiv civ) => civ != null && civ.alive ? civ.color : null;
+
         static void DrawUnitSprite(WbDrawList L, WbU u, WbRenderState st, double zoom, bool dayNight, WbCiv civ)
         {
-            if (u.boat != 0) { L.Bail("drawBoat", F64Hex(u.x), F64Hex(u.y), F64Hex(st.frameCount)); return; }
+            if (u.boat != 0) { WbSprites.DrawBoat(L, u, CivColorOf(civ), (int)st.frameCount); return; }   // M-U7a 接线：bail→WbSprites 直调（蓝本 drawBoat(wc, u, civ&&civ.alive?civ.color:null, fc)）
             var def = WbRenderTables.RDEF[u.race];
-            if (u.caravan > 0) { L.Bail("drawCaravan", F64Hex(u.x), F64Hex(u.y), F64Hex(st.frameCount)); return; } // TS (u.caravan ?? 0) > 0；WbU.caravan int 镜像恒值等价
+            if (u.caravan > 0) { WbSprites.DrawCaravan(L, u, CivColorOf(civ), (int)st.frameCount); return; } // TS (u.caravan ?? 0) > 0；WbU.caravan int 镜像恒值等价
             double px = u.dpx ?? (u.rx ?? u.x) * 2;
             double py = u.dpy ?? (u.ry ?? u.y) * 2;
             bool isGiant = u.traitName == "giant";
@@ -829,7 +832,7 @@ namespace PixelWorldBox.Wb
                         L.Tag("save");
                         L.Tag("scale", 0.5, 0.5);
                         L.Tag("translate", tx, ty);
-                        L.Bail("drawPersonFine", F64Hex(u.x), F64Hex(u.y), F64Hex(st.frameCount), F64Hex(king ? 1 : 0));
+                        WbSprites.DrawPersonFine(L, u, null, CivColorOf(civ), (int)st.frameCount, king);   // M-U7a：bail→直调（蓝本 drawPersonFine(wc, u, civColor, fc, king)）
                         L.Tag("restore");
                         fin = true;
                     }
@@ -841,7 +844,7 @@ namespace PixelWorldBox.Wb
                         L.Tag("save");
                         L.Tag("scale", 0.5, 0.5);
                         L.Tag("translate", tx, ty);
-                        L.Bail("drawQuadFine", F64Hex(u.x), F64Hex(u.y), F64Hex(st.frameCount), F64Hex(king ? 1 : 0));
+                        WbSprites.DrawQuadFine(L, u, def.sprite, (int)st.frameCount, king);   // M-U7a：bail→直调（蓝本 drawQuadFine(wc, u, quad, fc, king)）
                         L.Tag("restore");
                         fin = true;
                     }
@@ -929,18 +932,51 @@ namespace PixelWorldBox.Wb
                 }
             }
             // vis 涌现域 = M-U5+ 桩域（基表全 vis=false；黄金场景不含 vis 单位）
-            // 全绘档 switch → sprites.ts 域（M-U5）→ bail 契约（sheep/wolf/snowwolf/bear/deer 无 fc 参）
-            string bf = BailFnOf(def.sprite);
-            if (bf != null)
+            // 全绘档 switch → WbSprites 直调（M-U7a 接线：bail 契约翻转；蓝本 render.ts L2333 switch 逐字序）
+            switch (def.sprite)
             {
-                bool noFc = def.sprite == "sheep" || def.sprite == "wolf" || def.sprite == "snowwolf" || def.sprite == "bear" || def.sprite == "deer";
-                L.Bail(bf, F64Hex(u.x), F64Hex(u.y), noFc ? null : F64Hex(st.frameCount));
-            }
-            else
-            {
-                var lod = WbRenderTables.ANIMAL_LOD.ContainsKey(def.sprite) ? WbRenderTables.ANIMAL_LOD[def.sprite] : null;
-                double lw = lod != null ? lod.w : 2, lh = lod != null ? lod.h : 2;
-                L.Fill(hurt ? "#ff6b5e" : lod != null ? lod.body : "#9a8460", px - (int)(lw >> 1), py - lh, lw, lh);
+                case "person": WbSprites.DrawPerson(L, u, null, CivColorOf(civ), (int)st.frameCount); break;
+                case "sheep": WbSprites.DrawSheep(L, u); break;
+                case "wolf": WbSprites.DrawWolf(L, u); break;
+                case "snowwolf": WbSprites.DrawSnowWolf(L, u); break;
+                case "bear": WbSprites.DrawBear(L, u); break;
+                case "deer": WbSprites.DrawDeer(L, u); break;
+                case "penguin": WbSprites.DrawPenguin(L, u, (int)st.frameCount); break;
+                case "camel": WbSprites.DrawCamel(L, u, (int)st.frameCount); break;
+                case "scorpion": WbSprites.DrawScorpion(L, u, (int)st.frameCount); break;
+                case "snake": WbSprites.DrawSnake(L, u, (int)st.frameCount); break;
+                case "dragon": WbSprites.DrawDragon(L, u, (int)st.frameCount); break;
+                case "skeleton": WbSprites.DrawSkeleton(L, u, (int)st.frameCount); break;
+                case "demon": WbSprites.DrawDemon(L, u, (int)st.frameCount); break;
+                case "angel": WbSprites.DrawAngel(L, u, (int)st.frameCount); break;
+                case "phoenix": WbSprites.DrawPhoenix(L, u, (int)st.frameCount); break;
+                case "ent": WbSprites.DrawEnt(L, u, (int)st.frameCount); break;
+                case "lich": WbSprites.DrawLich(L, u, (int)st.frameCount); break;
+                case "hydra": WbSprites.DrawHydra(L, u, (int)st.frameCount); break;
+                case "mage": WbSprites.DrawMage(L, u, (int)st.frameCount); break;
+                case "troll": WbSprites.DrawTroll(L, u, (int)st.frameCount); break;
+                case "ogre": WbSprites.DrawOgre(L, u, (int)st.frameCount); break;
+                case "whitewalker": WbSprites.DrawWhiteWalker(L, u, (int)st.frameCount); break;
+                case "vampire": WbSprites.DrawVampire(L, u, (int)st.frameCount); break;
+                case "kraken": WbSprites.DrawKraken(L, u, (int)st.frameCount); break;
+                case "sandworm": WbSprites.DrawSandworm(L, u, (int)st.frameCount); break;
+                case "basilisk": WbSprites.DrawBasilisk(L, u, (int)st.frameCount); break;
+                case "chicken": WbSprites.DrawChicken(L, u, (int)st.frameCount); break;
+                case "pig": WbSprites.DrawPig(L, u, (int)st.frameCount); break;
+                case "rabbit": WbSprites.DrawRabbit(L, u, (int)st.frameCount); break;
+                case "fox": WbSprites.DrawFox(L, u, (int)st.frameCount); break;
+                case "fish": WbSprites.DrawFish(L, u, (int)st.frameCount); break;
+                case "crab": WbSprites.DrawCrab(L, u, (int)st.frameCount); break;
+                case "turtle": WbSprites.DrawTurtle(L, u, (int)st.frameCount); break;
+                case "shark": WbSprites.DrawShark(L, u, (int)st.frameCount); break;
+                default:
+                {
+                    // P2：未知精灵安全回退 —— 走 ANIMAL_LOD 色块（新种族接线遗漏时单位不消失、不崩溃）
+                    var lod = WbRenderTables.ANIMAL_LOD.ContainsKey(def.sprite) ? WbRenderTables.ANIMAL_LOD[def.sprite] : null;
+                    double lw = lod != null ? lod.w : 2, lh = lod != null ? lod.h : 2;
+                    L.Fill(hurt ? "#ff6b5e" : lod != null ? lod.body : "#9a8460", px - (int)(lw >> 1), py - lh, lw, lh);
+                    break;
+                }
             }
             if (king && def.sprite == "person") DrawCrown(L, px, py - 4);
             if (def.dynTint != null)
@@ -948,47 +984,7 @@ namespace PixelWorldBox.Wb
                 L.Fill(hurt ? "#ff6b5e" : def.dynTint, px, py - 4, 1, 1);
             }
         }
-        // 全绘档物种 → sprites.ts 函数名（render.ts L2333 switch 机械镜像）
-        static string BailFnOf(string sprite)
-        {
-            switch (sprite)
-            {
-                case "person": return "drawPerson";
-                case "sheep": return "drawSheep";
-                case "wolf": return "drawWolf";
-                case "snowwolf": return "drawSnowWolf";
-                case "bear": return "drawBear";
-                case "deer": return "drawDeer";
-                case "penguin": return "drawPenguin";
-                case "camel": return "drawCamel";
-                case "scorpion": return "drawScorpion";
-                case "snake": return "drawSnake";
-                case "dragon": return "drawDragon";
-                case "skeleton": return "drawSkeleton";
-                case "demon": return "drawDemon";
-                case "angel": return "drawAngel";
-                case "phoenix": return "drawPhoenix";
-                case "ent": return "drawEnt";
-                case "lich": return "drawLich";
-                case "hydra": return "drawHydra";
-                case "mage": return "drawMage";
-                case "troll": return "drawTroll";
-                case "ogre": return "drawOgre";
-                case "whitewalker": return "drawWhiteWalker";
-                case "vampire": return "drawVampire";
-                case "kraken": return "drawKraken";
-                case "sandworm": return "drawSandworm";
-                case "basilisk": return "drawBasilisk";
-                case "chicken": return "drawChicken";
-                case "pig": return "drawPig";
-                case "rabbit": return "drawRabbit";
-                case "fox": return "drawFox";
-                case "fish": return "drawFish";
-                case "crab": return "drawCrab";
-                case "turtle": return "drawTurtle";
-                case "shark": return "drawShark";
-                default: return null;
-            }
-        }
+        // M-U7a 接线注记：BailFnOf 已删除（全绘档 bail 契约翻转为 WbSprites 直调 switch）；
+        // WbDrawList.Bail/WbBail 保留 —— 地形/道具域 drawTree/drawMountainProp 契约仍在用（M-U5 已锁签名的双链并存）
     }
 }
