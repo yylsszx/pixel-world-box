@@ -103,6 +103,7 @@ namespace PixelWorldBox.Wb
         public double x, y, tx, ty;
         public double hp, maxHp, dmg = 1, speed = 1;
         public int age, maxAge = 9999, kills, cd, trait, job, king, infected, flip;
+        public int gen;                     // hydra 世代（斩首递减：[3,2,1][gen] 头数/躯干半高；TS u.gen ?? 0 → 默认 0）
         public string name;
         public int hurt, breath, parity, dead, boat, boatTTL, caravan, atk;
         // wep: civ 层镜像 TS Unit.wep 字符串 key（items.ts ItemKind）—— int 0 = 无装备占位；

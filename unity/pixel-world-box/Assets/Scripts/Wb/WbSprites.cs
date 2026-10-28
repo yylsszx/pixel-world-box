@@ -990,6 +990,811 @@ namespace PixelWorldBox.Wb
             L.Fill("#6e4a2b", px + f, py - 1, 1, 1);
             L.Fill("#6e4a2b", px - 1, py + 1, 1, 1);
             L.Fill("#6e4a2b", px + 1, py + 1, 1, 1);
+        }        // ================= M-U5b 渲染 III：frame 驱动物种精灵 20 族（机械翻译） =================
+        // JS 语义注记：Math.floor(frame/N) 浮点除后取整（C# (int)Math.Floor(frame/(double)N)）；
+        //   Math.round(含负数余弦) → Floor(v+0.5)（JS 半上语义全域等价）；u32 哈希域内恒正直译 int。
+
+        // ---- drawDragon（sprites.ts L477-500） ----
+        public static void DrawDragon(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            L.Fill("rgba(0,0,0,0.28)", px - 2, py + 2, 5, 1);
+            int up = (int)Math.Floor(frame / 6.0) % 2 == 0 ? 1 : 0;
+            L.Fill("#1f1d24", px - 2, py - (up != 0 ? 2 : 1), 2, 1);
+            L.Fill("#1f1d24", px + 1, py - (up != 0 ? 2 : 1), 2, 1);
+            L.Fill(u.hurt > 0 ? "#ff6b5e" : "#8c2317", px - 1, py, 3, 1);
+            L.Fill("#cf3f2e", px + 2 * f, py - 1, 1, 1);
+            L.Fill("#ffd93d", px + 2 * f, py - 1, 1, 1);
+            L.Fill("#8c2317", px - 2 * f, py, 1, 1);
         }
+
+        // ---- drawPenguin（sprites.ts L830-847） ----
+        public static void DrawPenguin(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int bob = (int)Math.Floor(frame / 6.0) % 2 == 0 ? 0 : 1;
+            double y = py - bob;
+            L.Fill(u.hurt > 0 ? "#ff6b5e" : "#1f1d24", px - 1, y - 1, 2, 2);
+            L.Fill("#f2ead8", px - 1, y, 2, 1);
+            L.Fill("#ff9b2d", px + (u.flip != 0 ? -1 : 1), y - 1, 1, 1);
+            L.Fill("#ff9b2d", px - 1, y + 1, 1, 1);
+            L.Fill("#ff9b2d", px, y + 1, 1, 1);
+        }
+
+        // ---- drawCamel（sprites.ts L850-874） ----
+        public static void DrawCamel(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            int bob = (int)Math.Floor(frame / 8.0) % 2 == 0 ? 0 : 1;
+            double y = py - bob;
+            string body = u.hurt > 0 ? "#ff6b5e" : "#e3cf96";
+            string shade = u.hurt > 0 ? "#ff6b5e" : "#c4ad74";
+            L.Fill(shade, px - 1, y - 1, 1, 1);
+            L.Fill(shade, px + 1, y - 1, 1, 1);
+            L.Fill(body, px - 1, y, 3, 1);
+            L.Fill(body, px + 2 * f, y - 1, 1, 1);
+            L.Fill(shade, px + 2 * f, y - 2, 1, 1);
+            L.Fill(shade, px - 1, y + 1, 1, 1);
+            L.Fill(shade, px + 1, y + 1, 1, 1);
+        }
+
+        // ---- drawScorpion（sprites.ts L877-905） ----
+        public static void DrawScorpion(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            int bob = (int)Math.Floor(frame / 4.0) % 2 == 0 ? 0 : 1;
+            double y = py - bob;
+            string dark = u.hurt > 0 ? "#ff6b5e" : "#1f1d24";
+            string mid = u.hurt > 0 ? "#ff6b5e" : "#3a342c";
+            L.Fill(mid, px - 2 * f, y - 2, 1, 1);
+            L.Fill(mid, px - 1 * f, y - 1, 1, 1);
+            L.Fill("#cf3f2e", px - 3 * f, y - 3, 1, 1);
+            L.Fill(dark, px + 1 * f, y, 1, 1);
+            L.Fill(mid, px + 2 * f, y - 1, 1, 1);
+            L.Fill(mid, px + 2 * f, y + 1, 1, 1);
+            L.Fill(dark, px - 1, y, 2, 1);
+            L.Fill(mid, px - 1, y + 1, 1, 1);
+            L.Fill(mid, px, y + 1, 1, 1);
+        }
+
+        // ---- drawSnake（sprites.ts L908-936） ----
+        public static void DrawSnake(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            int ph = (int)Math.Floor(frame / 5.0) % 4;
+            string body = u.hurt > 0 ? "#ff6b5e" : "#4a8f3c";
+            string dark = u.hurt > 0 ? "#ff6b5e" : "#2f5e26";
+            int[] wave = { 0, 1, 0, -1 };
+            for (int seg = 0; seg < 4; seg++)
+            {
+                double sx = px + (seg - 3) * f;
+                int wy = (ph + seg) % 4;
+                L.Fill(seg % 2 == 0 ? body : dark, sx, py + wave[wy], 1, 1);
+            }
+            L.Fill(dark, px + 1 * f, py, 1, 1);
+            if (frame % 9 < 3) L.Fill("#cf3f2e", px + 2 * f, py, 1, 1);
+            L.Fill("#f2ead8", px + 1 * f, py - 1, 1, 1);
+        }
+
+        // ---- drawSkeleton（sprites.ts L1036-1106） ----
+        public static void DrawSkeleton(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool isMoving = IsMoving(u);
+            int step = isMoving ? ((frame >> 2) & 1) : 0;
+            int bob = isMoving && step == 1 ? 1 : 0;
+            double y = py - bob;
+            string bone = u.hurt > 0 ? "#ff6b5e" : "#e8e4da";
+            string dark = "#3a342c";
+            L.Fill("rgba(0,0,0,0.28)", px - 1, y + 3, 3, 1);
+            if (isMoving && step == 1)
+            {
+                L.Fill(bone, px - 1, y + 1, 1, 2);
+                L.Fill(bone, px, y + 2, 1, 1);
+            }
+            else if (isMoving)
+            {
+                L.Fill(bone, px - 1, y + 2, 1, 1);
+                L.Fill(bone, px, y + 1, 1, 2);
+            }
+            else
+            {
+                L.Fill(bone, px - 1, y + 1, 1, 2);
+                L.Fill(bone, px, y + 1, 1, 2);
+            }
+            L.Fill(bone, px - 1, y - 1, 2, 1);
+            L.Fill(dark, px - 1, y, 1, 1);
+            L.Fill(bone, px, y, 1, 1);
+            if (u.atk > 0)
+            {
+                L.Fill(bone, px + 2 * f, y - 3, 1, 2);
+                L.Fill(bone, px - 2 * f + (f > 0 ? 1 : 0), y - 1, 1, 2);
+            }
+            else if (isMoving && step == 1)
+            {
+                L.Fill(bone, px - 2, y - 1, 1, 1);
+                L.Fill(bone, px + 1, y, 1, 2);
+            }
+            else if (isMoving)
+            {
+                L.Fill(bone, px - 2, y, 1, 2);
+                L.Fill(bone, px + 1, y - 1, 1, 1);
+            }
+            else
+            {
+                L.Fill(bone, px - 2, y - 1, 1, 2);
+                L.Fill(bone, px + 1, y - 1, 1, 2);
+            }
+            L.Fill(bone, px - 1, y - 3, 2, 2);
+            L.Fill(dark, px - 1, y - 2, 2, 1);
+            L.Fill(frame % 14 < 7 ? "#cf3f2e" : "#8c2317", px + (f > 0 ? 0 : -1), y - 2, 1, 1);
+            string wep = u.wep as string;
+            if (wep != null)
+            {
+                string wc = wep == "sword3" ? "#ffd93d" : wep == "sword2" ? "#e8e8e8" : bone;
+                if (u.atk > 0)
+                {
+                    L.Fill(wc, px + 3 * f, y - 3, 1, 2);
+                    L.Fill("#ffffff", px + 4 * f, y - 2, 1, 1);
+                }
+                else L.Fill(wc, px + 2 * f, y - 2, 1, 2);
+            }
+            if (u.hp < u.maxHp * 0.4) L.Fill("#cf3f2e", px - 1, y - 5, 4, 1);
+        }
+
+        // ---- drawDemon（sprites.ts L1109-1156） ----
+        public static void DrawDemon(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            int swell = (int)Math.Floor(frame / 10.0) % 2;
+            int flap = (int)Math.Floor(frame / 6.0) % 2;
+            string body = u.hurt > 0 ? "#ff6b5e" : "#a82a1e";
+            string dark = "#5c120c";
+            L.Fill("rgba(0,0,0,0.3)", px - 3, py + 2, 7, 1);
+            L.Fill("#1f1d24", px - 4, py - 1 - flap, 1, 3);
+            L.Fill("#1f1d24", px - 3, py - 2 - flap, 1, 2);
+            L.Fill("#1f1d24", px + 3, py - 1 - flap, 1, 3);
+            L.Fill("#1f1d24", px + 2, py - 2 - flap, 1, 2);
+            L.Fill("#1f1d24", px - 1, py - 3 - swell, 1, 1);
+            L.Fill("#1f1d24", px + 2, py - 3 - swell, 1, 1);
+            L.Fill(body, px, py - 2 - swell, 3, 2);
+            L.Fill(frame % 8 < 4 ? "#ffd93d" : "#ffb347", px + (u.flip != 0 ? 0 : 2), py - 2 - swell, 1, 1);
+            L.Fill(body, px - 1, py - swell, 4, 2);
+            L.Fill(dark, px - 1, py + 1 - swell, 4, 1);
+            bool tailUp = ((frame >> 3) & 1) == 1;
+            L.Fill(dark, px - 2 * f, py - 1 - swell, 1, 1);
+            L.Fill(dark, px - 3 * f, tailUp ? py - 2 - swell : py - swell, 1, 1);
+            L.Fill("#1f1d24", px, py + 2 - swell, 1, 1);
+            L.Fill("#1f1d24", px + 2, py + 2 - swell, 1, 1);
+            if (u.hp < u.maxHp * 0.4) L.Fill("#cf3f2e", px - 2, py - 5, 6, 1);
+        }
+
+        // ---- drawAngel（sprites.ts L1159-1208） ----
+        public static void DrawAngel(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            int bob = (int)Math.Floor(frame / 8.0) % 2;
+            double py2 = py - 2 - bob;
+            int flap = (int)Math.Floor(frame / 7.0) % 2;
+            string robe = u.hurt > 0 ? "#ffb9ad" : "#f7f9fb";
+            string shade = "#cfd4e0";
+            L.Fill(frame % 12 < 6 ? "#ffd93d" : "#ffe98a", px - 1, py2 - 4, 3, 1);
+            L.Fill(flap != 0 ? "#ffffff" : "#e8ecf5", px - 3, py2 - 1 - flap, 1, 2);
+            L.Fill(flap != 0 ? "#ffffff" : "#e8ecf5", px - 4, py2 - flap, 1, 1);
+            L.Fill(flap != 0 ? "#ffffff" : "#e8ecf5", px + 2, py2 - 1 - flap, 1, 2);
+            L.Fill(flap != 0 ? "#ffffff" : "#e8ecf5", px + 3, py2 - flap, 1, 1);
+            L.Fill("#f2ead8", px, py2 - 2, 2, 2);
+            L.Fill("#c98d5a", px + (u.flip != 0 ? 0 : 1), py2 - 1, 1, 1);
+            L.Fill(robe, px - 1, py2, 3, 2);
+            L.Fill(shade, px - 1 + (bob != 0 ? 0 : 1), py2 + 2, 2, 1);
+            L.Fill("#cdd6e0", px + 2 * f, py2 + 1, 1, 2);
+            if (frame % 20 < 3) L.Fill("#fff7c2", px + 2 * f, py2, 1, 1);
+            L.Fill("#ffd93d", px - 1, py2 + 1, 3, 1);
+            L.Fill("#ffe98a", px, py2 + 3, 1, 1);
+            L.Fill("#ffe98a", px + 1, py2 + 3, 1, 1);
+            if (u.hp < u.maxHp * 0.4) L.Fill("#ffd93d", px - 2, py2 - 5, 5, 1);
+        }
+
+        // ---- drawPhoenix（sprites.ts L1211-1274；余烬公转 Math.cos/sin f64 位精确） ----
+        public static void DrawPhoenix(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool isMoving = IsMoving(u);
+            int bob = (int)Math.Floor(frame / 8.0) % 2;
+            double py2 = py - 2 - bob;
+            int flap = (int)Math.Floor(frame / 5.0) % 2;
+            bool dim = u.hp < u.maxHp * 0.4;
+            string hot = u.hurt > 0 ? "#ff6b5e" : "#ff9b2d";
+            string core = u.hurt > 0 ? "#ffd0b0" : "#ffd93d";
+            L.Fill(dim ? "#c96a15" : (flap != 0 ? "#ff9b2d" : "#cf3f2e"), px - 3, py2 - 1 - flap, 1, 2);
+            L.Fill(dim ? "#c96a15" : (flap != 0 ? "#ff9b2d" : "#cf3f2e"), px - 4, py2 - flap, 1, 2);
+            L.Fill(dim ? "#c96a15" : (flap != 0 ? "#ff9b2d" : "#cf3f2e"), px + 2, py2 - 1 - flap, 1, 2);
+            L.Fill(dim ? "#c96a15" : (flap != 0 ? "#ff9b2d" : "#cf3f2e"), px + 3, py2 - flap, 1, 2);
+            L.Fill(dim ? "#8c2317" : "#ffd93d", px - 3, py2 - flap, 1, 1);
+            L.Fill(dim ? "#8c2317" : "#ffd93d", px + 2, py2 - flap, 1, 1);
+            L.Fill(hot, px, py2 - 4, 1, 1);
+            L.Fill(hot, px + 1, py2 - 3, 1, 1);
+            if (frame % 10 < 6) L.Fill(core, px, py2 - 5, 1, 1);
+            L.Fill(core, px, py2 - 2, 2, 2);
+            L.Fill("#8c2317", px + (u.flip != 0 ? 0 : 1), py2 - 1, 1, 1);
+            L.Fill(hot, px - 1, py2, 3, 2);
+            L.Fill("#cf3f2e", px - 1 + (bob != 0 ? 0 : 1), py2 + 2, 2, 1);
+            L.Fill(frame % 14 < 7 ? "#fff3c4" : "#ffd93d", px, py2 + 1, 1, 1);
+            string dimTail = dim ? "#c96a15" : "#ff9b2d";
+            for (int k = 0; k < 3; k++)
+            {
+                double ty = py2 - 1 + k;
+                int sway = ((frame + k * 4) % 12) < 6 ? 0 : 1;
+                L.Fill(dimTail, px - 2 * f - sway, ty, 1, 1);
+                if (isMoving) L.Fill(dimTail, px - 3 * f - sway, ty, 1, 1);
+            }
+            for (int k = 0; k < 3; k++)
+            {
+                double ph = (frame * 0.6 + k * 2.1) % 6.283;
+                double ex = px + Math.Floor(Math.Cos(ph) * (3 + (k & 1)) + 0.5);
+                double ey = py2 + Math.Floor(Math.Sin(ph) * 2 + 0.5) - 1;
+                if ((frame + k * 7) % 3 != 0) L.Fill("#ffd93d", ex, ey, 1, 1);
+            }
+            if (dim && frame % 16 < 4) L.Fill("#575757", px + 1, py2 - 6, 1, 1);
+        }
+        // ---- drawEnt（sprites.ts L1277-1343；树冠摇曳/眨眼 40 帧/根足跨步） ----
+        public static void DrawEnt(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool isMoving = IsMoving(u);
+            int step = isMoving ? ((frame >> 4) & 1) : 0;
+            bool dim = u.hp < u.maxHp * 0.4;
+            bool hurtFlash = u.hurt > 0;
+            string bark = hurtFlash ? "#ff9b8a" : "#6e4a2b";
+            string barkD = hurtFlash ? "#d97a66" : "#4a3018";
+            string leaf = dim ? "#3d6b2c" : "#4f9e3a";
+            string leafD = dim ? "#2c5e24" : "#2c7a2a";
+            int sway = (int)Math.Floor(frame / 12.0) % 2;
+            L.Fill(leafD, px - 2 + sway, py - 5, 5, 1);
+            L.Fill(leafD, px + 1 + sway, py - 5, 1, 1);
+            L.Fill(leaf, px - 3 + sway, py - 4, 7, 2);
+            L.Fill(leaf, px - 1 - sway, py - 6, 3, 1);
+            L.Fill(leafD, px - 2 + sway, py - 2, 5, 1);
+            if (dim && frame % 24 < 6) L.Fill("#c9a02a", px - 3 + ((frame >> 2) & 3), py - 1, 1, 1);
+            L.Fill("#2a1c0e", px - 1, py - 1, 3, 2);
+            bool blink = frame % 40 < 5;
+            L.Fill(blink ? "#6e4a2b" : "#ffb938", px - 1 + (u.flip != 0 ? 0 : 1), py - 1, 1, 1);
+            L.Fill(blink ? "#6e4a2b" : "#ffb938", px + (u.flip != 0 ? 1 : 0), py, 1, 1);
+            L.Fill(bark, px - 2, py + 1, 5, 5);
+            L.Fill(barkD, px - 1, py + 2, 1, 3);
+            L.Fill(barkD, px + 1, py + 3, 1, 2);
+            L.Fill("#5a7a2c", px - 2, py + 1, 2, 1);
+            L.Fill("#5a7a2c", px + 2, py + 2, 1, 1);
+            int armSw = isMoving ? (step != 0 ? 1 : -1) : 0;
+            L.Fill(bark, px - 4, py + 1 + armSw, 2, 1);
+            L.Fill(bark, px - 5, py + 2 + armSw, 1, 1);
+            L.Fill(bark, px + 3, py + 2 - armSw, 2, 1);
+            L.Fill(bark, px + 5, py + 1 - armSw, 1, 1);
+            if (step == 1)
+            {
+                L.Fill(barkD, px - 2, py + 6, 2, 1);
+                L.Fill(barkD, px + 1, py + 6, 1, 1);
+            }
+            else
+            {
+                L.Fill(barkD, px - 2, py + 6, 1, 1);
+                L.Fill(barkD, px, py + 6, 2, 1);
+            }
+            L.Fill(barkD, px - 2 + step, py + 7, 1, 1);
+            L.Fill(barkD, px + 1 - step, py + 7, 1, 1);
+            L.Fill("rgba(201,160,42,0.55)", px - 3, py + 8, 1, 1);
+            L.Fill("rgba(201,160,42,0.55)", px + 2, py + 8, 1, 1);
+            L.Fill("rgba(201,160,42,0.55)", px, py + 8, 1, 1);
+        }
+
+        // ---- drawLich（sprites.ts L1346-1420；魂火公转 orbT=frame*0.11） ----
+        public static void DrawLich(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool isMoving = IsMoving(u);
+            bool dim = u.hp < u.maxHp * 0.4;
+            bool hurtFlash = u.hurt > 0;
+            int bob = (frame % 14) < 7 ? 0 : 1;
+            int fade = dim && (frame % 22) < 4 ? 1 : 0;
+            double y = py - 1 - bob + fade;
+            string robe = hurtFlash ? "#c98a9e" : (dim ? "#2c2834" : "#37333b");
+            string robeD = hurtFlash ? "#8d5570" : "#1f1d24";
+            string bone = "#f2ead8";
+            L.Fill(robe, px - 2, y, 5, 1);
+            L.Fill(robe, px - 3, y + 1, 7, 2);
+            L.Fill(robe, px - 2, y + 3, 5, 3);
+            L.Fill(robeD, px - 3, y + 2, 1, 4);
+            L.Fill(robeD, px + 2, y + 2, 1, 4);
+            L.Fill(robeD, px - 2, y + 6, 1, 1);
+            L.Fill(robeD, px, y + 6, 1, 1);
+            L.Fill(robeD, px + 2, y + 6, 1, 1);
+            if (isMoving && frame % 8 < 3) L.Fill("rgba(55,51,59,0.6)", px - f * 3, y + 6, 1, 1);
+            L.Fill("#3a342c", px - 2, y - 1, 1, 1);
+            L.Fill("#3a342c", px, y - 1, 1, 1);
+            L.Fill("#3a342c", px + 2, y - 1, 1, 1);
+            L.Fill("#3a342c", px - 2, y - 2, 5, 1);
+            L.Fill("#b56cf0", px, y - 2, 1, 1);
+            L.Fill(bone, px - 1, y + 1, 3, 2);
+            L.Fill("#14100c", px - 1, y + 2, 3, 1);
+            bool glow = dim ? (frame % 16 < 10) : (frame % 8 < 6);
+            L.Fill(glow ? "#64c95d" : "#2c5e24", px - 1, y + 1, 1, 1);
+            L.Fill(glow ? "#64c95d" : "#2c5e24", px + 1, y + 1, 1, 1);
+            L.Fill(frame % 12 < 6 ? "#b56cf0" : "#8a4bd0", px, y + 4, 1, 1);
+            int armSw = isMoving ? (((frame >> 3) & 1) != 0 ? 1 : -1) : 0;
+            L.Fill(bone, px - 4, y + 3 + armSw, 1, 1);
+            L.Fill(bone, px + 4, y + 3 - armSw, 1, 1);
+            double orbT = frame * 0.11;
+            for (int k = 0; k < 2; k++)
+            {
+                double ox = Math.Floor(Math.Cos(orbT + k * Math.PI) * 4 + 0.5);
+                double oy = Math.Floor(Math.Sin(orbT + k * Math.PI) * 2 + 0.5);
+                L.Fill(k == 0 ? "#64c95d" : "#3f8f4a", px + ox, y + 2 + oy, 1, 1);
+            }
+            L.Fill("rgba(138,75,208,0.35)", px - 3, py + 8, 1, 1);
+            L.Fill("rgba(138,75,208,0.35)", px + 3, py + 8, 1, 1);
+            L.Fill("rgba(138,75,208,0.35)", px, py + 8, 1, 1);
+            if (dim && frame % 20 < 5) L.Fill("rgba(100,201,93,0.5)", px - 1 - ((frame >> 2) & 3), py + 8, 1, 1);
+        }
+
+        // ---- drawTroll（sprites.ts L1423-1491） ----
+        public static void DrawTroll(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool isMoving = IsMoving(u);
+            int step = isMoving ? ((frame >> 2) & 1) : 0;
+            int bob = isMoving && step == 1 ? 1 : 0;
+            int breath = !isMoving && ((frame >> 4) & 1) == 1 ? 1 : 0;
+            double y = py - bob - breath;
+            string body = u.hurt > 0 ? "#ff6b5e" : "#4a7c3a";
+            string dark = "#2c5e24";
+            string moss = "#6b8f4e";
+            L.Fill("rgba(0,0,0,0.32)", px - 3, y + 3, 7, 1);
+            if (isMoving && step == 1)
+            {
+                L.Fill(dark, px - 2, y + 2, 1, 2);
+                L.Fill(dark, px + 1, y + 2, 1, 1);
+            }
+            else if (isMoving)
+            {
+                L.Fill(dark, px - 2, y + 2, 1, 1);
+                L.Fill(dark, px + 1, y + 2, 1, 2);
+            }
+            else
+            {
+                L.Fill(dark, px - 2, y + 2, 1, 2);
+                L.Fill(dark, px + 1, y + 2, 1, 2);
+            }
+            if (u.atk > 0)
+            {
+                L.Fill(body, px - 4, y - 5, 1, 4);
+                L.Fill(body, px + 3, y - 5, 1, 4);
+                L.Fill("#ffffff", px + 4 * f, y - 4, 1, 1);
+            }
+            else if (isMoving && step == 1)
+            {
+                L.Fill(body, px - 4, y - 1, 1, 4);
+                L.Fill(body, px + 3, y, 1, 3);
+            }
+            else if (isMoving)
+            {
+                L.Fill(body, px - 4, y, 1, 3);
+                L.Fill(body, px + 3, y - 1, 1, 4);
+            }
+            else
+            {
+                L.Fill(body, px - 4, y - 1, 1, 4);
+                L.Fill(body, px + 3, y - 1, 1, 4);
+            }
+            L.Fill(body, px - 2, y - 3, 5, 4);
+            L.Fill(dark, px - 2, y, 5, 1);
+            L.Fill(frame % 20 < 10 ? moss : "#7fa93c", px - 2, y - 3, 1, 1);
+            L.Fill(frame % 20 < 10 ? moss : "#7fa93c", px + 2, y - 3, 1, 1);
+            L.Fill(frame % 20 < 10 ? moss : "#7fa93c", px + 1, y - 2, 1, 1);
+            L.Fill(body, px + (f > 0 ? 0 : -2), y - 5, 3, 2);
+            L.Fill("#ffd93d", px + (f > 0 ? 1 : -2), y - 4, 1, 1);
+            L.Fill("#f2ead8", px + (f > 0 ? 0 : -1), y - 3, 1, 1);
+            L.Fill("#f2ead8", px + (f > 0 ? 2 : -3), y - 3, 1, 1);
+            if (u.hp < u.maxHp * 0.4) L.Fill("#cf3f2e", px - 2, y - 7, 6, 1);
+        }
+
+        // ---- drawOgre（sprites.ts L1494-1557） ----
+        public static void DrawOgre(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool isMoving = IsMoving(u);
+            int step = isMoving ? ((frame >> 2) & 1) : 0;
+            int bob = isMoving && step == 1 ? 1 : 0;
+            int breath = !isMoving && ((frame >> 4) & 1) == 1 ? 1 : 0;
+            double y = py - bob - breath;
+            string skin = u.hurt > 0 ? "#ff6b5e" : "#c98d5a";
+            string dark = "#6e4a2b";
+            string belly = "#e3b98a";
+            L.Fill("rgba(0,0,0,0.32)", px - 3, y + 3, 7, 1);
+            if (isMoving && step == 1)
+            {
+                L.Fill(dark, px - 2, y + 2, 1, 2);
+                L.Fill(dark, px + 1, y + 2, 1, 1);
+            }
+            else if (isMoving)
+            {
+                L.Fill(dark, px - 2, y + 2, 1, 1);
+                L.Fill(dark, px + 1, y + 2, 1, 2);
+            }
+            else
+            {
+                L.Fill(dark, px - 2, y + 2, 1, 2);
+                L.Fill(dark, px + 1, y + 2, 1, 2);
+            }
+            L.Fill(skin, px - 2, y - 3, 5, 4);
+            L.Fill(belly, px - 1, y - 1, 3, 2);
+            L.Fill("#3a342c", px - 2, y + 1, 5, 1);
+            L.Fill(skin, px - 3, y - 2, 1, 3);
+            L.Fill(skin, px + 2, y - 2, 1, 3);
+            if (u.atk > 0)
+            {
+                L.Fill("#8a6a4a", px + 3 * f, y - 6, 1, 4);
+                L.Fill("#8a6a4a", px + 2 * f, y - 6, 1, 1);
+                L.Fill("#f2ead8", px + 3 * f, y - 6, 1, 1);
+            }
+            else L.Fill("#8a6a4a", px + 3 * f, y - 3, 1, 4);
+            L.Fill(skin, px - 1, y - 5, 3, 2);
+            L.Fill(dark, px - 1, y - 4, 1, 1);
+            L.Fill(dark, px + 1, y - 4, 1, 1);
+            L.Fill("#ffd93d", px, y - 3, 1, 1);
+            L.Fill("#f2ead8", px - 2, y - 4, 1, 1);
+            L.Fill("#f2ead8", px + 2, y - 4, 1, 1);
+            if (u.hp < u.maxHp * 0.4) L.Fill("#cf3f2e", px - 2, y - 7, 6, 1);
+        }
+
+        // ---- drawWhiteWalker（sprites.ts L1560-1631；飘雪 u32 哈希域内恒正） ----
+        public static void DrawWhiteWalker(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool isMoving = IsMoving(u);
+            int step = isMoving ? ((frame >> 2) & 1) : 0;
+            int bob = isMoving && step == 1 ? 1 : 0;
+            double y = py - bob;
+            string ice = u.hurt > 0 ? "#ff6b5e" : "#bfe3f2";
+            string robe = "#2b6fae";
+            string dark = "#1d4e89";
+            L.Fill("rgba(0,0,0,0.25)", px - 2, y + 3, 5, 1);
+            if (isMoving && step == 1)
+            {
+                L.Fill(robe, px - 1, y + 1, 1, 2);
+                L.Fill(robe, px, y + 1, 1, 1);
+            }
+            else if (isMoving)
+            {
+                L.Fill(robe, px - 1, y + 1, 1, 1);
+                L.Fill(robe, px, y + 1, 1, 2);
+            }
+            else
+            {
+                L.Fill(robe, px - 1, y + 1, 1, 2);
+                L.Fill(robe, px, y + 1, 1, 2);
+            }
+            L.Fill(robe, px - 1, y - 2, 3, 3);
+            L.Fill(dark, px - 1, y, 1, 1);
+            L.Fill(dark, px + 1, y, 1, 1);
+            if (u.atk > 0)
+            {
+                L.Fill(robe, px + 2 * f, y - 3, 2, 1);
+                L.Fill("#f7f9fb", px + 3 * f, y - 4, 1, 1);
+                L.Fill("#f7f9fb", px + 4 * f, y - 3, 1, 1);
+            }
+            else if (isMoving && step == 1)
+            {
+                L.Fill(robe, px - 2, y - 2, 1, 1);
+                L.Fill(robe, px + 2, y - 1, 1, 2);
+            }
+            else if (isMoving)
+            {
+                L.Fill(robe, px - 2, y - 1, 1, 2);
+                L.Fill(robe, px + 2, y - 2, 1, 1);
+            }
+            else
+            {
+                L.Fill(robe, px - 2, y - 2, 1, 2);
+                L.Fill(robe, px + 2, y - 2, 1, 2);
+            }
+            L.Fill(ice, px - 1, y - 4, 3, 2);
+            L.Fill(frame % 10 < 5 ? "#4d9fd6" : "#9ad4e8", px + (f > 0 ? 0 : -2), y - 3, 1, 1);
+            L.Fill(frame % 10 < 5 ? "#4d9fd6" : "#9ad4e8", px + (f > 0 ? 1 : -1), y - 3, 1, 1);
+            L.Fill("#f7f9fb", px - 1, y - 6, 1, 2);
+            L.Fill("#f7f9fb", px, y - 7, 1, 3);
+            L.Fill("#f7f9fb", px + 1, y - 6, 1, 2);
+            for (int k = 0; k < 3; k++)
+            {
+                int h = (u.id * 97 + k * 131 + frame * 7) % 16; // JS (expr>>>0)%16；域内恒正 u32 转换无变化
+                L.Fill("rgba(247,249,251,0.7)", px - 3 + (h % 7), y - 7 + ((h >> 2) % 9), 1, 1);
+            }
+            if (u.hp < u.maxHp * 0.4) L.Fill("#cf3f2e", px - 2, y - 8, 6, 1);
+        }
+
+        // ---- drawVampire（sprites.ts L1634-1681） ----
+        public static void DrawVampire(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            int hover = ((frame >> 3) & 1) == 1 ? 1 : 0;
+            double y = py - 1 - hover;
+            string cape = u.hurt > 0 ? "#ff6b5e" : "#37333b";
+            string face = "#e8e0d8";
+            string inner = "#8c2317";
+            L.Fill("rgba(0,0,0,0.22)", px - 1, py + 3, 3, 1);
+            L.Fill(cape, px - 2, y - 1, 5, 3);
+            bool flutter = ((frame >> 2) & 1) == 1;
+            L.Fill(cape, px - 3, flutter ? y : y + 1, 1, 2);
+            L.Fill(cape, px + 2, flutter ? y + 1 : y, 1, 2);
+            L.Fill(inner, px - 1, y - 1, 1, 1);
+            L.Fill(cape, px - 2, y - 4, 1, 2);
+            L.Fill(cape, px + 2, y - 4, 1, 2);
+            L.Fill(face, px - 1, y - 4, 3, 2);
+            L.Fill(frame % 12 < 6 ? "#cf3f2e" : "#8c2317", px + (f > 0 ? 0 : -2), y - 4, 1, 1);
+            if (u.atk > 0)
+            {
+                L.Fill("#ffffff", px + (f > 0 ? 0 : -1), y - 3, 1, 1);
+                L.Fill("#ffffff", px + (f > 0 ? 1 : -2), y - 3, 1, 1);
+                L.Fill("rgba(207,63,46,0.6)", px + 3 * f, y - 3, 1, 2);
+            }
+            L.Fill("#14100c", px - 1, y - 5, 3, 1);
+            L.Fill("#14100c", px, y - 4, 1, 1);
+            if (u.hp < u.maxHp * 0.4) L.Fill("#cf3f2e", px - 2, y - 7, 6, 1);
+        }
+        // ---- drawKraken（sprites.ts L1684-1743；涟漪三档/六触手相位蠕动/巨眼眨眼 47 帧） ----
+        public static void DrawKraken(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool isMoving = IsMoving(u);
+            int bob = isMoving ? ((frame >> 2) & 1) : 0;
+            int breath = !isMoving && ((frame >> 4) & 1) == 1 ? 1 : 0;
+            double y = py - bob - breath;
+            string body = u.hurt > 0 ? "#ff6b5e" : "#7a2f9e";
+            string dark = "#4a1a63";
+            string light = "#a86cc9";
+            int ripple = ((frame >> 3) % 3);
+            if (ripple == 0) L.Fill("rgba(220,240,255,0.4)", px - 3, y + 3, 7, 1);
+            else if (ripple == 1) { L.Fill("rgba(220,240,255,0.4)", px - 4, y + 3, 3, 1); L.Fill("rgba(220,240,255,0.4)", px + 2, y + 3, 3, 1); }
+            else { L.Fill("rgba(220,240,255,0.4)", px - 5, y + 3, 2, 1); L.Fill("rgba(220,240,255,0.4)", px + 4, y + 3, 2, 1); }
+            bool atk = u.atk > 0;
+            for (int k = 0; k < 6; k++)
+            {
+                int phase = ((frame >> 2) + k) & 3;
+                double bx = px - 5 + k * 2;
+                string tc = k % 2 == 0 ? body : dark;
+                if (atk && (k == 1 || k == 4))
+                {
+                    L.Fill(tc, bx + (f > 0 ? 1 : -1), y + 2, 1, 2);
+                    L.Fill(tc, bx + (f > 0 ? 3 : -3), y, 1, 2);
+                    L.Fill("#ffffff", bx + (f > 0 ? 4 : -4), y - 1, 1, 1);
+                }
+                else
+                {
+                    L.Fill(tc, bx, y + 2, 1, 2);
+                    int lift = phase == 0 ? 0 : phase == 1 ? 1 : phase == 2 ? 2 : 1;
+                    L.Fill(tc, bx, y + 3 - lift, 1, 1);
+                }
+            }
+            L.Fill(body, px - 3, y - 3, 6, 5);
+            L.Fill(light, px - 3, y - 3, 6, 1);
+            L.Fill(dark, px - 2, y + 1, 2, 1);
+            L.Fill(dark, px + 1, y, 1, 1);
+            bool blink = frame % 47 < 2;
+            L.Fill("#f2ead8", px - 2, y - 2, 3, 2);
+            if (!blink)
+            {
+                L.Fill("#14100c", px - 1 + (f > 0 ? 1 : 0), y - 2, 1, 1);
+                L.Fill("#ffd93d", px - 1 + (f > 0 ? 1 : 0), y - 2, 1, 1);
+            }
+            if (u.hp < u.maxHp * 0.4) L.Fill("#cf3f2e", px - 3, y - 5, 7, 1);
+        }
+
+        // ---- drawSandworm（sprites.ts L1748-1807；分节波动/半埋呼吸/巨口开合） ----
+        public static void DrawSandworm(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool isMoving = IsMoving(u);
+            int seg = (frame >> 2) & 3;
+            int hide = ((frame >> 3) & 1) == 1 ? 1 : 0;
+            double y = py - 2 - hide;
+            string body = u.hurt > 0 ? "#ff6b5e" : "#c4ad74";
+            string dark = "#8c7345";
+            string ridge = "#a88a55";
+            L.Fill("rgba(196,173,116,0.45)", px - 5, y + 4, 11, 1);
+            if (isMoving && (frame & 7) < 4)
+            {
+                L.Fill("rgba(222,203,141,0.55)", px - 6 * f, y + 3, 2, 1);
+                L.Fill("rgba(222,203,141,0.55)", px - 8 * f, y + 2, 1, 1);
+            }
+            for (int k = 0; k < 5; k++)
+            {
+                int wave = ((seg + k) & 3) < 2 ? 0 : 1;
+                double bx = px - f * (k + 1) * 2 - (f > 0 ? -1 : 1);
+                string bc = k == 4 ? dark : body;
+                int h = 4 - (k > 2 ? 1 : 0);
+                L.Fill(bc, bx, y + 1 + wave, 2, h);
+                if (k < 4) L.Fill(ridge, bx, y + 1 + wave, 1, 1);
+            }
+            bool atk = u.atk > 0;
+            L.Fill(body, px - 1 + f, y, 3, 5);
+            L.Fill("#dcc28a", px - 1 + f, y, 3, 1);
+            if (atk)
+            {
+                L.Fill("#14100c", px + (f > 0 ? 1 : -1), y + 1, 2, 3);
+                L.Fill("#f2ead8", px + (f > 0 ? 1 : -1), y + 1, 1, 1);
+                L.Fill("#f2ead8", px + (f > 0 ? 2 : -1), y + 2, 1, 1);
+                L.Fill("#f2ead8", px + (f > 0 ? 1 : -1), y + 3, 1, 1);
+            }
+            else
+            {
+                L.Fill(dark, px + (f > 0 ? 1 : 0), y + 2, 2, 1);
+                L.Fill(ridge, px + (f > 0 ? 2 : -1), y - 1, 1, 1);
+            }
+            if (u.hp < u.maxHp * 0.4) L.Fill("#cf3f2e", px - 3, y - 2, 7, 1);
+        }
+
+        // ---- drawBasilisk（sprites.ts L1810-1873；S 型长躯/竖瞳/冠翼/信子） ----
+        public static void DrawBasilisk(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool isMoving = IsMoving(u);
+            int und = (frame >> 2) & 3;
+            bool atk = u.atk > 0;
+            int rise = atk ? 2 : isMoving ? ((frame >> 3) & 1) : 0;
+            double y = py - 1 - rise;
+            string body = u.hurt > 0 ? "#ff6b5e" : "#5a7a2c";
+            string dark = "#3a5218";
+            string belly = "#9ad06a";
+            L.Fill("rgba(0,0,0,0.28)", px - 4, py + 3, 8, 1);
+            for (int k = 0; k < 4; k++)
+            {
+                int wave = ((und + k) & 1) == 0 ? 0 : 1;
+                double bx = px - f * (k + 1) * 2 - (f > 0 ? -1 : 1);
+                L.Fill(k % 2 == 0 ? body : dark, bx, y + 2 + wave, 2, 2);
+                if (k == 1) L.Fill(belly, bx, y + 3 + wave, 2, 1);
+            }
+            int tw = ((und >> 1) & 1) == 0 ? 0 : 1;
+            L.Fill(dark, px - f * 9, y + 2 + tw, 1, 1);
+            L.Fill(dark, px - f * 10, y + 3 - tw, 1, 1);
+            L.Fill(body, px + (atk ? f : 0), y + 1, 2, 3);
+            L.Fill(dark, px + (atk ? f : 0), y + 2, 1, 2);
+            double hx = px + (atk ? f * 2 : f);
+            L.Fill(body, hx, y - 2, 3, 2);
+            L.Fill(belly, hx + (f > 0 ? 1 : 0), y - 1, 2, 1);
+            L.Fill(frame % 24 < 12 ? "#ffd93d" : "#ffb020", hx + (f > 0 ? 1 : 0), y - 2, 1, 1);
+            L.Fill("#14100c", hx + (f > 0 ? 1 : 0), y - 2, 1, 1);
+            L.Fill(atk ? "#ff6b5e" : "#cf3f2e", hx - f, y - 3, 1, 1);
+            L.Fill(atk ? "#ff6b5e" : "#cf3f2e", hx - f * 2, y - 4, 1, 1);
+            L.Fill(atk ? "#ff6b5e" : "#cf3f2e", hx - f * 3, y - 3, 1, 1);
+            if (frame % 18 < 6 || atk)
+            {
+                L.Fill("#d556c0", hx + (f > 0 ? 3 : -2), y - 1, 1, 1);
+                if (atk)
+                {
+                    L.Fill("#d556c0", hx + (f > 0 ? 4 : -3), y - 1, 1, 1);
+                    L.Fill("#d556c0", hx + (f > 0 ? 4 : -3), y - 2, 1, 1);
+                }
+            }
+            if (u.hp < u.maxHp * 0.4) L.Fill("#cf3f2e", hx - 1, y - 5, 5, 1);
+        }
+
+        // ---- drawHydra（sprites.ts L1877-1961；世代 gen: [3,2,1] 头数/躯干半高；低血垂头毒雾） ----
+        public static void DrawHydra(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool isMoving = IsMoving(u);
+            int gen = u.gen;
+            int[] GEN_TABLE = { 3, 2, 1 };
+            int heads = gen >= 0 && gen < 3 ? GEN_TABLE[gen] : 1; // 域内 gen∈{0,1,2}；域外 JS undefined 比较走 else 单头分支等价
+            int bodyH = heads;
+            bool low = u.hp < u.maxHp * 0.35;
+            int step = isMoving ? ((frame >> 2) & 1) : 0;
+            double y = py - (isMoving ? step : 0);
+            string body = u.hurt > 0 ? "#ff6b5e" : low ? "#2c5223" : "#3f7a2e";
+            string dark = low ? "#1c3a17" : "#25501d";
+            string scale = low ? "#3a6e2c" : "#4f9e3a";
+            string belly = low ? "#6b8544" : "#8fae55";
+            int ripple = (frame >> 3) % 3;
+            if (ripple == 0) L.Fill("rgba(90,110,60,0.4)", px - 4, y + bodyH + 1, 9, 1);
+            else if (ripple == 1) { L.Fill("rgba(90,110,60,0.4)", px - 5, y + bodyH + 1, 3, 1); L.Fill("rgba(90,110,60,0.4)", px + 3, y + bodyH + 1, 3, 1); }
+            else { L.Fill("rgba(90,110,60,0.4)", px - 6, y + bodyH + 1, 2, 1); L.Fill("rgba(90,110,60,0.4)", px + 5, y + bodyH + 1, 2, 1); }
+            if (frame % 40 < 3)
+            {
+                L.Fill("#9fd42e", px - 2 + ((frame >> 2) % 5), y + bodyH + 1 - (frame % 40), 1, 1);
+            }
+            L.Fill(body, px - 4, y - bodyH, 9, bodyH * 2 + 1);
+            L.Fill(belly, px - 4, y + bodyH, 9, 1);
+            for (int k = 0; k < 4; k++)
+            {
+                if ((k + gen) % 2 == 0) L.Fill(scale, px - 3 + k * 2, y - bodyH + 1, 1, 1);
+            }
+            L.Fill(dark, px - 4, y - bodyH, 9, 1);
+            for (int k = 0; k < 4; k++)
+            {
+                double wx = px - 3 + k * 2;
+                if (isMoving ? (k + step) % 2 == 0 : k % 2 == 0) L.Fill(dark, wx, y - bodyH - 1, 1, 1);
+            }
+            int droop = low ? 1 : 0;
+            int[,] necks;
+            if (heads >= 3) necks = new int[,] { { -3, 0 }, { 0, 2 }, { 3, 4 } };
+            else if (heads == 2) necks = new int[,] { { -2, 1 }, { 2, 3 } };
+            else necks = new int[,] { { 0, 2 } };
+            for (int ni = 0; ni < necks.GetLength(0); ni++)
+            {
+                int nx = necks[ni, 0], swayBase = necks[ni, 1];
+                int sway = ((frame >> 2) + swayBase) & 3;
+                int lift = sway == 0 ? 0 : sway == 1 ? 1 : sway == 2 ? 2 : 1;
+                double cx = px + nx;
+                L.Fill(dark, cx - 1, y - bodyH - 1, 2, 1);
+                L.Fill(body, cx - 1 + (lift > 1 ? f : 0), y - bodyH - 2, 2, 1);
+                L.Fill(body, cx - 1 + (lift > 1 ? f * 2 : lift > 0 ? f : 0), y - bodyH - 3 + droop, 2, 1);
+                double hx = cx + (lift > 1 ? f * 2 : lift > 0 ? f : 0);
+                double hy = y - bodyH - 4 + droop;
+                L.Fill(body, hx - 1, hy, 3, 2);
+                L.Fill(scale, hx - 1, hy, 1, 1);
+                bool blink = frame % 23 < 2;
+                if (!blink) L.Fill(low ? "#8c2317" : "#ff4030", hx + (f > 0 ? 1 : 0), hy, 1, 1);
+                if (!low && frame % 16 < 5) L.Fill("#d556c0", hx + (f > 0 ? 2 : -1), hy + 1, 1, 1);
+            }
+            if (low)
+            {
+                L.Fill("#cf3f2e", px - 3, y - bodyH - 6, 7, 1);
+                L.Fill("rgba(120,140,80,0.25)", px - 5, y + bodyH, 11, 1);
+            }
+        }
+
+        // ---- drawMage（sprites.ts L1964-2016；施法亮袍 u.cd>18） ----
+        public static void DrawMage(WbDrawList L, WbU u, int frame)
+        {
+            double px = Px2(u), py = Py2(u);
+            int f = u.flip != 0 ? -1 : 1;
+            bool isMoving = IsMoving(u);
+            int step = isMoving ? ((frame >> 2) & 1) : 0;
+            int bob = isMoving && step == 1 ? 1 : 0;
+            int breath = !isMoving && ((frame >> 4) & 1) == 1 ? 1 : 0;
+            double y = py - bob - breath;
+            string robe = u.hurt > 0 ? "#ff6b5e" : u.cd > 18 ? "#c98af5" : "#8a4fd0";
+            string dark = "#4c2a78";
+            L.Fill("rgba(0,0,0,0.28)", px - 1, y + 3, 4, 1);
+            L.Fill(robe, px + (isMoving && step == 1 ? f : 0), y - 4, 1, 1);
+            L.Fill(robe, px, y - 3, 2, 1);
+            L.Fill(robe, px - 1, y - 2, 4, 1);
+            L.Fill("#e8d5c0", px, y - 1, 2, 1);
+            L.Fill("#9b59d0", px + (f > 0 ? 1 : 0), y - 1, 1, 1);
+            L.Fill(robe, px - 1, y, 4, 2);
+            if (isMoving && step == 1)
+            {
+                L.Fill(dark, px - 1, y + 2, 2, 1);
+                L.Fill(dark, px + 1, y + 2, 2, 1);
+            }
+            else
+            {
+                L.Fill(dark, px - 1, y + 2, 3, 1);
+                L.Fill(dark, px, y + 2, 2, 1);
+            }
+            if (u.atk > 0) L.Fill(robe, px + 2 * f, y - 2, 2, 1);
+            else L.Fill(robe, px + 2, y - 1, 1, 2);
+            L.Fill("#c98d5a", px + 2 * f, y - 1, 1, 3);
+            L.Fill(frame % 6 < 3 ? "#ffd93d" : "#ffb347", px + 2 * f, y - 2, 1, 1);
+            if (u.hp < u.maxHp * 0.4) L.Fill("#cf3f2e", px - 1, y - 5, 5, 1);
+        }
+
     }
 }

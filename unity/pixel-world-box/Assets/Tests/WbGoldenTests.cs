@@ -3053,6 +3053,54 @@ namespace PixelWorldBox.Tests
             AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
         }
 
+        // ============================================================
+        // Test13: M-U5b 渲染 III —— frame 驱动物种精灵 20 族（WbSprites.cs 扩展）
+        // 黄金: render3.json 113 场景（gen-render3.mjs 直录 sprites.ts 真实现）。
+        // ============================================================
+        [Test]
+        public void Test13_Species_Golden()
+        {
+            var golden = LoadJson<Newtonsoft.Json.Linq.JObject>("render3.json");
+            var scens = (Newtonsoft.Json.Linq.JArray)golden["scens"];
+            Assert.AreEqual(113, scens.Count, "物种精灵场景数");
+            foreach (var sc in scens) RunSpeciesScenario((Newtonsoft.Json.Linq.JObject)sc);
+        }
+
+        private void RunSpeciesScenario(Newtonsoft.Json.Linq.JObject sc)
+        {
+            string name = sc["name"].ToString();
+            string fn = sc["fn"].ToString();
+            var inp = (Newtonsoft.Json.Linq.JObject)sc["in"];
+            var u = RebuildSpriteU((Newtonsoft.Json.Linq.JObject)inp["u"]);
+            if (JHas(inp["u"]) && inp["u"]["id"] != null) u.id = inp["u"]["id"].Value<int>();
+            if (inp["u"]["cd"] != null) u.cd = inp["u"]["cd"].Value<int>();
+            if (inp["u"]["gen"] != null) u.gen = inp["u"]["gen"].Value<int>();
+            int frame = inp["frame"].Value<int>();
+            var L = new WbDrawList();
+            if (fn == "drawDragon") WbSprites.DrawDragon(L, u, frame);
+            else if (fn == "drawPenguin") WbSprites.DrawPenguin(L, u, frame);
+            else if (fn == "drawCamel") WbSprites.DrawCamel(L, u, frame);
+            else if (fn == "drawScorpion") WbSprites.DrawScorpion(L, u, frame);
+            else if (fn == "drawSnake") WbSprites.DrawSnake(L, u, frame);
+            else if (fn == "drawSkeleton") WbSprites.DrawSkeleton(L, u, frame);
+            else if (fn == "drawDemon") WbSprites.DrawDemon(L, u, frame);
+            else if (fn == "drawAngel") WbSprites.DrawAngel(L, u, frame);
+            else if (fn == "drawPhoenix") WbSprites.DrawPhoenix(L, u, frame);
+            else if (fn == "drawEnt") WbSprites.DrawEnt(L, u, frame);
+            else if (fn == "drawLich") WbSprites.DrawLich(L, u, frame);
+            else if (fn == "drawTroll") WbSprites.DrawTroll(L, u, frame);
+            else if (fn == "drawOgre") WbSprites.DrawOgre(L, u, frame);
+            else if (fn == "drawWhiteWalker") WbSprites.DrawWhiteWalker(L, u, frame);
+            else if (fn == "drawVampire") WbSprites.DrawVampire(L, u, frame);
+            else if (fn == "drawKraken") WbSprites.DrawKraken(L, u, frame);
+            else if (fn == "drawSandworm") WbSprites.DrawSandworm(L, u, frame);
+            else if (fn == "drawBasilisk") WbSprites.DrawBasilisk(L, u, frame);
+            else if (fn == "drawHydra") WbSprites.DrawHydra(L, u, frame);
+            else if (fn == "drawMage") WbSprites.DrawMage(L, u, frame);
+            else Assert.Fail("未知物种函数 " + fn);
+            AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
+        }
+
         // render2.json in.u 重建（dumpU 逆变换；f64 hex → double；渲染域字段映射 WbU）
         private WbU RebuildSpriteU(Newtonsoft.Json.Linq.JObject q)
         {
@@ -3060,6 +3108,9 @@ namespace PixelWorldBox.Tests
             {
                 race = q["race"].Value<int>(),
                 civ = q["civ"].Value<int>(),
+                id = q["id"] != null ? q["id"].Value<int>() : 1,
+                cd = q["cd"] != null ? q["cd"].Value<int>() : 0,
+                gen = q["gen"] != null ? q["gen"].Value<int>() : 0,
                 x = JHexD(q["x"]),
                 y = JHexD(q["y"]),
                 flip = q["flip"].Value<int>(),
