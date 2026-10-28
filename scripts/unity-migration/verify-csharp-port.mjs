@@ -1074,6 +1074,32 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   }
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0;
+// 段 16：M-U6b 存档容器恢复全链双链（save2-transcript 镜像 181 断言逐位 + gen-save2 sanity/det 复跑）
+{
+  const { execFileSync } = await import('node:child_process');
+  const { createHash } = await import('node:crypto');
+  var save2VerifyFail = 0;
+  try {
+    execFileSync('node', [new URL('./save2-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'] });
+    console.log('save2 黄金回放 (save2-transcript 镜像 vs save2.json): PASS (181 断言 × 容器恢复/抛错文案/unitsToRows 逐位)');
+  } catch (e) {
+    save2VerifyFail++;
+    console.error('save2 黄金回放 (save2-transcript 镜像 vs save2.json): FAIL');
+    console.error(String(e.stdout ?? '').split('\n').slice(0, 10).join('\n'));
+  }
+  try {
+    const goldenPath = new URL('./golden/save2.json', import.meta.url).pathname;
+    const h0 = createHash('md5').update(await (await import('node:fs')).promises.readFile(goldenPath)).digest('hex');
+    execFileSync('node', [new URL('./gen-save2.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const h1 = createHash('md5').update(await (await import('node:fs')).promises.readFile(goldenPath)).digest('hex');
+    if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
+    console.log('save2 gen sanity+det 复跑 (gen-save2): PASS (54 断言 × det 子进程双跑字节级)');
+  } catch (e) {
+    save2VerifyFail++;
+    console.error('save2 gen sanity+det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);

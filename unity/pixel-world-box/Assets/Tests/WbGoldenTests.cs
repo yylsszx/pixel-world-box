@@ -3366,4 +3366,175 @@ namespace PixelWorldBox.Tests
             return b;
         }
     }
+
+    // ============================================================
+    // M-U6b 存档容器恢复全链黄金回放（save2.json：R 容器恢复 / X 抛错文案 / W unitsToRows 写向）
+    // C# 第三链：镜像（181 断言逐位）+ gen sanity（54+det）已双绿；本链做结构性 + 抽样位级对账
+    // ============================================================
+    public class WbSaveRestoreGoldenTests
+    {
+        private JObject _gold;
+        private JObject _lifted;
+
+        private static string FindGolden2(string fileName)
+        {
+            var candidates = new[]
+            {
+                System.IO.Path.Combine("Assets", "StreamingAssets", "WbGolden", fileName),
+                System.IO.Path.Combine("..", "..", "StreamingAssets", "WbGolden", fileName),
+                fileName,
+            };
+            foreach (var p in candidates) if (System.IO.File.Exists(p)) return p;
+            throw new System.IO.FileNotFoundException("黄金文件未找到: " + fileName);
+        }
+
+        [OneTimeSetUp]
+        public void Load()
+        {
+            _gold = JObject.Parse(System.IO.File.ReadAllText(FindGolden2("save2.json")));
+            _lifted = (JObject)_gold["lifted"];
+        }
+
+        private WbSaveHost MkHost()
+        {
+            // 每场景重建（host Races/ItemDefs 为 C# 注册表克隆源，跨场景无污染）
+            var h = new WbSaveHost();
+            foreach (var kv in (JObject)_lifted["races"]) h.Races[kv.Key] = (JObject)((JObject)kv.Value).DeepClone();
+            foreach (var kv in (JObject)_lifted["itemDefs"]) h.ItemDefs[kv.Key] = (JObject)((JObject)kv.Value).DeepClone();
+            foreach (var kv in (JObject)_lifted["slotField"]) h.SlotField[kv.Key] = kv.Value.ToString();
+            foreach (var t in (JArray)_lifted["toolIds"]) h.ToolIds.Add(t.ToString());
+            foreach (var t in (JArray)_lifted["techKeys"]) h.TechKeys.Add(t.ToString());
+            foreach (var t in (JArray)_lifted["techCats"]) h.TechCats.Add(t.ToString());
+            foreach (var t in (JArray)_lifted["actionKinds"]) h.ActionKinds.Add(t.ToString());
+            foreach (var t in (JArray)_lifted["eventKinds"]) h.EventKinds.Add(t.ToString());
+            h.DynTints = ((JArray)_lifted["dynTints"]).Select(t => t.ToString()).ToArray();
+            h.AllianceColors = ((JArray)_lifted["allianceColors"]).Select(t => t.ToString()).ToArray();
+            h.StormNames = ((JArray)_lifted["stormNames"]).Select(t => t.ToString()).ToArray();
+            h.BaseCivRaces = ((JArray)_lifted["baseCivRaces"]).Select(t => (int)t).ToArray();
+            h.WaterT = ((JArray)_lifted["waterT"]).Select(t => (int)t).ToArray();
+            h.IceT = _lifted["iceT"].Value<int>();
+            h.ZombieR = _lifted["zombieR"].Value<int>();
+            h.AshCells = _lifted["ashCells"].Value<int>();
+            h.DefaultLaws = (JObject)_lifted["defaultLaws"].DeepClone();
+            foreach (var t in (JArray)_gold["casusTable"]) h.CasusTable.Add((JArray)t.DeepClone());
+            return h;
+        }
+
+        private static double BitsOf2(string hex) => BitConverter.Int64BitsToDouble(unchecked((long)Convert.ToUInt64(hex, 16)));
+
+        private JObject ScenarioInput(string name) => (JObject)_gold["inputs"][name].DeepClone();
+
+        [Test]
+        public void Test16_SaveRestore_Golden()
+        {
+            var scenByName = new System.Collections.Generic.Dictionary<string, JObject>();
+            foreach (var sc in (JArray)_gold["scenarios"]) scenByName[(string)sc["name"]] = (JObject)sc;
+
+            // —— R-legacy：容器恢复全分支 richest 场景 ——
+            var hostL = MkHost();
+            foreach (var row in (JArray)scenByName["R-legacy"]["techMods"])
+                hostL.TechMods.Add(new[] { row[0].Value<double>(), BitsOf2(row[1].ToString()), BitsOf2(row[2].ToString()) });
+            var stL = WbSave2.ApplySave(ScenarioInput("R-legacy"), hostL);
+            var gL = scenByName["R-legacy"];
+            Assert.AreEqual(gL["scalars"]["seed"].Value<int>(), stL.Seed);
+            Assert.AreEqual(gL["scalars"]["tickCount"].Value<int>(), stL.TickCount);
+            Assert.AreEqual(gL["scalars"]["eventSeq"].Value<int>(), stL.EventSeq);
+            Assert.AreEqual(gL["scalars"]["armySeq"].Value<int>(), stL.ArmySeq);
+            Assert.AreEqual(gL["scalars"]["dynSeq"].Value<int>(), stL.DynSeq);
+            Assert.AreEqual(gL["scalars"]["weapSeq"].Value<int>(), stL.WeapSeq);
+            Assert.AreEqual(gL["scalars"]["traitSeq"].Value<int>(), stL.TraitSeq);
+            Assert.AreEqual(gL["scalars"]["allianceSeq"].Value<int>(), stL.AllianceSeq);
+            Assert.AreEqual(gL["scalars"]["emTechSeq"].Value<int>(), stL.EmTechSeq);
+            Assert.AreEqual(gL["scalars"]["ideaSeq"].Value<int>(), stL.IdeaSeq);
+            Assert.AreEqual(gL["scalars"]["rngA"].ToString(), "0x" + stL.RngA.ToString("x8"), "rngA（重播种+visFromGene 消耗链）");
+            Assert.AreEqual(gL["units41"].Count(), stL.Units.Count, "units41 行数（999 护栏丢弃）");
+            Assert.IsFalse(stL.UnitById.ContainsKey(10050), "未知种族 999 丢弃");
+            var dynIds = stL.DynRaces.Keys.OrderBy(x => x).ToList();
+            CollectionAssert.AreEqual(new[] { 100, 101, 102 }, dynIds, "dyn races 重注册集（103 父种丢失丢弃）");
+            Assert.IsTrue(stL.CivRaces.Contains(102), "102 文明亚种入 CIV_RACES");
+            Assert.AreEqual("#a0ff8f", stL.RacesOut[102]["dynTint"].ToString(), "tintIdx 9 → clamp 7");
+            Assert.IsTrue(JToken.DeepEquals(gL["dyn"]["races"][2]["def"]["vis"], WbSave2.VisToTuple(stL.RacesOut[102]["vis"])), "102 vis 元组逐位");
+            Assert.IsNotNull(stL.RacesOut[101]["vis"]["root"], "101 缺 vis → visFromGene 兜底");
+            Assert.AreEqual(2, (int)stL.EmergentWeapons[5]["pl"], "武器 5 dtype1 fire>0.4 → pl 2");
+            Assert.AreEqual(6, (int)stL.EmergentWeapons[6]["pl"], "武器 6 dtype 9→4 → pl 6");
+            Assert.AreEqual(1, stL.Doctrines.Count, "dctr 损坏行跳过");
+            Assert.AreEqual(1.5, stL.Doctrines[2][0], 1e-12, "doctrine precision 无 clamp 真值");
+            Assert.AreEqual(1, stL.Defenses.Count);
+            Assert.AreEqual(0.0, stL.Defenses[1][0], 1e-12, "point -3 → clamp 0");
+            Assert.AreEqual(999.0, stL.Defenses[1][1], 1e-12, "armor 999 不设上限");
+            // 军团对账倒序怪味：army2/army1 后处理改写存活单位 u.army 残留
+            Assert.AreEqual(1, stL.Armies.Count, "仅 army4 存活");
+            Assert.AreEqual(4, (int)stL.UnitById[10001]["army"], "10001 → army4");
+            Assert.AreEqual(2, (int)stL.UnitById[10005]["army"], "10005 → army2 残留（倒序对账怪味）");
+            Assert.AreEqual(1, (int)stL.UnitById[10002]["army"], "10002 → army1 残留（army1 解散）");
+            // warData normalize + casusText 宿主查表
+            Assert.AreEqual("", stL.WarData["0|5"]["reasonText"].ToString(), "死文明行 reasonText '' 兜底");
+            Assert.AreEqual("annex", stL.WarData["0|5"]["reason"].ToString());
+            Assert.AreEqual(gL["warData"].First(w => (string)w["key"] == "0|1")["reasonText"].ToString(), stL.WarData["0|1"]["reasonText"].ToString(), "casusText 查表逐字");
+            // 联盟 + 工坊
+            Assert.AreEqual(2, stL.Alliances.Count);
+            Assert.AreEqual("#84cc16", stL.Alliances[1]["colorHex"].ToString(), "色值兜底 ALLIANCE_COLORS[3]");
+            Assert.AreEqual("长老", stL.RacesOut[2]["name"].ToString(), "rmods race2 name 补丁");
+            Assert.AreEqual(1.0, stL.RacesOut[4]["hp"].Value<double>(), "rmods race4 hp -5 → clamp 1");
+            Assert.IsTrue(stL.ItemMods.ContainsKey("sword1"), "imods sword1 补丁");
+            CollectionAssert.AreEqual(new[] { "uid-1", "uid-2" }, stL.CreationRaceIds.Keys.OrderBy(k => k).ToList(), "creg 注册（999 跳过）");
+            // 自然恢复：stormSeq spread 含损坏行 id+1（L15690 先于恢复循环）
+            Assert.AreEqual(10, stL.Nature.StormSeq, "stormSeq = max(1,5,8,9,10)");
+            Assert.AreEqual(2, stL.Nature.Storms.Count, "短风暴行跳过");
+            Assert.AreEqual("轩岚", stL.Nature.Storms[0]["name"].ToString(), "STORM_NAME_AT(7)");
+            Assert.AreEqual(0.1, stL.Nature.Storms[1]["strength"].Value<double>(), 1e-12, "strength 0.05 → clamp 0.1");
+            Assert.AreEqual(3, stL.Nature.PlateEpoch, "plateEpoch 透传");
+            Assert.IsNotNull(stL.Nature.PlateCx, "板块恢复分支命中（pcx 长度=plateN）");
+            var expectCx = ((JArray)gL["expectPlateCx"]).Select(t => t.Value<double>()).ToArray();
+            CollectionAssert.AreEqual(expectCx, stL.Nature.PlateCx, "plateCx 钳制面（宿主 recomputePlates 钩子前）");
+            Assert.AreEqual(640, hostL.AshCells, "灰烬场格数 AW×AH=32×20");
+            Assert.AreEqual(2, stL.Nature.AshF.Count, "ashF 越界行（ci=640）剔除");
+            Assert.AreEqual("running", stL.WorldWar["phase"].ToString());
+            CollectionAssert.AreEqual(new[] { 0, 1, 3 }, stL.WorldWar["belligerents"].Select(t => (int)t).ToArray(), "belligerents typeof number 过滤（3.5 → 3）");
+            Assert.AreEqual(-600, stL.WwNuke, "wwTimers 复位");
+            Assert.AreEqual(0, stL.Shake, "瞬态清空");
+
+            // —— R-v1：trk/job legacy 迁移 ——
+            var hostV1 = MkHost();
+            foreach (var row in (JArray)scenByName["R-v1"]["techMods"])
+                hostV1.TechMods.Add(new[] { row[0].Value<double>(), BitsOf2(row[1].ToString()), BitsOf2(row[2].ToString()) });
+            var stV1 = WbSave2.ApplySave(ScenarioInput("R-v1"), hostV1);
+            Assert.AreEqual("sword1", stV1.UnitById[20001]["wep"].ToString(), "trk → wep 迁移");
+            Assert.AreEqual(0, (int)stV1.UnitById[20002]["job"], "job 缺省 0");
+
+            // —— units41 全量逐位（42 列直读协议；unitsToRows 同构）——
+            foreach (var name in new[] { "R-fixture", "R-legacy", "R-v1" })
+            {
+                var host = MkHost();
+                foreach (var row in (JArray)scenByName[name]["techMods"])
+                    host.TechMods.Add(new[] { row[0].Value<double>(), BitsOf2(row[1].ToString()), BitsOf2(row[2].ToString()) });
+                var st = WbSave2.ApplySave(ScenarioInput(name), host);
+                var rows = WbSave2.UnitsToRows(st.Units);
+                var expect = (JArray)scenByName[name]["units41"];
+                Assert.AreEqual(expect.Count, rows.Count - 1, $"{name} units41 行数");
+                for (int i = 0; i < expect.Count; i++)
+                    Assert.IsTrue(JToken.DeepEquals(expect[i], rows[i + 1]), $"{name} units41 行 {i} 逐位");
+            }
+
+            // —— W 组：unitsToRows 写方向（serialize save.u 对账）——
+            foreach (var name in new[] { "W-fixture", "W-legacy" })
+            {
+                var host = MkHost();
+                var st = WbSave2.ApplySave(ScenarioInput(name), host);
+                var rows = WbSave2.UnitsToRows(st.Units);
+                Assert.IsTrue(JToken.DeepEquals((JArray)scenByName[name]["save"]["u"], rows), $"{name} save.u 42 列逐位");
+            }
+
+            // —— X 组：rowToTrigger 抛错文案逐字 ——
+            foreach (var name in new[] { "X-trigger-len", "X-trigger-cond", "X-trigger-condkind", "X-trigger-action" })
+            {
+                var host = MkHost();
+                Exception caught = null;
+                try { WbSave2.ApplySave(ScenarioInput(name), host); }
+                catch (Exception e) { caught = e; }
+                Assert.IsNotNull(caught, $"{name} 应抛错");
+                Assert.AreEqual(scenByName[name]["threw"].ToString(), caught.Message, $"{name} 文案逐字");
+            }
+        }
+    }
 }
