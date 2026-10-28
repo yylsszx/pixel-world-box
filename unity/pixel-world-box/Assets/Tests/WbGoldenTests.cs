@@ -108,6 +108,22 @@ namespace PixelWorldBox.Tests
             return candidates[0];
         }
 
+        /// 通用黄金 JSON 加载（Test10/11 共用；路径候选与 WbCivTickPath 同构）
+        /// ⚠ M-U3g 缺陷修复：Test10 一直引用本助手但未定义（沙箱无 dotnet 未暴露），此处补落。
+        private static T LoadJson<T>(string fileName)
+        {
+            string[] candidates =
+            {
+                "Assets/StreamingAssets/WbGolden/" + fileName,
+                Path.Combine(TestContext.CurrentContext.TestDirectory, "Assets/StreamingAssets/WbGolden/" + fileName),
+                Path.Combine(Directory.GetParent("Assets").FullName, "Assets/StreamingAssets/WbGolden/" + fileName),
+            };
+            string path = candidates[0];
+            foreach (var c in candidates) if (File.Exists(c)) { path = c; break; }
+            Assert.IsTrue(File.Exists(path), $"golden json not found: {path}");
+            return JsonConvert.DeserializeObject<T>(File.ReadAllText(path));
+        }
+
         // UnityEngine.Application.dataPath（EditMode TestRunner cwd = 工程根）
         private static string ApplicationDataPath() => "Assets";
 
@@ -2751,6 +2767,232 @@ namespace PixelWorldBox.Tests
             w.armies.Add(a);
             foreach (int uid in a.members) if (w.unitById.TryGetValue(uid, out var u)) u.army = a.id;
             w.armySeq = System.Math.Max(w.armySeq, a.id + 1);
+        }
+
+        // ================================================================
+        // Test11 —— M-U4 渲染 I 黄金回放（render.json 102 场景三段逐位）
+        //   地形 39 × 8×8 RGBA 烘焙（flushDirty 全数学链）＋ 道具 15 命令流（flushProps）＋ 单位 48 决策流（render 单位循环）
+        // 蓝本链：engine.ts flushDirty/flushProps + render.ts render 直跑（gen-render.mjs）→ WbRender.cs 机械翻译 → 本回放
+        // 平行链：render-transcript.mjs JS 镜像 186/186 ALL PASS（verify 段 11）
+        // 样式协议：fillRect→s=[fillStyle]；strokeRect→s=[strokeStyle,lineWidth(double)]；其余 op s=null
+        // ================================================================
+
+        private static double HexToF64(string hex)
+        {
+            byte[] b = new byte[8];
+            for (int i = 0; i < 8; i++) b[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
+            return BitConverter.ToDouble(b, 0);
+        }
+        private static double JHexD(Newtonsoft.Json.Linq.JToken tok)
+        {
+            if (tok == null || tok.Type == Newtonsoft.Json.Linq.JTokenType.Null) return 0;
+            return HexToF64(tok.ToString());
+        }
+
+        private static void AssertOpsEqual(Newtonsoft.Json.Linq.JArray want, WbDrawList got, string ctx)
+        {
+            Assert.AreEqual(want.Count, got.ops.Count, ctx + " op 数");
+            for (int k = 0; k < want.Count; k++)
+            {
+                var wop = want[k];
+                var gop = got.ops[k];
+                Assert.AreEqual(wop["o"].ToString(), gop.o, ctx + $" op[{k}] opcode");
+                var wa = (Newtonsoft.Json.Linq.JArray)wop["a"];
+                Assert.AreEqual(wa.Count, gop.a.Length, ctx + $" op[{k}] 参数数");
+                for (int j = 0; j < wa.Count; j++)
+                    Assert.AreEqual(JHex(wa[j]), WbRender.F64Hex(gop.a[j]), ctx + $" op[{k}].a[{j}]（f64 bits）");
+                var ws = wop["s"];
+                if (ws == null || ws.Type == Newtonsoft.Json.Linq.JTokenType.Null)
+                {
+                    Assert.IsNull(gop.s, ctx + $" op[{k}] s=null");
+                }
+                else
+                {
+                    Assert.IsNotNull(gop.s, ctx + $" op[{k}] s 非空");
+                    var sarr = (Newtonsoft.Json.Linq.JArray)ws;
+                    Assert.AreEqual(sarr.Count, gop.s.Length, ctx + $" op[{k}] s 元素数");
+                    for (int j = 0; j < sarr.Count; j++)
+                    {
+                        if (sarr[j].Type == Newtonsoft.Json.Linq.JTokenType.String)
+                            Assert.AreEqual(sarr[j].ToString(), (string)gop.s[j], ctx + $" op[{k}].s[{j}] 样式串");
+                        else
+                            Assert.AreEqual(sarr[j].Value<double>(), (double)gop.s[j], ctx + $" op[{k}].s[{j}] lineWidth");
+                    }
+                }
+            }
+        }
+
+        private static void AssertBailsEqual(Newtonsoft.Json.Linq.JArray want, WbDrawList got, string ctx)
+        {
+            Assert.AreEqual(want.Count, got.bails.Count, ctx + " bail 数");
+            for (int k = 0; k < want.Count; k++)
+            {
+                var wb = want[k];
+                var gb = got.bails[k];
+                Assert.AreEqual(wb["fn"].ToString(), gb.fn, ctx + $" bail[{k}] fn");
+                var wa = (Newtonsoft.Json.Linq.JArray)wb["a"];
+                Assert.AreEqual(wa.Count, gb.a.Length, ctx + $" bail[{k}] 基元数");
+                for (int j = 0; j < wa.Count; j++)
+                {
+                    string wv = wa[j].Type == Newtonsoft.Json.Linq.JTokenType.Null ? null : wa[j].ToString();
+                    Assert.AreEqual(wv ?? "", gb.a[j] ?? "", ctx + $" bail[{k}].a[{j}]（f64 bits hex/null）");
+                }
+            }
+        }
+
+        [Test]
+        public void Test11_Render_Golden()
+        {
+            var golden = LoadJson<Newtonsoft.Json.Linq.JObject>("render.json");
+            var terrain = (Newtonsoft.Json.Linq.JArray)golden["terrain"];
+            var props = (Newtonsoft.Json.Linq.JArray)golden["props"];
+            var units = (Newtonsoft.Json.Linq.JArray)golden["units"];
+            Assert.AreEqual(39, terrain.Count, "terrain 场景数");
+            Assert.AreEqual(15, props.Count, "props 场景数");
+            Assert.AreEqual(48, units.Count, "unit 场景数");
+            foreach (var sc in terrain) RunTerrainScenario((Newtonsoft.Json.Linq.JObject)sc);
+            foreach (var sc in props) RunPropsScenario((Newtonsoft.Json.Linq.JObject)sc);
+            foreach (var sc in units) RunUnitScenario((Newtonsoft.Json.Linq.JObject)sc);
+        }
+
+        private WbRenderState NewRenderState()
+        {
+            var st = new WbRenderState();
+            for (int i = 0; i < WbRender.W * WbRender.H; i++) st.owner[i] = -1;
+            return st;
+        }
+
+        private void RunTerrainScenario(Newtonsoft.Json.Linq.JObject sc)
+        {
+            string name = sc["name"].ToString();
+            var tiles = (Newtonsoft.Json.Linq.JArray)sc["tiles"];
+            var st = NewRenderState();
+            foreach (var tl in tiles)
+            {
+                var inp = tl["in"];
+                int i = inp["i"].Value<int>();
+                st.terrain[i] = (byte)inp["t"].Value<int>();
+                st.variant[i] = (byte)inp["variant"].Value<int>();
+                st.waterTier[i] = (byte)inp["waterTier"].Value<int>();
+                st.road[i] = inp["road"].Value<int>();
+                st.owner[i] = inp["owner"].Value<int>();
+                st.radiate[i] = inp["radiate"].Value<double>();
+                st.season = inp["season"].Value<int>();
+                st.ash = JHexD(inp["ash"]);
+                st.glacier[i] = (byte)inp["glacier"].Value<int>();
+                // 邻居地形（软边/坡向/海岸泡沫域）
+                int x = i % WbRender.W, y = i / WbRender.W;
+                if (x > 0) st.terrain[i - 1] = (byte)inp["nL"].Value<int>();
+                if (x < WbRender.W - 1) st.terrain[i + 1] = (byte)inp["nR"].Value<int>();
+                if (y > 0) st.terrain[i - WbRender.W] = (byte)inp["nT"].Value<int>();
+                if (y < WbRender.H - 1) st.terrain[i + WbRender.W] = (byte)inp["nB"].Value<int>();
+                if (x > 0 && y > 0) st.terrain[i - WbRender.W - 1] = (byte)inp["nTL"].Value<int>();
+                if (x < WbRender.W - 1 && y < WbRender.H - 1) st.terrain[i + WbRender.W + 1] = (byte)inp["nBR"].Value<int>();
+                // 邻居 owner（疆域边界域；-9 = 画外哨兵不灌）
+                if (x > 0) st.owner[i - 1] = inp["oL"].Value<int>();
+                if (x < WbRender.W - 1) st.owner[i + 1] = inp["oR"].Value<int>();
+                if (y > 0) st.owner[i - WbRender.W] = inp["oT"].Value<int>();
+                if (y < WbRender.H - 1) st.owner[i + WbRender.W] = inp["oB"].Value<int>();
+                if (inp["civColor"] != null && inp["civColor"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                {
+                    int o = inp["owner"].Value<int>();
+                    while (st.civs.Count <= o) st.civs.Add(null);
+                    if (st.civs[o] == null)
+                        st.civs[o] = new WbCiv
+                        {
+                            id = o,
+                            color = inp["civColor"].Values<int>().ToArray(),
+                            colorHex = "#000000",
+                            alive = true,
+                        };
+                }
+                var px = new byte[256];
+                WbRender.TerrainBake(st, i, px);
+                var sb = new StringBuilder(512);
+                foreach (var b in px) sb.Append(b.ToString("x2"));
+                Assert.AreEqual(tl["rgba"].ToString(), sb.ToString(), name + $" tile {i} 8×8 RGBA 逐位");
+            }
+        }
+
+        private void RunPropsScenario(Newtonsoft.Json.Linq.JObject sc)
+        {
+            string name = sc["name"].ToString();
+            var inp = sc["in"];
+            int i = inp["i"].Value<int>();
+            var st = NewRenderState();
+            st.terrain[i] = (byte)inp["t"].Value<int>();
+            st.variant[i] = (byte)inp["variant"].Value<int>();
+            st.road[i] = inp["road"].Value<int>();
+            st.snowman[i] = (byte)inp["snowman"].Value<int>();
+            st.season = inp["season"].Value<int>();
+            var L = new WbDrawList();
+            WbRender.PropsBake(st, i, L);
+            AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
+            AssertBailsEqual((Newtonsoft.Json.Linq.JArray)sc["bails"], L, name);
+        }
+
+        private void RunUnitScenario(Newtonsoft.Json.Linq.JObject sc)
+        {
+            string name = sc["name"].ToString();
+            var inp = sc["in"];
+            var st = NewRenderState();
+            st.terrainAt = (byte)inp["terrainAt"].Value<int>();
+            st.camX = JHexD(inp["cam"]["x"]);
+            st.camY = JHexD(inp["cam"]["y"]);
+            st.camZoom = JHexD(inp["cam"]["zoom"]);
+            st.frameCount = inp["frameCount"].Value<long>();
+            st.fxDayNight = inp["fxPrefs"]["dayNight"].Value<bool>();
+            st.fxHpBars = inp["fxPrefs"]["hpBars"].Value<bool>();
+            st.selectedId = inp["selectedId"].Value<int>();
+            if (inp["civs"] != null && inp["civs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                foreach (var c in (Newtonsoft.Json.Linq.JArray)inp["civs"])
+                {
+                    int cid = c["id"].Value<int>();
+                    while (st.civs.Count <= cid) st.civs.Add(null);
+                    st.civs[cid] = new WbCiv
+                    {
+                        id = cid,
+                        color = c["color"] != null && c["color"].Type != Newtonsoft.Json.Linq.JTokenType.Null
+                            ? c["color"].Values<int>().ToArray() : new[] { 0, 0, 0 },
+                        colorHex = c["colorHex"]?.ToString() ?? "#000000",
+                        alive = c["alive"] == null || c["alive"].Value<bool>(),
+                    };
+                }
+            var units = new List<WbU>();
+            foreach (var q in (Newtonsoft.Json.Linq.JArray)inp["units"])
+            {
+                var u = new WbU
+                {
+                    id = q["id"].Value<int>(),
+                    race = q["race"].Value<int>(),
+                    civ = q["civ"].Value<int>(),
+                    x = JHexD(q["x"]),
+                    y = JHexD(q["y"]),
+                    flip = q["flip"].Value<int>(),
+                    atk = (int)JHexD(q["atk"]),
+                    age = q["age"].Value<int>(),
+                    hurt = q["hurt"].Value<int>(),
+                    hp = JHexD(q["hp"]),
+                    maxHp = JHexD(q["maxHp"]),
+                    boat = q["boat"].Value<int>(),
+                    caravan = q["caravan"].Value<int>(),
+                    king = q["king"].Value<int>(),
+                };
+                if (q["rx"] != null && q["rx"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.rx = JHexD(q["rx"]);
+                if (q["ry"] != null && q["ry"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.ry = JHexD(q["ry"]);
+                if (q["dpx"] != null && q["dpx"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.dpx = JHexD(q["dpx"]);
+                if (q["dpy"] != null && q["dpy"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.dpy = JHexD(q["dpy"]);
+                if (q["lx"] != null && q["lx"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.lx = JHexD(q["lx"]);
+                if (q["ly"] != null && q["ly"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.ly = JHexD(q["ly"]);
+                if (q["panic"] != null && q["panic"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.panic = JHexD(q["panic"]);
+                if (q["wep"] != null && q["wep"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.wep = q["wep"].ToString();
+                if (q["trait"] != null && q["trait"].Type != Newtonsoft.Json.Linq.JTokenType.Null) u.traitName = q["trait"].ToString();
+                units.Add(u);
+            }
+            var L = new WbDrawList();
+            WbRender.UnitScene(st, units, L);
+            AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
+            AssertBailsEqual((Newtonsoft.Json.Linq.JArray)sc["bails"], L, name);
         }
     }
 }

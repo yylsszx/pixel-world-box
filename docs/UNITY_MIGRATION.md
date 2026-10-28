@@ -48,8 +48,9 @@ C# 代码只允许从下列蓝本**机械翻译**，禁止从记忆重写：
 | M-U3e | 科技研发域：WbTech 全表 50 项 + 五函数（PickResearch/FundResearch/CompleteTech/InventEmTech/TechTick）+ ModsOfTechs 26→50 | engine.ts | ✅ 075eb31 |
 | M-U3f | 经济/社会域：economyTick + societyTick 全链（旨意/税政/军饷/稳定度/理念扩散/政体演变/危机）+ 类型 double 化五连（黄金 CVT44-55，transcript 57/57） | engine.ts L2535/L2569 真序 | ✅ bd553c1 |
 | M-O1 | 神谕 AI：dsh 五包最小闭环冒烟（主线二，见 docs/deepseek-harness-adaptation.md） | dsh 源码 | ✅ 98cb7b1 |
-| M-U3g | 文明余域盘点：商队结算/殖民建城/船单位等 bail 稀疏路径的宿主侧对齐 | engine.ts | ⬜ 待盘点 |
-| M-U4 | 渲染 I：地形/单位绘制（SOA→Unity Tilemap/Sprite） | render.ts | ⬜ |
+| M-U3g | 军团域全量切片（重定界）：armyTick 状态机全链 C# 机械翻译 + 黄金 16 场景 + mirror/verify/NUnit 四链 | engine.ts | ✅ 60103d6 |
+| M-U3h | 文明余域盘点：商队结算/殖民建城/船单位等 bail 稀疏路径的宿主侧对齐（原 M-U3g 未覆盖余量） | engine.ts | ⬜ 待盘点 |
+| M-U4 | 渲染 I：地形/单位绘制管线（flushDirty 8×8 RGBA 烘焙 / flushProps 命令流 / render 单位决策链+清屏机 / sprites bail 契约；精灵内部像素画 = M-U5） | render.ts + engine.ts | ✅ M-U4 提交 |
 | M-U5 | 渲染 II：生物外形/动作精细化（sprites、动画帧、朝向 flip、特效层） | sprites.ts / render.ts | ⬜ |
 | M-U6 | 存档兼容：saveSafe/version 迁移（TS 存档可被 Unity 读） | saveSafe.ts | ⬜ |
 | M-U7 | 集成打磨：Unity 工程整合、性能（Jobs/Burst 可选，位精确优先）、QA | — | ⬜ |
@@ -58,6 +59,8 @@ C# 代码只允许从下列蓝本**机械翻译**，禁止从记忆重写：
 
 ```
 scripts/unity-migration/          # 黄金向量生成器（Node，直接加载 wasm/import src）
+  gen-render.mjs                  # M-U4 渲染 I 黄金向量（录制 ctx + sprites bail 打标）
+  render-transcript.mjs           # M-U4 WbRender.cs 的 JS 独立转写（防循环论证双链）
   gen-units-move.mjs              # M-U2a 移动黄金向量
   golden/units_move.json          # 生成产物（入库，C# 测试数据源）
 unity/pixel-world-box/
@@ -67,6 +70,7 @@ unity/pixel-world-box/
     WbMath.cs                     # fd_hypot / js_min / js_max（jsmath.rs 逐行）
     WbArena.cs                    # arena byte[] + offs place! 布局同构 + u8/u32/f64 访问
     WbUnits.cs                    # 批驱动 + update_unit 移动路径 + move_unit/pass_tile + 动作缓冲
+    WbRender.cs                   # M-U4 渲染 I：TerrainBake/PropsBake/UnitScene（清屏机+单位决策链）+ sprites bail 契约
   Assets/Tests/WbGoldenTests.cs   # NUnit 逐位对账（黄金 JSON 驱动）
   Assets/StreamingAssets/WbGolden/units_move.json
 ```

@@ -109,7 +109,12 @@ namespace PixelWorldBox.Wb
         // 战斗树（WbUnits）读 arena OFF_UGEAR int 索引，不经此字段（M-U3g IsRangedMember 消费 string 语义）
         public object wep;
         public int arm, hlm, shd, bts, rng, amu;
-        public double lx, ly;                // engine Unit.lx/ly（leadAim 弹道预测 vx = x - lx）
+        public double? lx, ly;               // engine Unit.lx/ly（leadAim vx = x - (lx ?? x)；undefined → null）
+        // —— 渲染域镜像（M-U4：render.ts 消费的可选插值/显示/恐慌字段；undefined → null）——
+        public double? rx, ry;               // u.rx/ry 插值坐标（dpx 缺省时 px = (rx ?? x) * 2）
+        public double? dpx, dpy;             // u.dpx/dpy 显示像素覆盖（直接 2px 空间坐标）
+        public double? panic;                // u.panic 恐慌值（涌现社会域；?? 0 语义）
+        public string traitName;             // u.trait 字符串语义（'tiny'/'giant'；int trait 为旧占位域）
         public double? tDmg, tHp;        // engine u.tDmg/u.tHp（undefined ?? 1 语义 → null；completeTech retro 记账）
         public object army;
         public object gene;

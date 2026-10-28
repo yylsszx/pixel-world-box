@@ -4147,8 +4147,8 @@ namespace PixelWorldBox.Wb
         /// engine leadAim L4351-4358 —— 弹道预测：按目标当前速度取提前量（箭矢飞行期间目标会走 1 格余）
         public static (double x, double y) LeadAim(WbWorld w, WbU enemy, int ttl)
         {
-            double vx = enemy.x - enemy.lx;
-            double vy = enemy.y - enemy.ly;
+            double vx = enemy.x - (enemy.lx ?? enemy.x);
+            double vy = enemy.y - (enemy.ly ?? enemy.y);
             return (
                 System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, enemy.x + vx * ttl + w.Rng() * 0.4 - 0.2)),
                 System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, enemy.y + vy * ttl + w.Rng() * 0.4 - 0.2))
