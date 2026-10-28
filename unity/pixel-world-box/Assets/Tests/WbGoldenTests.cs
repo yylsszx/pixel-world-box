@@ -3907,5 +3907,79 @@ namespace PixelWorldBox.Tests
             }
             Assert.AreEqual(10, n, "overlay 场景数（O 组 3 + A 组 3 + D 组 1 + B 组 1 + T 组 2）");
         }
+
+        /// M-U7e minimap 小地图战略层黄金回放（minimap.json 15 场景 → WbMinimap.RenderMinimap 全档逐位）
+        /// dump 协议：units/cam/view f64hex 小端（BitConverter LE 直读）；civs 数组序即 id；rdefs 动态种 isCiv；
+        /// op 流 fillRect s=[style]/strokeRect s=[style,lw 数值]/drawImage 符号 blit s=[src, alpha 数值]。
+        [Test]
+        public void Test22_Minimap_Golden()
+        {
+            double LeD(string h) { var b = new byte[8]; for (int i = 0; i < 8; i++) b[i] = Convert.ToByte(h.Substring(i * 2, 2), 16); return BitConverter.ToDouble(b, 0); }
+            var gold = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(FindGolden2("minimap.json")));
+            int n = 0;
+            foreach (var sc in (Newtonsoft.Json.Linq.JArray)gold["scens"])
+            {
+                string name = sc["name"].ToString();
+                var st = NewRenderState();
+                st.camX = LeD(sc["cam"]["x"].ToString());
+                st.camY = LeD(sc["cam"]["y"].ToString());
+                st.camZoom = LeD(sc["cam"]["zoom"].ToString());
+                if (sc["civs"] != null && sc["civs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    foreach (var c in (Newtonsoft.Json.Linq.JArray)sc["civs"])
+                    {
+                        // 数组序即 id（gen dump：eng.civs.map(c => c ? {colorHex, alive} : null)）
+                        st.civs.Add(c == null || c.Type == Newtonsoft.Json.Linq.JTokenType.Null ? null : new WbCiv
+                        {
+                            colorHex = c["colorHex"]?.ToString() ?? "#000000",
+                            alive = c["alive"] == null || c["alive"].Value<bool>(),
+                        });
+                    }
+                if (sc["rdefs"] != null && sc["rdefs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                {
+                    var dyn = new System.Collections.Generic.Dictionary<int, WbRenderTables.RDef>();
+                    foreach (var r in (Newtonsoft.Json.Linq.JArray)sc["rdefs"])
+                        dyn[r["id"].Value<int>()] = new WbRenderTables.RDef("wolf", 40, false, false) { isCiv = r["isCiv"].Value<int>() == 1 };
+                    st.RdefHost = (race) => dyn.TryGetValue(race, out var d) ? d : null;
+                }
+                var host = new WbMinimapHost
+                {
+                    mw = sc["mw"].Value<int>(),
+                    mh = sc["mh"].Value<int>(),
+                    viewW = LeD(sc["view"]["w"].ToString()),
+                    viewH = LeD(sc["view"]["h"].ToString()),
+                    overlayMode = sc["overlayMode"].ToString(),
+                    fireSet = null,
+                    battles = null,
+                    buildings = null,
+                };
+                if (sc["fireSet"] != null && sc["fireSet"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    host.fireSet = sc["fireSet"].Values<int>().ToList();
+                if (sc["battles"] != null && sc["battles"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    host.battles = sc["battles"].Values<int>().ToList();
+                if (sc["buildings"] != null && sc["buildings"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                {
+                    host.buildings = new System.Collections.Generic.List<double[]>();
+                    foreach (var b in (Newtonsoft.Json.Linq.JArray)sc["buildings"])
+                        host.buildings.Add(new[] { LeD(b["x"].ToString()), LeD(b["y"].ToString()) });
+                }
+                var units = new System.Collections.Generic.List<WbU>();
+                if (sc["units"] != null && sc["units"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    foreach (var u in (Newtonsoft.Json.Linq.JArray)sc["units"])
+                        units.Add(new WbU
+                        {
+                            race = u["race"].Value<int>(),
+                            civ = u["civ"].Value<int>(),
+                            x = LeD(u["x"].ToString()),
+                            y = LeD(u["y"].ToString()),
+                            boat = u["boat"].Value<int>(),
+                            dead = u["dead"].Value<int>(),
+                        });
+                var L = new WbDrawList();
+                WbMinimap.RenderMinimap(st, units, host, L);
+                AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
+                n++;
+            }
+            Assert.AreEqual(15, n, "minimap 场景数（M01-M14 含 zoom 两档 15 条）");
+        }
     }
 }

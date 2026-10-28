@@ -74,10 +74,19 @@ namespace PixelWorldBox.Wb
         };
         // RACES 渲染域子集（types.ts RACES 41 族机械镜像；vis/dynTint = 涌现域，基表全 false/null）
         // M-U7b+：visG = 涌现视觉基因组（蓝本 def.vis 本体——动态种 def 由宿主 RdefHost 注入，vis=true 且 visG!=null）
+        // M-U7e：isCiv = 文明族标志（minimap 单位点色路径 def.isCiv 消费；静态 41 条从 WbCivSim.RacesIsCiv 回填，
+        //     动态种由 RdefHost 注入——蓝本 RACES spread 继承 isCiv 语义）
         public class RDef { public string sprite; public int maxAge; public bool aquatic, flying, vis; public string dynTint;
             public WbVis visG; public bool sandswim;   // 蓝本 def.sandswim（沙虫族系巨怪形态锚）
+            public bool isCiv;                          // 蓝本 def.isCiv（M-U7e minimap 消费）
             public RDef(string s, int ma, bool aq, bool fl, bool vis = false, string dt = null)
             { sprite = s; maxAge = ma; aquatic = aq; flying = fl; this.vis = vis; dynTint = dt; } }
+        static WbRenderTables()
+        {
+            // isCiv 静态回填（types.ts RACES 全表 0-40：civ 族 0/1/2/3/19/20——WbCivSim.RacesIsCiv 同源镜像）
+            foreach (var kv in RDEF)
+                if (kv.Key >= 0 && kv.Key < WbCivSim.RacesIsCiv.Length && WbCivSim.RacesIsCiv[kv.Key]) kv.Value.isCiv = true;
+        }
         public static readonly Dictionary<int, RDef> RDEF = new Dictionary<int, RDef> {
             { 0,  new RDef("person", 55, false, false) },
             { 1,  new RDef("person", 90, false, false) },
@@ -145,6 +154,10 @@ namespace PixelWorldBox.Wb
         { ops.Add(new WbDrawOp { o = "clearRect", a = new[] { x, y, w, h }, s = null }); }
         public void Stroke(string style, double lw, double x, double y, double w, double h)
         { ops.Add(new WbDrawOp { o = "strokeRect", a = new[] { x, y, w, h }, s = new object[] { style, lw } }); }
+        // M-U7e minimap：canvas 间 drawImage 的符号 blit op（srcTag = 'terrain'/'overlay'；alpha 内联进 s——
+        // 像素合成不进对账面，blit 事实与参数可对账；AssertOpsEqual s 协议：string 直比 / 数值 Value<double>）
+        public void Blit(string srcTag, double alpha, double x, double y, double w, double h)
+        { ops.Add(new WbDrawOp { o = "drawImage", a = new[] { x, y, w, h }, s = new object[] { srcTag, alpha } }); }
         public void Bail(string fn, params string[] aHex)
         { bails.Add(new WbBail { fn = fn, a = aHex }); }
         public void Tag(string o, params double[] a)
