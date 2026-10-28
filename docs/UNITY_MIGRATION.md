@@ -51,7 +51,8 @@ C# 代码只允许从下列蓝本**机械翻译**，禁止从记忆重写：
 | M-U3g | 军团域全量切片（重定界）：armyTick 状态机全链 C# 机械翻译 + 黄金 16 场景 + mirror/verify/NUnit 四链 | engine.ts | ✅ 60103d6 |
 | M-U3h | 文明余域盘点：商队结算/殖民建城/船单位等 bail 稀疏路径的宿主侧对齐（原 M-U3g 未覆盖余量） | engine.ts | ⬜ 待盘点 |
 | M-U4 | 渲染 I：地形/单位绘制管线（flushDirty 8×8 RGBA 烘焙 / flushProps 命令流 / render 单位决策链+清屏机 / sprites bail 契约；精灵内部像素画 = M-U5） | render.ts + engine.ts | ✅ 8c820b3 |
-| M-U5 | 渲染 II：生物外形/动作精细化（sprites、动画帧、朝向 flip、特效层） | sprites.ts / render.ts | ⬜ |
+| M-U5a | 渲染 II：精灵像素画 bail 契约展开（sprites 12 函数完整 op 序列：树/山/人形中档+精绘/四足精绘/船/商队/中档五族 + vis 涌现色移 shiftColor/shiftRgb+HSL 链） | sprites.ts + emergence.ts | ✅ 本轮 |
+| M-U5b | 渲染 III：frame 驱动物种精灵（dragon/penguin/camel/scorpion/snake/skeleton/demon/angel/phoenix/ent/lich/troll/ogre/whitewalker/vampire/kraken/sandworm/basilisk/hydra/mage + 八新动物 8 + 涌现 visCacheFor 域）+ drawBuilding/drawItem/drawFire/drawTornado | sprites.ts 余段 | ⬜ |
 | M-U6 | 存档兼容：saveSafe/version 迁移（TS 存档可被 Unity 读） | saveSafe.ts | ⬜ |
 | M-U7 | 集成打磨：Unity 工程整合、性能（Jobs/Burst 可选，位精确优先）、QA | — | ⬜ |
 
@@ -60,7 +61,9 @@ C# 代码只允许从下列蓝本**机械翻译**，禁止从记忆重写：
 ```
 scripts/unity-migration/          # 黄金向量生成器（Node，直接加载 wasm/import src）
   gen-render.mjs                  # M-U4 渲染 I 黄金向量（录制 ctx + sprites bail 打标）
+  gen-render2.mjs                 # M-U5a 渲染 II 黄金向量（精灵 12 函数直调，bail 展开为完整 op 序列）
   render-transcript.mjs           # M-U4 WbRender.cs 的 JS 独立转写（防循环论证双链）
+  render2-transcript.mjs          # M-U5a WbSprites.cs 的 JS 独立转写（128 场景逐 op 逐位）
   gen-units-move.mjs              # M-U2a 移动黄金向量
   golden/units_move.json          # 生成产物（入库，C# 测试数据源）
 unity/pixel-world-box/
@@ -71,6 +74,7 @@ unity/pixel-world-box/
     WbArena.cs                    # arena byte[] + offs place! 布局同构 + u8/u32/f64 访问
     WbUnits.cs                    # 批驱动 + update_unit 移动路径 + move_unit/pass_tile + 动作缓冲
     WbRender.cs                   # M-U4 渲染 I：TerrainBake/PropsBake/UnitScene（清屏机+单位决策链）+ sprites bail 契约
+    WbSprites.cs                  # M-U5a 渲染 II：12 精灵函数像素画（完整 op 命令流）+ WbVis 涌现色移链
   Assets/Tests/WbGoldenTests.cs   # NUnit 逐位对账（黄金 JSON 驱动）
   Assets/StreamingAssets/WbGolden/units_move.json
 ```

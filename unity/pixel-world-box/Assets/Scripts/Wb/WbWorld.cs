@@ -109,6 +109,9 @@ namespace PixelWorldBox.Wb
         // 战斗树（WbUnits）读 arena OFF_UGEAR int 索引，不经此字段（M-U3g IsRangedMember 消费 string 语义）
         public object wep;
         public int arm, hlm, shd, bts, rng, amu;
+        // armS/hlmS: 渲染域镜像 TS Unit.arm/hlm 字符串 key（'armor1'/'armor2'/'armor3'/'energy_shield'/'hlm1'/'hlm2'/'hlm3'）——
+        // 精灵域（WbSprites）消费 string 语义（armor2→钢色等），与 wep object 同款协议（M-U5a）
+        public object armS, hlmS;
         public double? lx, ly;               // engine Unit.lx/ly（leadAim vx = x - (lx ?? x)；undefined → null）
         // —— 渲染域镜像（M-U4：render.ts 消费的可选插值/显示/恐慌字段；undefined → null）——
         public double? rx, ry;               // u.rx/ry 插值坐标（dpx 缺省时 px = (rx ?? x) * 2）

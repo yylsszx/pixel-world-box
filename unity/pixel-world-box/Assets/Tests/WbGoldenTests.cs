@@ -2994,5 +2994,96 @@ namespace PixelWorldBox.Tests
             AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
             AssertBailsEqual((Newtonsoft.Json.Linq.JArray)sc["bails"], L, name);
         }
+
+        // ============================================================
+        // Test12: M-U5a 渲染 II —— sprites 12 函数像素画（WbSprites.cs）
+        // 黄金: render2.json 128 场景（gen-render2.mjs 直录 src/lib/game/sprites.ts 真实现，
+        //       bail 契约展开为完整 op 序列）。逐 op 逐位（opcode/参数 f64 bits/样式串）。
+        // ============================================================
+        [Test]
+        public void Test12_Sprites_Golden()
+        {
+            var golden = LoadJson<Newtonsoft.Json.Linq.JObject>("render2.json");
+            var scens = (Newtonsoft.Json.Linq.JArray)golden["scens"];
+            Assert.AreEqual(128, scens.Count, "sprites 场景数");
+            foreach (var sc in scens) RunSpritesScenario((Newtonsoft.Json.Linq.JObject)sc);
+        }
+
+        private static bool JHas(Newtonsoft.Json.Linq.JToken tok)
+        {
+            return tok != null && tok.Type != Newtonsoft.Json.Linq.JTokenType.Null;
+        }
+
+        private void RunSpritesScenario(Newtonsoft.Json.Linq.JObject sc)
+        {
+            string name = sc["name"].ToString();
+            string fn = sc["fn"].ToString();
+            var inp = (Newtonsoft.Json.Linq.JObject)sc["in"];
+            var L = new WbDrawList();
+            if (fn == "drawTree")
+            {
+                WbSprites.DrawTree(L, inp["x"].Value<double>(), inp["y"].Value<double>(),
+                    inp["variant"].Value<int>(), inp["season"].Value<int>());
+            }
+            else if (fn == "drawMountainProp")
+            {
+                double? elev = JHas(inp["elev"]) ? (double?)JHexD(inp["elev"]) : null;
+                double? cold = JHas(inp["cold"]) ? (double?)JHexD(inp["cold"]) : null;
+                WbSprites.DrawMountainProp(L, inp["x"].Value<double>(), inp["y"].Value<double>(),
+                    inp["variant"].Value<int>(), elev, cold);
+            }
+            else
+            {
+                var u = RebuildSpriteU((Newtonsoft.Json.Linq.JObject)inp["u"]);
+                WbVis vis = JHas(inp["raceVis"]) ? JsonConvert.DeserializeObject<WbVis>(inp["raceVis"].ToString()) : null;
+                int[] civColor = null;
+                if (JHas(inp["civColor"])) civColor = inp["civColor"].Values<int>().ToArray();
+                if (fn == "drawPerson") WbSprites.DrawPerson(L, u, vis, civColor, inp["t"].Value<int>());
+                else if (fn == "drawPersonFine") WbSprites.DrawPersonFine(L, u, vis, civColor, inp["t"].Value<int>(), inp["crown"].Value<int>() != 0);
+                else if (fn == "drawQuadFine") WbSprites.DrawQuadFine(L, u, inp["kind"].ToString(), inp["t"].Value<int>(), inp["crown"].Value<int>() != 0);
+                else if (fn == "drawBoat") WbSprites.DrawBoat(L, u, civColor, inp["frame"].Value<int>());
+                else if (fn == "drawCaravan") WbSprites.DrawCaravan(L, u, civColor, inp["frame"].Value<int>());
+                else if (fn == "drawSheep") WbSprites.DrawSheep(L, u);
+                else if (fn == "drawWolf") WbSprites.DrawWolf(L, u);
+                else if (fn == "drawSnowWolf") WbSprites.DrawSnowWolf(L, u);
+                else if (fn == "drawBear") WbSprites.DrawBear(L, u);
+                else if (fn == "drawDeer") WbSprites.DrawDeer(L, u);
+                else Assert.Fail("未知精灵函数 " + fn);
+            }
+            AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
+        }
+
+        // render2.json in.u 重建（dumpU 逆变换；f64 hex → double；渲染域字段映射 WbU）
+        private WbU RebuildSpriteU(Newtonsoft.Json.Linq.JObject q)
+        {
+            var u = new WbU
+            {
+                race = q["race"].Value<int>(),
+                civ = q["civ"].Value<int>(),
+                x = JHexD(q["x"]),
+                y = JHexD(q["y"]),
+                flip = q["flip"].Value<int>(),
+                atk = (int)JHexD(q["atk"]),
+                age = q["age"].Value<int>(),
+                maxAge = q["maxAge"].Value<int>(),
+                hurt = q["hurt"].Value<int>(),
+                hp = JHexD(q["hp"]),
+                maxHp = JHexD(q["maxHp"]),
+                job = q["job"].Value<int>(),
+                infected = q["infected"].Value<int>(),
+                king = q["king"].Value<int>(),
+            };
+            if (JHas(q["rx"])) u.rx = JHexD(q["rx"]);
+            if (JHas(q["ry"])) u.ry = JHexD(q["ry"]);
+            if (JHas(q["dpx"])) u.dpx = JHexD(q["dpx"]);
+            if (JHas(q["dpy"])) u.dpy = JHexD(q["dpy"]);
+            if (JHas(q["lx"])) u.lx = JHexD(q["lx"]);
+            if (JHas(q["ly"])) u.ly = JHexD(q["ly"]);
+            if (JHas(q["wep"])) u.wep = q["wep"].ToString();
+            if (JHas(q["arm"])) u.armS = q["arm"].ToString();
+            if (JHas(q["hlm"])) u.hlmS = q["hlm"].ToString();
+            if (JHas(q["trait"])) u.traitName = q["trait"].ToString();
+            return u;
+        }
     }
 }
