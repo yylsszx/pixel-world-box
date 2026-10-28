@@ -3839,5 +3839,73 @@ namespace PixelWorldBox.Tests
             }
             Assert.AreEqual(19, n, "render7 场景数（E 组 10 + M 组 5 + G 组 4）");
         }
+
+        /// M-U7d overlay 政治版图层黄金回放（overlay.json 10 场景 → WbOverlay.RedrawOverlay 五模式全档逐位）
+        /// dump 协议：RLE（[start,value,runLen]…）阵列解码（owner 默认 -1/terrain 默认 GRASS=3/temp/moist 默认 128）；
+        /// units 坐标 f64hex 小端（BitConverter.ToDouble LE 直读）；op 流 fillRect s=[style]/clearRect s=null。
+        [Test]
+        public void Test21_Overlay_Golden()
+        {
+            double LeD(string h) { var b = new byte[8]; for (int i = 0; i < 8; i++) b[i] = Convert.ToByte(h.Substring(i * 2, 2), 16); return BitConverter.ToDouble(b, 0); }
+            int[] RleI(Newtonsoft.Json.Linq.JArray r, int len, int dflt)
+            {
+                var a = new int[len];
+                if (a.Length > 0) System.Array.Fill(a, dflt);
+                if (r != null) foreach (var t in r) { int s = t[0].Value<int>(), v = t[1].Value<int>(), n = t[2].Value<int>(); for (int k = 0; k < n; k++) a[s + k] = v; }
+                return a;
+            }
+            byte[] RleB(Newtonsoft.Json.Linq.JArray r, int len, byte dflt)
+            {
+                var a = new byte[len];
+                if (a.Length > 0) System.Array.Fill(a, dflt);
+                if (r != null) foreach (var t in r) { int s = t[0].Value<int>(), v = t[1].Value<int>(), n = t[2].Value<int>(); for (int k = 0; k < n; k++) a[s + k] = (byte)v; }
+                return a;
+            }
+            var gold = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(FindGolden2("overlay.json")));
+            int n = 0;
+            foreach (var sc in (Newtonsoft.Json.Linq.JArray)gold["scens"])
+            {
+                string name = sc["name"].ToString();
+                var st = NewRenderState();
+                st.owner = RleI((Newtonsoft.Json.Linq.JArray)sc["ownerRle"], 256 * 160, -1);
+                st.terrain = RleB((Newtonsoft.Json.Linq.JArray)sc["terrainRle"], 256 * 160, 3);
+                if (sc["civs"] != null && sc["civs"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    foreach (var c in (Newtonsoft.Json.Linq.JArray)sc["civs"])
+                    {
+                        int cid = c["id"].Value<int>();
+                        while (st.civs.Count <= cid) st.civs.Add(null);
+                        st.civs[cid] = new WbCiv
+                        {
+                            id = cid,
+                            color = c["color"] != null ? c["color"].Values<int>().ToArray() : new[] { 0, 0, 0 },
+                            colorHex = c["colorHex"]?.ToString() ?? "#000000",
+                            alive = c["alive"] == null || c["alive"].Value<bool>(),
+                        };
+                    }
+                var host = new WbOverlayHost
+                {
+                    mode = sc["mode"].ToString(),
+                    alliances = new System.Collections.Generic.List<WbAl>(),
+                    allianceOf = new System.Collections.Generic.Dictionary<int, int>(),
+                    tempOverlay = RleB((Newtonsoft.Json.Linq.JArray)sc["tempRle"], 256 * 160, 128),
+                    moistMap = RleB((Newtonsoft.Json.Linq.JArray)sc["moistRle"], 256 * 160, 128),
+                };
+                if (sc["alliances"] != null && sc["alliances"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    foreach (var a in (Newtonsoft.Json.Linq.JArray)sc["alliances"])
+                        host.alliances.Add(new WbAl { id = a["id"].Value<int>(), colorHex = a["colorHex"].ToString() });
+                if (sc["allianceOf"] != null && sc["allianceOf"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    foreach (var t in (Newtonsoft.Json.Linq.JArray)sc["allianceOf"])
+                        host.allianceOf[t[0].Value<int>()] = t[1].Value<int>();
+                var units = new System.Collections.Generic.List<WbU>();
+                if (sc["units"] != null && sc["units"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    foreach (var u in (Newtonsoft.Json.Linq.JArray)sc["units"])
+                        units.Add(new WbU { x = LeD(u["x"].ToString()), y = LeD(u["y"].ToString()), dead = u["dead"].Value<int>() });
+                var L = new WbDrawList();
+                WbOverlay.RedrawOverlay(st, units, host, L);
+                AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
+                n++;
+            }
+            Assert.AreEqual(10, n, "overlay 场景数（O 组 3 + A 组 3 + D 组 1 + B 组 1 + T 组 2）");
+        }
     }
 }
