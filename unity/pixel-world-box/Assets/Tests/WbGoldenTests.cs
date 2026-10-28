@@ -3228,5 +3228,142 @@ namespace PixelWorldBox.Tests
             }
             AssertOpsEqual((Newtonsoft.Json.Linq.JArray)sc["ops"], L, name);
         }
+
+        // ============================================================
+        // Test15: M-U6a 存档编解码核心 —— B64/RLE/Hash2/Reseed/CamClamp/OccClamp/RowsToUnits/Validate（WbSave.cs）
+        // 黄金: save.json 13 场景组（gen-save.mjs 真引擎 serialize/applySave 直录 + validateSaveData + hash2 直调）。
+        // 对账纪律: rngA 为 applySave 尾链推进值（M-U6b 域）不在此锁 —— 重播种公式由 H-math reseed 表锁定。
+        // ============================================================
+        [Test]
+        public void Test15_Save_Golden()
+        {
+            var golden = LoadJson<Newtonsoft.Json.Linq.JObject>("save.json");
+            var scens = (Newtonsoft.Json.Linq.JArray)golden["scenarios"];
+            Assert.AreEqual(13, scens.Count, "存档编解码场景组数");
+            int W = golden["meta"]["W"].Value<int>();
+            int H = golden["meta"]["H"].Value<int>();
+            var ufields = ((Newtonsoft.Json.Linq.JArray)golden["meta"]["unitFields"]).Select(t => t.ToString()).ToArray();
+            foreach (var scT in scens)
+            {
+                var sc = (Newtonsoft.Json.Linq.JObject)scT;
+                string name = sc["name"].ToString();
+                if (name.StartsWith("S-"))
+                {
+                    var save = (Newtonsoft.Json.Linq.JObject)sc["save"];
+                    var raw = (Newtonsoft.Json.Linq.JObject)sc["raw"];
+                    // RLE round-trip：解码黄金 → 引擎内数组 hex 逐位；编码引擎内数组 → 黄金字串逐位
+                    var fields = new[] { "terrain", "owner", "building", "fire", "radiate", "river", "road" };
+                    foreach (var f in fields)
+                    {
+                        var svTok = save[f];
+                        if (svTok == null || svTok.Type != JTokenType.String) continue;
+                        string sv = svTok.ToString();
+                        if (sv.Length == 0) continue; // variant 空串跳过（v2 不存）
+                        int expect = f == "owner" ? W * H * 2 : W * H;
+                        byte[] dec = WbSave.RleDecode(sv, expect);
+                        Assert.AreEqual(raw[f].ToString(), Hex(dec, 0, dec.Length), $"{name} {f} RleDecode 逐位");
+                        string enc = WbSave.RleEncode(HexToBytes(raw[f].ToString()));
+                        Assert.AreEqual(sv, enc, $"{name} {f} RleEncode round-trip");
+                    }
+                    // 列式单位行：RowsToUnits 协议 + round-trip 重建 == 黄金 u
+                    var uArr = (Newtonsoft.Json.Linq.JArray)save["u"];
+                    var units = WbSave.RowsToUnits(uArr);
+                    var units41 = (Newtonsoft.Json.Linq.JArray)sc["units41"];
+                    Assert.AreEqual(units41.Count, units.Count, $"{name} rowsToUnits 行数");
+                    var rebuilt = new Newtonsoft.Json.Linq.JArray();
+                    var headerArr = new Newtonsoft.Json.Linq.JArray();
+                    foreach (var hf in ufields) headerArr.Add(hf);
+                    rebuilt.Add(headerArr);
+                    foreach (var dict in units)
+                    {
+                        var row = new Newtonsoft.Json.Linq.JArray();
+                        foreach (var hf in ufields)
+                            row.Add(dict.ContainsKey(hf) ? (JToken)dict[hf] : JToken.Parse("null"));
+                        rebuilt.Add(row);
+                    }
+                    Assert.AreEqual(save["u"].ToString(Formatting.None), rebuilt.ToString(Formatting.None), $"{name} rows round-trip 逐位");
+                    // 语义锚（S-fixture 注入 id=10000 行）：wep 对象字段深值
+                    if (name == "S-fixture-777")
+                    {
+                        var row10k = units41.First(r => ((Newtonsoft.Json.Linq.JArray)r)[0].Value<int>() == 10000);
+                        var wepTok = ((Newtonsoft.Json.Linq.JArray)row10k)[ufields.ToList().IndexOf("wep")];
+                        Assert.AreEqual("Emergent Blade", wepTok["name"].ToString(), "注入单位 wep 对象字段");
+                    }
+                }
+                else if (name.StartsWith("A-"))
+                {
+                    int seed = sc["scalarSeed"].Value<int>();
+                    // variant 重算逐位（hash2 链）
+                    byte[] variant = WbSave.RecomputeVariant(W, H, seed);
+                    Assert.AreEqual(sc["variant"].ToString(), Hex(variant, 0, variant.Length), $"{name} RecomputeVariant 逐位");
+                    // cam 谓词 + clamp
+                    var camIn = sc["camIn"];
+                    bool finite = camIn != null && camIn.Type == JTokenType.Object
+                        && WbSave.CamFinite(JHexD(camIn["x"]), JHexD(camIn["y"]), camIn["zoom"].ToString() == "NaN" ? double.NaN : JHexD(camIn["zoom"]));
+                    Assert.AreEqual(sc["camApplied"].Value<bool>(), finite, $"{name} CamFinite 谓词");
+                    if (finite && sc["camApplied"].Value<bool>())
+                    {
+                        double rawZoom = camIn["zoom"].ToString() == "NaN" ? double.NaN : JHexD(camIn["zoom"]);
+                        Assert.AreEqual(sc["cam"]["zoom"].ToString(), F64Hex(WbSave.CamZoomClamp(rawZoom)), $"{name} CamZoomClamp");
+                    }
+                    // occ clamp 逐行（注入表与 gen-save 硬编码同源；civ 存活 = 0/1 两文明）
+                    if (name == "A-occ-clamp")
+                    {
+                        int[][] injected = new[] { new[] { 0, 0, 0 }, new[] { 1, 0, 1 }, new[] { 2, 0, 50 }, new[] { 3, 0, 99 }, new[] { 4, 0, 100 }, new[] { 5, 0, 150 }, new[] { 6, 9, 10 }, new[] { 7, 0, -5 }, new[] { -1, 0, 10 }, new[] { W * H, 0, 10 }, new[] { 8, 1, 3 }, new[] { 9, 0, 98 } };
+                        var goldOcc = new Dictionary<int, int[]>();
+                        foreach (var r in (Newtonsoft.Json.Linq.JArray)sc["occ"])
+                        {
+                            var row = (Newtonsoft.Json.Linq.JArray)r;
+                            goldOcc[row[0].Value<int>()] = new[] { row[0].Value<int>(), row[1].Value<int>(), row[2].Value<int>() };
+                        }
+                        foreach (var inj in injected)
+                        {
+                            bool alive = inj[1] == 0 || inj[1] == 1;
+                            int? got = WbSave.OccAccept(inj[0], inj[1], inj[2], alive, W * H);
+                            if (got == null) Assert.IsFalse(goldOcc.ContainsKey(inj[0]), $"{name} occ i={inj[0]} 应跳过");
+                            else
+                            {
+                                Assert.IsTrue(goldOcc.ContainsKey(inj[0]), $"{name} occ i={inj[0]} 应收录");
+                                Assert.AreEqual(got.Value, goldOcc[inj[0]][2], $"{name} occ i={inj[0]} clamp 值");
+                            }
+                        }
+                    }
+                }
+                else if (name == "H-math")
+                {
+                    foreach (var r in (Newtonsoft.Json.Linq.JArray)sc["hash2"])
+                    {
+                        var row = (Newtonsoft.Json.Linq.JArray)r;
+                        double got = WbSave.Hash2(row[0].Value<int>(), row[1].Value<int>(), row[2].Value<int>());
+                        Assert.AreEqual(row[3].ToString(), F64Hex(got), $"hash2({row[0]},{row[1]},{row[2]}) f64 逐位");
+                    }
+                    foreach (var r in (Newtonsoft.Json.Linq.JArray)sc["reseed"])
+                    {
+                        var row = (Newtonsoft.Json.Linq.JArray)r;
+                        uint got = WbSave.ReseedRng(row[0].Value<int>(), row[1].Value<int>());
+                        Assert.AreEqual(row[2].ToString(), "0x" + got.ToString("x8"), $"ReseedRng({row[0]},{row[1]})");
+                    }
+                }
+                else if (name == "V-validate")
+                {
+                    foreach (var cT in (Newtonsoft.Json.Linq.JArray)sc["cases"])
+                    {
+                        var c = (Newtonsoft.Json.Linq.JObject)cT;
+                        string got = WbSave.ValidateSaveData(c["input"]);
+                        var expectTok = c["expect"];
+                        string expect = expectTok == null || expectTok.Type == JTokenType.Null ? null : expectTok.ToString();
+                        Assert.AreEqual(expect ?? "null", got ?? "null", $"validate {c["name"]}");
+                    }
+                }
+                else Assert.Fail("未知场景组 " + name);
+            }
+        }
+
+        private static byte[] HexToBytes(string hex)
+        {
+            var b = new byte[hex.Length / 2];
+            for (int i = 0; i < b.Length; i++) b[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
+            return b;
+        }
     }
 }

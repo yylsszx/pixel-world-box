@@ -1045,6 +1045,35 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   }
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0;
+// 段 15：M-U6a 存档编解码核心双链（save-transcript 镜像逐位 + gen-save sanity/det 复跑）
+//   save-transcript.mjs = WbSave.cs 的 JS 独立转写（B64/RLE/Hash2/Reseed/CamClamp/OccClamp/RowsToUnits/Validate 文案逐字）
+//   gen-save.mjs = 黄金生成器自带 sanity 33 断言 + det 子进程双跑（RACES 全局态污染 → 双跑必须进程隔离）；黄金 13 场景组
+// ============================================================
+{
+  const { execFileSync } = await import('node:child_process');
+  const { createHash } = await import('node:crypto');
+  var saveVerifyFail = 0;
+  try {
+    execFileSync('node', [new URL('./save-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'] });
+    console.log('save 黄金回放 (save-transcript 镜像 vs save.json): PASS (77 断言 × 编解码/数学/validate 逐位)');
+  } catch (e) {
+    saveVerifyFail++;
+    console.error('save 黄金回放 (save-transcript 镜像 vs save.json): FAIL');
+    console.error(String(e.stdout ?? '').split('\n').slice(0, 10).join('\n'));
+  }
+  try {
+    const goldenPath = new URL('./golden/save.json', import.meta.url).pathname;
+    const h0 = createHash('md5').update(await (await import('node:fs')).promises.readFile(goldenPath)).digest('hex');
+    execFileSync('node', [new URL('./gen-save.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const h1 = createHash('md5').update(await (await import('node:fs')).promises.readFile(goldenPath)).digest('hex');
+    if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
+    console.log('save gen sanity+det 复跑 (gen-save): PASS (33 断言 × det 子进程双跑字节级)');
+  } catch (e) {
+    saveVerifyFail++;
+    console.error('save gen sanity+det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);

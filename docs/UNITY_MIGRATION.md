@@ -54,7 +54,8 @@ C# 代码只允许从下列蓝本**机械翻译**，禁止从记忆重写：
 | M-U5a | 渲染 II：精灵像素画 bail 契约展开（sprites 12 函数完整 op 序列：树/山/人形中档+精绘/四足精绘/船/商队/中档五族 + vis 涌现色移 shiftColor/shiftRgb+HSL 链） | sprites.ts + emergence.ts | ✅ 本轮 |
 | M-U5b | 渲染 III：frame 驱动物种精灵 20 族全量（dragon/penguin/camel/scorpion/snake/skeleton/demon/angel/phoenix/ent/lich/troll/ogre/whitewalker/vampire/kraken/sandworm/basilisk/hydra/mage——相位步态/振翅/公转 cos-sin/u32 哈希/世代 hydra gen 全语义） | sprites.ts frame 族 | ✅ 本轮 |
 | M-U5c | 渲染 IV：八新动物 8（chicken/pig/rabbit/fox/fish/crab/turtle/shark）+ drawBuilding（9 专用 kind + house/capital 科技阶位）/drawItem（meat 特判 + 查表上提）/drawFire/drawTornado + 涌现域 drawEmergentCreature/drawEmergentMonster（save/scale 变换 op）——sprites.ts 全量清零、M-U5 渲染域收官 | sprites.ts 余段 | ✅ 本轮 |
-| M-U6 | 存档兼容：saveSafe/version 迁移（TS 存档可被 Unity 读） | saveSafe.ts | ⬜ |
+| M-U6a | 存档编解码核心（读方向）：B64/RLE（u16 小端对 run&lt;65535 四异常文案逐字）/列式单位行 rowsToUnits 协议/Hash2（JS double 乘舍入 ToInt32 语义模拟）/ReseedRng/CamFinite+ZoomClamp/OccAccept/ValidateSaveData 全分支（16 案例文案逐字）——WbSave.cs + 黄金 save.json 13 场景组（真引擎 serialize/applySave 直录）+ save-transcript 77 断言 + verify 段 15 + NUnit Test15 | engine.ts serialize/applySave + saveSafe.ts + noise.ts | ✅ 430d1f2 后本轮 |
+| M-U6b | 存档状态恢复全链（applySave 容器段：dyn/emTechs/evo/fams/agentLaws/nature/ww/alliance 恢复 + rngA 尾链对账）+ serialize 方向（Unity 存档可被 TS 读） | engine.ts applySave L15350-15911 | ⬜ |
 | M-U7 | 集成打磨：Unity 工程整合、性能（Jobs/Burst 可选，位精确优先）、QA | — | ⬜ |
 
 ## 3. 目录结构
