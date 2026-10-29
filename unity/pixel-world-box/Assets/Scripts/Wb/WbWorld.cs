@@ -71,6 +71,7 @@ namespace PixelWorldBox.Wb
         public double dir;
         public int? civ;
         public string colorHex;
+        public double? dmg;                 // engine Effect.dmg（castArrow/bullet opts 覆盖域；dump 协议外占位 —— M-U3h case3）
     }
 
     /// WorldEvent —— engine.ts addEvent L13996
@@ -453,6 +454,7 @@ namespace PixelWorldBox.Wb
         public int seasonOffset;            // NatureSystem.seasonOffset（reset 恒 0；夹具注入冬季场景）
         public string overlayMode = "none";                                                  // 渲染 overlay（M-U4 域；黄金恒 none）
         public bool overlayDirty = true;
+        public long lastSiegeEventTick;                 // engine L521 lastSiegeEventTick = 0（攻城纪事节流阀 —— M-U3h case3）
         public List<WbEvoNode> evoNodes = new List<WbEvoNode>();
         public int evoSeq;
         public Dictionary<string, int> evoIndex = new Dictionary<string, int>();
@@ -509,7 +511,7 @@ namespace PixelWorldBox.Wb
         }
 
         /// engine.ts fx L9781-9799 —— 渲染侧效应入事件流（rng 消耗×2 是模拟语义，桩不掉）
-        public WbFx Fx(string kind, double x, double y, double ttl, double? optR = null, int? optCiv = null, string optColorHex = null)
+        public WbFx Fx(string kind, double x, double y, double ttl, double? optR = null, int? optCiv = null, string optColorHex = null, double? optX0 = null, double? optY0 = null, double? optDmg = null)
         {
             // 特效总量控制（L9784-9792）：满载逐出最老次要特效；全是关键则丢新的次要
             if (effects.Count >= FX_CAP)
@@ -524,13 +526,15 @@ namespace PixelWorldBox.Wb
             }
             var e = new WbFx
             {
-                kind = kind, x = x, y = y, x0 = x, y0 = y,
+                kind = kind, x = x, y = y,
+                x0 = optX0 ?? x, y0 = optY0 ?? y,       // L9793-9797 spread opts 覆盖（castArrow x0/y0 消费）
                 r = optR ?? 1,
                 ttl = ttl,
                 seed = (int)(Rng() * 65536.0),          // Math.floor(rng()*65536)
                 dir = Rng() * System.Math.PI * 2,
                 civ = optCiv,
                 colorHex = optColorHex,
+                dmg = optDmg,                           // opts.dmg 覆盖（castArrow 消费；dump 协议外占位）
             };
             effects.Add(e);
             return e;

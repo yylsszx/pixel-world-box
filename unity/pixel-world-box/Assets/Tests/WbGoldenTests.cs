@@ -4253,7 +4253,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             Assert.AreEqual(256, meta["W"].Value<int>(), "meta W");
             Assert.AreEqual(160, meta["H"].Value<int>(), "meta H");
             var scenarios = (Newtonsoft.Json.Linq.JArray)golden["scenarios"];
-            Assert.AreEqual(28, scenarios.Count, "scenario count");
+            Assert.AreEqual(36, scenarios.Count, "scenario count");
             foreach (var sc in scenarios) RunBailScenario((Newtonsoft.Json.Linq.JObject)sc);
         }
 
@@ -4271,6 +4271,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             w.familySeq = sc["familySeq0"].Value<int>();
             w.traitSeq = sc["traitSeq0"].Value<int>();
             w.evoSeq = sc["evoSeq0"].Value<int>();
+            w.tickCount = sc["startTick"].Value<int>(); // case3 siege 节流门基准（B 系不消费未暴露）
 
             // laws 全量（golden dump eng.laws）
             var laws = sc["laws"];
@@ -4358,6 +4359,8 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                     dead = u["dead"]?.Value<int>() ?? 0,
                     name = $"u{u["id"].Value<int>()}",
                 };
+                if (u["army"] != null && u["army"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    un.army = u["army"].Value<int>(); // case3 inArmy 真值门（u.army != null）
                 w.units.Add(un);
                 w.unitById[un.id] = un;
                 if (un.id == sc["unitId"].Value<int>()) target = un;
@@ -4407,6 +4410,15 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                 w.wildCount[wc[0].Value<int>()] = wc[1].Value<int>();                      // E06 cap 门夹具
             foreach (var rd in (fx["radiate"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                 w.radiate[rd[0].Value<int>()] = (byte)rd[1].Value<int>();                   // E02 辐射高压锅夹具（fixture.radiate 稀疏对）
+            // case3 夹具（第四批）：warData 记分簿 + 攻城纪事节流阀
+            foreach (var wd in (fx["wars"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
+            {
+                int wa = wd["a"].Value<int>(), wbv = wd["b"].Value<int>();
+                string wk = WbWorld.PairKey(wa, wbv);
+                w.warData[wk] = new WbWarData { key = wk, a = wa, b = wbv };
+            }
+            w.lastSiegeEventTick = fx["lastSiegeEventTick"] != null && fx["lastSiegeEventTick"].Type != Newtonsoft.Json.Linq.JTokenType.Null
+                ? fx["lastSiegeEventTick"].Value<long>() : 0;   // ctor L521 初值 0（禁读 POST 态——dump 时序纪律④）
 
             // —— relay 直调（engine L3148 同入口）——
             int relayKind = sc["kind"].Value<int>();
@@ -4434,6 +4446,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             Assert.AreEqual(wantU["boatTTL"].Value<int>(), target.boatTTL, $"{name} unit.boatTTL");
             Assert.AreEqual(wantU["dead"].Value<int>(), target.dead, $"{name} unit.dead");
             Assert.AreEqual(wantU["hurt"].Value<int>(), target.hurt, $"{name} unit.hurt");
+            Assert.AreEqual(wantU["cd"].Value<int>(), target.cd, $"{name} unit.cd"); // case3 弓手 cd=18（字段只加，旧场景恒 0）
             // case1 消费域扩展断言（字段只加）
             AreBitsEqual(target.ageF, LeD(wantU["age"].ToString()), $"{name} unit.age");
             AreBitsEqual(target.hp, LeD(wantU["hp"].ToString()), $"{name} unit.hp");
@@ -4688,6 +4701,28 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                 CollectionAssert.AreEqual(
                     (sc["radiateRle"] as Newtonsoft.Json.Linq.JArray).Select(t => t.Value<int>()).ToList(),
                     RleOf(w.radiate.Select(rr => (int)rr)), $"{name} radiateRle");
+
+            // case3 POST 态对账（第四批）：warData 记分增量 12 字段 + 攻城纪事节流阀终值
+            var wantWars = (sc["wars"] as Newtonsoft.Json.Linq.JArray) ?? new Newtonsoft.Json.Linq.JArray();
+            Assert.AreEqual(wantWars.Count, w.warData.Count, $"{name} wars count");
+            foreach (var wwd in wantWars)
+            {
+                string wk2 = wwd["key"].ToString();
+                Assert.IsTrue(w.warData.TryGetValue(wk2, out WbWarData gw), $"{name} war {wk2} missing");
+                Assert.AreEqual(wwd["a"].Value<int>(), gw.a, $"{name} war {wk2}.a");
+                Assert.AreEqual(wwd["b"].Value<int>(), gw.b, $"{name} war {wk2}.b");
+                AreBitsEqual(gw.scoreA, wwd["scoreA"].Value<double>(), $"{name} war {wk2}.scoreA");
+                AreBitsEqual(gw.scoreB, wwd["scoreB"].Value<double>(), $"{name} war {wk2}.scoreB");
+                AreBitsEqual(gw.casA, wwd["casA"].Value<double>(), $"{name} war {wk2}.casA");
+                AreBitsEqual(gw.casB, wwd["casB"].Value<double>(), $"{name} war {wk2}.casB");
+                AreBitsEqual(gw.exA, wwd["exA"].Value<double>(), $"{name} war {wk2}.exA");
+                AreBitsEqual(gw.exB, wwd["exB"].Value<double>(), $"{name} war {wk2}.exB");
+                AreBitsEqual(gw.razedA, wwd["razedA"].Value<double>(), $"{name} war {wk2}.razedA");
+                AreBitsEqual(gw.razedB, wwd["razedB"].Value<double>(), $"{name} war {wk2}.razedB");
+                AreBitsEqual(gw.occA, wwd["occA"].Value<double>(), $"{name} war {wk2}.occA");
+                AreBitsEqual(gw.occB, wwd["occB"].Value<double>(), $"{name} war {wk2}.occB");
+            }
+            Assert.AreEqual(sc["lastSiegeEventTick"].Value<long>(), w.lastSiegeEventTick, $"{name} lastSiegeEventTick");
         }
     }
 }

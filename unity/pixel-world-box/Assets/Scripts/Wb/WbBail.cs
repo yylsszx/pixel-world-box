@@ -111,7 +111,8 @@ namespace PixelWorldBox.Wb
                     Case2(w, u, d);
                     break;                                                                                              // L3230-3257
                 case 3:
-                    throw new System.InvalidOperationException("wbResume case3 建筑摧毁级联未翻译（M-U3h 第二批域）");             // L3258-3285
+                    Case3(w, u, d);
+                    break;                                                                                              // L3258-3285
                 default:
                     throw new System.InvalidOperationException($"wbResume case {kind} 越界");
             }
@@ -973,6 +974,248 @@ namespace PixelWorldBox.Wb
             if (civId < 0) return 0;                                                            // L8068
             WbCiv c = civId < w.civs.Count ? w.civs[civId] : null;                              // L8069 ?.gov ?? 0
             return c != null ? c.gov : 0;
+        }
+
+        // ============================================================
+        // ============ M-U3h 第四批 case3 建筑摧毁级联域 ================
+        // ============================================================
+        // 蓝本：engine.ts wbResume case3 L3258-3285 + onBuildingDestroyed L4464-4496 +
+        //   sackCapital L4498-4508 + annexTiles L4510-4553 + destroyBuilding L1936-1952（WbCivSim 复用）+
+        //   enemyBuildingNear L4396-4417 + nearestEnemyBuilding L4421-4431 + castArrow L4368-4370 +
+        //   addWarScore L7234-7245 + noteOccupied L7172-7177 + maybeBoardForWar L5740（GUARD 桩）
+
+        // CAPTURABLE（types.ts L343 —— Set{HOUSE, FARM, MARKET, BARRACKS, PORT}）
+        private static readonly System.Collections.Generic.HashSet<int> Capturable = new System.Collections.Generic.HashSet<int> { 1, 4, 9, 5, 7 };
+
+        // BUILDING_DEFS[kind].name 消费切片（types.ts L325-337——capture/siege 纪事文案）
+        private static readonly string[] BuildName = { "空地", "住宅", "王都", "箭塔", "农田", "兵营", "城堡", "港口", "图书馆", "集市", "神殿", "城墙" };
+
+        // ================= wbResume case3 体（engine L3258-3285 机械翻译） =================
+        private static void Case3(WbWorld w, WbU u, double[] d)
+        {
+            // 建筑摧毁级联（单位 cd/atk 已置）：onBuildingDestroyed + 战争 AI 分支剩余 + 尾段
+            int tile = (int)d[0];                                                               // L3260 d[0] | 0
+            int byCiv = (int)d[1];                                                              // L3261
+            OnBuildingDestroyed(w, tile, byCiv);                                                // L3262
+            int job = u.job;                                                                    // L3263 ?? 0（int 旧占位语义）
+            bool inArmy = u.army != null;                                                       // L3264 u.army != null
+            // 弓手轰击（cd 已被置 14 → 门不触发，掷骰不消耗 —— 与 Rust 短路一致）
+            if (job == 3 && u.cd <= 0 && w.Rng() < 0.1)                                         // L3266
+            {
+                int bi = EnemyBuildingNear(w, u, 5);                                            // L3267 JOBS[3].ranged ?? 5
+                if (bi >= 0)
+                {
+                    u.cd = 18;                                                                  // L3269
+                    CastArrow(w, u, (bi % WbWorld.W) + 0.5, ((bi / WbWorld.W) | 0) + 0.5, u.dmg);   // L3270
+                }
+            }
+            if (!inArmy)                                                                        // L3274
+            {
+                if (w.Rng() < 0.05 && MaybeBoardForWar(w, u)) return;                           // L3275（GUARD 桩——黄金受控不可达）
+                {
+                    double tdx = u.tx - u.x;                                                    // L3277-3278
+                    double tdy = u.ty - u.y;
+                    if (tdx * tdx + tdy * tdy < 1.44 || w.Rng() < 0.03)                         // L3279
+                    {
+                        WbBuilding tgt = NearestEnemyBuilding(w, u);                            // L3280
+                        if (tgt != null) { u.tx = tgt.x + w.Rng() * 2 - 1; u.ty = tgt.y + w.Rng() * 2 - 1; }   // L3281
+                    }
+                }
+            }
+            if (UpdateUnitTailJS(w, u)) return;                                                 // L3284
+            UpdateUnitPostJS(w, u);                                                             // L3285
+        }
+
+        // ================= destroyBuilding（engine L1936-1952 —— WbCivSim.DestroyBuilding 已全译复用） =================
+
+        // ================= addWarScore（engine L7234-7245 机械翻译） =================
+        private static void AddWarScore(WbWorld w, int byCiv, int victimCiv, double pts, string kind)
+        {
+            if (!w.warData.TryGetValue(WbWorld.PairKey(byCiv, victimCiv), out WbWarData wd)) return;   // L7235
+            bool isA = wd.a == byCiv;                                                           // L7237
+            if (isA) wd.scoreA += pts; else wd.scoreB += pts;                                   // L7238
+            if (kind == "kill")                                                                 // L7239-7243
+            {
+                if (isA) { wd.casB += 1; wd.exB += 1; } else { wd.casA += 1; wd.exA += 1; }
+            }
+            else if (kind == "raze" || kind == "capture")
+            {
+                if (isA) wd.razedA += 1; else wd.razedB += 1;
+            }
+        }
+
+        // ================= noteOccupied（engine L7172-7177 机械翻译） =================
+        private static void NoteOccupied(WbWorld w, int byCiv, int victimCiv, int n)
+        {
+            if (n <= 0 || byCiv == victimCiv) return;                                           // L7173
+            if (!w.warData.TryGetValue(WbWorld.PairKey(byCiv, victimCiv), out WbWarData wd)) return;   // L7174
+            if (wd.a == byCiv) wd.occA += n; else wd.occB += n;                                 // L7176
+        }
+
+        // ================= annexTiles（engine L4510-4553 机械翻译：以 tile 为圆心把半径 r 内守方领土/建筑划归攻方） =================
+        private static void AnnexTiles(WbWorld w, int center, int toCiv, int r)
+        {
+            int victim = w.owner[center];                                                       // L4511
+            int cx = center % WbWorld.W;                                                        // L4512-4513
+            int cy = center / WbWorld.W;
+            int took = 0;                                                                       // L4514
+            for (int dy = -r; dy <= r; dy++)                                                    // L4515
+            {
+                for (int dx = -r; dx <= r; dx++)
+                {
+                    if (dx * dx + dy * dy > r * r + 0.5) continue;                              // L4517
+                    int xx = cx + dx;
+                    int yy = cy + dy;
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;       // L4519-4520
+                    int i = WbWorld.Idx(xx, yy);
+                    // 领土易主（仅吞并受害方与无主地，不抢第三方）
+                    if (w.owner[i] == victim || (w.owner[i] == -1 && victim == -1))             // L4523
+                    {
+                        int old = w.owner[i];
+                        if (old >= 0 && old != toCiv)                                           // L4525-4528
+                        {
+                            w.civs[old].tiles.RemoveAll(t => t == i);
+                            if (old == victim) took++;
+                        }
+                        w.owner[i] = (short)toCiv;                                              // L4529
+                        w.civs[toCiv].tiles.Add(i);
+                        w.MarkDirty(i);
+                    }
+                    // 建筑易帜或焚毁
+                    if (w.building[i] > 0)                                                      // L4533
+                    {
+                        int bi = w.bIdx[i];
+                        WbBuilding b = w.buildings[bi];
+                        if (b.civ != toCiv)                                                     // L4536
+                        {
+                            if (Capturable.Contains(b.kind))                                    // L4537-4543
+                            {
+                                WbCiv oldCiv = b.civ < w.civs.Count ? w.civs[b.civ] : null;
+                                if (oldCiv != null) oldCiv.houses--;
+                                b.civ = toCiv;
+                                w.civs[toCiv].houses++;
+                                w.BhpSet(i, WbCivSim.BUILDING_DEFS[b.kind].hp);
+                            }
+                            else
+                            {
+                                WbCivSim.DestroyBuilding(w, i);                                 // L4545
+                            }
+                        }
+                    }
+                }
+            }
+            // 战争占领入账（目的进度：border/conquest 的量尺）
+            if (took > 0 && victim >= 0) NoteOccupied(w, toCiv, victim, took);                  // L4551
+            if (w.overlayMode == "political" || w.overlayMode == "alliance") w.overlayDirty = true;   // L4552
+        }
+
+        // ================= sackCapital（engine L4498-4508 机械翻译：王都陷落；onSound 宿主回调 no-op） =================
+        private static void SackCapital(WbWorld w, WbBuilding capital, int byCiv)
+        {
+            WbCiv attacker = byCiv < w.civs.Count ? w.civs[byCiv] : null;                       // L4499-4500
+            WbCiv victim = capital.civ >= 0 && capital.civ < w.civs.Count ? w.civs[capital.civ] : null;
+            if (attacker == null || !attacker.alive || victim == null || !victim.alive) return; // L4501
+            w.shake = WbMath.JsMax(w.shake, 10);                                                // L4502
+            AnnexTiles(w, capital.i, byCiv, 6);                                                 // L4503
+            AddWarScore(w, byCiv, capital.civ, 40, "capital");                                  // L4504
+            w.AddEvent("sack", $"「{victim.name}」的王都陷落了！「{attacker.name}」的铁蹄踏碎了最后的城墙，国土尽数易主", attacker.colorHex, capital.x, capital.y);   // L4505
+            w.Toast($"「{victim.name}」的王都陷落了", "war");                                    // L4506
+            // onSound('boom') —— 宿主回调（黄金受控 undefined → no-op 同 gen 端）
+        }
+
+        // ================= onBuildingDestroyed（engine L4464-4496 机械翻译：占领易帜 / 王都陷落 / 攻城纪事） =================
+        public static void OnBuildingDestroyed(WbWorld w, int i, int byCiv)
+        {
+            if (!w.bIdx.TryGetValue(i, out int bi)) return;                                     // L4465-4466
+            WbBuilding b = w.buildings[bi];
+            int kind = b.kind;                                                                  // L4467-4468
+            int victimCiv = b.civ;
+            WbCivSim.DestroyBuilding(w, i);                                                     // L4470
+            if (byCiv < 0 || byCiv == victimCiv) return;                                        // L4471 天灾/己方摧毁（byCiv == null 域不入 C#——int 参数恒有值，-1 承载）
+            WbCiv attacker = byCiv < w.civs.Count ? w.civs[byCiv] : null;                       // L4473-4474
+            WbCiv victim = victimCiv >= 0 && victimCiv < w.civs.Count ? w.civs[victimCiv] : null;
+            if (attacker == null || !attacker.alive || victim == null || !victim.alive) return; // L4475
+            if (!WbCivSim.AtWar(w, byCiv, victimCiv)) return;                                   // L4476
+            // 占领：可易帜建筑（住宅/农田/集市/兵营/港口）45% 归入攻方，周边领土易主
+            if (Capturable.Contains(kind) && w.Rng() < 0.45)                                    // L4478
+            {
+                WbCivSim.BuildBuilding(w, i, kind, byCiv);                                      // L4479
+                AnnexTiles(w, i, byCiv, 2);                                                     // L4480
+                AddWarScore(w, byCiv, victimCiv, 8, "capture");                                 // L4481
+                w.AddEvent("capture", $"「{attacker.name}」占领了「{victim.name}」的{BuildName[kind]}", attacker.colorHex, b.x, b.y);   // L4482
+                w.Fx("spawn", b.x, b.y, 26);                                                    // L4483
+                if (w.overlayMode == "political" || w.overlayMode == "alliance") w.overlayDirty = true;   // L4484
+                return;
+            }
+            // 王都陷落：大事件——攻方吞并王都周边领土，守方建筑尽数易帜或焚毁
+            if (kind == WbCivSim.BUILD_KINDS.CAPITAL)                                           // L4487
+            {
+                SackCapital(w, b, byCiv);
+                return;
+            }
+            // 普通攻城摧毁：纯武力拆毁（战争不纵火 —— 国民会奋起修复家园）+ 节流纪事
+            AddWarScore(w, byCiv, victimCiv, 5, "raze");                                        // L4492
+            if (w.tickCount - w.lastSiegeEventTick > 150)                                       // L4493
+            {
+                w.lastSiegeEventTick = w.tickCount;                                             // L4494
+                w.AddEvent("siege", $"「{attacker.name}」的军队摧毁了「{victim.name}」的{BuildName[kind]}", attacker.colorHex, b.x, b.y);   // L4495
+            }
+        }
+
+        // ================= castArrow（engine L4368-4370 机械翻译） =================
+        private static void CastArrow(WbWorld w, WbU u, double tx, double ty, double dmg)
+        {
+            w.Fx("arrow", WbMath.JsMax(0.5, WbMath.JsMin(WbWorld.W - 0.5, tx)), WbMath.JsMax(0.5, WbMath.JsMin(WbWorld.H - 0.5, ty)), 12,
+                optR: 0, optCiv: u.civ, optX0: u.x, optY0: u.y, optDmg: dmg);                   // L4369 {x0,y0,src,r:0,dmg} spread 覆盖
+        }
+
+        // ================= enemyBuildingNear（engine L4396-4417 机械翻译：单位周边半径 r 最近敌国建筑 tile） =================
+        private static int EnemyBuildingNear(WbWorld w, WbU u, double r)
+        {
+            int cx = (int)System.Math.Floor(u.x);                                               // L4397-4399
+            int cy = (int)System.Math.Floor(u.y);
+            int rr = (int)System.Math.Ceiling(r);
+            int best = -1;
+            double bestD = r + 0.5;
+            for (int dy = -rr; dy <= rr; dy++)                                                  // L4401
+            {
+                for (int dx = -rr; dx <= rr; dx++)
+                {
+                    int xx = cx + dx;
+                    int yy = cy + dy;
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;       // L4404-4405
+                    int i = WbWorld.Idx(xx, yy);
+                    int bk = w.building[i];
+                    if (bk == 0) continue;                                                      // L4407-4408
+                    WbBuilding b = w.bIdx.TryGetValue(i, out int bidx) ? w.buildings[bidx] : null;   // L4409 ?? -1（蓝本 buildings[-1] undefined → null）
+                    if (b == null || b.civ == u.civ) continue;                                  // L4410
+                    if (u.civ >= 0 && !WbCivSim.AtWar(w, u.civ, b.civ)) continue;               // L4411
+                    double d = WbMath.FdHypot(xx - u.x, yy - u.y);                              // L4412
+                    if (d < bestD) { bestD = d; best = i; }                                     // L4413
+                }
+            }
+            return best;
+        }
+
+        // ================= nearestEnemyBuilding（engine L4421-4431 机械翻译：全表扫描最近敌国交战建筑） =================
+        private static WbBuilding NearestEnemyBuilding(WbWorld w, WbU u)
+        {
+            WbBuilding best = null;
+            double bestD = double.PositiveInfinity;                                             // L4423
+            foreach (WbBuilding b in w.buildings)                                               // L4424
+            {
+                if (b.civ == u.civ) continue;                                                   // L4425
+                if (u.civ < 0 || !WbCivSim.AtWar(w, u.civ, b.civ)) continue;                    // L4426
+                double d = WbMath.FdHypot(b.x - u.x, b.y - u.y);                                // L4427
+                if (d < bestD) { bestD = d; best = b; }                                         // L4428
+            }
+            return best;
+        }
+
+        // ================= maybeBoardForWar（engine L5740-5791）—— GUARD 桩（0.05 门黄金受控不可达；第五批收官域） =================
+        private static bool MaybeBoardForWar(WbWorld w, WbU u)
+        {
+            throw new System.InvalidOperationException("maybeBoardForWar 未翻译（case3 登船参战域——M-U3h 第五批余域）");
         }
     }
 }

@@ -117,7 +117,8 @@ function mkUnit(eng, o) {
     grab: o.grab, thrT: o.thrT, thrVx: o.thrVx, thrVy: o.thrVy, thrX0: o.thrX0, thrY0: o.thrY0,
     // M-U3h 第三批 case2 涌现接力消费域（fam/fgn 旧场景硬编码 0 → 修正为透传：TS u.fam ?? 门需 undefined 语义）
     fam: o.fam, fgn: o.fgn, gene: o.gene ?? null,
-    army: null, food: 0, gIds: [], gVal: [],
+    // M-U3h 第四批 case3 消费域（army 真值门 inArmy；cd 已置语义——Rust 侧置 14 后 bail，夹具透传）
+    army: o.army ?? null, cd: o.cd ?? 0,
   };
   eng.units.push(u);
   eng.unitById.set(u.id, u);
@@ -138,6 +139,7 @@ function dumpUnit(u) {
     x: f64hex(u.x), y: f64hex(u.y), tx: f64hex(u.tx), ty: f64hex(u.ty),
     speed: f64hex(u.speed), flip: u.flip ? 1 : 0, job: u.job ?? 0,
     caravan: u.caravan ?? 0, boat: u.boat ?? 0, boatTTL: u.boatTTL ?? 0, dead: u.dead ?? 0, hurt: u.hurt ?? 0,
+    cd: u.cd ?? 0, // M-U3h 第四批 case3 弓手 cd=18 消费域（字段只加）
     // M-U3h 第二批 case1 消费域扩展（字段只加：旧场景恒 0/10/null，不漂移）
     age: f64hex(u.age ?? 0), hp: f64hex(u.hp ?? 10), maxHp: f64hex(u.maxHp ?? 10),
     grab: u.grab ?? null, thrT: u.thrT ?? null,
@@ -213,8 +215,16 @@ function runScenario(sc) {
     for (const m of a.members) eng.allianceOf.set(m, a.id);
   }
   for (const [cid, mi] of sc.marketIdx ?? []) eng.marketIdx.set(cid, mi); // 宿主市场表（tail 商队分支消费）
+  // case3 warData 记分夹具（addWarScore/noteOccupied 消费——atWar 判定走 rel 基，warData 只承载增量）
+  for (const wd of sc.wars ?? []) {
+    eng.warData.set(wd.a < wd.b ? `${wd.a}-${wd.b}` : `${wd.b}-${wd.a}`, { key: wd.a < wd.b ? `${wd.a}-${wd.b}` : `${wd.b}-${wd.a}`,
+      a: wd.a, b: wd.b, startTick: 0, startYear: 0, total: false, scoreA: 0, scoreB: 0, exA: 0, exB: 0, casA: 0, casB: 0,
+      razedA: 0, razedB: 0, battles: 0, giveUpAt: 0, reason: 'border', reasonText: '', aggressor: 0, goal: 0, goalNow: 0,
+      occA: 0, occB: 0, popA0: 0, popB0: 0 });
+  }
   if (sc.setup) sc.setup(eng);
   eng.tickCount = sc.startTick ?? 0;
+  if (sc.lastSiegeEventTick != null) eng.lastSiegeEventTick = sc.lastSiegeEventTick; // case3 攻城纪事节流阀夹具
   eng.yearF = sc.yearF ?? 0;                                              // 纪事/图谱/家族年份基准（case2 消费）
   // 夹具后清 generate 残留（同 civtick gen 纪律：黄金基线只含夹具+relay 产物）
   eng.effects.length = 0;
@@ -259,7 +269,8 @@ function runScenario(sc) {
     // 声明式 PRE 态夹具（C#/转写回放重建源——与 civtick gen fixture 协议同构）
     fixture: { civs: sc.civs ?? null, units: sc.units ?? null, rel: sc.rel ?? null,
       buildings: sc.buildings ?? null, alliances: sc.alliances ?? null, marketIdx: sc.marketIdx ?? null,
-      radiate: sc.radiate ?? null, wildCount: sc.wildCount ?? null, yearF: sc.yearF ?? null },
+      radiate: sc.radiate ?? null, wildCount: sc.wildCount ?? null, yearF: sc.yearF ?? null,
+      wars: sc.wars ?? null, lastSiegeEventTick: sc.lastSiegeEventTick ?? null },
     rngA: eng.rngA >>> 0,
     eventSeq: eng.eventSeq,
     unit: dumpUnit(target),
@@ -286,6 +297,10 @@ function runScenario(sc) {
     wildCountPost: [...eng.wildCount.entries()],
     unitSeq: eng.unitSeq, familySeq: eng.familySeq, traitSeq: eng.traitSeq, evoSeq: eng.evoSeq,
     radiateRle: rle(Array.from(eng.radiate)),
+    // M-U3h 第四批 case3 POST 态（warData 记分增量/shake 已有/wd 节流阀）
+    wars: [...eng.warData.values()].map((wd) => ({ key: wd.key, a: wd.a, b: wd.b, scoreA: wd.scoreA, scoreB: wd.scoreB,
+      casA: wd.casA, casB: wd.casB, exA: wd.exA, exB: wd.exB, razedA: wd.razedA, razedB: wd.razedB, occA: wd.occA, occB: wd.occB })),
+    lastSiegeEventTick: eng.lastSiegeEventTick,
   };
 }
 
@@ -436,7 +451,7 @@ const scenarios = [
   { name: 'E02-emerge-radiate-amp', seed: 0x5d02, kind: 2, data: [1.6, 1.0, 1.2, 1.0, 0], startTick: 0, unitId: 5,
     paint: [[40, 60, 80, 80, GRASS]],
     units: [{ id: 5, race: 6, x: 60.5, y: 70.5 }],
-    radiate: [[70 * 160 + 70, 1]] },
+    radiate: [[idx(60, 70), 1]] },
   // E03 文明分支：d[4]=1 → 人类 pop/上限门已在 Rust 过 → rollJob 加权抽取 + techModsOf/govOf + pop++
   { name: 'E03-emerge-civ-spawn', seed: 0x5d03, kind: 2, data: [1.0, 1.0, 1.0, 1.0, 1], startTick: 0, unitId: 5,
     paint: [[40, 60, 80, 80, GRASS]],
@@ -455,17 +470,90 @@ const scenarios = [
   { name: 'E07-emerge-wild-seed-b', seed: 0x5d07, kind: 2, data: [1.6, 1.0, 1.2, 1.0, 0], startTick: 0, unitId: 5,
     paint: [[40, 60, 80, 80, GRASS]],
     units: [{ id: 5, race: 6, x: 60.5, y: 70.5 }] },
+
+  // ===== case 3 建筑摧毁级联（M-U3h 第四批：onBuildingDestroyed L4464 + destroyBuilding L1936 +
+  //   capture/raze/sack 三路 + annexTiles L4510 + addWarScore L7234 + noteOccupied L7172 +
+  //   弓手轰击 enemyBuildingNear L4396 + castArrow L4368 + inArmy 跳过段 + nearestEnemyBuilding L4421；
+  //   maybeBoardForWar L5740 GUARD（0.05 门受控不可达）；d=[tile,byCiv]）=====
+  // D01 raze 基础：HOUSE(可占领) atWar startTick=200 → capture 门掷≥0.45 不易帜 → destroyBuilding(smoke fx)
+  //   + addWarScore 5 'raze' + siege 纪事（200-0>150 节流门开，lastSiegeEventTick=200）
+  { name: 'D01-raze-basic', seed: 0x5e01, kind: 3, data: [idx(70, 70), 0], startTick: 200, unitId: 5,
+    paint: [[40, 60, 80, 80, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(50, 70), tiles: [idx(50, 70)] }, { id: 1, pop: 3, capital: idx(72, 70), tiles: [idx(72, 70)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 60.5, y: 70.5, job: 0, tx: 70.5, ty: 70.5 }],
+    rel: [[0, 1, -30]],
+    wars: [{ a: 0, b: 1 }],
+    buildings: [[idx(70, 70), 1, 1]] },
+  // D02 capture 45%：capture 门掷<0.45 → buildBuilding 易帜 + annexTiles(2) 圈地（took→occA）+ score 8 'capture'
+  //   + capture 纪事 + spawn fx + overlayDirty 门（overlayMode none → 不置脏）
+  { name: 'D02-capture-45', seed: 0x5e02, kind: 3, data: [idx(70, 70), 0], startTick: 200, unitId: 5,
+    paint: [[40, 60, 80, 80, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(50, 70), tiles: [idx(50, 70)] }, { id: 1, pop: 3, capital: idx(72, 70), tiles: [idx(72, 70)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 60.5, y: 70.5, job: 0, tx: 70.5, ty: 70.5 }],
+    rel: [[0, 1, -30]],
+    wars: [{ a: 0, b: 1 }],
+    buildings: [[idx(70, 70), 1, 1]] },
+  // D03 TOWER 纯 raze：TOWER ∉ CAPTURABLE → capture 门不掷（rng 流少一次）→ 直接 raze
+  { name: 'D03-tower-raze', seed: 0x5e03, kind: 3, data: [idx(70, 70), 0], startTick: 200, unitId: 5,
+    paint: [[40, 60, 80, 80, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(50, 70), tiles: [idx(50, 70)] }, { id: 1, pop: 3, capital: idx(72, 70), tiles: [idx(72, 70)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 60.5, y: 70.5, job: 0, tx: 70.5, ty: 70.5 }],
+    rel: [[0, 1, -30]],
+    wars: [{ a: 0, b: 1 }],
+    buildings: [[idx(70, 70), 3, 1]] },
+  // D04 王都陷落：CAPITAL → sackCapital（shake=10 + annexTiles(6) + score 40 'capital' + sack 纪事 + toast + onSound no-op）
+  //   destroyBuilding 先行（capital=-1），sack 的 annex 循环对已拆瓦建筑零易帜
+  { name: 'D04-capital-sack', seed: 0x5e04, kind: 3, data: [idx(70, 70), 0], startTick: 200, unitId: 5,
+    paint: [[40, 60, 80, 80, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(50, 70), tiles: [idx(50, 70)] }, { id: 1, pop: 3, capital: idx(70, 70), tiles: [idx(70, 70), idx(71, 70), idx(69, 70)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 60.5, y: 70.5, job: 0, tx: 70.5, ty: 70.5 }],
+    rel: [[0, 1, -30]],
+    wars: [{ a: 0, b: 1 }],
+    buildings: [[idx(70, 70), 2, 1]] },
+  // D05 天灾早退：byCiv=-1 → destroyBuilding 照做 → byCiv<0 return（零 warScore 零纪事零 capture 掷）
+  { name: 'D05-disaster-early', seed: 0x5e05, kind: 3, data: [idx(70, 70), -1], startTick: 200, unitId: 5,
+    paint: [[40, 60, 80, 80, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(50, 70), tiles: [idx(50, 70)] }, { id: 1, pop: 3, capital: idx(72, 70), tiles: [idx(72, 70)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 60.5, y: 70.5, job: 0, tx: 70.5, ty: 70.5 }],
+    rel: [[0, 1, -30]],
+    wars: [{ a: 0, b: 1 }],
+    buildings: [[idx(70, 70), 1, 1]] },
+  // D06 非交战早退：attacker/victim alive 但 !atWar（rel 缺）→ 只摧毁无结算（capture 门不进）
+  { name: 'D06-peace-early', seed: 0x5e06, kind: 3, data: [idx(70, 70), 0], startTick: 200, unitId: 5,
+    paint: [[40, 60, 80, 80, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(50, 70), tiles: [idx(50, 70)] }, { id: 1, pop: 3, capital: idx(72, 70), tiles: [idx(72, 70)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 60.5, y: 70.5, job: 0, tx: 70.5, ty: 70.5 }],
+    wars: [{ a: 0, b: 1 }],
+    buildings: [[idx(70, 70), 1, 1]] },
+  // D07 弓手轰击：job=3 cd=0 → 弓手门 rng<0.1 → enemyBuildingNear(5) 索敌 → castArrow（arrow fx x0/y0/src/r:0）+ cd=18
+  //   靶建筑 idx(65,70) 距 u 4.5 格 ≤5 射程内
+  { name: 'D07-archer-bombard', seed: 0x5e27, kind: 3, data: [idx(70, 70), 0], startTick: 200, unitId: 5,
+    paint: [[40, 60, 80, 80, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(50, 70), tiles: [idx(50, 70)] }, { id: 1, pop: 3, capital: idx(72, 70), tiles: [idx(72, 70)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 60.5, y: 70.5, job: 3, cd: 0, tx: 70.5, ty: 70.5 }],
+    rel: [[0, 1, -30]],
+    wars: [{ a: 0, b: 1 }],
+    buildings: [[idx(70, 70), 1, 1], [idx(65, 70), 1, 1]] },
+  // D08 inArmy 跳过段：u.army=1 → 跳 0.05 登船门/1.44 重定向段（rng 流短）直接尾段（tailJS/postJS 无 army 分支实证）
+  { name: 'D08-inarmy-skip', seed: 0x5e08, kind: 3, data: [idx(70, 70), 0], startTick: 200, unitId: 5,
+    paint: [[40, 60, 80, 80, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(50, 70), tiles: [idx(50, 70)] }, { id: 1, pop: 3, capital: idx(72, 70), tiles: [idx(72, 70)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 60.5, y: 70.5, job: 0, army: 1, tx: 70.5, ty: 70.5 }],
+    rel: [[0, 1, -30]],
+    wars: [{ a: 0, b: 1 }],
+    buildings: [[idx(70, 70), 1, 1]] },
 ];
 
 // ---------------- 主流程 ----------------
 const out = { meta: {
   gen: 'gen-units-bail.mjs',
-  blueprint: 'engine.ts wbResume L3215-3302 case1/case2/case4/case5 + updateUnit 前奏 L3455-3464 + caravanArrive L4770 + foundSettlement L5704 + updateUnitTailJS L4116 + updateUnitPostJS L4262 + moveUnit L5813 + grabbedTick L5343 + updateBoat L5608 + disembark L5663 + findLandNear L5589 + inventEmergentTrait L3318 + inventTrait emergence.ts L390 + spawnUnit L1283 + newFamily L1111 + wildCapOf L2132',
+  blueprint: 'engine.ts wbResume L3215-3302 case1/case2/case3/case4/case5 + updateUnit 前奏 L3455-3464 + caravanArrive L4770 + foundSettlement L5704 + updateUnitTailJS L4116 + updateUnitPostJS L4262 + moveUnit L5813 + grabbedTick L5343 + updateBoat L5608 + disembark L5663 + findLandNear L5589 + inventEmergentTrait L3318 + inventTrait emergence.ts L390 + spawnUnit L1283 + newFamily L1111 + wildCapOf L2132 + onBuildingDestroyed L4464 + sackCapital L4498 + annexTiles L4510 + destroyBuilding L1936 + enemyBuildingNear L4396 + nearestEnemyBuilding L4421 + castArrow L4368 + addWarScore L7234 + noteOccupied L7172',
   W, H,
   dumpNote: 'f64 小端 16hex；rngA u32；relay 直调（engine L3148 同入口）',
 }, scenarios: [] };
 
 for (const sc of scenarios) {
+  if (process.env.BAIL_ONLY && !sc.name.startsWith(process.env.BAIL_ONLY)) continue; // 单场景快跑（挑 seed 用）
   const r = runScenario(sc);
   out.scenarios.push(r);
   console.log(`${r.name}: rngA ${r.rngA0} -> ${r.rngA} effects=${r.effects.length} events=${r.events.length} toasts=${r.toasts.length} buildings=${r.buildings.length} civ0gold=${r.civs[0]?.gold ?? '-'}`);
