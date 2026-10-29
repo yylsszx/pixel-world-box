@@ -77,6 +77,140 @@ namespace PixelWorldBox.Wb
             new RelayDef{ aquatic=true, predator=true, repro=0.002 },                                      // 40 SHARK L201
         };
 
+        // ---------------- ITEM_DEFS 消费切片（items.ts TABLE 全表机械转写 —— tryPickup 换装链消费：slot/rank/rarity/name/dmg/hp/speedMul） ----------------
+        public sealed class WbItemDef
+        {
+            public string key, name, slot;
+            public int rank, rarity;
+            public double dmg, hp, speedMul;
+            public WbItemDef(string key, string name, string slot, int rank, int rarity, double dmg = 0, double hp = 0, double speedMul = 0)
+            { this.key = key; this.name = name; this.slot = slot; this.rank = rank; this.rarity = rarity; this.dmg = dmg; this.hp = hp; this.speedMul = speedMul; }
+        }
+        public static readonly System.Collections.Generic.Dictionary<string, WbItemDef> ItemDefs = new System.Collections.Generic.Dictionary<string, WbItemDef>
+        {
+            { "sword1", new WbItemDef("sword1", "锈蚀短剑", "wep", 1, 0, 5, 0, 0) },
+            { "sword2", new WbItemDef("sword2", "铁铸长剑", "wep", 2, 0, 11, 0, 0) },
+            { "sword3", new WbItemDef("sword3", "黄金圣剑", "wep", 3, 3, 18, 0, 0) },
+            { "wood_club", new WbItemDef("wood_club", "粗木棒", "wep", 0, 0, 2, 0, 0) },
+            { "iron_dagger", new WbItemDef("iron_dagger", "铁匕首", "wep", 1, 0, 6, 0, 1.04) },
+            { "katana", new WbItemDef("katana", "武士刀", "wep", 3, 2, 16, 0, 1.05) },
+            { "elf_blade", new WbItemDef("elf_blade", "精灵之刃", "wep", 3, 2, 15, 0, 1.08) },
+            { "flame_sword", new WbItemDef("flame_sword", "烈焰之剑", "wep", 4, 3, 22, 0, 0) },
+            { "ice_sword", new WbItemDef("ice_sword", "寒冰之剑", "wep", 4, 3, 21, 0, 0) },
+            { "excalibur", new WbItemDef("excalibur", "王者之剑", "wep", 6, 4, 34, 0, 0) },
+            { "holy_sword", new WbItemDef("holy_sword", "圣光之剑", "wep", 5, 3, 26, 0, 0) },
+            { "battle_axe", new WbItemDef("battle_axe", "战斧", "wep", 2, 0, 14, 0, 0.96) },
+            { "warhammer", new WbItemDef("warhammer", "战锤", "wep", 3, 1, 17, 0, 0.95) },
+            { "berserker_axe", new WbItemDef("berserker_axe", "狂战士巨斧", "wep", 4, 2, 24, 0, 0.93) },
+            { "executioner_axe", new WbItemDef("executioner_axe", "刽子手巨斧", "wep", 5, 2, 28, 0, 0) },
+            { "thunder_hammer", new WbItemDef("thunder_hammer", "雷神之锤", "wep", 5, 4, 30, 0, 0) },
+            { "storm_hammer", new WbItemDef("storm_hammer", "风暴之锤", "wep", 4, 3, 23, 0, 0) },
+            { "pickaxe", new WbItemDef("pickaxe", "矿工镐", "wep", 1, 0, 6, 0, 0) },
+            { "hunting_spear", new WbItemDef("hunting_spear", "猎人矛", "wep", 2, 0, 12, 0, 0) },
+            { "dragon_fang", new WbItemDef("dragon_fang", "龙牙枪", "wep", 4, 3, 23, 0, 0) },
+            { "dual_blades", new WbItemDef("dual_blades", "双刃", "wep", 3, 2, 18, 0, 1.06) },
+            { "scythe", new WbItemDef("scythe", "死神镰刀", "wep", 5, 4, 26, 0, 0) },
+            { "dragon_slayer", new WbItemDef("dragon_slayer", "屠龙巨刃", "wep", 5, 4, 30, 0, 0) },
+            { "short_bow", new WbItemDef("short_bow", "短弓", "wep", 1, 0, 3, 0, 0) },
+            { "long_bow", new WbItemDef("long_bow", "长弓", "wep", 2, 1, 6, 0, 0) },
+            { "crossbow", new WbItemDef("crossbow", "重弩", "wep", 3, 1, 9, 0, 0) },
+            { "elf_bow", new WbItemDef("elf_bow", "精灵长弓", "wep", 3, 2, 8, 0, 0) },
+            { "eagle_bow", new WbItemDef("eagle_bow", "鹰眼神弓", "wep", 4, 3, 11, 0, 0) },
+            { "hunt_bow", new WbItemDef("hunt_bow", "猎人角弓", "wep", 2, 0, 5, 0, 0) },
+            { "musket", new WbItemDef("musket", "燧发火枪", "wep", 4, 2, 19, 0, 0) },
+            { "rifle", new WbItemDef("rifle", "线膛步枪", "wep", 5, 3, 20, 0, 0) },
+            { "laser_rifle", new WbItemDef("laser_rifle", "相位光束枪", "wep", 6, 4, 28, 0, 0) },
+            { "plasma_caster", new WbItemDef("plasma_caster", "等离子投射器", "wep", 7, 4, 34, 0, 0) },
+            { "wood_staff", new WbItemDef("wood_staff", "学徒木杖", "wep", 1, 0, 3, 0, 0) },
+            { "mage_staff", new WbItemDef("mage_staff", "法师权杖", "wep", 2, 1, 6, 0, 0) },
+            { "storm_staff", new WbItemDef("storm_staff", "风暴法杖", "wep", 4, 3, 12, 0, 0) },
+            { "archmage_staff", new WbItemDef("archmage_staff", "大魔导师杖", "wep", 5, 4, 15, 0, 0) },
+            { "armor1", new WbItemDef("armor1", "皮革护甲", "arm", 1, 0, 0, 18, 0) },
+            { "armor2", new WbItemDef("armor2", "钢铁重甲", "arm", 2, 1, 0, 36, 0.97) },
+            { "cloth_robe", new WbItemDef("cloth_robe", "粗布袍", "arm", 0, 0, 0, 6, 0) },
+            { "studded_leather", new WbItemDef("studded_leather", "镶钉皮甲", "arm", 2, 0, 0, 26, 0) },
+            { "chain_mail", new WbItemDef("chain_mail", "锁子甲", "arm", 3, 1, 0, 40, 0) },
+            { "iron_plate", new WbItemDef("iron_plate", "铁板甲", "arm", 3, 1, 0, 48, 0.95) },
+            { "energy_shield", new WbItemDef("energy_shield", "能量护盾", "arm", 6, 4, 0, 68, 1.02) },
+            { "gold_armor", new WbItemDef("gold_armor", "黄金铠甲", "arm", 4, 2, 0, 55, 0) },
+            { "dragon_scale", new WbItemDef("dragon_scale", "龙鳞甲", "arm", 5, 4, 0, 75, 0) },
+            { "mithril_mail", new WbItemDef("mithril_mail", "秘银锁甲", "arm", 5, 3, 0, 62, 1.03) },
+            { "shadow_cloak", new WbItemDef("shadow_cloak", "暗影斗篷", "arm", 3, 2, 0, 30, 1.12) },
+            { "berserker_hide", new WbItemDef("berserker_hide", "狂战士皮", "arm", 2, 0, 4, 30, 0) },
+            { "elf_robe", new WbItemDef("elf_robe", "精灵长袍", "arm", 3, 2, 0, 28, 0) },
+            { "bone_armor", new WbItemDef("bone_armor", "白骨战甲", "arm", 3, 1, 0, 44, 0) },
+            { "obsidian_shell", new WbItemDef("obsidian_shell", "黑曜石甲", "arm", 4, 3, 0, 60, 0) },
+            { "holy_vestment", new WbItemDef("holy_vestment", "圣袍", "arm", 4, 2, 0, 38, 0) },
+            { "emperor_robe", new WbItemDef("emperor_robe", "帝王华服", "arm", 5, 3, 0, 70, 0) },
+            { "leather_cap", new WbItemDef("leather_cap", "皮帽", "hlm", 1, 0, 0, 6, 0) },
+            { "archer_cap", new WbItemDef("archer_cap", "猎手帽", "hlm", 1, 0, 0, 5, 1.05) },
+            { "iron_helm", new WbItemDef("iron_helm", "铁盔", "hlm", 2, 0, 0, 14, 0) },
+            { "horned_helm", new WbItemDef("horned_helm", "兽角盔", "hlm", 2, 0, 3, 12, 0) },
+            { "wizard_hat", new WbItemDef("wizard_hat", "法师尖帽", "hlm", 2, 1, 0, 8, 0) },
+            { "knight_helm", new WbItemDef("knight_helm", "骑士全盔", "hlm", 3, 1, 0, 22, 0) },
+            { "warlock_hood", new WbItemDef("warlock_hood", "术士兜帽", "hlm", 3, 2, 0, 12, 0) },
+            { "viking_helm", new WbItemDef("viking_helm", "维京战盔", "hlm", 3, 1, 4, 20, 0) },
+            { "skull_mask", new WbItemDef("skull_mask", "骷髅面甲", "hlm", 3, 1, 0, 18, 0) },
+            { "gold_crown", new WbItemDef("gold_crown", "黄金王冠", "hlm", 3, 2, 4, 16, 0) },
+            { "dragon_skull", new WbItemDef("dragon_skull", "龙骨冠", "hlm", 4, 3, 6, 30, 0) },
+            { "crown_kings", new WbItemDef("crown_kings", "王者之冠", "hlm", 5, 4, 8, 26, 0) },
+            { "round_shield", new WbItemDef("round_shield", "圆木盾", "shd", 0, 0, 0, 0, 0) },
+            { "wood_shield", new WbItemDef("wood_shield", "木盾", "shd", 1, 0, 0, 0, 0) },
+            { "kite_shield", new WbItemDef("kite_shield", "鸢形盾", "shd", 2, 0, 0, 8, 0) },
+            { "spiked_shield", new WbItemDef("spiked_shield", "刺击盾", "shd", 2, 0, 0, 0, 0) },
+            { "iron_shield", new WbItemDef("iron_shield", "铁盾", "shd", 2, 1, 0, 10, 0) },
+            { "tower_shield", new WbItemDef("tower_shield", "塔盾", "shd", 3, 1, 0, 16, 0.95) },
+            { "gold_shield", new WbItemDef("gold_shield", "黄金盾", "shd", 4, 2, 0, 12, 0) },
+            { "holy_aegis", new WbItemDef("holy_aegis", "神圣庇护盾", "shd", 4, 3, 0, 0, 0) },
+            { "mithril_shield", new WbItemDef("mithril_shield", "秘银盾", "shd", 5, 3, 0, 0, 1.02) },
+            { "dragon_shield", new WbItemDef("dragon_shield", "龙纹盾", "shd", 5, 4, 0, 20, 0) },
+            { "worn_sandal", new WbItemDef("worn_sandal", "破旧凉鞋", "bts", 0, 0, 0, 0, 1.05) },
+            { "leather_boots", new WbItemDef("leather_boots", "皮靴", "bts", 1, 0, 0, 0, 1.15) },
+            { "boots", new WbItemDef("boots", "迅捷之靴", "bts", 2, 1, 0, 0, 1.35) },
+            { "mountain_boots", new WbItemDef("mountain_boots", "登山靴", "bts", 2, 0, 0, 6, 1.1) },
+            { "war_greaves", new WbItemDef("war_greaves", "战争胫甲", "bts", 2, 1, 0, 14, 1.2) },
+            { "iron_boots", new WbItemDef("iron_boots", "铁靴", "bts", 2, 0, 0, 10, 1.05) },
+            { "swift_greaves", new WbItemDef("swift_greaves", "疾风胫甲", "bts", 3, 2, 0, 0, 1.5) },
+            { "lava_boots", new WbItemDef("lava_boots", "熔岩之靴", "bts", 4, 3, 0, 0, 1.3) },
+            { "winged_sandals", new WbItemDef("winged_sandals", "神行凉鞋", "bts", 4, 3, 0, 0, 1.65) },
+            { "phantom_boots", new WbItemDef("phantom_boots", "幻影之靴", "bts", 5, 4, 0, 0, 1.8) },
+            { "copper_ring", new WbItemDef("copper_ring", "铜戒指", "rng", 1, 0, 3, 0, 0) },
+            { "silver_ring", new WbItemDef("silver_ring", "银戒", "rng", 1, 0, 0, 8, 0) },
+            { "ring", new WbItemDef("ring", "再生之戒", "rng", 2, 1, 0, 0, 0) },
+            { "gold_ring", new WbItemDef("gold_ring", "黄金戒指", "rng", 2, 0, 0, 16, 0) },
+            { "ruby_ring", new WbItemDef("ruby_ring", "红宝石之戒", "rng", 3, 1, 8, 0, 0) },
+            { "sapphire_ring", new WbItemDef("sapphire_ring", "蓝宝石之戒", "rng", 3, 1, 0, 0, 0) },
+            { "ring_power", new WbItemDef("ring_power", "力量之戒", "rng", 3, 2, 10, 10, 0) },
+            { "ring_fire", new WbItemDef("ring_fire", "烈焰之戒", "rng", 4, 3, 12, 0, 0) },
+            { "ring_ice", new WbItemDef("ring_ice", "寒冰之戒", "rng", 4, 3, 0, 0, 0) },
+            { "ring_sage", new WbItemDef("ring_sage", "贤者之戒", "rng", 4, 3, 0, 0, 0) },
+            { "ring_void", new WbItemDef("ring_void", "虚空指环", "rng", 5, 4, 14, 0, 0) },
+            { "ring_immortal", new WbItemDef("ring_immortal", "不朽之戒", "rng", 6, 4, 0, 20, 0) },
+            { "lucky_charm", new WbItemDef("lucky_charm", "幸运符", "amu", 1, 0, 0, 0, 0) },
+            { "wolf_fang", new WbItemDef("wolf_fang", "狼牙坠", "amu", 1, 0, 4, 0, 0) },
+            { "bear_claw", new WbItemDef("bear_claw", "熊爪链", "amu", 2, 0, 6, 8, 0) },
+            { "totem_stone", new WbItemDef("totem_stone", "图腾石", "amu", 2, 1, 0, 0, 0) },
+            { "eagle_eye", new WbItemDef("eagle_eye", "鹰眼石", "amu", 2, 1, 0, 0, 0) },
+            { "vampire_fang", new WbItemDef("vampire_fang", "吸血獠牙", "amu", 3, 2, 0, 0, 0) },
+            { "holy_symbol", new WbItemDef("holy_symbol", "圣徽", "amu", 3, 1, 0, 0, 0) },
+            { "moon_pendant", new WbItemDef("moon_pendant", "月亮坠饰", "amu", 3, 2, 0, 20, 1.08) },
+            { "demon_heart", new WbItemDef("demon_heart", "恶魔之心", "amu", 4, 3, 14, 0, 0) },
+            { "phoenix_feather", new WbItemDef("phoenix_feather", "凤凰羽", "amu", 4, 3, 0, 0, 0) },
+            { "doom_amulet", new WbItemDef("doom_amulet", "末日坠饰", "amu", 5, 4, 16, 16, 0) },
+            { "god_shard", new WbItemDef("god_shard", "神之碎片", "amu", 6, 4, 12, 24, 0) },
+        };
+        public static readonly System.Collections.Generic.Dictionary<string, string> SlotField = new System.Collections.Generic.Dictionary<string, string>
+        {
+            { "wep", "wep" },
+            { "arm", "arm" },
+            { "hlm", "hlm" },
+            { "shd", "shd" },
+            { "bts", "bts" },
+            { "rng", "rng" },
+            { "amu", "amu" },
+        };
+        public static readonly string[] RarityNames = { "普通", "精良", "稀有", "史诗", "传说" };
+
         private static RelayDef DefOf(int race)
         {
             if (race < 0 || race >= RDEF.Length) throw new System.InvalidOperationException($"RDEF race {race} 越界");
@@ -84,7 +218,8 @@ namespace PixelWorldBox.Wb
         }
 
         // 常量（engine R 值 + R2 别名 L36）
-        private const int R_BANDIT = 4, R_SHEEP = 6, R_DRAGON = 9, R_FISH = 37, R_CRAB = 38;
+        private const int R_BANDIT = 4, R_SHEEP = 6, R_DRAGON = 9, R_DEER = 10, R_PENGUIN = 11, R_CAMEL = 12,
+            R_CHICKEN = 33, R_PIG = 34, R_RABBIT = 35, R_FISH = 37, R_CRAB = 38;   // isHerbivoreRace L2120 静态八种 + 既有常量
 
         // ================= wbResume L3215-3302（Stage 2 bail 接力分派） =================
         public static void WbResume(WbWorld w, WbU u, int kind, double[] d)
@@ -157,7 +292,7 @@ namespace PixelWorldBox.Wb
                     u.grab = System.Math.Max(u.grab ?? 0, 24);                                                              // L5363
                     u.thrT = 0;                                                                                            // L5364
                     for (int k = 0; k < 3; k++) w.Fx("dust", u.x + (w.Rng() - 0.5) * 1.6, u.y + (w.Rng() - 0.5) * 1.6, 20);   // L5365
-                    if (w.fxDmgNumbers && dmg > 0) w.Fx("dmg", u.x, u.y - 1, 30);                                          // L5366
+                    if (w.fxDmgNumbers && dmg > 0) w.Fx("dmg", u.x, u.y - 1, 30, optText: $"{dmg}");                        // L5366 {text: `${dmg}`}（M-U3h 第五批 dump text 维度）
                     w.shake = System.Math.Max(w.shake, System.Math.Min(5, 1 + dist * 0.3));                                 // L5367
                 }
                 if (u.hp <= 0) u.dead = 1;                                                                                 // L5369
@@ -353,12 +488,95 @@ namespace PixelWorldBox.Wb
                     if (cdx * cdx + cdy * cdy < 3.24) CaravanArrive(w, u); // 1.8² 平方距离判定                            // L4130
                 }
             }
-            // —— 捕食者索敌（猎手嗅觉）——（buckets/preyGrid 宿主结构未译：第二批域；门控短路保 rng 协议）               // L4132
-            if (def.predator && !def.undead && u.food < 70 && w.Rng() < 0.4)
-                throw new System.InvalidOperationException("tail 捕食者索敌分支未翻译（M-U3h 第二批域）");
-            // —— 鱼群结队 ——                                                                                           // L4177
+            // —— 捕食者索敌（猎手嗅觉）：饥饿时大范围搜索猎物并循味逼近（不再守株待兔地瞎逛）——            // L4132-4176
+            if (def.predator && !def.undead && u.food < 70 && w.Rng() < 0.4)                            // u.food ?? 99：int 域捕食者场景恒显式布置
+            {
+                int hx = System.Math.Min(WbWorld.BKW - 1, System.Math.Max(0, (int)(u.x / 4)));          // L4133-4134
+                int hy = System.Math.Min(WbWorld.BKH - 1, System.Math.Max(0, (int)(u.y / 4)));
+                WbU prey = null;
+                double preyD2 = 26.0 * 26.0;                                                            // 嗅觉半径平方（L4137）
+                for (int by = hy - 6; by <= hy + 6; by++)
+                {
+                    for (int bx = hx - 6; bx <= hx + 6; bx++)
+                    {
+                        if (bx < 0 || by < 0 || bx >= WbWorld.BKW || by >= WbWorld.BKH) continue;       // L4141
+                        foreach (WbU o in w.buckets[by * WbWorld.BKW + bx])
+                        {
+                            if (o.dead != 0 || ReferenceEquals(o, u)) continue;                          // L4143-4144
+                            if (!IsHerbivoreRace(w, o.race)) continue;
+                            double pdx = o.x - u.x, pdy = o.y - u.y;
+                            double pd2 = pdx * pdx + pdy * pdy;
+                            if (pd2 < preyD2) { preyD2 = pd2; prey = o; }                               // L4147-4148
+                        }
+                    }
+                }
+                if (prey != null && (u.detour ?? 0) == 0)                                               // L4152
+                {
+                    u.tx = prey.x; u.ty = prey.y;
+                    MoveUnit(w, u, 1.15);
+                    return true;
+                }
+                // 嗅觉内无猎物 → 猎物密度场导航：朝猎物最富集的逃区进发（跨地域长征 —— 不再原地打转饿死）// L4154-4174
+                if ((u.detour ?? 0) == 0)
+                {
+                    int gx = System.Math.Min(31, System.Math.Max(0, (int)(u.x / 8)));
+                    int gy = System.Math.Min(19, System.Math.Max(0, (int)(u.y / 8)));
+                    int bestCell = -1;
+                    double bestScore = 0;
+                    for (int cy2 = System.Math.Max(0, gy - 3); cy2 <= System.Math.Min(19, gy + 3); cy2++)
+                    {
+                        for (int cx2 = System.Math.Max(0, gx - 3); cx2 <= System.Math.Min(31, gx + 3); cx2++)
+                        {
+                            int c = w.preyGrid[cy2 * 32 + cx2];
+                            if (c <= 0) continue;                                                       // L4162
+                            double d2 = WbMath.FdHypot(cx2 - gx, cy2 - gy);
+                            if (d2 < 0.9) continue;                                                     // 本区已有猎（L4164）
+                            double score = c / (1 + d2 * 0.8);
+                            if (score > bestScore) { bestScore = score; bestCell = cy2 * 32 + cx2; }    // L4166
+                        }
+                    }
+                    if (bestCell >= 0)
+                    {
+                        u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, (bestCell % 32) * 8 + 4 + (w.Rng() * 4 - 2)));   // L4169-4171
+                        u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, (bestCell / 32) * 8 + 4 + (w.Rng() * 4 - 2)));
+                        MoveUnit(w, u, 1.15);
+                        return true;
+                    }
+                }
+            }
+            // —— 鱼群结队（5-10 群游）：偶尔向邻近同类鱼的重心靠拢（集体游弋的观感；浅扫 3×3 桶，开销可控）—— // L4177-4204
             if (u.race == R_FISH && w.Rng() < 0.12)
-                throw new System.InvalidOperationException("tail 鱼群结队分支未翻译（M-U3h 第二批域）");
+            {
+                int hx = System.Math.Min(WbWorld.BKW - 1, System.Math.Max(0, (int)(u.x / 4)));          // L4179-4180
+                int hy = System.Math.Min(WbWorld.BKH - 1, System.Math.Max(0, (int)(u.y / 4)));
+                double ax = 0, ay = 0; int n = 0;
+                for (int by = hy - 1; by <= hy + 1; by++)
+                {
+                    for (int bx = hx - 1; bx <= hx + 1; bx++)
+                    {
+                        if (bx < 0 || by < 0 || bx >= WbWorld.BKW || by >= WbWorld.BKH) continue;       // L4186
+                        foreach (WbU o in w.buckets[by * WbWorld.BKW + bx])
+                        {
+                            if (ReferenceEquals(o, u) || o.dead != 0 || o.race != R_FISH) continue;      // L4188
+                            double dx2 = o.x - u.x, dy2 = o.y - u.y;
+                            if (dx2 * dx2 + dy2 * dy2 > 36) continue;                                   // 6 格内的同群鱼（L4191）
+                            ax += o.x; ay += o.y; n++;
+                        }
+                    }
+                }
+                if (n >= 2)
+                {
+                    double gx2 = ax / n, gy2 = ay / n;                                                  // L4197-4198
+                    // 鱼群中心必须是水域：搁浅个体会把同群目标拽上岸（L4200）
+                    int ci = WbWorld.Idx(System.Math.Max(0, System.Math.Min(WbWorld.W - 1, (int)System.Math.Floor(gx2))),
+                                         System.Math.Max(0, System.Math.Min(WbWorld.H - 1, (int)System.Math.Floor(gy2))));
+                    if (WbWorld.IsWater(w.terrain[ci]))
+                    {
+                        u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, gx2 + (w.Rng() - 0.5) * 2));   // L4201-4202
+                        u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, gy2 + (w.Rng() - 0.5) * 2));
+                    }
+                }
+            }
             // 随机漫游触发判定（0.5² 平方距离：纯阈值比较，无需实距）                                                     // L4213
             double ndx = u.tx - u.x;
             double ndy = u.ty - u.y;
@@ -367,15 +585,59 @@ namespace PixelWorldBox.Wb
                 double r = u.race == R_SHEEP ? 2.5 : u.race == R_DRAGON ? 9 : 5;   // R2 = R.DRAGON（engine L36）        // L4217
                 double wx = u.x + (w.Rng() * 2 - 1) * r;
                 double wy = u.y + (w.Rng() * 2 - 1) * r;
-                // 饥饿捕食者的逐草而行（第二批域）                                                                      // L4221
+                // 饥饿捕食者的逐草而行：食草动物活在草原 —— 顺着植被走就能找到猎场（跨地域觅食）      // L4221-4229
                 if (def.predator && !def.undead && u.food < 55)
-                    throw new System.InvalidOperationException("tail 漫游逐草分支未翻译（M-U3h 第二批域）");
-                // 蟹：滩涂限定（第二批域）                                                                              // L4230
+                {
+                    for (int k = 0; k < 3; k++)
+                    {
+                        double gx = u.x + (w.Rng() * 2 - 1) * 14;                                       // L4224-4225
+                        double gy = u.y + (w.Rng() * 2 - 1) * 14;
+                        int gj = WbWorld.Idx(System.Math.Max(0, System.Math.Min(WbWorld.W - 1, (int)System.Math.Floor(gx))),
+                                             System.Math.Max(0, System.Math.Min(WbWorld.H - 1, (int)System.Math.Floor(gy))));
+                        int tt = w.terrain[gj];
+                        if ((tt == WbWorld.T_GRASS || tt == WbWorld.T_FOREST) && w.building[gj] == 0) { wx = gx; wy = gy; break; }  // L4227-4228
+                    }
+                }
+                // 蟹：滩涂限定 —— 游荡目标须为水域或邻水沙滩（离岸沙丘不去；4 次重选仍不合法则
+                // 原地停留，防止 inland 沙漠安家）                                                            // L4230-4240
                 if (u.race == R_CRAB)
-                    throw new System.InvalidOperationException("tail 蟹漫游分支未翻译（M-U3h 第二批域）");
-                // 纯水生（鱼/龟/鲨）：游荡目标必须为水域（第二批域）                                                     // L4241
+                {
+                    bool ok = false;
+                    for (int k = 0; k < 4 && !ok; k++)
+                    {
+                        int cx2 = System.Math.Max(0, System.Math.Min(WbWorld.W - 1, (int)System.Math.Floor(wx)));
+                        int cy2 = System.Math.Max(0, System.Math.Min(WbWorld.H - 1, (int)System.Math.Floor(wy)));
+                        int cj = cy2 * WbWorld.W + cx2;
+                        int ct = w.terrain[cj];
+                        if (WbWorld.IsWater(ct)) ok = true;
+                        else if (ct == WbWorld.T_SAND)
+                        {
+                            ok = (cx2 > 0 && WbWorld.IsWater(w.terrain[cj - 1])) || (cx2 < WbWorld.W - 1 && WbWorld.IsWater(w.terrain[cj + 1]))
+                                || (cy2 > 0 && WbWorld.IsWater(w.terrain[cj - WbWorld.W])) || (cy2 < WbWorld.H - 1 && WbWorld.IsWater(w.terrain[cj + WbWorld.W]));  // L4236-4238
+                        }
+                        if (!ok) { wx = u.x + (w.Rng() * 2 - 1) * r; wy = u.y + (w.Rng() * 2 - 1) * r; }   // L4239
+                    }
+                    if (!ok) { wx = u.x; wy = u.y; }                                                    // L4240
+                }
+                // 纯水生（鱼/龟/鲨）：游荡目标必须为水域 —— 海啸/洪水退潮搁浅的入口封锁；
+                // 已搁浅个体则把目标导向最近水域（配合 moveUnit 搁浅蹦跳完成自救回归）                     // L4241-4256
                 else if (def.aquatic)
-                    throw new System.InvalidOperationException("tail 水生漫游分支未翻译（M-U3h 第二批域）");
+                {
+                    bool ok = false;
+                    for (int k = 0; k < 4 && !ok; k++)
+                    {
+                        int cx2 = System.Math.Max(0, System.Math.Min(WbWorld.W - 1, (int)System.Math.Floor(wx)));
+                        int cy2 = System.Math.Max(0, System.Math.Min(WbWorld.H - 1, (int)System.Math.Floor(wy)));
+                        if (WbWorld.IsWater(w.terrain[cy2 * WbWorld.W + cx2])) ok = true;               // L4245
+                        else { wx = u.x + (w.Rng() * 2 - 1) * r; wy = u.y + (w.Rng() * 2 - 1) * r; }       // L4246
+                    }
+                    if (!ok)
+                    {
+                        (double wx2, double wy2)? near = WbWorld.IsWater(w.terrain[WbWorld.Idx((int)System.Math.Floor(u.x), (int)System.Math.Floor(u.y))])
+                            ? null : WbCivSim.FindWaterNear(w, u.x, u.y, 14);                           // L4248
+                        if (near != null) { wx = near.Value.wx2; wy = near.Value.wy2; } else { wx = u.x; wy = u.y; }   // L4249
+                    }
+                }
                 u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, wx));                                          // L4257
                 u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, wy));
             }
@@ -387,12 +649,202 @@ namespace PixelWorldBox.Wb
         public static void UpdateUnitPostJS(WbWorld w, WbU u)
         {
             RelayDef def = DefOf(u.race);
-            // 宝物拾取（items 空 → 门短路；本体第二批域）                                                                // L4265
+            // 宝物拾取：文明生物与强盗经过地面物品时自动装备更强的；捕食者顺路捡食肉                // L4265-4267
             if (w.items.Count > 0 && (def.isCiv || u.race == R_BANDIT || (def.predator && !def.undead)))
-                throw new System.InvalidOperationException("post tryPickup 本体未翻译（M-U3h 第二批域）");
-            // reproduce —— 两段式繁衍门（门掷必耗 rng；boost+spawn 链第二批域）                                          // L4271
+                TryPickup(w, u);
+            // reproduce —— 与战斗状态无关（否则被猎物包围的捕食者永不绝育 → 种群灭绝）             // L4270-4334
+            // 繁衍：两段式 —— 先掷基础骰（绝大多数单位此 tick 直接跳过），过门再算增益（懒计算省 CPU）
+            // 搁浅的水生个体失去繁衍能力（离水濒死不产卵 —— 否则陆生鱼群自续成退化生态；beachT 由 beachedAquaticTick 维护）
             if (w.laws.reproduction && def.repro > 0 && !(def.aquatic && !def.beach && (u.beachT ?? 0) > 0) && w.Rng() < def.repro)
-                throw new System.InvalidOperationException("post 繁衍 boost+spawn 链未翻译（M-U3h 第二批域；黄金场景 rngA0 受控此门必败）");
+            {
+                // 增益链：人口令 ×1.8 / 科技繁衍 / 爱之甘霖 ×2.5 / 基因繁衍 / 自然季节                        // L4277-4287
+                double boost = ((def.isCiv && u.civ >= 0 && WbCivSim.ActiveDirective(w, u.civ, "populate") != null) ? 1.8 : 1)
+                    * (def.isCiv && u.civ >= 0 ? WbCivSim.TechModsOf(w, u.civ).repro * (1 + (WbCivSim.IdeaModsOf(w, u.civ).repro ?? 0)) : 1)
+                    * (u.fert != 0 ? 2.5 : 1)
+                    * (u.geneC?.r ?? 1)                                     // v3：全体单位的基因繁衍乘数
+                    * ((u.panic ?? 0) >= 0.5 ? 0.3 : 1)                     // 涌现社会内核：惊魂未定者无心繁衍
+                    * (def.isCiv ? 0.85 + def.growth * 0.3 : 1)             // 种族系统 v2：繁衍倾向
+                    * NatureReproMul(w)
+                    * (def.isCiv && u.civ >= 0 && WbCivSim.CivAtWar(w, u.civ) ? 0.55 : 1)
+                    * (!def.isCiv && !def.predator ? 0.75 + System.Math.Min(0.75, w.grassTiles / 16000.0) : 1)
+                    // 捕食者丰猎增益：吃得越饱生得越多（1.6..3×）—— 猎物涨 → 狼群兴；猎物跌 → 绝育
+                    * (def.predator ? 1.6 + System.Math.Min(1.4, System.Math.Max(0, u.food - 40) / 85.0) : 1)
+                    * 1.0;                                                  // ep('pop.reproMul') 热参数（engineParams L26 默认 1）
+                // 捕食者繁衍门槛：饥饿账本充盈（food > 40）才生育 —— 猎物稀少时种群自我收缩（Lotka-Volterra 迟滞）
+                if ((!def.predator || u.food > 40) && w.Rng() < boost)
+                {
+                    if (def.isCiv)
+                    {
+                        WbCiv civ = WbCivSim.CivAt(w, u.civ);
+                        if (civ != null && civ.alive && civ.pop < WbCivSim.PopCapOf(w, civ) + 6 && w.units.Count < WbConstants.MAX_UNITS)
+                        {
+                            // v3：文明子代也遗传基因（±变异 + 环境选择压力）—— 文明种族在代代繁衍中演化 // L4293-4297
+                            WbGene cg = ChildGene(w, u);
+                            string traitKey = TryEmergentTrait(w, u, cg);
+                            // 家族谱系：子随母姓（fgn+1 代代相传）；无姓者 25% 概率为子嗣开宗立姓
+                            int? fam = u.famN ?? (w.Rng() < 0.25 ? NewFamily(w, u.race, u).id : (int?)null);
+                            SpawnUnit(w, u.race, u.x + w.Rng() - 0.5, u.y + w.Rng() - 0.5, new WbSpawnOpts
+                            {
+                                civ = u.civ, silent = true, gene = cg, trait = traitKey,
+                                fam = fam, fgn = fam.HasValue ? (u.fgnN ?? 1) + 1 : (int?)null,
+                            });
+                            w.Fx("heart", u.x, u.y - 1, 40);
+                        }
+                    }
+                    else
+                    {
+                        int cap = WildCapOf(w, u.race);                                     // O(1) 分种族计数（替代 O(N) 全表扫描）// L4305-4319
+                        int same = w.wildCount.TryGetValue(u.race, out int s0) ? s0 : 0;
+                        if (same < cap)
+                        {
+                            // 子代基因：母代基因 + 环境偏向突变（进化引擎）+ v3 涌现特质分化
+                            WbGene cg = ChildGene(w, u);
+                            string traitKey = TryEmergentTrait(w, u, cg);
+                            int? fam = u.famN ?? (w.Rng() < 0.25 ? NewFamily(w, u.race, u).id : (int?)null);
+                            SpawnUnit(w, u.race, u.x + w.Rng() - 0.5, u.y + w.Rng() - 0.5, new WbSpawnOpts
+                            {
+                                silent = true, gene = cg, trait = traitKey,
+                                fam = fam, fgn = fam.HasValue ? (u.fgnN ?? 1) + 1 : (int?)null,
+                            });
+                            w.Fx("heart", u.x, u.y - 1, 40);
+                        }
+                    }
+                }
+            }
+        }
+
+        // rollTrait L1467-1470（TRAITS keys 插入序随机抽——JS Object.keys 序 = 预设 12 + dynTraits 追加序）
+        private static string RollTrait(WbWorld w)
+        {
+            var keys = TraitsKeys;
+            return keys[(int)System.Math.Floor(w.Rng() * keys.Count)];                      // L1469
+        }
+
+        // nature.ts reproMul L325-328（繁衍系数：春 1.14 / 冬 0.78 / 夏秋 1）
+        private static double NatureReproMul(WbWorld w)
+        {
+            int s = w.NatureSeason();
+            return s == 0 ? 1.14 : s == 3 ? 0.78 : 1;
+        }
+
+        // childGene L11037-11057（子代基因：母代 ± 变异 + 辐射高压锅 + 环境选择压力）
+        private static WbGene ChildGene(WbWorld w, WbU parent)
+        {
+            WbGene g = parent.geneC ?? new WbGene { s = 1, d = 1, h = 1, r = 1 };       // L11038 g ?? {1,1,1,1}
+            int gx = System.Math.Max(0, System.Math.Min(WbWorld.W - 1, (int)System.Math.Floor(parent.x)));   // L11040-11041
+            int gy = System.Math.Max(0, System.Math.Min(WbWorld.H - 1, (int)System.Math.Floor(parent.y)));
+            double radBoost = w.radiate[WbWorld.Idx(gx, gy)] > 0 ? 2.6 : 1;             // 辐射区 = 演化高压锅（L11042）
+            // ep('evo.mutationRate') engineParams L37 默认 0.08
+            double Mut(double v) => System.Math.Max(0.5, System.Math.Min(2, v * (1 + (w.Rng() - 0.5) * 0.08 * radBoost)));
+            WbGene gene = new WbGene { s = Mut(g.s), d = Mut(g.d), h = Mut(g.h), r = Mut(g.r) };        // L11044
+            // 环境选择压力：不同地物偏向不同基因维（长期演化出地方适应性）                             // L11046-11052
+            int t = w.terrain[WbWorld.Idx(gx, gy)];
+            if (t == WbWorld.T_SNOW || t == WbWorld.T_ICE) gene.h = System.Math.Min(2, gene.h * (1 + w.Rng() * 0.05));
+            else if (t == WbWorld.T_SAND) gene.s = System.Math.Min(2, gene.s * (1 + w.Rng() * 0.05));
+            else if (t == WbWorld.T_FOREST) gene.d = System.Math.Min(2, gene.d * (1 + w.Rng() * 0.05));
+            else if (t == WbWorld.T_GRASS) gene.r = System.Math.Min(2, gene.r * (1 + w.Rng() * 0.04));
+            return gene;
+        }
+
+        // tryEmergentTrait L8854-8866（繁衍链涌现特质门：极端基因才可能诞生新特质）
+        private static string TryEmergentTrait(WbWorld w, WbU parent, WbGene cg)
+        {
+            bool extreme = cg.d >= 1.5 || cg.h >= 1.5 || cg.s >= 1.5;                   // L8855
+            if (!extreme || w.dynTraits.Count >= 24 || w.Rng() > 0.06) return null;      // L8856
+            WbTrait t = InventTrait(w, cg, w.traitSeq);                                 // L8857
+            t.key = $"dt{w.traitSeq++}";                                                // L8858-8860
+            w.dynTraits[t.key] = t;
+            WbBailRelay.TraitsAll[t.key] = t;                                           // L8861 模块级注册（全引擎 TRAITS 查找即刻生效）
+            WbBailRelay.TraitsKeys.Add(t.key);                                          // JS Object.keys 插入序台账同步（rollTrait 序协议）
+            WbCivSim.RecordEvo(w, "trait", t.name, null, "#ff5fd2",
+                $"{t.desc} —— 源自「{WbCivSim.RaceName(parent.race)}」种群 {System.Math.Floor(w.yearF)} 年的极端基因个体", t.desc,
+                new System.Collections.Generic.Dictionary<string, object> { { "race", (object)parent.race } });   // L8862-8863
+            w.AddEvent("emerge", $"演化奇迹——「{WbCivSim.RaceName(parent.race)}」种群诞生了前所未见的个体，携带着新特质「{t.name}」（{t.desc}）", "#ff5fd2", parent.x, parent.y);   // L8864
+            return t.key;
+        }
+
+        // tryPickup L5225-5279（宝物拾取本体：拾肉回充 / 换装升级先卸旧）
+        private static void TryPickup(WbWorld w, WbU u)
+        {
+            RelayDef defR = DefOf(u.race);
+            bool eater = defR.isCiv || u.race == R_BANDIT || (defR.predator && !defR.undead);
+            for (int i = w.items.Count - 1; i >= 0; i--)                                // L5228 逆序遍历
+            {
+                WbItem it = w.items[i];
+                if (System.Math.Abs(it.x - u.x) > 0.9 || System.Math.Abs(it.y - u.y) > 0.9) continue;      // L5230
+                // —— 肉：捕食链的地面食物（拾取即食；非捕食野生动物不捡）——                        // L5232-5247
+                if (it.kind == "meat")
+                {
+                    if (!eater || (u.grab ?? 0) > 0) continue;
+                    if (defR.predator && !defR.undead)
+                    {
+                        u.food = System.Math.Min(160, u.food + 45);                     // 饱食回充
+                        if (w.fxDmgNumbers) w.Fx("dmg", u.x, u.y - 1, 22, optText: "饱");
+                    }
+                    else if (u.civ >= 0 && WbCivSim.CivAt(w, u.civ) is WbCiv civ)
+                    {
+                        civ.gold = (civ.gold ?? 0) + 2;                                 // 入国库：食物储备（集市经济口径）
+                        w.Fx("coin", u.x, u.y - 1, 20);
+                    }
+                    w.items.RemoveAt(i);
+                    w.Fx("heart", u.x, u.y - 0.8, 18);
+                    continue;
+                }
+                if (!defR.isCiv && u.race != R_BANDIT) continue;                        // 野生动物不捡装备 // L5249
+                if (!ItemDefs.TryGetValue(it.kind, out WbItemDef def)) continue;        // L5250-5251
+                string field = SlotField.TryGetValue(def.slot, out string f0) ? f0 : null;
+                string cur = GetGear(u, field);
+                int curRank = cur != null && ItemDefs.TryGetValue(cur, out WbItemDef cd0) ? cd0.rank : -1;
+                if (curRank >= def.rank) continue;                                      // 已有同级或更好的装备 // L5254
+                // —— 换装先卸旧（Task 34 失衡修复）：同槽替换时扣除旧装备加成——                    // L5256-5264
+                if (cur != null)
+                {
+                    if (ItemDefs.TryGetValue(cur, out WbItemDef old))
+                    {
+                        if (old.dmg != 0) u.dmg = System.Math.Max(1, u.dmg - old.dmg);
+                        if (old.hp != 0) u.maxHp = System.Math.Max(1, u.maxHp - old.hp);
+                        if (old.speedMul != 0) u.speed /= old.speedMul;
+                    }
+                }
+                SetGear(u, field, it.kind);                                             // L5265 u[field] = it.kind
+                if (def.dmg != 0) u.dmg += def.dmg;                                     // L5267-5269
+                if (def.hp != 0) { u.maxHp += def.hp; u.hp = System.Math.Min(u.maxHp, u.hp + def.hp); }
+                if (def.speedMul != 0) u.speed *= def.speedMul;
+                w.items.RemoveAt(i);
+                w.Fx("spawn", u.x, u.y, 26);
+                // onSound?.('coin') 拾取叮当（42-e 接线）—— 宿主音效域不进对账面
+                // 拾取播报：史诗/传说足够稀有时额外 toast + 纪事                                 // L5273-5278
+                if (w.fxDmgNumbers) w.Fx("dmg", u.x, u.y - 1.2, 34, optText: def.name);
+                if (def.rarity >= 3) w.Toast($"{u.name} 拾取了{RarityNames[def.rarity]}{def.name}", "good");
+                if (def.rarity == 4)
+                {
+                    string owner = u.civ >= 0 ? (WbCivSim.CivAt(w, u.civ)?.name ?? "流浪") : WbCivSim.RaceName(u.race);
+                    w.AddEvent("loot", $"{u.name}（{owner}）获得了传说之物「{def.name}」", null, u.x, u.y);
+                }
+            }
+        }
+
+        // 槽位字段 string 语义读写（SLOT_FIELD L44-52：wep/arm/hlm/shd/bts/rng/amu —— 装备串是 ItemKind key）
+        private static string GetGear(WbU u, string field) => field switch
+        {
+            "wep" => u.wep as string,
+            "arm" => u.armS as string,
+            "hlm" => u.hlmS as string,
+            "shd" => u.shdS,
+            "bts" => u.btsS,
+            "rng" => u.rngS,
+            "amu" => u.amuS,
+            _ => null,
+        };
+        private static void SetGear(WbU u, string field, string key)
+        {
+            if (field == "wep") u.wep = key;
+            else if (field == "arm") u.armS = key;
+            else if (field == "hlm") u.hlmS = key;
+            else if (field == "shd") u.shdS = key;
+            else if (field == "bts") u.btsS = key;
+            else if (field == "rng") u.rngS = key;
+            else if (field == "amu") u.amuS = key;
         }
 
         // ================= moveUnit L5813-5876（宿主路径；flying/aquatic/sandswim/登船桩域） =================
@@ -415,13 +867,49 @@ namespace PixelWorldBox.Wb
             double ny = u.y + (dy / d) * step;
             if (dx != 0) u.flip = dx < 0 ? 1 : 0;                                                                       // L5830
             if (def.flying)
-                throw new System.InvalidOperationException("moveUnit flying 分支未翻译（M-U3h 第二批域）");             // L5831-5835
+            {
+                u.x = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, nx));                                       // L5832-5835
+                u.y = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, ny));
+                return;
+            }
             // 通行规则（注释见蓝本 L5837-5841）
             int cur = w.terrain[WbWorld.Idx((int)System.Math.Floor(u.x), (int)System.Math.Floor(u.y))];                 // L5843
             if (def.aquatic)
-                throw new System.InvalidOperationException("moveUnit aquatic 分支未翻译（M-U3h 第二批域）");            // L5844-5860
+            {
+                // 水生巨怪只可在水域游动（内联判定替代闭包）；滩涂两栖（蟹）：邻水沙滩亦可爬行       // L5844-5860
+                int nt = w.terrain[WbWorld.Idx((int)System.Math.Floor(nx), (int)System.Math.Floor(ny))];
+                if (nt == WbWorld.T_DEEP || nt == WbWorld.T_WATER || (def.beach && nt == WbWorld.T_SAND)) { u.x = nx; u.y = ny; }
+                else if (!WbWorld.IsWater(cur) && !def.beach)
+                {
+                    // 搁浅自救（洪水/海啸退潮遗留）：离水的纯水生单位在陆上蹦跳（×0.7 蹒跚仍快于窒息线），
+                    // 踏任何地表直奔目标（目标已被漫游限定为最近水域）—— 回海后恢复常态水游
+                    const double f = 0.7;
+                    u.x = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, u.x + (nx - u.x) * f));
+                    u.y = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, u.y + (ny - u.y) * f));
+                    u.flip = dx < 0 ? 1 : 0;
+                }
+                else
+                {
+                    // 留在深水：随机改向游动
+                    u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, u.x + (w.Rng() * 2 - 1) * 8));
+                    u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, u.y + (w.Rng() * 2 - 1) * 8));
+                }
+                return;
+            }
             if (def.sandswim)
-                throw new System.InvalidOperationException("moveUnit sandswim 分支未翻译（M-U3h 第二批域）");           // L5861-5870
+            {
+                // 沙泳巨虫只可在沙/草/焦土潜行（内联判定替代闭包）                                       // L5861-5870
+                int nt = w.terrain[WbWorld.Idx((int)System.Math.Floor(nx), (int)System.Math.Floor(ny))];
+                if (nt == WbWorld.T_SAND || nt == WbWorld.T_GRASS || nt == WbWorld.T_BURNT) { u.x = nx; u.y = ny; }
+                else
+                {
+                    u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, u.x + (w.Rng() * 2 - 1) * 6));
+                    u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, u.y + (w.Rng() * 2 - 1) * 6));
+                }
+                // 沙泳扬尘：移动中偶尔喷出沙尘（原子级拖尾反馈）
+                if (w.fxAmbience && w.Rng() < 0.08) w.Fx("dust", u.x, u.y + 0.5, 12);
+                return;
+            }
             bool swimming = cur == WbWorld.T_DEEP || cur == WbWorld.T_WATER;
             bool onMountain = cur == WbWorld.T_MOUNTAIN;
             // 通行判定 + 城墙阻挡（敌方陆行单位不可逾越）
@@ -433,7 +921,12 @@ namespace PixelWorldBox.Wb
             else if (passX) u.x = nx;
             else if (passY) u.y = ny;
             else
-                throw new System.InvalidOperationException("moveUnit 阻断分支（maybeBoardForWar/reroute）未翻译（M-U3h 第二批域）");  // L5881-5889
+            {
+                // 阻断：战时可能是隔海 → 登船跨海远征（WorldBox 战争船）；否则随机改向绕行         // L5881-5889
+                if (MaybeBoardForWar(w, u)) return;
+                u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, u.x + (w.Rng() * 2 - 1) * 6));
+                u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, u.y + (w.Rng() * 2 - 1) * 6));
+            }
         }
 
         // wallBlocks L5804-5812（swimming 时闭包恒 false —— L5877 内联）
@@ -454,6 +947,79 @@ namespace PixelWorldBox.Wb
             if (swimming) return t != WbWorld.T_LAVA && t != WbWorld.T_MOUNTAIN;
             if (onMountain) return t != WbWorld.T_DEEP && t != WbWorld.T_WATER && t != WbWorld.T_LAVA;
             return t != WbWorld.T_DEEP && t != WbWorld.T_WATER && t != WbWorld.T_MOUNTAIN && t != WbWorld.T_LAVA; // walkable L76-78
+        }
+
+        // isHerbivoreRace L2120-2128（猎物链底层判定：静态八种 + dynRaces 递归母族）
+        private static bool IsHerbivoreRace(WbWorld w, int race)
+        {
+            if (race == R_SHEEP || race == R_DEER || race == R_PENGUIN || race == R_CAMEL) return true;     // L2121
+            // 八新动物：鸡/猪/兔（陆）与鱼（水）均为猎物链底层（狐猎兔鸡、鲨猎鱼）                        // L2123-2124
+            if (race == R_CHICKEN || race == R_PIG || race == R_RABBIT || race == R_FISH) return true;
+            WbDynRace d = w.dynRaces.TryGetValue(race, out WbDynRace d0) ? d0 : null;                       // L2125
+            if (d == null) return false;
+            if (d.eco == "herb") return true;                                                               // L2127
+            if (d.eco != null) return false;
+            return IsHerbivoreRace(w, d.parent);                                                            // L2129 递归母族
+        }
+
+        // maybeBoardForWar L5740-5791（战时隔海登船跨海远征：编队 board 闭包 + 直线跨水 45% 采样）
+        public static bool MaybeBoardForWar(WbWorld w, WbU u)
+        {
+            // WBB.touchMeta() —— Stage 3 战争登船 boat 列收口（bail 轻重打包漏斗 no-op 先例）
+            if (u.boat != 0 || !DefOf(u.race).isCiv) return false;                                          // L5742
+            int job = u.job;                                                                                // L5743-5744
+            if (job != 2 && job != 3) return false; // 只有作战职业会跨海远征
+            if (u.civ < 0 || !WbCivSim.CivAtWar(w, u.civ)) return false;                                    // L5745
+            double dx = u.tx - u.x, dy = u.ty - u.y;
+            double d = WbMath.FdHypot(dx, dy);
+            if (d < 8) return false; // 近距离目标正常行军                                                  // L5749
+            // 直线跨水采样：水面占比 ≥ 45% → 视为隔海（山阻不是跨海）                                     // L5751-5760
+            int water = 0;
+            int samples = System.Math.Max(1, (int)System.Math.Floor(d));
+            for (int s = 1; s <= samples; s++)
+            {
+                int xx = (int)System.Math.Floor(u.x + (dx * s) / d);
+                int yy = (int)System.Math.Floor(u.y + (dy * s) / d);
+                if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;
+                if (WbWorld.IsWater(w.terrain[WbWorld.Idx(xx, yy)])) water++;
+            }
+            if (water / (double)samples < 0.45) return false;
+            int curT = w.terrain[WbWorld.Idx((int)System.Math.Floor(u.x), (int)System.Math.Floor(u.y))];
+            if (WbWorld.IsWater(curT)) return false; // 落水者直接游向岸边                                   // L5762-5763
+            (double x, double y)? dockN = WbCivSim.FindWaterNear(w, u.x, u.y, 4);                           // L5764
+            if (dockN == null) return false;
+            double dockX = dockN.Value.x, dockY = dockN.Value.y;
+            // —— 集结编队：附近 6 格内同国的作战同袍一起登船（集团军出海，不再单个漂洋）——           // L5766-5785
+            double ttl = 700 + System.Math.Floor(w.Rng() * 300);                                            // sharedTarget（board 闭包捕获）
+            void Board(WbU o)
+            {
+                o.boat = 1;
+                o.boatTTL = (int)ttl;
+                o.x = dockX + (w.Rng() - 0.5) * 1.2;
+                o.y = dockY + (w.Rng() - 0.5) * 1.2;
+                o.lx = o.x;
+                o.ly = o.y; // 登船重置插值起点，避免一帧长距离滑行
+                w.Fx("spawn", o.x, o.y, 24);
+            }
+            Board(u);
+            int fleet = 1;
+            for (int i = 0; i < w.units.Count; i++)
+            {
+                if (fleet >= 4) break; // 编队上限 4 艘（同屏成本可控）                                      // L5772
+                WbU o = w.units[i];
+                if (ReferenceEquals(o, u) || o.dead != 0 || o.boat != 0 || o.civ != u.civ) continue;        // L5773
+                int ojob = o.job;
+                if (ojob != 2 && ojob != 3) continue;
+                if (WbMath.FdHypot(o.x - u.x, o.y - u.y) > 6) continue;
+                Board(o);
+                fleet++;
+            }
+            if (fleet >= 3)
+            {
+                WbCiv civ = WbCivSim.CivAt(w, u.civ);
+                w.AddEvent("war", $"「{civ?.name ?? ""}」的一支舰队（{fleet} 艘战船）跨海远征", civ?.colorHex, u.x, u.y);   // L5787-5788
+            }
+            return true;
         }
 
         // ================= foundSettlement L5704-5739 =================
@@ -578,6 +1144,14 @@ namespace PixelWorldBox.Wb
 
         // ---------------- TRAITS 预设表（types.ts L264-276 机械转写 —— spawnUnit td 消费 + inventEmergentTrait TRAITS[key]=t 动态写入同一表） ----------------
         public static readonly System.Collections.Generic.Dictionary<string, WbTrait> TraitsAll = BuildTraits();
+        // JS Object.keys(TRAITS) 插入序台账（rollTrait L1468 随机抽取序 = 预设 12 + dynTraits 追加序；同 BhpKeys 先例）
+        public static readonly System.Collections.Generic.List<string> TraitsKeys = BuildTraitKeys();
+
+        private static System.Collections.Generic.List<string> BuildTraitKeys()
+        {
+            // JS Object.keys(TRAITS) = 插入序（types.ts L265-276 预设 12 条顺序）——Dictionary 迭代序不可用（教训⑤ BhpKeys 同款）
+            return new System.Collections.Generic.List<string> { "strong", "tough", "swift", "weak", "sickly", "genius", "berserk", "lucky", "regeneration", "giant", "tiny", "immune" };
+        }
 
         private static System.Collections.Generic.Dictionary<string, WbTrait> BuildTraits()
         {
@@ -686,6 +1260,7 @@ namespace PixelWorldBox.Wb
             w.traitSeq++;
             w.dynTraits[t.key] = t;                                                         // L3321
             TraitsAll[t.key] = t;                                                           // L3322 TRAITS[t.key] = t（全局预设表动态扩充）
+            TraitsKeys.Add(t.key);                                                          // JS Object.keys 插入序台账同步（rollTrait 序协议）
             string raceName = parent.race >= 0 && parent.race < RStats.Length ? RStats[parent.race].name : "?"; // L3323 RACES[parent.race]?.name ?? '?'
             WbCivSim.RecordEvo(w, "trait", t.name, null, "#ff5fd2",                         // L3323-3324
                 $"{t.desc} —— 源自「{raceName}」种群 {(int)System.Math.Floor(w.yearF)} 年的极端基因个体",
@@ -760,7 +1335,7 @@ namespace PixelWorldBox.Wb
 
             string trait;                                                                       // L1327（!== undefined 门 → 恒传；'' → null）
             if (o != null && o.trait != null) trait = o.trait.Length > 0 ? o.trait : null;
-            else throw new System.InvalidOperationException("rollTrait 未转写（case2 场景恒传 trait）"); // 0.15 门 GUARD（蓝本惰性分支）
+            else trait = w.Rng() < 0.15 ? RollTrait(w) : null;                                  // L1316 未传 → 0.15 门随机抽（M-U3h 第五批繁衍链 traitKey=null 可达）
             WbTrait td = trait != null && TraitsAll.TryGetValue(trait, out WbTrait td0) ? td0 : null;   // L1327 TRAITS[trait]
             if (o == null || o.gene == null)                                                    // L1329-1330 GUARD
                 throw new System.InvalidOperationException("baseGene 深链未转写（case2 场景恒传 gene）");
@@ -1210,12 +1785,6 @@ namespace PixelWorldBox.Wb
                 if (d < bestD) { bestD = d; best = b; }                                         // L4428
             }
             return best;
-        }
-
-        // ================= maybeBoardForWar（engine L5740-5791）—— GUARD 桩（0.05 门黄金受控不可达；第五批收官域） =================
-        private static bool MaybeBoardForWar(WbWorld w, WbU u)
-        {
-            throw new System.InvalidOperationException("maybeBoardForWar 未翻译（case3 登船参战域——M-U3h 第五批余域）");
         }
     }
 }

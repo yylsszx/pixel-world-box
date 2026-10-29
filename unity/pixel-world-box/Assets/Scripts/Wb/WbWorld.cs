@@ -72,6 +72,15 @@ namespace PixelWorldBox.Wb
         public int? civ;
         public string colorHex;
         public double? dmg;                 // engine Effect.dmg（castArrow/bullet opts 覆盖域；dump 协议外占位 —— M-U3h case3）
+        public string text;                 // engine Effect.text（fx('dmg',...,{text}) 拾取播报 —— M-U3h 第五批）
+    }
+
+    /// 地面物品 —— engine items.push L5388 结构（tryPickup L5225 消费；M-U3h 第五批）
+    public class WbItem
+    {
+        public int id;
+        public string kind;
+        public double x, y;
     }
 
     /// WorldEvent —— engine.ts addEvent L13996
@@ -114,6 +123,10 @@ namespace PixelWorldBox.Wb
         // armS/hlmS: 渲染域镜像 TS Unit.arm/hlm 字符串 key（'armor1'/'armor2'/'armor3'/'energy_shield'/'hlm1'/'hlm2'/'hlm3'）——
         // 精灵域（WbSprites）消费 string 语义（armor2→钢色等），与 wep object 同款协议（M-U5a）
         public object armS, hlmS;
+        // —— M-U3h 第五批装备槽 string 镜像（SLOT_FIELD 七槽 —— shd/bts/rng/amu 无旧渲染镜像，补齐只加；tryPickup GetGear/SetGear 消费）——
+        public string shdS, btsS, rngS, amuS;
+        // —— M-U3h 第五批 fam/fgn 可空镜像（fam ?? 门 undefined 语义分离：int fam/fgn 旧占位不动 —— 同 ageF/maxAgeF 先例）——
+        public int? famN, fgnN;
         public double? lx, ly;               // engine Unit.lx/ly（leadAim vx = x - (lx ?? x)；undefined → null）
         // —— 渲染域镜像（M-U4：render.ts 消费的可选插值/显示/恐慌字段；undefined → null）——
         public double? rx, ry;               // u.rx/ry 插值坐标（dpx 缺省时 px = (rx ?? x) * 2）
@@ -128,6 +141,7 @@ namespace PixelWorldBox.Wb
         public int chill, curse;             // engine u.chill/u.curse（moveUnit 真值门：? 0.55 / ? 0.75）
         public int fert;                     // engine u.fert（postJS 繁衍增益 u.fert ? 2.5 : 1）
         public double? beachT;               // engine u.beachT（postJS 水生搁浅繁衍抑制门；?? 0 语义）
+        public int? detour;                  // engine u.detour（tailJS 索敌/导航抑制门；undefined → null —— M-U3h 第五批）
         public List<int> gIds = new List<int>();
         public List<double> gVal = new List<double>();
         // —— M-U3h 第二批 case1 船域消费（字段只加不改不重排）——
@@ -359,6 +373,7 @@ namespace PixelWorldBox.Wb
         public const int FX_CAP = 620;    // FX_CAPS[fxDensity=1] L9777
         // —— M-U3h 第二批 case1 消费切片：engine fxPrefs.dmgNumbers（L271 默认 true；落地伤害数字 fx 门）——
         public bool fxDmgNumbers = true;
+        public bool fxAmbience = true;      // engine fxPrefs.ambience（engine L271 默认 true —— sandswim 扬尘门消费；M-U3h 第五批）
 
         public const int T_DEEP = 0, T_WATER = 1, T_SAND = 2, T_GRASS = 3, T_FOREST = 4, T_HILL = 5,
                          T_MOUNTAIN = 6, T_SNOW = 7, T_LAVA = 8, T_BURNT = 9, T_ICE = 10, T_SWAMP = 11;
@@ -402,9 +417,15 @@ namespace PixelWorldBox.Wb
         // ---------------- 事件流（引擎侧效应与宿主解耦 —— WbNature 先例纪律③） ----------------
         public List<WbFx> effects = new List<WbFx>();
         // —— M-U3h bail 宿主接力消费域（字段只加）——
-        public List<object> items = new List<object>();   // engine this.items（postJS 拾取门 Count 消费；本体第二批域）
+        public List<WbItem> items = new List<WbItem>();   // engine this.items（postJS 拾取门 Count 消费；本体第五批 TryPickup L5225 消费 id/kind/x/y）
         public int grassTiles;                             // engine this.grassTiles（postJS 非文明繁衍增益）
+        public int itemSeq;                                // engine this.itemSeq（items.push L5388 id 序列器；M-U3h 第五批）
         public Dictionary<int, int> wildCount = new Dictionary<int, int>(); // engine this.wildCount（种族 O(1) 计数）
+        // —— M-U3h 第五批 tail 索敌/鱼群宿主结构（字段只加）——
+        public int[] preyGrid = new int[32 * 20];          // engine L252 preyGrid: Uint16Array(32*20)（猎物密度场；生态核算写、索敌导航读）
+        public const int BKW = (W + 3) / 4;                // engine L717 bw = ceil(W/4) = 64
+        public const int BKH = (H + 3) / 4;                // engine L718 bh = ceil(H/4) = 40
+        public readonly List<WbU>[] buckets = new List<WbU>[BKW * BKH]; // engine L761 buckets（空间桶；桶内序 = units push 序）
         // —— M-U3h 第三批 case2 涌现接力消费域（字段只加）——
         public byte[] radiate = new byte[W * H];           // engine L164 radiate: Uint8Array（辐射场；高压锅门）
         public Dictionary<int, WbFamily> families = new Dictionary<int, WbFamily>(); // engine this.families（家族谱系）
@@ -511,7 +532,7 @@ namespace PixelWorldBox.Wb
         }
 
         /// engine.ts fx L9781-9799 —— 渲染侧效应入事件流（rng 消耗×2 是模拟语义，桩不掉）
-        public WbFx Fx(string kind, double x, double y, double ttl, double? optR = null, int? optCiv = null, string optColorHex = null, double? optX0 = null, double? optY0 = null, double? optDmg = null)
+        public WbFx Fx(string kind, double x, double y, double ttl, double? optR = null, int? optCiv = null, string optColorHex = null, double? optX0 = null, double? optY0 = null, double? optDmg = null, string optText = null)
         {
             // 特效总量控制（L9784-9792）：满载逐出最老次要特效；全是关键则丢新的次要
             if (effects.Count >= FX_CAP)
@@ -535,9 +556,29 @@ namespace PixelWorldBox.Wb
                 civ = optCiv,
                 colorHex = optColorHex,
                 dmg = optDmg,                           // opts.dmg 覆盖（castArrow 消费；dump 协议外占位）
+                text = optText,                         // opts.text 覆盖（fx('dmg',...,{text}) 拾取播报 —— 第五批）
             };
             effects.Add(e);
             return e;
+        }
+
+        /// <summary>rebuildBuckets（engine L3081-3104 —— 空间桶重建；懒清空世代戳为性能优化，C# 全清语义等价：
+        /// 桶内容严格=本世代全量 units 按 (x/4,y/4) 分桶，桶内序=units push 序 —— tailJS 索敌/鱼群消费前调）</summary>
+        public void RebuildBuckets()
+        {
+            int maxX = BKW - 1, maxY = BKH - 1;
+            for (int i = 0; i < buckets.Length; i++)
+            {
+                if (buckets[i] == null) buckets[i] = new List<WbU>();
+                else buckets[i].Clear();
+            }
+            for (int i = 0; i < units.Count; i++)
+            {
+                WbU u = units[i];
+                int cx = (int)(u.x / 4); if (cx > maxX) cx = maxX; else if (cx < 0) cx = 0;   // L3095-3096
+                int cy = (int)(u.y / 4); if (cy > maxY) cy = maxY; else if (cy < 0) cy = 0;
+                buckets[cy * BKW + cx].Add(u);
+            }
         }
 
         /// FX_MINOR（L9779）—— 次要特效种类（满载时逐出/丢弃）

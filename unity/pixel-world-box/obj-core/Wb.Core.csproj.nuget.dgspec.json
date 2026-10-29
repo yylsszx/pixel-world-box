@@ -1,0 +1,72 @@
+{
+  "format": 1,
+  "restore": {
+    "/home/z/my-project/unity/pixel-world-box/Wb.Core.csproj": {}
+  },
+  "projects": {
+    "/home/z/my-project/unity/pixel-world-box/Wb.Core.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/home/z/my-project/unity/pixel-world-box/Wb.Core.csproj",
+        "projectName": "PixelWorldBox.Wb",
+        "projectPath": "/home/z/my-project/unity/pixel-world-box/Wb.Core.csproj",
+        "packagesPath": "/home/z/.nuget/packages/",
+        "outputPath": "/home/z/my-project/unity/pixel-world-box/obj-core/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/home/z/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "netstandard2.1"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "netstandard2.1": {
+            "targetAlias": "netstandard2.1",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "netstandard2.1": {
+          "targetAlias": "netstandard2.1",
+          "dependencies": {
+            "Newtonsoft.Json": {
+              "target": "Package",
+              "version": "[13.0.3, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "NETStandard.Library": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/home/z/.dotnet/sdk/8.0.427/RuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

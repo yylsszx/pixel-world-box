@@ -14,10 +14,6 @@
 bin-tests/
 *.sln
 
-# dotnet 双项目隔离中间目录（Directory.Build.props 定制位，产物不入库）
-obj-core/
-obj-tests/
-
 # BUT keep our dotnet verification csproj (T1/T2 工程壳)
 !Wb.Core.csproj
 !Wb.Tests.csproj

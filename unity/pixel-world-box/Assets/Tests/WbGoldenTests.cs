@@ -4253,7 +4253,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             Assert.AreEqual(256, meta["W"].Value<int>(), "meta W");
             Assert.AreEqual(160, meta["H"].Value<int>(), "meta H");
             var scenarios = (Newtonsoft.Json.Linq.JArray)golden["scenarios"];
-            Assert.AreEqual(36, scenarios.Count, "scenario count");
+            Assert.AreEqual(56, scenarios.Count, "scenario count");
             foreach (var sc in scenarios) RunBailScenario((Newtonsoft.Json.Linq.JObject)sc);
         }
 
@@ -4261,6 +4261,12 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
         {
             string name = sc["name"].ToString();
             WbCivSim.ClearTechModCache(); // 静态科技缓存跨场景污染防护（M-U3g ARM10 先例——BuildBuilding bHp 消费 TechModsOf）
+            // TRAITS 模块级全局表重置（gen 清理段同款：前序场景 InventEmergentTrait 的 dt* 条目污染 RollTrait keys 域）
+            foreach (var tk in WbBailRelay.TraitsKeys.Where(k => k.StartsWith("dt")).ToList())
+            {
+                WbBailRelay.TraitsAll.Remove(tk);
+                WbBailRelay.TraitsKeys.Remove(tk);
+            }
             var w = new WbWorld();
             w.rngA = unchecked((uint)sc["rngA0"].Value<long>());
             w.eventSeq = sc["eventSeq0"].Value<int>();
@@ -4359,6 +4365,15 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                     dead = u["dead"]?.Value<int>() ?? 0,
                     name = $"u{u["id"].Value<int>()}",
                 };
+                // M-U3h 第五批 tail/post 消费域灌入（字段只加：food/panic/detour/fert/famN/fgnN/geneC）
+                un.food = u["food"] != null && u["food"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? u["food"].Value<int>() : 0;
+                un.panic = u["panic"] != null && u["panic"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? (double?)u["panic"].Value<double>() : null;
+                un.detour = u["detour"] != null && u["detour"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? (int?)u["detour"].Value<int>() : null;
+                un.fert = u["fert"] != null && u["fert"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? u["fert"].Value<int>() : 0;
+                un.famN = u["fam"] != null && u["fam"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? (int?)u["fam"].Value<int>() : null;
+                un.fgnN = u["fgn"] != null && u["fgn"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? (int?)u["fgn"].Value<int>() : null;
+                if (u["gene"] != null && u["gene"].Type == Newtonsoft.Json.Linq.JTokenType.Object)
+                    un.geneC = new WbGene { s = u["gene"]["s"].Value<double>(), d = u["gene"]["d"].Value<double>(), h = u["gene"]["h"].Value<double>(), r = u["gene"]["r"].Value<double>() };
                 if (u["army"] != null && u["army"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
                     un.army = u["army"].Value<int>(); // case3 inArmy 真值门（u.army != null）
                 w.units.Add(un);
@@ -4419,11 +4434,26 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             }
             w.lastSiegeEventTick = fx["lastSiegeEventTick"] != null && fx["lastSiegeEventTick"].Type != Newtonsoft.Json.Linq.JTokenType.Null
                 ? fx["lastSiegeEventTick"].Value<long>() : 0;   // ctor L521 初值 0（禁读 POST 态——dump 时序纪律④）
+            // M-U3h 第五批夹具（items/preyGrid/grassTiles/directive —— fixture 原样数值）
+            foreach (var it in (fx["items"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
+                w.items.Add(new WbItem { id = w.itemSeq++, kind = it["kind"].ToString(), x = it["x"].Value<double>(), y = it["y"].Value<double>() });
+            foreach (var pg in (fx["preyGrid"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
+                w.preyGrid[pg[0].Value<int>()] = pg[1].Value<int>();
+            if (fx["grassTiles"] != null && fx["grassTiles"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                w.grassTiles = fx["grassTiles"].Value<int>();
+            if (fx["directive"] != null && fx["directive"].Type == Newtonsoft.Json.Linq.JTokenType.Object)
+                w.directives.Add(new WbDirective { id = 0, civ = fx["directive"]["civ"].Value<int>(), kind = fx["directive"]["kind"].ToString(), target = null, param = 0, status = "active", startTick = 0 });
 
-            // —— relay 直调（engine L3148 同入口）——
+            // —— relay 直调（engine L3148 同入口；M-U3h 第五批 fn 分派直调协议）——
             int relayKind = sc["kind"].Value<int>();
             double[] relayData = (sc["data"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()).Select(t => t.Value<double>()).ToArray();
-            WbBailRelay.WbResume(w, target, relayKind, relayData);
+            string fn = sc["fn"] != null ? sc["fn"].ToString() : "resume";
+            bool tailRet = false;
+            if (fn == "tail") { w.RebuildBuckets(); tailRet = WbBailRelay.UpdateUnitTailJS(w, target); }          // gen 同规则：消费前显式 rebuild（模拟 tick 头）
+            else if (fn == "post") { WbBailRelay.UpdateUnitPostJS(w, target); }
+            else if (fn == "move") { WbBailRelay.MoveUnit(w, target, sc["mul"] != null && sc["mul"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? sc["mul"].Value<double>() : 1.0); }
+            else if (fn == "board") { tailRet = WbBailRelay.MaybeBoardForWar(w, target); }
+            else { WbBailRelay.WbResume(w, target, relayKind, relayData); }
 
             // —— dump 对账（全字段逐位）——
             Assert.AreEqual(sc["rngA"].Value<long>(), (long)w.rngA, $"{name} rngA u32");
@@ -4463,6 +4493,15 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                 AreBitsEqual(target.thrVy ?? 0, LeD(wantU["thrVy"].ToString()), $"{name} unit.thrVy");
             else
                 Assert.IsNull(target.thrVy, $"{name} unit.thrVy");
+            // M-U3h 第五批消费域断言（字段只加：dmg/food/wep —— 旧场景 dmg=1/food=0/wep null 同协议）
+            AreBitsEqual(target.dmg, LeD(wantU["dmg"].ToString()), $"{name} unit.dmg");
+            Assert.AreEqual(wantU["food"] != null && wantU["food"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? wantU["food"].Value<int>() : 0, target.food, $"{name} unit.food");
+            // wep 协议归一：JS u.wep=0（int 占位）经 `?? null` 落 dump 为 0（0 非 nullish）—— 0 → null，string key 原样
+            string wantWep = wantU["wep"] != null && wantU["wep"].Type == Newtonsoft.Json.Linq.JTokenType.String ? wantU["wep"].ToString() : null;
+            Assert.AreEqual(wantWep, target.wep as string, $"{name} unit.wep");
+            // fn 分派返回值（tail return true / board true —— resume 场景 tailRet null 无断言）
+            if (fn == "tail" || fn == "board")
+                Assert.AreEqual(sc["tailRet"] != null && sc["tailRet"].Type != Newtonsoft.Json.Linq.JTokenType.Null && sc["tailRet"].Value<bool>(), tailRet, $"{name} tailRet");
 
             var wantCivs = (Newtonsoft.Json.Linq.JArray)sc["civs"];
             Assert.AreEqual(wantCivs.Count, w.civs.Count, $"{name} civs count");
@@ -4508,6 +4547,8 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                 AreBitsEqual(ge.y, LeD(we["y"].ToString()), $"{name} fx{i} y");
                 AreBitsEqual(ge.ttl, LeD(we["ttl"].ToString()), $"{name} fx{i} ttl");
                 AreBitsEqual(ge.dir, LeD(we["dir"].ToString()), $"{name} fx{i} dir");
+                // M-U3h 第五批：fx text 拾取播报维度（旧场景恒 null 同协议）
+                Assert.AreEqual(we["text"] != null && we["text"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? we["text"].ToString() : null, ge.text, $"{name} fx{i} text");
             }
 
             // events 全字段
@@ -4554,6 +4595,35 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
 
             // —— case2 POST 态对账（第三批；字段只加，旧 22 场景空值同协议）——
             AssertBailPost(w, sc, name);
+
+            // —— M-U3h 第五批 POST 态：itemsPost 余量 + fleet 编队全单位（board 场景）——
+            var wantItems = (sc["itemsPost"] as Newtonsoft.Json.Linq.JArray) ?? new Newtonsoft.Json.Linq.JArray();
+            Assert.AreEqual(wantItems.Count, w.items.Count, $"{name} itemsPost count");
+            for (int i = 0; i < wantItems.Count; i++)
+            {
+                Assert.AreEqual(wantItems[i]["id"].Value<int>(), w.items[i].id, $"{name} itemsPost{i} id");
+                Assert.AreEqual(wantItems[i]["kind"].ToString(), w.items[i].kind, $"{name} itemsPost{i} kind");
+                AreBitsEqual(w.items[i].x, LeD(wantItems[i]["x"].ToString()), $"{name} itemsPost{i} x");
+                AreBitsEqual(w.items[i].y, LeD(wantItems[i]["y"].ToString()), $"{name} itemsPost{i} y");
+            }
+            var wantFleet = sc["fleet"] as Newtonsoft.Json.Linq.JArray;
+            if (wantFleet != null)
+            {
+                Assert.AreEqual(wantFleet.Count, w.units.Count, $"{name} fleet count");
+                for (int i = 0; i < wantFleet.Count; i++)
+                {
+                    var wf = wantFleet[i];
+                    var gf = w.units[i];
+                    Assert.AreEqual(wf["id"].Value<int>(), gf.id, $"{name} fleet{i} id");
+                    Assert.AreEqual(wf["boat"].Value<int>(), gf.boat, $"{name} fleet{i} boat");
+                    Assert.AreEqual(wf["boatTTL"].Value<int>(), gf.boatTTL, $"{name} fleet{i} boatTTL");
+                    AreBitsEqual(gf.x, LeD(wf["x"].ToString()), $"{name} fleet{i} x");
+                    AreBitsEqual(gf.y, LeD(wf["y"].ToString()), $"{name} fleet{i} y");
+                    Assert.AreEqual(wf["flip"].Value<int>(), gf.flip, $"{name} fleet{i} flip");
+                    if (wf["lx"] != null && wf["lx"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                        AreBitsEqual(gf.lx ?? 0, LeD(wf["lx"].ToString()), $"{name} fleet{i} lx");
+                }
+            }
         }
 
         /// <summary>case2 POST 态全字段逐位（gen dumpAll 尾段协议：child/traits/evoNodes/families/wildCountPost/序列器/radiateRle）</summary>

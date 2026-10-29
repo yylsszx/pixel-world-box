@@ -1,4 +1,61 @@
-TestResults/
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# 沙箱本地验证软链（verify 对账台 jiti 依赖；不入库 R3 体积纪律）
+# dependencies
 node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+.next-*/
+.api-stash-export/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+local-*
+.claude
+.z-ai-config
+*.log
+dev.log
+dev.out.log
+test
+prompt
+
+server.log
+# 运行时状态（Task 76）：pid/lock/rate 是本机运行时状态，进 git 会让部署
+# 环境拿到陈旧 pid → watchdog 误判「已在运行」拒绝启动（演练实测踩坑）
+.zscripts/*.pid
+.zscripts/*.lock
+.zscripts/*.rate
+# Skills directory
+/skills/tool-results/

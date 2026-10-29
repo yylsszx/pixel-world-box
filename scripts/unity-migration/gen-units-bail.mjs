@@ -48,7 +48,7 @@ globalThis.requestAnimationFrame = noop;
 const { createJiti } = await import('jiti');
 const jiti = createJiti(import.meta.url, { alias: { '@': path.join(ROOT, 'src') } });
 const { GameEngine } = await jiti.import(path.join(ROOT, 'src/lib/game/engine.ts'));
-const { T, R, RACES, JOBS, BUILDING_DEFS, BUILD_KINDS, DEFAULT_LAWS } = await jiti.import(path.join(ROOT, 'src/lib/game/types.ts'));
+const { T, R, RACES, JOBS, BUILDING_DEFS, BUILD_KINDS, DEFAULT_LAWS, TRAITS } = await jiti.import(path.join(ROOT, 'src/lib/game/types.ts'));
 const { isLand, isWater, buildable } = await jiti.import(path.join(ROOT, 'src/lib/game/constants.ts'));
 
 const W = 256, H = 160;
@@ -119,6 +119,8 @@ function mkUnit(eng, o) {
     fam: o.fam, fgn: o.fgn, gene: o.gene ?? null,
     // M-U3h 第四批 case3 消费域（army 真值门 inArmy；cd 已置语义——Rust 侧置 14 后 bail，夹具透传）
     army: o.army ?? null, cd: o.cd ?? 0,
+    // M-U3h 第五批 tail/post/move 消费域（字段只加：food 索敌/拾肉门、panic 繁衍恐慌、detour 索敌抑制、fert 繁衍增益、gene 已有）
+    food: o.food, panic: o.panic, detour: o.detour, fert: o.fert,
   };
   eng.units.push(u);
   eng.unitById.set(u.id, u);
@@ -132,6 +134,11 @@ function mkBuilding0(eng, i, kind, civ) {
   eng.bHp.set(i, Math.round((BUILDING_DEFS[kind]?.hp ?? 70) * 1));
 }
 
+// M-U3h 第五批：地面物品夹具（engine items.push L5388 结构 {id, kind, x, y}——tryPickup L5225 消费）
+function mkItem(eng, o) {
+  eng.items.push({ id: eng.itemSeq++, kind: o.kind, x: o.x, y: o.y });
+}
+
 // ---------------- dump 协议 ----------------
 function dumpUnit(u) {
   return {
@@ -142,6 +149,8 @@ function dumpUnit(u) {
     cd: u.cd ?? 0, // M-U3h 第四批 case3 弓手 cd=18 消费域（字段只加）
     // M-U3h 第二批 case1 消费域扩展（字段只加：旧场景恒 0/10/null，不漂移）
     age: f64hex(u.age ?? 0), hp: f64hex(u.hp ?? 10), maxHp: f64hex(u.maxHp ?? 10),
+    // M-U3h 第五批消费域断言扩展（字段只加：dmg 拾取加成、food 索敌/拾肉、wep 换装）
+    dmg: f64hex(u.dmg ?? 1), food: u.food ?? null, wep: u.wep ?? null,
     grab: u.grab ?? null, thrT: u.thrT ?? null,
     thrVx: u.thrVx === undefined ? null : f64hex(u.thrVx), thrVy: u.thrVy === undefined ? null : f64hex(u.thrVy),
     thrX0: u.thrX0 === undefined ? null : f64hex(u.thrX0), thrY0: u.thrY0 === undefined ? null : f64hex(u.thrY0),
@@ -180,7 +189,9 @@ function dumpCiv(c) {
 }
 function dumpEffect(e) {
   if (!e) return null;
-  return { kind: e.kind, x: f64hex(e.x), y: f64hex(e.y), x0: f64hex(e.x0), y0: f64hex(e.y0), r: f64hex(e.r), age: f64hex(e.age), ttl: f64hex(e.ttl), seed: e.seed, dir: f64hex(e.dir) };
+  return { kind: e.kind, x: f64hex(e.x), y: f64hex(e.y), x0: f64hex(e.x0), y0: f64hex(e.y0), r: f64hex(e.r), age: f64hex(e.age), ttl: f64hex(e.ttl), seed: e.seed, dir: f64hex(e.dir),
+    // M-U3h 第五批：fx('dmg',...,{text}) 拾取播报文本维度（字段只加）
+    text: e.text ?? null };
 }
 function dumpEvent(ev) {
   return { id: ev.id, year: ev.year, kind: ev.kind, text: ev.text, colorHex: ev.colorHex ?? null,
@@ -223,6 +234,12 @@ function runScenario(sc) {
       occA: 0, occB: 0, popA0: 0, popB0: 0 });
   }
   if (sc.setup) sc.setup(eng);
+  // M-U3h 第五批夹具（清理后施加：items/preyGrid/grassTiles/directive 属黄金基线的一部分）
+  for (const it of sc.items ?? []) mkItem(eng, it);                                     // 地面物品（tryPickup 消费）
+  if (sc.preyGrid) for (const [ci, n] of sc.preyGrid) eng.preyGrid[ci] = n;             // 猎物密度场（索敌导航消费——直调不跑生态核算，全显式注入）
+  if (sc.grassTiles != null) eng.grassTiles = sc.grassTiles;                            // 植被计数（野生繁衍增益消费）
+  if (sc.directive) eng.directives.push({ id: 0, civ: sc.directive.civ, kind: sc.directive.kind,
+    target: null, param: 0, status: 'active', startTick: 0 });                          // 旨意夹具（繁衍 populate ×1.8 消费）
   eng.tickCount = sc.startTick ?? 0;
   if (sc.lastSiegeEventTick != null) eng.lastSiegeEventTick = sc.lastSiegeEventTick; // case3 攻城纪事节流阀夹具
   eng.yearF = sc.yearF ?? 0;                                              // 纪事/图谱/家族年份基准（case2 消费）
@@ -237,6 +254,9 @@ function runScenario(sc) {
   eng.familySeq = 0;
   eng.wildCount.clear();
   eng.dynTraits.clear();
+  // TRAITS 模块级全局表重置（第五批实锤：E 系场景 inventEmergentTrait 追加的 dt* 条目跨场景污染 rollTrait 的 keys.length——
+  //   Task 122 RACES 进程内污染同源教训；清理后 TRAITS 回预设 12 条，后续场景 rollTrait 抽取域一致）
+  for (const tk of Object.keys(TRAITS)) if (tk.startsWith('dt')) delete TRAITS[tk];
   eng.traitSeq = 0;
   eng.evoNodes.length = 0;
   eng.evoSeq = 0;
@@ -259,10 +279,19 @@ function runScenario(sc) {
   if (!target) throw new Error(`scenario ${sc.name}: unit ${sc.unitId} not found`);
   const data = Float64Array.from(sc.data ?? []);
   const kind = sc.kind;
-  eng.wbResume(target, kind, data);
+  // M-U3h 第五批直调协议（fn 分派；Task 125 renderMinimap 直调先例）：tail/post/move/board 单步直调，
+  //   桶由 gen 显式 rebuild（模拟 tick 头 rebuildBuckets——C# 侧同规则自 units 重建，协议对齐）
+  let tailRet = null;
+  if (sc.fn === 'tail') { eng.rebuildBuckets(); tailRet = eng.updateUnitTailJS(target) === true; }
+  else if (sc.fn === 'post') { eng.updateUnitPostJS(target); }
+  else if (sc.fn === 'move') { eng.moveUnit(target, sc.mul ?? 1); }
+  else if (sc.fn === 'board') { tailRet = eng.maybeBoardForWar(target) === true; }
+  else { eng.wbResume(target, kind, data); }
 
   return {
     name: sc.name, seed, startTick: sc.startTick ?? 0, kind, unitId: sc.unitId, data: [...(sc.data ?? [])],
+    // M-U3h 第五批：直调协议标识（resume=wbResume 契约不变；tail/post/move/board=单步直调）
+    fn: sc.fn ?? 'resume', tailRet, mul: sc.mul ?? null,
     laws: eng.laws, rngA0, eventSeq0, toastSeq0, yearF: eng.yearF,
     unitSeq0, familySeq0, traitSeq0, evoSeq0,
     terrainRle: rle(eng.terrain),
@@ -270,7 +299,10 @@ function runScenario(sc) {
     fixture: { civs: sc.civs ?? null, units: sc.units ?? null, rel: sc.rel ?? null,
       buildings: sc.buildings ?? null, alliances: sc.alliances ?? null, marketIdx: sc.marketIdx ?? null,
       radiate: sc.radiate ?? null, wildCount: sc.wildCount ?? null, yearF: sc.yearF ?? null,
-      wars: sc.wars ?? null, lastSiegeEventTick: sc.lastSiegeEventTick ?? null },
+      wars: sc.wars ?? null, lastSiegeEventTick: sc.lastSiegeEventTick ?? null,
+      // M-U3h 第五批夹具声明（items/preyGrid/grassTiles/directive——C# 灌入源）
+      items: sc.items ?? null, preyGrid: sc.preyGrid ?? null, grassTiles: sc.grassTiles ?? null,
+      directive: sc.directive ?? null, mul: sc.mul ?? null },
     rngA: eng.rngA >>> 0,
     eventSeq: eng.eventSeq,
     unit: dumpUnit(target),
@@ -301,6 +333,9 @@ function runScenario(sc) {
     wars: [...eng.warData.values()].map((wd) => ({ key: wd.key, a: wd.a, b: wd.b, scoreA: wd.scoreA, scoreB: wd.scoreB,
       casA: wd.casA, casB: wd.casB, exA: wd.exA, exB: wd.exB, razedA: wd.razedA, razedB: wd.razedB, occA: wd.occA, occB: wd.occB })),
     lastSiegeEventTick: eng.lastSiegeEventTick,
+    // M-U3h 第五批 POST 态（地面物品余量/编队舰队全单位/野种计数已有——itemsPost/fleet 字段只加）
+    itemsPost: eng.items.map((it) => ({ id: it.id, kind: it.kind, x: f64hex(it.x), y: f64hex(it.y) })),
+    fleet: (sc.fn === 'board') ? eng.units.map(dumpUnit) : null,
   };
 }
 
@@ -542,6 +577,127 @@ const scenarios = [
     rel: [[0, 1, -30]],
     wars: [{ a: 0, b: 1 }],
     buildings: [[idx(70, 70), 1, 1]] },
+  // ===== M-U3h 第五批：tail 捕食者索敌/鱼群/漫游三分支 + post 拾取/繁衍 + moveUnit 四分支 + maybeBoardForWar =====
+  //   直调协议（fn 分派）——Task 125 renderMinimap 直调先例；updateUnit 主体 L3465-4113（战斗/职业 650 行）
+  //   非 M-U3h 收官依赖（Task 131 遗留②），case1 非船域保持桩——tail/post/move/board 从函数入口直调。
+  // D09 登船参战基础：job3 作战职业 + atWar(rel -60) + 直线 d=27 跨水 85%≥45% + dock findWaterNear(4) 命中
+  //   → board(u) 单舰 fleet=1（rng: ttl 1 + x/y 2 = 3）无纪事；tx/ty 语义 = 指向敌岛目标（不重定向）
+  { name: 'D09-board-basic', seed: 0x5f09, kind: 1, fn: 'board', unitId: 5,
+    paint: [[30, 38, 55, 43, GRASS], [56, 30, 82, 50, DEEP], [76, 38, 95, 43, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(32, 40), tiles: [idx(32, 40)] }, { id: 1, pop: 3, capital: idx(90, 40), tiles: [idx(90, 40)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 52.5, y: 40.5, job: 3, tx: 80.5, ty: 40.5 }],
+    rel: [[0, 1, -60]] },
+  // D10 编队远征：+3 同袍（job2/3 距 ≤6）→ board×4 fleet=4（rng 3+6=9）→ fleet≥3 跨海纪事
+  { name: 'D10-board-fleet', seed: 0x5f0a, kind: 1, fn: 'board', unitId: 5,
+    paint: [[30, 38, 55, 43, GRASS], [56, 30, 82, 50, DEEP], [76, 38, 95, 43, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(32, 40), tiles: [idx(32, 40)] }, { id: 1, pop: 3, capital: idx(90, 40), tiles: [idx(90, 40)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 52.5, y: 40.5, job: 3, tx: 80.5, ty: 40.5 },
+            { id: 6, race: 0, civ: 0, x: 54.5, y: 38.5, job: 2 }, { id: 7, race: 0, civ: 0, x: 53.5, y: 39.5, job: 2 },
+            { id: 8, race: 0, civ: 0, x: 52.5, y: 40.5, job: 2 }],
+    rel: [[0, 1, -60]] },
+  // D11 水占比不足：全程 GRASS（采样 water=0 <45%）→ false 零掷（rng 0 消费——采样纯几何）
+  { name: 'D11-board-nowater', seed: 0x5f0b, kind: 1, fn: 'board', unitId: 5,
+    paint: [[30, 38, 95, 43, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(32, 40), tiles: [idx(32, 40)] }, { id: 1, pop: 3, capital: idx(90, 40), tiles: [idx(90, 40)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 53.5, y: 40.5, job: 3, tx: 80.5, ty: 40.5 }],
+    rel: [[0, 1, -60]] },
+  // D12 无码头：跨水 54%≥45% 过采样门，但 findWaterNear(4) 全 GRASS miss → false 零掷（dock 在 ttl 掷前）
+  { name: 'D12-board-nodock', seed: 0x5f0c, kind: 1, fn: 'board', unitId: 5,
+    paint: [[40, 36, 67, 45, GRASS], [68, 30, 100, 50, DEEP], [96, 38, 100, 43, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(42, 40), tiles: [idx(42, 40)] }, { id: 1, pop: 3, capital: idx(98, 40), tiles: [idx(98, 40)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 45.5, y: 40.5, job: 3, tx: 95.5, ty: 40.5 }],
+    rel: [[0, 1, -60]] },
+  // F01 索敌命中：wolf food=60<70 + rng<0.4 门开 → 6 桶扫猎 u6 sheep（isHerbivoreRace）→ tx/ty=prey + moveUnit(1.15) return true
+  { name: 'F01-pred-hunt', seed: 0x5f11, kind: 1, fn: 'tail', unitId: 5,
+    paint: [[30, 35, 55, 46, GRASS]],
+    units: [{ id: 5, race: 7, civ: -1, x: 40.5, y: 40.5, food: 60 }, { id: 6, race: 6, civ: -1, x: 42.5, y: 41.5 }],
+    setup: (eng) => { eng.rngA = 7920; } },
+  // F02 密度场导航：嗅觉内无猎 → preyGrid 注入 [231]=3（cx2=7,cy2=7 相对 gx,gy=5,5 的 d=2.83≥0.9）
+  //   → bestCell=231 → tx=(231%32)*8+4=60±2 ty=((231/32)|0)*8+4=60±2（rng 门1+tx1+ty1=3）+ moveUnit(1.15) return true
+  { name: 'F02-pred-grid', seed: 0x5f12, kind: 1, fn: 'tail', unitId: 5,
+    paint: [[30, 35, 70, 70, GRASS]],
+    units: [{ id: 5, race: 7, civ: -1, x: 40.5, y: 40.5, food: 60 }],
+    preyGrid: [[231, 3]] },
+  // F03 鱼群结队：FISH + rng<0.12 门开 → 3×3 桶浅扫 n=2（u6/u7 距≤6）→ 重心水域 → tx/ty=重心±1（rng 门1+2）
+  //   → 漫游门 rng<0.02 关（1）→ moveUnit(u,1) 水生直走
+  { name: 'F03-fish-school', seed: 0x5f13, kind: 1, fn: 'tail', unitId: 5,
+    paint: [[30, 35, 55, 46, DEEP]],
+    units: [{ id: 5, race: 37, civ: -1, x: 40.5, y: 40.5 }, { id: 6, race: 37, civ: -1, x: 42.5, y: 40.5 },
+            { id: 7, race: 37, civ: -1, x: 40.5, y: 42.5 }],
+    setup: (eng) => { eng.rngA = 293004; } },
+  // F04 鱼群重心陆：全图 GRASS 搁浅三鱼 → 鱼群门开 n=2 重心 GRASS → isWater false 不设目标（tx/ty rng 不掷）
+  //   → 漫游门开（dist²=0）→ wx/wy 2 + 水生 4 重选 8 全败 → findWaterNear(14) miss → 原地 → moveUnit 搁浅蹦跳 f=0.7
+  { name: 'F04-fish-center-land', seed: 0x5f14, kind: 1, fn: 'tail', unitId: 5,
+    paint: [[0, 0, 255, 159, GRASS]],
+    units: [{ id: 5, race: 37, civ: -1, x: 40.5, y: 40.5 }, { id: 6, race: 37, civ: -1, x: 50.5, y: 40.5 },
+            { id: 7, race: 37, civ: -1, x: 49.5, y: 41.5 }],
+    setup: (eng) => { eng.rngA = 293004; } },
+  // F05 逐草而行：wolf food=50<55 + 索敌门 rng≥0.4 关（1）→ 漫游门开（dist²=0）→ wx/wy 2 + 逐草 k0 命中 GRASS（2）break
+  { name: 'F05-graze', seed: 0x5f15, kind: 1, fn: 'tail', unitId: 5,
+    paint: [[0, 0, 255, 159, GRASS]],
+    units: [{ id: 5, race: 7, civ: -1, x: 40.5, y: 40.5, food: 50 }] },
+  // F06 蟹滩涂限定：CRAB 全图 GRASS → 蟹门 4 重选（水/邻水沙全非）→ 原地 wx=u.x（rng 2+8=10）→ moveUnit d<0.05 直退
+  { name: 'F06-crab-inland', seed: 0x5f16, kind: 1, fn: 'tail', unitId: 5,
+    paint: [[0, 0, 255, 159, GRASS]],
+    units: [{ id: 5, race: 38, civ: -1, x: 40.5, y: 40.5 }] },
+  // F07 水生漫游 miss：FISH 搁浅 + 鱼群门关（1）→ 漫游门开 → wx/wy 2 + 水生 4 重选 8 全败 → findWaterNear(14) miss → 原地蹦跳
+  { name: 'F07-aqua-roam', seed: 0x5f17, kind: 1, fn: 'tail', unitId: 5,
+    paint: [[0, 0, 255, 159, GRASS]],
+    units: [{ id: 5, race: 37, civ: -1, x: 40.5, y: 40.5 }] },
+  // H01 拾肉：wolf food=60 + meat 落地（|dx|≤0.9）→ predator !undead → food=min(160,105)=105 + fx dmg'饱' + splice + heart
+  //   → 繁衍门 rng<0.004 关（1）——items 空 POST
+  { name: 'H01-pickup-meat', seed: 0x5f21, kind: 1, fn: 'post', unitId: 5,
+    paint: [[0, 0, 255, 159, GRASS]],
+    units: [{ id: 5, race: 7, civ: -1, x: 40.5, y: 40.5, food: 60 }],
+    items: [{ kind: 'meat', x: 40.8, y: 40.5 }],
+    setup: (eng) => { eng.rngA = 1; } },
+  // H02 拾装备：human + sword3 黄金圣剑（rank3 rarity3 dmg18）→ 换装 u.wep + dmg+=18 + spawn fx + dmg fx text + toast（rarity≥3）
+  { name: 'H02-pickup-gear', seed: 0x5f22, kind: 1, fn: 'post', unitId: 5,
+    paint: [[0, 0, 255, 159, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(40, 40), tiles: [idx(40, 40)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 40.5, y: 40.5 }],
+    items: [{ kind: 'sword3', x: 40.5, y: 40.5 }],
+    setup: (eng) => { eng.rngA = 1; } },
+  // H03 文明繁衍全链：human civ0 + populate 旨意（×1.8）+ gene.r=1.2 + repro 门 rng<0.006 开 + boost 门开
+  //   → pop 门（6<cap+6）→ childGene（mut×4 + GRASS r 维 1）→ extreme 假零掷 → fam 门关（u.fam=undefined→rng≥0.25）
+  //   → spawnUnit（civ silent + gene + heart fx）
+  { name: 'H03-repro-civ', seed: 0x5f23, kind: 1, fn: 'post', unitId: 5,
+    paint: [[0, 0, 255, 159, GRASS]],
+    civs: [{ id: 0, pop: 2, capital: idx(40, 40), tiles: [idx(40, 40)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 40.5, y: 40.5, gene: { s: 1.1, d: 1.0, h: 1.0, r: 1.2 } }],
+    directive: { civ: 0, kind: 'populate' },
+    setup: (eng) => { eng.rngA = 300923; } },
+  // H04 野生繁衍：sheep civ=-1 + wildCount{6:3}<cap + grassTiles=8000（×1.125 植被增益）+ 门1 开 + boost 门开
+  //   → fam 门开（rng<0.25 命中 → newFamily 开宗）→ spawnUnit（wild silent）+ heart + families/wildCountPost 断言
+  { name: 'H04-repro-wild', seed: 0x5f24, kind: 1, fn: 'post', unitId: 5,
+    paint: [[0, 0, 255, 159, GRASS]],
+    units: [{ id: 5, race: 6, civ: -1, x: 40.5, y: 40.5 }],
+    wildCount: [[6, 3]], grassTiles: 8000,
+    setup: (eng) => { eng.rngA = 736468; } },
+  // H05 捕食者饥饿绝育：wolf food=30 → 门1 rng<0.004 开 → boost 计算含捕食者丰猎（1.6+0）→ 门2 (!predator||food>40)=false 短路零掷
+  { name: 'H05-repro-gate-fail', seed: 0x5f25, kind: 1, fn: 'post', unitId: 5,
+    paint: [[0, 0, 255, 159, GRASS]],
+    units: [{ id: 5, race: 7, civ: -1, x: 40.5, y: 40.5, food: 30 }],
+    setup: (eng) => { eng.rngA = 300923; } },
+  // I01 飞行直落：DRAGON flying → moveUnit 主干 + flying 分支钳位 [0.5,W-0.5] return（零 rng）
+  { name: 'I01-flying', seed: 0x5f31, kind: 1, fn: 'move', unitId: 5,
+    paint: [[0, 0, 255, 159, GRASS]],
+    units: [{ id: 5, race: 9, civ: -1, x: 40.5, y: 40.5, tx: 50.5, ty: 40.5 }] },
+  // I02 深水改向：FISH 在 DEEP 目标近岸（nx=61.5→GRASS）→ aquatic 分支 nt 非水非沙 且 cur 是水 → else 深水随机改向 ×8（rng 2）
+  { name: 'I02-deepwater-turn', seed: 0x5f32, kind: 1, fn: 'move', unitId: 5,
+    paint: [[30, 35, 60, 46, DEEP], [61, 35, 75, 46, GRASS]],
+    units: [{ id: 5, race: 37, civ: -1, x: 59.5, y: 40.5, tx: 70.5, ty: 40.5 }] },
+  // I03 沙泳潜行：SANDWORM sandswim 目标 SAND 直走 + dust 门 rng<0.08 开（fxPrefs.ambience 默认 true）→ fx dust 12
+  { name: 'I03-sandswim', seed: 0x5f33, kind: 1, fn: 'move', unitId: 5,
+    paint: [[30, 35, 60, 46, SAND]],
+    units: [{ id: 5, race: 26, civ: -1, x: 40.5, y: 40.5, tx: 50.5, ty: 40.5 }] },
+  // I04 墙挡改向：human job=0（非作战→board false 零掷）+ 敌墙两轴（WALL=11 civ1 atWar）→ 阻断 else 随机改向 ×6（rng 2）
+  { name: 'I04-blocked-reroute', seed: 0x5f34, kind: 1, fn: 'move', unitId: 5,
+    paint: [[0, 0, 255, 159, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(38, 38), tiles: [idx(38, 38)] }, { id: 1, pop: 3, capital: idx(90, 90), tiles: [idx(90, 90)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 40.5, y: 40.5, tx: 50.5, ty: 44.5 }],
+    rel: [[0, 1, -60]],
+    buildings: [[idx(42, 40), 11, 1], [idx(40, 41), 11, 1]] },
 ];
 
 // ---------------- 主流程 ----------------

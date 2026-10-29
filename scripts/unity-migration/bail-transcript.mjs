@@ -22,7 +22,7 @@ const W = 256, H = 160;
 const idx = (x, y) => y * W + x;
 const T = { DEEP: 0, WATER: 1, SAND: 2, GRASS: 3, FOREST: 4, HILL: 5, MOUNTAIN: 6, SNOW: 7, LAVA: 8, BURNT: 9, ICE: 10, SWAMP: 11 };
 const BUILD_KINDS = { HOUSE: 1, CAPITAL: 2, TOWER: 3, FARM: 4, BARRACKS: 5, CASTLE: 6, PORT: 7, LIBRARY: 8, MARKET: 9, TEMPLE: 10, WALL: 11 };
-const R = { HUMAN: 0, ELF: 1, FISH: 26, CRAB: 33, SHEEP: 6, DRAGON: 9 };
+const R = { HUMAN: 0, ELF: 1, FISH: 37, CRAB: 38, SHEEP: 6, DRAGON: 9 }; // R.FISH=37/R.CRAB=38（types.ts L70-71 实号；旧臆测 26/33 系第五批 F 系场景暴露的潜伏错）
 // RACE_REL_BASE（types.ts L208-219）
 const RACE_REL_BASE = { '1-3': -45, '2-3': -30, '0-1': 25, '0-2': 20, '2-20': -25, '1-20': -20, '3-20': 15, '3-19': -10, '1-2': 10 };
 const pairKey = (a, b) => (a < b ? `${a}-${b}` : `${b}-${a}`);
@@ -34,6 +34,13 @@ const walkable = (t) => t !== T.DEEP && t !== T.WATER && t !== T.MOUNTAIN && t !
 const RDEF = {
   0: { isCiv: true, hostile: false, flying: false, aquatic: false, beach: false, sandswim: false, predator: false, undead: false, coldBlood: false, repro: 0.006, growth: 0.5 },
   1: { isCiv: true, hostile: false, flying: false, aquatic: false, beach: false, sandswim: false, predator: false, undead: false, coldBlood: false, repro: 0.005, growth: 0.3 },
+  // M-U3h 第五批消费域追加（types.ts L164/166/185/199/200：狼/龙/沙虫/蟹/鱼——tail/move/board 消费切片）
+  7: { isCiv: false, hostile: false, flying: false, aquatic: false, beach: false, sandswim: false, predator: true, undead: false, coldBlood: false, repro: 0.004, growth: 0 },
+  6: { isCiv: false, hostile: false, flying: false, aquatic: false, beach: false, sandswim: false, predator: false, undead: false, coldBlood: false, repro: 0.004, growth: 0 },
+  9: { isCiv: false, hostile: true, flying: true, aquatic: false, beach: false, sandswim: false, predator: true, undead: false, coldBlood: false, repro: 0, growth: 0 },
+  26: { isCiv: false, hostile: true, flying: false, aquatic: false, beach: false, sandswim: true, predator: true, undead: false, coldBlood: false, repro: 0, growth: 0 },
+  37: { isCiv: false, hostile: false, flying: false, aquatic: true, beach: false, sandswim: false, predator: false, undead: false, coldBlood: false, repro: 0, growth: 0 },
+  38: { isCiv: false, hostile: false, flying: false, aquatic: true, beach: true, sandswim: false, predator: false, undead: false, coldBlood: false, repro: 0.007, growth: 0 },
 };
 const defOf = (race) => {
   const d = RDEF[race];
@@ -65,15 +72,15 @@ const FAM_POST = ['牙', '羽', '痕', '鬃', '棘', '誓', '歌', '爪', '翼',
 const TRAIT_PREFIX = ['凶蛮', '钢筋', '魅影', '荒野', '苔藓', '血怒', '霜骨', '雷筋', '深渊', '星辉', '荆棘', '孤狼'];
 const TRAIT_BODY = ['之爪', '之躯', '之足', '血脉', '之瞳', '之鳞'];
 // types.ts L296-305 JOBS 权重/乘数（rollJob + spawnUnit 消费切片）
-const JOBS_MUL = [
-  { hp: 1, dmg: 1, speed: 1, weight: 46 },
-  { hp: 0.95, dmg: 0.9, speed: 1, weight: 24 },
-  { hp: 1.3, dmg: 1.35, speed: 1.05, weight: 14 },
-  { hp: 1.05, dmg: 1.15, speed: 1, weight: 8 },
-  { hp: 1.15, dmg: 0.95, speed: 1.05, weight: 5 },
-  { hp: 1, dmg: 0.9, speed: 1.2, weight: 2 },
-  { hp: 1.25, dmg: 1.1, speed: 1, weight: 1 },
-  { hp: 1.5, dmg: 1.5, speed: 1, weight: 0 },
+const JOBS_MUL = [ // types.ts L296-305 JOBS 真值（字段名 hpMul/dmgMul/speedMul——第五批 H03 暴露旧简写 hp/dmg/speed 与 gen 真引擎分歧）
+  { hpMul: 1, dmgMul: 1, speedMul: 1, weight: 46 },
+  { hpMul: 0.95, dmgMul: 0.9, speedMul: 1, weight: 24 },
+  { hpMul: 1.3, dmgMul: 1.35, speedMul: 1.05, weight: 14 },
+  { hpMul: 1.05, dmgMul: 1.15, speedMul: 1, weight: 8 },
+  { hpMul: 1.15, dmgMul: 0.95, speedMul: 1.05, weight: 5 },
+  { hpMul: 1, dmgMul: 0.9, speedMul: 1.2, weight: 2 },
+  { hpMul: 1.25, dmgMul: 1.1, speedMul: 1, weight: 1 },
+  { hpMul: 1.5, dmgMul: 1.5, speedMul: 1, weight: 0 },
 ];
 // types.ts L264-276 TRAITS 预设表（spawnUnit td 消费 + inventEmergentTrait 写入目标）
 const TRAITS_ALL = {
@@ -123,6 +130,8 @@ function mkWorld(fx, golden) {
     unitSeq: fx.unitSeq0, unitSeq0: fx.unitSeq0, familySeq: fx.familySeq0, traitSeq: fx.traitSeq0, evoSeq: fx.evoSeq0,
     families: new Map(), dynTraits: new Map(), evoNodes: [], evoIndex: new Map(),
     radiate: new Uint8Array(W * H),
+    // M-U3h 第五批 tail/post 消费域（旨意/猎物密度场/空间桶/itemSeq）
+    directives: [], preyGrid: new Uint16Array(32 * 20), buckets: null, itemSeq: 0,
   };
   // radiate RLE（case2 高压锅门消费；夹具态全量）
   {
@@ -150,15 +159,22 @@ function mkWorld(fx, golden) {
       hp: u.hp ?? 10, maxHp: u.hp ?? 10, age: u.age ?? 0, maxAge: u.maxAge ?? 9999,
       grab: u.grab ?? null, thrT: u.thrT ?? null, thrVx: u.thrVx ?? null, thrVy: u.thrVy ?? null,
       thrX0: u.thrX0 ?? null, thrY0: u.thrY0 ?? null,
-      chill: 0, curse: 0, detour: 0, food: 0, fert: 0, panic: 0, beachT: 0, lx: null, ly: null,
+      chill: 0, curse: 0, detour: u.detour ?? 0, food: u.food ?? null, fert: u.fert ?? 0, panic: u.panic ?? 0, beachT: 0, lx: null, ly: null,
+      wep: 0, arm: 0, hlm: 0, shd: 0, bts: 0, rng: 0, amu: 0, // gen mkUnit 装备 int 0 占位（dump ?? null → 0 非 nullish 落 0）
       // case2 消费域：fam/fgn undefined 语义（null）+ gene 对象（{s,d,h,r} 或 null）+ name（gen mkUnit u${id} 语义）
       name: `u${u.id}`, kills: 0, cd: u.cd ?? 0, breath: 0, parity: 0, king: 0, infected: 0,
+      dmg: 1, // gen mkUnit dmg: 1（拾装备 += 域；第五批 H02 暴露缺字段 NaN）
       army: u.army ?? null, // case3 inArmy 真值门（u.army != null）
       fam: u.fam ?? null, fgn: u.fgn ?? null,
       gene: u.gene ? { s: u.gene.s, d: u.gene.d, h: u.gene.h, r: u.gene.r } : null };
     w.units.push(un); w.unitById.set(un.id, un);
   }
   for (const [r, n] of fx.fixture.wildCount ?? []) w.wildCount.set(r, n); // case2 cap 门夹具（清理后施加同 gen 序）
+  // M-U3h 第五批夹具（items/preyGrid/grassTiles/directive —— 同 gen 施加序）
+  for (const it of fx.fixture.items ?? []) w.items.push({ id: w.itemSeq++, kind: it.kind, x: it.x, y: it.y });
+  for (const [ci, n] of fx.fixture.preyGrid ?? []) w.preyGrid[ci] = n;
+  if (fx.fixture.grassTiles != null) w.grassTiles = fx.fixture.grassTiles;
+  if (fx.fixture.directive) w.directives.push({ id: 0, civ: fx.fixture.directive.civ, kind: fx.fixture.directive.kind, target: null, param: 0, status: 'active', startTick: 0 });
   for (const [a, b, v] of fx.fixture.rel ?? []) w.rel.set(pairKey(a, b), v);
   for (const [i, kind, civ] of fx.fixture.buildings ?? []) {
     w.buildings.push({ i, x: i % W, y: (i / W) | 0, kind, civ });
@@ -342,7 +358,7 @@ function GrabbedTick(w, u) {
       u.grab = Math.max(u.grab ?? 0, 24);
       u.thrT = 0;
       for (let k = 0; k < 3; k++) Fx(w, 'dust', u.x + (Rng(w) - 0.5) * 1.6, u.y + (Rng(w) - 0.5) * 1.6, 20);
-      if (w.fxPrefs.dmgNumbers && dmg > 0) Fx(w, 'dmg', u.x, u.y - 1, 30);
+      if (w.fxPrefs.dmgNumbers && dmg > 0) Fx(w, 'dmg', u.x, u.y - 1, 30, { text: `${dmg}` });   // L5366 {text: `${dmg}`}（第五批 dump text 维度）
       w.shake = Math.max(w.shake, Math.min(5, 1 + dist * 0.3));
     }
     if (u.hp <= 0) u.dead = true;
@@ -598,7 +614,7 @@ function SpawnUnit(w, race, x, y, opts) {
   y = Math.max(0.5, Math.min(H - 0.5, y));
   let civ = opts?.civ ?? -1;
   if (st.isCiv && civ < 0) throw new Error('findCivNear/createCiv 深链未转写（case2 场景 civ>=0 或野生）');
-  const trait = opts?.trait !== undefined ? (opts.trait || null) : (Rng(w) < 0.15 ? (() => { throw new Error('rollTrait 未转写（case2 场景恒传 trait）'); })() : null);
+  const trait = opts?.trait !== undefined ? (opts.trait || null) : (Rng(w) < 0.15 ? RollTrait(w) : null);   // L1316 三门（第五批繁衍链 traitKey=null 可达 → 0.15 门）
   const td = trait ? TRAITS_ALL[trait] : null;
   if (opts?.gene === undefined) throw new Error('baseGene 深链未转写（case2 场景恒传 gene）');
   const gene = opts.gene;
@@ -862,10 +878,6 @@ function NearestEnemyBuilding(w, u) {
   }
   return best;
 }
-// maybeBoardForWar（engine L5740-5791）——GUARD 桩（0.05 门黄金受控不可达；第四批余域下轮收官）
-function MaybeBoardForWar(w, u) {
-  throw new Error('maybeBoardForWar 未转写（case3 登船参战域——第四批余域）');
-}
 // wbResume case3 体（engine L3258-3285）
 function Case3(w, u, d) {
   // 建筑摧毁级联（单位 cd/atk 已置）：onBuildingDestroyed + 战争 AI 分支剩余 + 尾段
@@ -930,7 +942,7 @@ function WallBlocks(w, x, y, u) {
   if (w.building[i] !== BUILD_KINDS.WALL) return false;
   const b = w.buildings[w.bIdx.get(i) ?? -1];
   if (!b || b.civ === u.civ) return false;
-  if (u.civ >= 0) throw new Error('wallBlocks→atWar 分支未转写（第二批域；黄金场景无城墙）');
+  if (u.civ >= 0) return AtWarT(w, b.civ, u.civ); // 中立/盟友通行，交战国被拦（M-U3h 第五批 I04 真译——AtWarT 复用）
   return defOf(u.race).hostile;
 }
 // passTile（engine L5800-5802）
@@ -952,10 +964,41 @@ function MoveUnit(w, u, mul) {
   const nx = u.x + (dx / d) * step;
   const ny = u.y + (dy / d) * step;
   if (dx !== 0) u.flip = dx < 0 ? 1 : 0;
-  if (def.flying) throw new Error('moveUnit flying 分支未转写（第二批域）');
+  if (def.flying) {
+    u.x = Math.max(0.5, Math.min(W - 0.5, nx));                                                // L5832-5835
+    u.y = Math.max(0.5, Math.min(H - 0.5, ny));
+    return;
+  }
   const cur = w.terrain[idx(MathFloor(u.x), MathFloor(u.y))];
-  if (def.aquatic) throw new Error('moveUnit aquatic 分支未转写（第二批域）');
-  if (def.sandswim) throw new Error('moveUnit sandswim 分支未转写（第二批域）');
+  if (def.aquatic) {
+    // 水生巨怪只可在水域游动；滩涂两栖（蟹）：邻水沙滩亦可爬行                                    // L5844-5860
+    const nt = w.terrain[idx(MathFloor(nx), MathFloor(ny))];
+    if (nt === T.DEEP || nt === T.WATER || (def.beach && nt === T.SAND)) { u.x = nx; u.y = ny; }
+    else if (!isWater(cur) && !def.beach) {
+      // 搁浅自救：离水的纯水生单位在陆上蹦跳（×0.7 蹒跚仍快于窒息线）
+      const f = 0.7;
+      u.x = Math.max(0.5, Math.min(W - 0.5, u.x + (nx - u.x) * f));
+      u.y = Math.max(0.5, Math.min(H - 0.5, u.y + (ny - u.y) * f));
+      u.flip = dx < 0 ? 1 : 0;
+    } else {
+      // 留在深水：随机改向游动
+      u.tx = Math.max(1, Math.min(W - 2, u.x + (Rng(w) * 2 - 1) * 8));
+      u.ty = Math.max(1, Math.min(H - 2, u.y + (Rng(w) * 2 - 1) * 8));
+    }
+    return;
+  }
+  if (def.sandswim) {
+    // 沙泳巨虫只可在沙/草/焦土潜行（内联判定替代闭包）                                          // L5861-5870
+    const nt = w.terrain[idx(MathFloor(nx), MathFloor(ny))];
+    if (nt === T.SAND || nt === T.GRASS || nt === T.BURNT) { u.x = nx; u.y = ny; }
+    else {
+      u.tx = Math.max(1, Math.min(W - 2, u.x + (Rng(w) * 2 - 1) * 6));
+      u.ty = Math.max(1, Math.min(H - 2, u.y + (Rng(w) * 2 - 1) * 6));
+    }
+    // 沙泳扬尘：移动中偶尔喷出沙尘（原子级拖尾反馈）
+    if (w.fxPrefs.ambience && Rng(w) < 0.08) Fx(w, 'dust', u.x, u.y + 0.5, 12);
+    return;
+  }
   const swimming = cur === T.DEEP || cur === T.WATER;
   const onMountain = cur === T.MOUNTAIN;
   const wallChk = swimming ? (_x, _y) => false : (x, y) => WallBlocks(w, x, y, u);
@@ -964,7 +1007,12 @@ function MoveUnit(w, u, mul) {
   if (passX && passY) { u.x = nx; u.y = ny; }
   else if (passX) u.x = nx;
   else if (passY) u.y = ny;
-  else throw new Error('moveUnit 阻断分支（maybeBoardForWar/reroute）未转写（第二批域）');
+  else {
+    // 阻断：战时可能是隔海 → 登船跨海远征（WorldBox 战争船）；否则随机改向绕行           // L5881-5889
+    if (MaybeBoardForWar(w, u)) return;
+    u.tx = Math.max(1, Math.min(W - 2, u.x + (Rng(w) * 2 - 1) * 6));
+    u.ty = Math.max(1, Math.min(H - 2, u.y + (Rng(w) * 2 - 1) * 6));
+  }
 }
 // updateUnitTailJS（engine L4116-4260；捕食者/鱼群分支 GUARD）
 function UpdateUnitTailJS(w, u) {
@@ -982,10 +1030,70 @@ function UpdateUnitTailJS(w, u) {
     }
   }
   if (def.predator && !def.undead && (u.food ?? 99) < 70 && Rng(w) < 0.4) {
-    throw new Error('tail 捕食者索敌分支未转写（第二批域）');
+    // 捕食者索敌（猎手嗅觉）：6 桶半径扫猎 → 猎物密度场导航                                     // L4132-4176
+    const hx = Math.min(BKW - 1, Math.max(0, (u.x / 4) | 0));
+    const hy = Math.min(BKH - 1, Math.max(0, (u.y / 4) | 0));
+    let prey = null;
+    let preyD2 = 26 * 26;
+    for (let by = hy - 6; by <= hy + 6; by++) {
+      for (let bx = hx - 6; bx <= hx + 6; bx++) {
+        if (bx < 0 || by < 0 || bx >= BKW || by >= BKH) continue;
+        for (const o of w.buckets[by * BKW + bx]) {
+          if (o.dead || o === u) continue;
+          if (!IsHerbivoreRace(w, o.race)) continue;
+          const pdx = o.x - u.x, pdy = o.y - u.y;
+          const pd2 = pdx * pdx + pdy * pdy;
+          if (pd2 < preyD2) { preyD2 = pd2; prey = o; }
+        }
+      }
+    }
+    if (prey && !u.detour) { u.tx = prey.x; u.ty = prey.y; MoveUnit(w, u, 1.15); return true; }
+    if (!u.detour) {
+      const gx = Math.min(31, Math.max(0, (u.x / 8) | 0));
+      const gy = Math.min(19, Math.max(0, (u.y / 8) | 0));
+      let bestCell = -1, bestScore = 0;
+      for (let cy2 = Math.max(0, gy - 3); cy2 <= Math.min(19, gy + 3); cy2++) {
+        for (let cx2 = Math.max(0, gx - 3); cx2 <= Math.min(31, gx + 3); cx2++) {
+          const c = w.preyGrid[cy2 * 32 + cx2];
+          if (c <= 0) continue;
+          const dd = Math.hypot(cx2 - gx, cy2 - gy);
+          if (dd < 0.9) continue;
+          const score = c / (1 + dd * 0.8);
+          if (score > bestScore) { bestScore = score; bestCell = cy2 * 32 + cx2; }
+        }
+      }
+      if (bestCell >= 0) {
+        u.tx = Math.max(1, Math.min(W - 2, (bestCell % 32) * 8 + 4 + (Rng(w) * 4 - 2)));
+        u.ty = Math.max(1, Math.min(H - 2, ((bestCell / 32) | 0) * 8 + 4 + (Rng(w) * 4 - 2)));
+        MoveUnit(w, u, 1.15);
+        return true;
+      }
+    }
   }
   if (u.race === R.FISH && Rng(w) < 0.12) {
-    throw new Error('tail 鱼群结队分支未转写（第二批域）');
+    // 鱼群结队（5-10 群游）：3×3 桶浅扫同种鱼重心靠拢                                             // L4177-4204
+    const hx = Math.min(BKW - 1, Math.max(0, (u.x / 4) | 0));
+    const hy = Math.min(BKH - 1, Math.max(0, (u.y / 4) | 0));
+    let ax = 0, ay = 0, n = 0;
+    for (let by = hy - 1; by <= hy + 1; by++) {
+      for (let bx = hx - 1; bx <= hx + 1; bx++) {
+        if (bx < 0 || by < 0 || bx >= BKW || by >= BKH) continue;
+        for (const o of w.buckets[by * BKW + bx]) {
+          if (o === u || o.dead || o.race !== R.FISH) continue;
+          const dx2 = o.x - u.x, dy2 = o.y - u.y;
+          if (dx2 * dx2 + dy2 * dy2 > 36) continue;
+          ax += o.x; ay += o.y; n++;
+        }
+      }
+    }
+    if (n >= 2) {
+      const gx2 = ax / n, gy2 = ay / n;
+      const ci = idx(Math.max(0, Math.min(W - 1, MathFloor(gx2))), Math.max(0, Math.min(H - 1, MathFloor(gy2))));
+      if (isWater(w.terrain[ci])) {
+        u.tx = Math.max(1, Math.min(W - 2, gx2 + (Rng(w) - 0.5) * 2));
+        u.ty = Math.max(1, Math.min(H - 2, gy2 + (Rng(w) - 0.5) * 2));
+      }
+    }
   }
   const ndx = u.tx - u.x, ndy = u.ty - u.y;
   if ((u.caravan ?? 0) === 0 && (ndx * ndx + ndy * ndy < 0.25 || Rng(w) < 0.02)) {
@@ -993,10 +1101,46 @@ function UpdateUnitTailJS(w, u) {
     let wx = u.x + (Rng(w) * 2 - 1) * r;
     let wy = u.y + (Rng(w) * 2 - 1) * r;
     if (def.predator && !def.undead && (u.food ?? 99) < 55) {
-      throw new Error('tail 漫游逐草分支未转写（第二批域）');
+      // 饥饿捕食者的逐草而行：顺着植被走就能找到猎场（跨地域觅食）                              // L4221-4229
+      for (let k = 0; k < 3; k++) {
+        const gx = u.x + (Rng(w) * 2 - 1) * 14;
+        const gy = u.y + (Rng(w) * 2 - 1) * 14;
+        const gj = idx(Math.max(0, Math.min(W - 1, MathFloor(gx))), Math.max(0, Math.min(H - 1, MathFloor(gy))));
+        const tt = w.terrain[gj];
+        if ((tt === T.GRASS || tt === T.FOREST) && w.building[gj] === 0) { wx = gx; wy = gy; break; }
+      }
     }
-    if (u.race === R.CRAB) throw new Error('tail 蟹漫游分支未转写（第二批域）');
-    else if (def.aquatic) throw new Error('tail 水生漫游分支未转写（第二批域）');
+    if (u.race === R.CRAB) {
+      // 蟹：滩涂限定 —— 游荡目标须为水域或邻水沙滩（4 次重选仍不合法则原地停留）            // L4230-4240
+      let ok = false;
+      for (let k = 0; k < 4 && !ok; k++) {
+        const cx2 = Math.max(0, Math.min(W - 1, MathFloor(wx)));
+        const cy2 = Math.max(0, Math.min(H - 1, MathFloor(wy)));
+        const cj = cy2 * W + cx2;
+        const ct = w.terrain[cj];
+        if (isWater(ct)) ok = true;
+        else if (ct === T.SAND) {
+          ok = (cx2 > 0 && isWater(w.terrain[cj - 1])) || (cx2 < W - 1 && isWater(w.terrain[cj + 1]))
+            || (cy2 > 0 && isWater(w.terrain[cj - W])) || (cy2 < H - 1 && isWater(w.terrain[cj + W]));
+        }
+        if (!ok) { wx = u.x + (Rng(w) * 2 - 1) * r; wy = u.y + (Rng(w) * 2 - 1) * r; }
+      }
+      if (!ok) { wx = u.x; wy = u.y; }
+    }
+    else if (def.aquatic) {
+      // 纯水生：游荡目标必须为水域（4 次重选 miss → findWaterNear(14) 或原地）              // L4241-4256
+      let ok = false;
+      for (let k = 0; k < 4 && !ok; k++) {
+        const cx2 = Math.max(0, Math.min(W - 1, MathFloor(wx)));
+        const cy2 = Math.max(0, Math.min(H - 1, MathFloor(wy)));
+        if (isWater(w.terrain[cy2 * W + cx2])) ok = true;
+        else { wx = u.x + (Rng(w) * 2 - 1) * r; wy = u.y + (Rng(w) * 2 - 1) * r; }
+      }
+      if (!ok) {
+        const near = isWater(w.terrain[idx(MathFloor(u.x), MathFloor(u.y))]) ? null : FindWaterNear(w, u.x, u.y, 14);
+        if (near) { wx = near.x; wy = near.y; } else { wx = u.x; wy = u.y; }
+      }
+    }
     u.tx = Math.max(1, Math.min(W - 2, wx));
     u.ty = Math.max(1, Math.min(H - 2, wy));
   }
@@ -1007,12 +1151,259 @@ function UpdateUnitTailJS(w, u) {
 function UpdateUnitPostJS(w, u) {
   const def = defOf(u.race);
   if (w.items.length > 0 && (def.isCiv || u.race === R.BANDIT || (def.predator && !def.undead))) {
-    throw new Error('post tryPickup 本体未转写（第二批域；黄金场景 items 空）');
+    TryPickup(w, u);                                                                     // L4265-4267
   }
   if (w.laws.reproduction && def.repro > 0 && !(def.aquatic && !def.beach && (u.beachT ?? 0) > 0) && Rng(w) < def.repro) {
-    throw new Error('post 繁衍门意外通过（黄金场景 rngA0 受控必败）—— boost 链深域未转写（第二批）');
+    // 增益链（L4277-4287）：人口令/科技繁衍/爱之甘霖/基因/恐慌/繁衍倾向/自然季节/战争/植被/捕食者丰猎/热参数
+    const boost = ((def.isCiv && u.civ >= 0 && activeDirective(w, u.civ, 'populate')) ? 1.8 : 1)
+      * (def.isCiv && u.civ >= 0 ? techModsRepro(w, u.civ) * (1 + ideaModsRepro(w, u.civ)) : 1)
+      * (u.fert ? 2.5 : 1)
+      * (u.gene ? u.gene.r : 1)
+      * ((u.panic ?? 0) >= 0.5 ? 0.3 : 1)
+      * (def.isCiv ? 0.85 + def.growth * 0.3 : 1)
+      * reproMul(w)
+      * (def.isCiv && u.civ >= 0 && CivAtWar(w, u.civ) ? 0.55 : 1)
+      * (!def.isCiv && !def.predator ? 0.75 + Math.min(0.75, w.grassTiles / 16000) : 1)
+      * (def.predator ? 1.6 + Math.min(1.4, Math.max(0, (u.food ?? 0) - 40) / 85) : 1)
+      * 1; // ep('pop.reproMul') 默认 1
+    if ((!def.predator || (u.food ?? 0) > 40) && Rng(w) < boost) {
+      if (def.isCiv) {
+        const civ = w.civs[u.civ];
+        if (civ && civ.alive && civ.pop < PopCapOf(w, civ) + 6 && w.units.length < 4096) {
+          const cg = ChildGene(w, u);                                                    // L4293-4303
+          const traitKey = TryEmergentTrait(w, u, cg);
+          const fam = u.fam ?? (Rng(w) < 0.25 ? NewFamily(w, u.race, u).id : undefined);
+          SpawnUnit(w, u.race, u.x + Rng(w) - 0.5, u.y + Rng(w) - 0.5,
+            { civ: u.civ, silent: true, gene: cg, trait: traitKey ?? undefined,
+              fam, fgn: fam !== undefined ? (u.fgn ?? 1) + 1 : undefined });
+          Fx(w, 'heart', u.x, u.y - 1, 40);
+        }
+      } else {
+        const cap = WildCapOf(w, u.race);                                                // L4305-4319
+        const same = w.wildCount.get(u.race) ?? 0;
+        if (same < cap) {
+          const cg = ChildGene(w, u);
+          const traitKey = TryEmergentTrait(w, u, cg);
+          const fam = u.fam ?? (Rng(w) < 0.25 ? NewFamily(w, u.race, u).id : undefined);
+          SpawnUnit(w, u.race, u.x + Rng(w) - 0.5, u.y + Rng(w) - 0.5,
+            { silent: true, gene: cg, trait: traitKey ?? undefined,
+              fam, fgn: fam !== undefined ? (u.fgn ?? 1) + 1 : undefined });
+          Fx(w, 'heart', u.x, u.y - 1, 40);
+        }
+      }
+    }
   }
 }
+// ---------------- M-U3h 第五批转写（tail 索敌/鱼群/漫游 + post 拾取/繁衍 + moveUnit 四分支 + maybeBoardForWar） ----------------
+// isHerbivoreRace（engine L2120-2128）：静态八种 + dynRaces 递归母族
+function IsHerbivoreRace(w, race) {
+  if (race === R.SHEEP || race === R.DEER || race === R.PENGUIN || race === R.CAMEL) return true;
+  if (race === R.CHICKEN || race === R.PIG || race === R.RABBIT || race === R.FISH) return true;
+  const d = w.dynRaces ? w.dynRaces.get(race) : null;
+  if (!d) return false;
+  if (d.eco === 'herb') return true;
+  if (d.eco) return false;
+  return IsHerbivoreRace(w, d.parent);
+}
+// childGene（engine L11037-11057）：母代 ± 变异 + 辐射高压锅 + 环境选择压力
+function ChildGene(w, parent) {
+  const g = parent.gene ?? { s: 1, d: 1, h: 1, r: 1 };
+  const gx = Math.max(0, Math.min(W - 1, MathFloor(parent.x)));
+  const gy = Math.max(0, Math.min(H - 1, MathFloor(parent.y)));
+  const radBoost = w.radiate[idx(gx, gy)] > 0 ? 2.6 : 1;
+  const mut = (v) => Math.max(0.5, Math.min(2, v * (1 + (Rng(w) - 0.5) * 0.08 * radBoost)));  // ep('evo.mutationRate') 默认 0.08
+  const gene = { s: mut(g.s), d: mut(g.d), h: mut(g.h), r: mut(g.r) };
+  const t = w.terrain[idx(gx, gy)];
+  if (t === T.SNOW || t === T.ICE) gene.h = Math.min(2, gene.h * (1 + Rng(w) * 0.05));
+  else if (t === T.SAND) gene.s = Math.min(2, gene.s * (1 + Rng(w) * 0.05));
+  else if (t === T.FOREST) gene.d = Math.min(2, gene.d * (1 + Rng(w) * 0.05));
+  else if (t === T.GRASS) gene.r = Math.min(2, gene.r * (1 + Rng(w) * 0.04));
+  return gene;
+}
+// tryEmergentTrait（engine L8854-8866）：繁衍链涌现特质门
+function TryEmergentTrait(w, parent, cg) {
+  const extreme = cg.d >= 1.5 || cg.h >= 1.5 || cg.s >= 1.5;
+  if (!extreme || w.dynTraits.size >= 24 || Rng(w) > 0.06) return null;
+  const t = InventTrait(w, cg, w.traitSeq);
+  t.key = `dt${w.traitSeq++}`;
+  w.dynTraits.set(t.key, t);
+  TRAITS_ALL[t.key] = t;
+  RecordEvo(w, 'trait', t.name, null, '#ff5fd2', `${t.desc} —— 源自「${statOf(parent.race).name ?? '?'}」种群 ${MathFloor(w.yearF)} 年的极端基因个体`, t.desc, { race: parent.race });
+  AddEvent(w, 'emerge', `演化奇迹——「${statOf(parent.race).name ?? '?'}」种群诞生了前所未见的个体，携带着新特质「${t.name}」（${t.desc}）`, { colorHex: '#ff5fd2', x: parent.x, y: parent.y });
+  return t.key;
+}
+// rollTrait（engine L1467-1470）：TRAITS keys 插入序随机抽
+function RollTrait(w) {
+  const keys = Object.keys(TRAITS_ALL);
+  return keys[MathFloor(Rng(w) * keys.length)];
+}
+// tryPickup（engine L5225-5279）：拾肉回充 / 换装升级先卸旧（ITEM_DEFS 消费切片：场景只触 meat/sword3）
+const ITEM_DEFS_CUT = { sword3: { key: 'sword3', name: '黄金圣剑', slot: 'wep', rank: 3, rarity: 3, dmg: 18, hp: 0, speedMul: 0 } };
+const SLOT_FIELD_CUT = { wep: 'wep', arm: 'arm', hlm: 'hlm', shd: 'shd', bts: 'bts', rng: 'rng', amu: 'amu' };
+const RARITY_NAMES = ['普通', '精良', '稀有', '史诗', '传说'];
+function getGear(u, field) { return field === 'wep' ? (typeof u.wep === 'string' ? u.wep : null)
+  : field === 'arm' ? (typeof u.armS === 'string' ? u.armS : null)
+  : field === 'hlm' ? (typeof u.hlmS === 'string' ? u.hlmS : null)
+  : (u[`${field}S`] ?? null); }
+function setGear(u, field, key) {
+  if (field === 'wep') u.wep = key;
+  else if (field === 'arm') u.armS = key;
+  else if (field === 'hlm') u.hlmS = key;
+  else u[`${field}S`] = key;
+}
+function TryPickup(w, u) {
+  const defR = defOf(u.race);
+  const eater = defR.isCiv || u.race === R.BANDIT || (defR.predator && !defR.undead);
+  for (let i = w.items.length - 1; i >= 0; i--) {
+    const it = w.items[i];
+    if (Math.abs(it.x - u.x) > 0.9 || Math.abs(it.y - u.y) > 0.9) continue;
+    if (it.kind === 'meat') {
+      if (!eater || (u.grab ?? 0) > 0) continue;
+      if (defR.predator && !defR.undead) {
+        u.food = Math.min(160, (u.food ?? 0) + 45);
+        if (w.fxPrefs.dmgNumbers) Fx(w, 'dmg', u.x, u.y - 1, 22, { text: '饱' });
+      } else if (u.civ >= 0 && w.civs[u.civ]) {
+        const civ = w.civs[u.civ];
+        civ.gold = (civ.gold ?? 0) + 2;
+        Fx(w, 'coin', u.x, u.y - 1, 20);
+      }
+      w.items.splice(i, 1);
+      Fx(w, 'heart', u.x, u.y - 0.8, 18);
+      continue;
+    }
+    if (!defR.isCiv && u.race !== R.BANDIT) continue;
+    const def = ITEM_DEFS_CUT[it.kind];
+    if (!def) continue;
+    const field = SLOT_FIELD_CUT[def.slot];
+    const cur = getGear(u, field);
+    const curRank = cur && ITEM_DEFS_CUT[cur] ? ITEM_DEFS_CUT[cur].rank : -1;
+    if (curRank >= def.rank) continue;
+    if (cur && ITEM_DEFS_CUT[cur]) {
+      const old = ITEM_DEFS_CUT[cur];
+      if (old.dmg) u.dmg = Math.max(1, u.dmg - old.dmg);
+      if (old.hp) u.maxHp = Math.max(1, u.maxHp - old.hp);
+      if (old.speedMul) u.speed /= old.speedMul;
+    }
+    setGear(u, field, it.kind);
+    if (def.dmg) u.dmg += def.dmg;
+    if (def.hp) { u.maxHp += def.hp; u.hp = Math.min(u.maxHp, u.hp + def.hp); }
+    if (def.speedMul) u.speed *= def.speedMul;
+    w.items.splice(i, 1);
+    Fx(w, 'spawn', u.x, u.y, 26);
+    if (w.fxPrefs.dmgNumbers) Fx(w, 'dmg', u.x, u.y - 1.2, 34, { text: def.name });
+    if (def.rarity >= 3) Toast(w, `${u.name} 拾取了${RARITY_NAMES[def.rarity]}${def.name}`, 'good');
+    if (def.rarity === 4) {
+      const owner = u.civ >= 0 ? (w.civs[u.civ]?.name ?? '流浪') : statOf(u.race).name;
+      AddEvent(w, 'loot', `${u.name}（${owner}）获得了传说之物「${def.name}」`, { x: u.x, y: u.y });
+    }
+  }
+}
+// maybeBoardForWar（engine L5740-5791）：战时隔海登船跨海远征（编队 board 闭包 + 直线跨水 45% 采样）
+function MaybeBoardForWar(w, u) {
+  if (u.boat || !defOf(u.race).isCiv) return false;
+  const job = u.job ?? 0;
+  if (job !== 2 && job !== 3) return false;
+  if (u.civ < 0 || !CivAtWar(w, u.civ)) return false;
+  const dx = u.tx - u.x, dy = u.ty - u.y;
+  const d = Math.hypot(dx, dy);
+  if (d < 8) return false;
+  let water = 0;
+  const samples = Math.max(1, MathFloor(d));
+  for (let s = 1; s <= samples; s++) {
+    const xx = MathFloor(u.x + (dx * s) / d);
+    const yy = MathFloor(u.y + (dy * s) / d);
+    if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+    if (isWater(w.terrain[idx(xx, yy)])) water++;
+  }
+  if (water / samples < 0.45) return false;
+  const cur = w.terrain[idx(MathFloor(u.x), MathFloor(u.y))];
+  if (isWater(cur)) return false;
+  const dock = FindWaterNear(w, u.x, u.y, 4);
+  if (!dock) return false;
+  const sharedTtl = 700 + MathFloor(Rng(w) * 300);
+  const board = (o) => {
+    o.boat = 1;
+    o.boatTTL = sharedTtl;
+    o.x = dock.x + (Rng(w) - 0.5) * 1.2;
+    o.y = dock.y + (Rng(w) - 0.5) * 1.2;
+    o.lx = o.x; o.ly = o.y;
+    Fx(w, 'spawn', o.x, o.y, 24);
+  };
+  board(u);
+  let fleet = 1;
+  for (const o of w.units) {
+    if (fleet >= 4) break;
+    if (o === u || o.dead || o.boat || o.civ !== u.civ) continue;
+    const ojob = o.job ?? 0;
+    if (ojob !== 2 && ojob !== 3) continue;
+    if (Math.hypot(o.x - u.x, o.y - u.y) > 6) continue;
+    board(o);
+    fleet++;
+  }
+  if (fleet >= 3) {
+    AddEvent(w, 'war', `「${w.civs[u.civ]?.name ?? ''}」的一支舰队（${fleet} 艘战船）跨海远征`, { colorHex: w.civs[u.civ]?.colorHex, x: u.x, y: u.y });
+  }
+  return true;
+}
+// findWaterNear（engine L5546-5571）：环扫水域（3×3 邻域 ≥5 水面）
+function FindWaterNear(w, x, y, r) {
+  const cx = MathFloor(x), cy = MathFloor(y);
+  for (let ring = 1; ring <= r; ring++) {
+    for (let dy = -ring; dy <= ring; dy++) {
+      for (let dx = -ring; dx <= ring; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+        const xx = cx + dx, yy = cy + dy;
+        if (xx < 1 || yy < 1 || xx >= W - 1 || yy >= H - 1) continue;
+        if (!isWater(w.terrain[idx(xx, yy)])) continue;
+        let waterN = 0;
+        for (let ny = -1; ny <= 1; ny++) for (let nx = -1; nx <= 1; nx++) {
+          if (nx === 0 && ny === 0) continue;
+          if (isWater(w.terrain[idx(xx + nx, yy + ny)])) waterN++;
+        }
+        if (waterN >= 5) return { x: xx + 0.5, y: yy + 0.5 };
+      }
+    }
+  }
+  return null;
+}
+// rebuildBuckets（engine L3081-3104）：空间桶全量重建（桶内序 = units push 序）
+const BKW = Math.ceil(W / 4), BKH = Math.ceil(H / 4);
+function RebuildBuckets(w) {
+  const buckets = w.buckets || (w.buckets = Array.from({ length: BKW * BKH }, () => []));
+  for (const b of buckets) b.length = 0;
+  for (const u of w.units) {
+    let cx = (u.x / 4) | 0, cy = (u.y / 4) | 0;
+    if (cx > BKW - 1) cx = BKW - 1; else if (cx < 0) cx = 0;
+    if (cy > BKH - 1) cy = BKH - 1; else if (cy < 0) cy = 0;
+    buckets[cy * BKW + cx].push(u);
+  }
+}
+// activeDirective（engine L7717-7722）
+function activeDirective(w, civId, kind) {
+  for (const d of w.directives) if (d.status === 'active' && d.civ === civId && d.kind === kind) return d;
+  return undefined;
+}
+// civAtWar（engine L2017-2020）：任一他国 alive 且 AtWar（rel<-30 基，与 C# CivAtWar 同构）
+function CivAtWar(w, civId) {
+  for (const o of w.civs) {
+    if (o && o.alive && o.id !== civId && AtWarT(w, civId, o.id)) return true;
+  }
+  return false;
+}
+// popCapOf（engine L2004-2014）：houseTier + 建筑承载（场景无 civBuildCounts → houses × (HOUSE_CAP+bonus)）
+function PopCapOf(w, civ) {
+  let bonus = 0;
+  if (civ && civ.alive) {
+    const t = civ.techs ?? [];
+    if (t.includes('masonry')) bonus = 1;
+    if (t.includes('fortification')) bonus = 2;
+    if (t.includes('gothic')) bonus = 3;
+  }
+  return civ.houses * (4 + bonus); // HOUSE_CAP = 4（场景无建筑 counts）
+}
+// techModsOf/ideaModsOf 的 repro 消费切片（场景 techs/ideas 空 → NEUTRAL 1 / 0）
+function techModsRepro(w, civId) { void w; void civId; return 1; }
+function ideaModsRepro(w, civId) { void w; void civId; return 0; }
 // wbResume（engine L3215-3302 case1/2/4/5；case3 第二批余域）
 function WbResume(w, u, kind, d) {
   switch (kind) {
@@ -1072,6 +1463,7 @@ function dumpAll(w, u, fx) {
       speed: hex(u.speed), flip: u.flip ?? 0, job: u.job ?? 0, caravan: u.caravan ?? 0,
       boat: u.boat ?? 0, boatTTL: u.boatTTL ?? 0, dead: u.dead ?? 0, hurt: u.hurt ?? 0,
       age: hex(u.age ?? 0), hp: hex(u.hp ?? 10), maxHp: hex(u.maxHp ?? 10),
+      dmg: hex(u.dmg ?? 1), food: u.food ?? null, wep: u.wep ?? null,
       grab: u.grab ?? null, thrT: u.thrT ?? null,
       thrVx: u.thrVx === undefined || u.thrVx === null ? null : hex(u.thrVx),
       thrVy: u.thrVy === undefined || u.thrVy === null ? null : hex(u.thrVy),
@@ -1084,7 +1476,7 @@ function dumpAll(w, u, fx) {
     }),
     rel: [...w.rel.entries()],
     raceRel: [...w.raceRel.entries()],
-    effects: w.effects.map((e) => ({ kind: e.kind, x: hex(e.x), y: hex(e.y), x0: hex(e.x0), y0: hex(e.y0), r: hex(e.r), age: hex(e.age), ttl: hex(e.ttl), seed: e.seed, dir: hex(e.dir) })),
+    effects: w.effects.map((e) => ({ kind: e.kind, x: hex(e.x), y: hex(e.y), x0: hex(e.x0), y0: hex(e.y0), r: hex(e.r), age: hex(e.age), ttl: hex(e.ttl), seed: e.seed, dir: hex(e.dir), text: e.text ?? null })),
     events: w.worldEvents.map((ev) => ({ id: ev.id, year: ev.year, kind: ev.kind, text: ev.text, colorHex: ev.colorHex ?? null,
       x: ev.x === undefined ? null : hex(ev.x), y: ev.y === undefined ? null : hex(ev.y) })),
     toasts: w.toasts,
@@ -1107,6 +1499,9 @@ function dumpAll(w, u, fx) {
     wars: [...w.warData.values()].map((wd) => ({ key: wd.key, a: wd.a, b: wd.b, scoreA: wd.scoreA, scoreB: wd.scoreB,
       casA: wd.casA, casB: wd.casB, exA: wd.exA, exB: wd.exB, razedA: wd.razedA, razedB: wd.razedB, occA: wd.occA, occB: wd.occB })),
     lastSiegeEventTick: w.lastSiegeEventTick,
+    // M-U3h 第五批 POST 态（itemsPost 余量/fleet 编队全单位 —— 与 gen 同协议）
+    itemsPost: w.items.map((it) => ({ id: it.id, kind: it.kind, x: hex(it.x), y: hex(it.y) })),
+    fleet: null,
   };
 }
 // case2 新生儿 dump（gen dumpChild 同协议；按 id≥unitSeq0 定位——cap 门不产子为 null）
@@ -1137,15 +1532,35 @@ function dumpTraitM(t) {
 const golden = JSON.parse(readFileSync(GOLDEN, 'utf8'));
 let pass = 0, fail = 0;
 for (const fx of golden.scenarios) {
+  // TRAITS 模块级全局表重置（gen 清理段同款：E 系 InventEmergentTrait 的 dt* 条目跨场景污染 RollTrait keys 域）
+  for (const tk of Object.keys(TRAITS_ALL)) if (tk.startsWith('dt')) delete TRAITS_ALL[tk];
   const w = mkWorld(fx, golden);
   const u = w.unitById.get(fx.unitId);
-  WbResume(w, u, fx.kind, Float64Array.from(fx.data ?? []));
+  // M-U3h 第五批 fn 分派直调（与 gen/NUnit 同协议：tail 前显式 rebuild 模拟 tick 头）
+  let tailRet = null;
+  if (fx.fn === 'tail') { RebuildBuckets(w); tailRet = UpdateUnitTailJS(w, u) === true; }
+  else if (fx.fn === 'post') UpdateUnitPostJS(w, u);
+  else if (fx.fn === 'move') MoveUnit(w, u, fx.mul ?? 1);
+  else if (fx.fn === 'board') tailRet = MaybeBoardForWar(w, u) === true;
+  else WbResume(w, u, fx.kind, Float64Array.from(fx.data ?? []));
   const got = dumpAll(w, u, fx);
+  if (fx.fn === 'board') got.fleet = w.units.map((uu) => ({ id: uu.id, race: uu.race, civ: uu.civ, x: hex(uu.x), y: hex(uu.y),
+    tx: hex(uu.tx), ty: hex(uu.ty), speed: hex(uu.speed), flip: uu.flip ?? 0, job: uu.job ?? 0, caravan: uu.caravan ?? 0,
+    boat: uu.boat ?? 0, boatTTL: uu.boatTTL ?? 0, dead: uu.dead ?? 0, hurt: uu.hurt ?? 0,
+    age: hex(uu.age ?? 0), hp: hex(uu.hp ?? 10), maxHp: hex(uu.maxHp ?? 10),
+    dmg: hex(uu.dmg ?? 1), food: uu.food ?? null, wep: uu.wep ?? null,
+    grab: uu.grab ?? null, thrT: uu.thrT ?? null,
+    thrVx: uu.thrVx === undefined || uu.thrVx === null ? null : hex(uu.thrVx),
+    thrVy: uu.thrVy === undefined || uu.thrVy === null ? null : hex(uu.thrVy),
+    thrX0: uu.thrX0 === undefined || uu.thrX0 === null ? null : hex(uu.thrX0),
+    thrY0: uu.thrY0 === undefined || uu.thrY0 === null ? null : hex(uu.thrY0) }));
+  if (fx.fn === 'tail' || fx.fn === 'board') got.tailRet = tailRet;
   const want = fx;
   const diffs = [];
   const cmp = (path, a, b) => { if (JSON.stringify(a) !== JSON.stringify(b)) diffs.push(`${path}: got ${JSON.stringify(a)?.slice(0, 120)} want ${JSON.stringify(b)?.slice(0, 120)}`); };
   cmp('rngA', got.rngA, want.rngA);
   cmp('eventSeq', got.eventSeq, want.eventSeq);
+  if (want.fn === 'tail' || want.fn === 'board') cmp('tailRet', got.tailRet, want.tailRet === true);
   for (const k of Object.keys(got.unit)) cmp(`unit.${k}`, got.unit[k], want.unit[k]);
   const wantCivsArr = want.civs ?? [];
   if (got.civs.length !== wantCivsArr.length) diffs.push('civs len');
