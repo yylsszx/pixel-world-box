@@ -123,6 +123,10 @@ namespace PixelWorldBox.Wb
         public object army;
         public object gene;
         public int food, fam, fgn;
+        // —— M-U3h bail 宿主接力消费域（字段只加不改不重排）——
+        public int chill, curse;             // engine u.chill/u.curse（moveUnit 真值门：? 0.55 / ? 0.75）
+        public int fert;                     // engine u.fert（postJS 繁衍增益 u.fert ? 2.5 : 1）
+        public double? beachT;               // engine u.beachT（postJS 水生搁浅繁衍抑制门；?? 0 语义）
         public List<int> gIds = new List<int>();
         public List<double> gVal = new List<double>();
     }
@@ -353,6 +357,10 @@ namespace PixelWorldBox.Wb
 
         // ---------------- 事件流（引擎侧效应与宿主解耦 —— WbNature 先例纪律③） ----------------
         public List<WbFx> effects = new List<WbFx>();
+        // —— M-U3h bail 宿主接力消费域（字段只加）——
+        public List<object> items = new List<object>();   // engine this.items（postJS 拾取门 Count 消费；本体第二批域）
+        public int grassTiles;                             // engine this.grassTiles（postJS 非文明繁衍增益）
+        public Dictionary<int, int> wildCount = new Dictionary<int, int>(); // engine this.wildCount（种族 O(1) 计数）
         public List<WbEv> worldEvents = new List<WbEv>();   // unshift 语义：新的在最前
         public List<WbToast> toasts = new List<WbToast>();  // onToast 回调收集（toast 本体不存储）
         public int eventSeq;

@@ -4195,4 +4195,307 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             Assert.AreEqual(15, n, "minimap 场景数（M01-M14 含 zoom 两档 15 条）");
         }
     }
+
+    // ================================================================
+    // Test 23 — M-U3h bail 宿主接力第一批黄金回放（units_bail.json 9 场景全字段逐位）
+    // 蓝本链：engine.ts wbResume 直跑（gen-units-bail，engine L3148 同入口）→ WbBail.cs 机械翻译 → 本回放
+    // 平行链：bail-transcript.mjs JS 镜像 9/9 ALL PASS（verify 段 24）
+    // case4 = CaravanArrive + updateUnitTailJS + updateUnitPostJS（engine L3286-3290）
+    // case5 = FoundSettlement（engine L3292-3295）
+    // dump 协议：f64 小端 16hex 逐位（bits 精确非 epsilon）；rngA u32；RLE 数组直比
+    // ================================================================
+    [TestFixture]
+    public class WbBailGoldenTests
+    {
+        private static Newtonsoft.Json.Linq.JObject LoadBail()
+        {
+            string[] candidates =
+            {
+                "Assets/StreamingAssets/WbGolden/units_bail.json",
+                System.IO.Path.Combine(NUnit.Framework.TestContext.CurrentContext.TestDirectory, "Assets/StreamingAssets/WbGolden/units_bail.json"),
+                System.IO.Path.Combine(System.IO.Directory.GetParent("Assets").FullName, "Assets/StreamingAssets/WbGolden/units_bail.json"),
+            };
+            string path = candidates[0];
+            foreach (var c in candidates) if (System.IO.File.Exists(c)) { path = c; break; }
+            Assert.IsTrue(System.IO.File.Exists(path), "golden json not found: units_bail.json");
+            return Newtonsoft.Json.JsonConvert.DeserializeObject<Newtonsoft.Json.Linq.JObject>(System.IO.File.ReadAllText(path));
+        }
+
+        private static double LeD(string hex)
+        {
+            byte[] b = new byte[8];
+            for (int i = 0; i < 8; i++) b[i] = System.Convert.ToByte(hex.Substring(i * 2, 2), 16);
+            return System.BitConverter.ToDouble(b, 0);
+        }
+        private static long Bits(double d) => System.BitConverter.DoubleToInt64Bits(d);
+
+        /// gen rle 协议逐行（gen-units-bail.mjs rle()：同值且 run<65535 合并）
+        private static List<int> RleOf(IEnumerable<int> arr)
+        {
+            var outList = new List<int>();
+            int cur = arr.First(), n = 1;
+            foreach (var v in arr.Skip(1))
+            {
+                if (v == cur && n < 65535) n++;
+                else { outList.Add(cur); outList.Add(n); cur = v; n = 1; }
+            }
+            outList.Add(cur); outList.Add(n);
+            return outList;
+        }
+        private static void AreBitsEqual(double got, double want, string tag)
+            => Assert.AreEqual(Bits(want), Bits(got), $"{tag} f64 逐位");
+
+        [Test]
+        public void Test23_BailRelay_Golden()
+        {
+            var golden = LoadBail();
+            var meta = golden["meta"];
+            Assert.AreEqual(256, meta["W"].Value<int>(), "meta W");
+            Assert.AreEqual(160, meta["H"].Value<int>(), "meta H");
+            var scenarios = (Newtonsoft.Json.Linq.JArray)golden["scenarios"];
+            Assert.AreEqual(9, scenarios.Count, "scenario count");
+            foreach (var sc in scenarios) RunBailScenario((Newtonsoft.Json.Linq.JObject)sc);
+        }
+
+        private void RunBailScenario(Newtonsoft.Json.Linq.JObject sc)
+        {
+            string name = sc["name"].ToString();
+            WbCivSim.ClearTechModCache(); // 静态科技缓存跨场景污染防护（M-U3g ARM10 先例——BuildBuilding bHp 消费 TechModsOf）
+            var w = new WbWorld();
+            w.rngA = unchecked((uint)sc["rngA0"].Value<long>());
+            w.eventSeq = sc["eventSeq0"].Value<int>();
+            w.toastSeq = sc["toastSeq0"].Value<int>();
+            w.yearF = 0; // 接力域不跑 tick()（黄金 yearF 恒 0 → season 0）
+
+            // laws 全量（golden dump eng.laws）
+            var laws = sc["laws"];
+            w.laws.wars = laws["wars"].Value<bool>();
+            w.laws.cityGrowth = laws["cityGrowth"].Value<bool>();
+            w.laws.reproduction = laws["reproduction"].Value<bool>();
+            w.laws.banditRaids = laws["banditRaids"].Value<bool>();
+            w.laws.dragonSpawns = laws["dragonSpawns"].Value<bool>();
+            w.laws.zombieInfect = laws["zombieInfect"].Value<bool>();
+            w.laws.zombieVirus = laws["zombieVirus"].Value<bool>();
+            w.laws.undeadRise = laws["undeadRise"].Value<bool>();
+            w.laws.rebels = laws["rebels"].Value<bool>();
+            w.laws.tectonics = laws["tectonics"].Value<bool>();
+            w.laws.atmosphere = laws["atmosphere"].Value<bool>();
+            w.laws.seasons = laws["seasons"].Value<bool>();
+            w.laws.naturalDisasters = laws["naturalDisasters"].Value<bool>();
+
+            // terrain RLE
+            int pos = 0;
+            var rle = sc["terrainRle"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray();
+            for (int k = 0; k < rle.Count; k += 2)
+            {
+                byte v = (byte)rle[k].Value<int>();
+                int run = rle[k + 1].Value<int>();
+                for (int j = 0; j < run && pos < WbWorld.W * WbWorld.H; j++) w.terrain[pos++] = v;
+            }
+
+            // civs 夹具（fixture PRE 态；CivAt 位置序 = id 序）
+            var fx = sc["fixture"];
+            foreach (var c in (fx["civs"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
+            {
+                var civ = new WbCiv
+                {
+                    id = c["id"].Value<int>(),
+                    name = c["name"]?.ToString() ?? $"C{c["id"].Value<int>()}",
+                    race = c["race"]?.Value<int>() ?? 0,
+                    pop = c["pop"]?.Value<int>() ?? 0,
+                    houses = c["houses"]?.Value<int>() ?? 0,
+                    capital = c["capital"]?.Value<int>() ?? -1,
+                    alive = c["alive"] == null || c["alive"].Value<bool>(),
+                    gold = c["gold"] != null && c["gold"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? c["gold"].Value<double>() : 0,
+                    knowledge = c["knowledge"] != null && c["knowledge"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? c["knowledge"].Value<double>() : 0,
+                    colorHex = c["colorHex"]?.ToString() ?? "#c83c3c",
+                    kingName = c["kingName"]?.ToString() ?? "K",
+                    banner = c["banner"]?.ToString() ?? "B",
+                };
+                while (w.civs.Count < civ.id) w.civs.Add(null);
+                w.civs.Add(civ);
+                foreach (var t in (c["tiles"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
+                {
+                    civ.tiles.Add(t.Value<int>()); // 夹具语义（mkCiv）：tiles 是已持有领土 → civ.tiles 与 owner 同步
+                    w.owner[t.Value<int>()] = (short)civ.id;
+                }
+            }
+
+            // units 夹具 → WbU
+            WbU target = null;
+            foreach (var u in (fx["units"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
+            {
+                var un = new WbU
+                {
+                    id = u["id"].Value<int>(),
+                    race = u["race"]?.Value<int>() ?? 0,
+                    civ = u["civ"]?.Value<int>() ?? -1,
+                    x = u["x"].Value<double>(),
+                    y = u["y"].Value<double>(),
+                    tx = u["x"].Value<double>(),
+                    ty = u["y"].Value<double>(),
+                    speed = u["speed"]?.Value<double>() ?? 1,
+                    job = u["job"]?.Value<int>() ?? 0,
+                    caravan = u["caravan"]?.Value<int>() ?? 0,
+                    boat = u["boat"]?.Value<int>() ?? 0,
+                    dead = u["dead"]?.Value<int>() ?? 0,
+                    name = $"u{u["id"].Value<int>()}",
+                };
+                w.units.Add(un);
+                w.unitById[un.id] = un;
+                if (un.id == sc["unitId"].Value<int>()) target = un;
+            }
+            Assert.IsNotNull(target, $"{name}: relay unit missing");
+
+            // rel 夹具
+            foreach (var r in (fx["rel"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
+            {
+                int a = r[0].Value<int>(), b = r[1].Value<int>();
+                w.rel[WbWorld.PairKey(a, b)] = r[2].Value<double>();
+            }
+
+            // buildings 夹具（mkBuilding0 语义：bHp = round(hp × 1)）
+            foreach (var b in (fx["buildings"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
+            {
+                int bi2 = b[0].Value<int>(), bkind = b[1].Value<int>(), bciv = b[2].Value<int>();
+                w.buildings.Add(new WbBuilding { i = bi2, x = bi2 % WbWorld.W, y = bi2 / WbWorld.W, kind = bkind, civ = bciv });
+                w.bIdx[bi2] = w.buildings.Count - 1;
+                w.building[bi2] = (byte)bkind;
+                w.BhpSet(bi2, System.Math.Round(WbCivSim.BUILDING_DEFS[bkind].hp * 1.0));
+            }
+
+            // alliances 夹具（bonded 真值 + allianceOf 反查）
+            foreach (var al in (fx["alliances"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
+            {
+                var a = new WbAlliance
+                {
+                    id = al["id"].Value<int>(),
+                    name = al["name"]?.ToString() ?? $"AL{al["id"].Value<int>()}",
+                    members = new List<int>(),
+                    leader = al["leader"]?.Value<int>() ?? (al["members"] != null && al["members"].Count() > 0 ? al["members"][0].Value<int>() : 0),
+                    cohesion = al["cohesion"]?.Value<double>() ?? 50,
+                    bonded = al["bonded"] != null && al["bonded"].Value<bool>(),
+                };
+                foreach (var m in (al["members"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray())) a.members.Add(m.Value<int>());
+                w.alliances.Add(a);
+                foreach (var m in a.members) w.allianceOf[m] = a.id;
+            }
+
+            // marketIdx 夹具（tail 商队分支宿主市场表）
+            foreach (var mi in (fx["marketIdx"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
+                w.marketIdx[mi[0].Value<int>()] = mi[1].Value<int>();
+
+            // —— relay 直调（engine L3148 同入口）——
+            int relayKind = sc["kind"].Value<int>();
+            double[] relayData = (sc["data"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()).Select(t => t.Value<double>()).ToArray();
+            WbBailRelay.WbResume(w, target, relayKind, relayData);
+
+            // —— dump 对账（全字段逐位）——
+            Assert.AreEqual(sc["rngA"].Value<long>(), (long)w.rngA, $"{name} rngA u32");
+            Assert.AreEqual(sc["eventSeq"].Value<int>(), w.eventSeq, $"{name} eventSeq");
+
+            var wantU = sc["unit"];
+            Assert.AreEqual(wantU["id"].Value<int>(), target.id, $"{name} unit.id");
+            Assert.AreEqual(wantU["race"].Value<int>(), target.race, $"{name} unit.race");
+            Assert.AreEqual(wantU["civ"].Value<int>(), target.civ, $"{name} unit.civ");
+            AreBitsEqual(target.x, LeD(wantU["x"].ToString()), $"{name} unit.x");
+            AreBitsEqual(target.y, LeD(wantU["y"].ToString()), $"{name} unit.y");
+            AreBitsEqual(target.tx, LeD(wantU["tx"].ToString()), $"{name} unit.tx");
+            AreBitsEqual(target.ty, LeD(wantU["ty"].ToString()), $"{name} unit.ty");
+            AreBitsEqual(target.speed, LeD(wantU["speed"].ToString()), $"{name} unit.speed");
+            Assert.AreEqual(wantU["flip"].Value<int>(), target.flip, $"{name} unit.flip");
+            Assert.AreEqual(wantU["job"].Value<int>(), target.job, $"{name} unit.job");
+            Assert.AreEqual(wantU["caravan"].Value<int>(), target.caravan, $"{name} unit.caravan");
+            Assert.AreEqual(wantU["boat"].Value<int>(), target.boat, $"{name} unit.boat");
+            Assert.AreEqual(wantU["dead"].Value<int>(), target.dead, $"{name} unit.dead");
+
+            var wantCivs = (Newtonsoft.Json.Linq.JArray)sc["civs"];
+            Assert.AreEqual(wantCivs.Count, w.civs.Count, $"{name} civs count");
+            for (int i = 0; i < wantCivs.Count; i++)
+            {
+                var wc = wantCivs[i];
+                var gc = w.civs[i];
+                Assert.AreEqual(wc["gold"].Value<double>(), gc.gold ?? 0, $"{name} civ{i} gold");
+                Assert.AreEqual(wc["knowledge"].Value<double>(), gc.knowledge ?? 0, $"{name} civ{i} knowledge");
+                Assert.AreEqual(wc["houses"].Value<int>(), gc.houses, $"{name} civ{i} houses");
+                Assert.AreEqual(((Newtonsoft.Json.Linq.JArray)wc["tiles"]).Count, gc.tiles.Count, $"{name} civ{i} tiles count");
+            }
+
+            // rel 逐键逐位
+            var wantRel = (Newtonsoft.Json.Linq.JArray)sc["rel"];
+            Assert.AreEqual(wantRel.Count, w.rel.Count, $"{name} rel count");
+            foreach (var r in wantRel)
+            {
+                string rk = r[0].ToString();
+                Assert.IsTrue(w.rel.TryGetValue(rk, out double rv), $"{name} rel key {rk}");
+                AreBitsEqual(rv, r[1].Value<double>(), $"{name} rel[{rk}]");
+            }
+            // raceRel 逐键逐位（shiftRaceRel 消费域）
+            var wantRR = (Newtonsoft.Json.Linq.JArray)sc["raceRel"];
+            Assert.AreEqual(wantRR.Count, w.raceRel.Count, $"{name} raceRel count");
+            foreach (var r in wantRR)
+            {
+                string rk = r[0].ToString();
+                Assert.IsTrue(w.raceRel.TryGetValue(rk, out double rv), $"{name} raceRel key {rk}");
+                AreBitsEqual(rv, r[1].Value<double>(), $"{name} raceRel[{rk}]");
+            }
+
+            // effects 逐位（kind/seed/dir/x/y/ttl）
+            var wantFx = (Newtonsoft.Json.Linq.JArray)sc["effects"];
+            Assert.AreEqual(wantFx.Count, w.effects.Count, $"{name} effects count");
+            for (int i = 0; i < wantFx.Count; i++)
+            {
+                var we = wantFx[i];
+                var ge = w.effects[i];
+                Assert.AreEqual(we["kind"].ToString(), ge.kind, $"{name} fx{i} kind");
+                Assert.AreEqual(we["seed"].Value<int>(), ge.seed, $"{name} fx{i} seed");
+                AreBitsEqual(ge.x, LeD(we["x"].ToString()), $"{name} fx{i} x");
+                AreBitsEqual(ge.y, LeD(we["y"].ToString()), $"{name} fx{i} y");
+                AreBitsEqual(ge.ttl, LeD(we["ttl"].ToString()), $"{name} fx{i} ttl");
+                AreBitsEqual(ge.dir, LeD(we["dir"].ToString()), $"{name} fx{i} dir");
+            }
+
+            // events 全字段
+            var wantEv = (Newtonsoft.Json.Linq.JArray)sc["events"];
+            Assert.AreEqual(wantEv.Count, w.worldEvents.Count, $"{name} events count");
+            for (int i = 0; i < wantEv.Count; i++)
+            {
+                var we = wantEv[i];
+                var ge = w.worldEvents[i];
+                Assert.AreEqual(we["id"].Value<int>(), ge.id, $"{name} ev{i} id");
+                Assert.AreEqual(we["kind"].ToString(), ge.kind, $"{name} ev{i} kind");
+                Assert.AreEqual(we["text"].ToString(), ge.text, $"{name} ev{i} text");
+            }
+
+            // toasts
+            var wantTo = (Newtonsoft.Json.Linq.JArray)sc["toasts"];
+            Assert.AreEqual(wantTo.Count, w.toasts.Count, $"{name} toasts count");
+            for (int i = 0; i < wantTo.Count; i++)
+                Assert.AreEqual(wantTo[i]["text"].ToString(), w.toasts[i].text, $"{name} toast{i}");
+
+            // buildings（i/kind/civ/bHp）
+            var wantB = (Newtonsoft.Json.Linq.JArray)sc["buildings"];
+            Assert.AreEqual(wantB.Count, w.buildings.Count, $"{name} buildings count");
+            for (int i = 0; i < wantB.Count; i++)
+            {
+                var wb = wantB[i];
+                var gb = w.buildings[i];
+                Assert.AreEqual(wb["i"].Value<int>(), gb.i, $"{name} bld{i} i");
+                Assert.AreEqual(wb["kind"].Value<int>(), gb.kind, $"{name} bld{i} kind");
+                Assert.AreEqual(wb["civ"].Value<int>(), gb.civ, $"{name} bld{i} civ");
+                Assert.AreEqual(wb["bHp"].Value<double>(), w.bHp.TryGetValue(gb.i, out double hp) ? hp : 0, $"{name} bld{i} bHp");
+            }
+
+            // 网格 RLE 直比（building/owner/road）—— C# 侧原始数组先 RLE 编码再比（gen rle 协议：run<65535）
+            CollectionAssert.AreEqual(
+                (sc["buildingRle"] as Newtonsoft.Json.Linq.JArray).Select(t => t.Value<int>()).ToList(),
+                RleOf(w.building.Select(bb => (int)bb)), $"{name} buildingRle");
+            CollectionAssert.AreEqual(
+                (sc["ownerRle"] as Newtonsoft.Json.Linq.JArray).Select(t => t.Value<int>()).ToList(),
+                RleOf(w.owner.Select(oo => (int)oo)), $"{name} ownerRle");
+            CollectionAssert.AreEqual(
+                (sc["roadRle"] as Newtonsoft.Json.Linq.JArray).Select(t => t.Value<int>()).ToList(),
+                RleOf(w.road.Select(rr => (int)rr)), $"{name} roadRle");
+        }
+    }
 }

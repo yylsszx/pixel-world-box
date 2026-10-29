@@ -49,7 +49,7 @@ C# 代码只允许从下列蓝本**机械翻译**，禁止从记忆重写：
 | M-U3f | 经济/社会域：economyTick + societyTick 全链（旨意/税政/军饷/稳定度/理念扩散/政体演变/危机）+ 类型 double 化五连（黄金 CVT44-55，transcript 57/57） | engine.ts L2535/L2569 真序 | ✅ bd553c1 |
 | M-O1 | 神谕 AI：dsh 五包最小闭环冒烟（主线二，见 docs/deepseek-harness-adaptation.md） | dsh 源码 | ✅ 98cb7b1 |
 | M-U3g | 军团域全量切片（重定界）：armyTick 状态机全链 C# 机械翻译 + 黄金 16 场景 + mirror/verify/NUnit 四链 | engine.ts | ✅ 60103d6 |
-| M-U3h | 文明余域盘点：商队结算/殖民建城/船单位等 bail 稀疏路径的宿主侧对齐（原 M-U3g 未覆盖余量） | engine.ts | ⬜ 待盘点 |
+| M-U3h | 文明余域：bail 宿主接力——**第一批 ✅**（case4 商队结算 caravanArrive L4770+tail L4116+post L4262+moveUnit L5813 宿主路径 / case5 殖民建城 foundSettlement L5704→buildBuilding+5×5 圈地；WbBailRelay.cs RDEF 41 族接力子表+wallBlocks+passTile；NUnit Test23 9 场景逐位 165/165；黄金 gen-units-bail 9 场景+bail-transcript 镜像 9/9+verify 段 24）——**第二批 ⬜**（case1 船全量 updateUnit 接管/case2 涌现接力/case3 建筑摧毁级联；tail buckets/preyGrid 捕食者/鱼群；post 拾取本体/繁衍 spawn 链；moveUnit flying/aquatic/sandswim/登船） | engine.ts wbResume L3215-3302 | ◐ 第一批 ✅ |
 | M-U4 | 渲染 I：地形/单位绘制管线（flushDirty 8×8 RGBA 烘焙 / flushProps 命令流 / render 单位决策链+清屏机 / sprites bail 契约；精灵内部像素画 = M-U5） | render.ts + engine.ts | ✅ 8c820b3 |
 | M-U5a | 渲染 II：精灵像素画 bail 契约展开（sprites 12 函数完整 op 序列：树/山/人形中档+精绘/四足精绘/船/商队/中档五族 + vis 涌现色移 shiftColor/shiftRgb+HSL 链） | sprites.ts + emergence.ts | ✅ 本轮 |
 | M-U5b | 渲染 III：frame 驱动物种精灵 20 族全量（dragon/penguin/camel/scorpion/snake/skeleton/demon/angel/phoenix/ent/lich/troll/ogre/whitewalker/vampire/kraken/sandworm/basilisk/hydra/mage——相位步态/振翅/公转 cos-sin/u32 哈希/世代 hydra gen 全语义） | sprites.ts frame 族 | ✅ 本轮 |
