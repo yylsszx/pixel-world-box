@@ -1,0 +1,16 @@
+{
+    "name": "PixelWorldBox.Host",
+    "rootNamespace": "PixelWorldBox.Host",
+    "references": [
+        "PixelWorldBox.Wb"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -4794,5 +4794,215 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             }
             Assert.AreEqual(sc["lastSiegeEventTick"].Value<long>(), w.lastSiegeEventTick, $"{name} lastSiegeEventTick");
         }
+
+        // ==================== Test24：宿主播放器 WbHostCanvas 语义断言（M-U7 整合 a） ====================
+        // 对账边界：canvas 像素合成不进黄金对账面（M-U4/7d/7e 既定裁定）——本组测试为播放器
+        // 自身语义一致性（变换栈/颜色解析/覆盖域/alpha 合成/最近邻 blit/TerrainFull 自洽），
+        // 黄金侧样式串形态完备校验由 verify 台新段承担（475 串全部落入三形态）。
+
+        [Test]
+        public void Test24a_HostCanvas_CssColor()
+        {
+            // #rrggbb
+            var c = WbCssColor.Parse("#ff8800");
+            Assert.AreEqual(255, c.R); Assert.AreEqual(136, c.G); Assert.AreEqual(0, c.B); Assert.AreEqual(255, c.A);
+            // rgb(r,g,b)
+            c = WbCssColor.Parse("rgb(104,102,100)");
+            Assert.AreEqual(104, c.R); Assert.AreEqual(102, c.G); Assert.AreEqual(100, c.B); Assert.AreEqual(255, c.A);
+            // rgba(r,g,b,a) 两位小数（0.5 → floor(127.5+0.5)=128）
+            c = WbCssColor.Parse("rgba(255,136,0,0.5)");
+            Assert.AreEqual(255, c.R); Assert.AreEqual(128, c.A);
+            // rgba 三位小数形态（黄金 0.150 实存）：0.15*255=38.25 → floor(38.75)=38
+            c = WbCssColor.Parse("rgba(12,9,6,0.150)");
+            Assert.AreEqual(12, c.R); Assert.AreEqual(38, c.A);
+            // rgba 四位小数形态（黄金 0.40 实存）：0.4*255=102 → floor(102.5)=102
+            c = WbCssColor.Parse("rgba(240,248,255,0.40)");
+            Assert.AreEqual(240, c.R); Assert.AreEqual(102, c.A);
+            // 越界钳制（通道 >255 / alpha >1）
+            c = WbCssColor.Parse("rgb(300,-5,0)");
+            Assert.AreEqual(255, c.R); Assert.AreEqual(0, c.G);
+            c = WbCssColor.Parse("rgba(0,0,0,2)");
+            Assert.AreEqual(255, c.A);
+            // 未知格式抛（桩域触达即抛纪律——不静默）
+            Assert.Throws<FormatException>(() => WbCssColor.Parse("#fff"));
+            Assert.Throws<FormatException>(() => WbCssColor.Parse("hsl(0,50%,50%)"));
+            Assert.Throws<FormatException>(() => WbCssColor.Parse(null));
+        }
+
+        [Test]
+        public void Test24b_HostCanvas_TransformStack()
+        {
+            // Identity
+            var cv = new WbHostCanvas(8, 8);
+            double rx, ry;
+            cv.Ctm.Apply(5, 7, out rx, out ry);
+            Assert.AreEqual(5.0, rx); Assert.AreEqual(7.0, ry);
+            // canvas transform 后乘语义：setTransform(2)·translate(10,20)·scale(3)
+            //   CTM = [2,0,0,2,0,0] → ·T(10,20) = [2,0,0,2,20,40] → ·S(3) = [6,0,0,6,20,40]
+            cv.SetTransform(2, 0, 0, 2, 0, 0);
+            cv.Translate(10, 20);
+            cv.Scale(3, 3);
+            Assert.AreEqual(6.0, cv.Ctm.A); Assert.AreEqual(20.0, cv.Ctm.E); Assert.AreEqual(40.0, cv.Ctm.F);
+            cv.Ctm.Apply(1, 1, out rx, out ry);
+            Assert.AreEqual(26.0, rx); Assert.AreEqual(46.0, ry);
+            // MDN 参考例：translate(50,50)·scale(2) → 点(3,4) = (56,58)
+            var cv2 = new WbHostCanvas(4, 4);
+            cv2.Translate(50, 50);
+            cv2.Scale(2, 2);
+            cv2.Ctm.Apply(3, 4, out rx, out ry);
+            Assert.AreEqual(56.0, rx); Assert.AreEqual(58.0, ry);
+            // save/restore 栈：CTM=[2,0,0,2,50,50] ·T(100,0) → E = 2*100+50 = 250
+            cv2.Save();
+            cv2.Translate(100, 0);
+            Assert.AreEqual(250.0, cv2.Ctm.E);
+            cv2.Restore();
+            Assert.AreEqual(50.0, cv2.Ctm.E);
+            // 空栈 restore 抛
+            Assert.Throws<InvalidOperationException>(() => new WbHostCanvas(2, 2).Restore());
+            // 全零 CTM：任意矩形 Apply 后退化为零面积点 → 零覆盖不抛（像素不变）；
+            // det==0 throw 为逆变换路径防御（覆盖域非空才可达）
+            var cv3 = new WbHostCanvas(2, 2);
+            cv3.RegisterSource("t", new byte[2 * 2 * 4], 2, 2);
+            cv3.SetTransform(0, 0, 0, 0, 0, 0);
+            cv3.PlayOp(new WbDrawOp { o = "drawImage", a = new[] { 0.0, 0.0, 1.0, 1.0 }, s = new object[] { "t", 1.0 } });
+            Assert.AreEqual(0, cv3.Px[3]); // 零覆盖：像素仍透明
+        }
+
+        [Test]
+        public void Test24c_HostCanvas_FillClearStroke()
+        {
+            var cv = new WbHostCanvas(8, 8);
+            // fillRect 恒等变换
+            cv.FillRect(0, 0, 2, 1, "#ff0000");
+            long i00 = (0L * 8 + 0) * 4, i10 = (0L * 8 + 1) * 4, i20 = (0L * 8 + 2) * 4;
+            Assert.AreEqual(255, cv.Px[i00]); Assert.AreEqual(255, cv.Px[i00 + 3]);
+            Assert.AreEqual(255, cv.Px[i10]); Assert.AreEqual(255, cv.Px[i10 + 3]);
+            Assert.AreEqual(0, cv.Px[i20 + 3]); // 未覆盖透明
+            // alpha 合成：红底(255,0,0) + 蓝 0.5 → (r=255*0.498=127, g=0, b=255*0.502=128, a=1)
+            cv.FillRect(0, 0, 1, 1, "rgba(0,0,255,0.5)");
+            Assert.AreEqual(127, cv.Px[i00]); Assert.AreEqual(0, cv.Px[i00 + 1]); Assert.AreEqual(128, cv.Px[i00 + 2]);
+            Assert.AreEqual(255, cv.Px[i00 + 3]);
+            // clearRect 置透明黑
+            cv.ClearRect(0, 0, 2, 1);
+            Assert.AreEqual(0, cv.Px[i00]); Assert.AreEqual(0, cv.Px[i00 + 3]);
+            // strokeRect(1,1,4,2,lw=1)：中心线 ±0.5 → 外框（px 0..4 × py 0..2 空心）
+            var cv2 = new WbHostCanvas(8, 8);
+            cv2.StrokeRect(1, 1, 4, 2, "rgba(0,255,0,1)", 1);
+            for (int px = 0; px <= 4; px++)
+            {
+                Assert.AreEqual(255, cv2.Px[(0L * 8 + px) * 4 + 1], $"top {px}");    // 上带 y=0
+                Assert.AreEqual(255, cv2.Px[(2L * 8 + px) * 4 + 1], $"bot {px}");    // 下带 y=2
+            }
+            Assert.AreEqual(255, cv2.Px[(1L * 8 + 0) * 4 + 1]);  // 左带中段
+            Assert.AreEqual(255, cv2.Px[(1L * 8 + 4) * 4 + 1]);  // 右带中段
+            Assert.AreEqual(0, cv2.Px[(1L * 8 + 2) * 4 + 3]);    // 中心透明
+            // scale(2) 基变换：用户 (0,0,1,1) → 设备 2×2
+            var cv3 = new WbHostCanvas(8, 8);
+            cv3.SetTransform(2, 0, 0, 2, 0, 0);
+            cv3.FillRect(0, 0, 1, 1, "#ffffff");
+            Assert.AreEqual(255, cv3.Px[(0L * 8 + 0) * 4 + 3]);
+            Assert.AreEqual(255, cv3.Px[(0L * 8 + 1) * 4 + 3]);
+            Assert.AreEqual(255, cv3.Px[(1L * 8 + 1) * 4 + 3]);
+            Assert.AreEqual(0, cv3.Px[(0L * 8 + 2) * 4 + 3]); // (2,0) 出界
+            // 零尺寸不绘制
+            var cv4 = new WbHostCanvas(4, 4);
+            cv4.FillRect(0, 0, 0, 4, "#ffffff");
+            Assert.AreEqual(0, cv4.Px[3]);
+        }
+
+        [Test]
+        public void Test24d_HostCanvas_Blit()
+        {
+            // 2×2 源（红/绿/蓝/白，a=128）
+            var src = new byte[2 * 2 * 4];
+            Action<int, byte, byte, byte> put = (i, r, g, b) =>
+            { src[i * 4] = r; src[i * 4 + 1] = g; src[i * 4 + 2] = b; src[i * 4 + 3] = 128; };
+            put(0, 255, 0, 0); put(1, 0, 255, 0); put(2, 0, 0, 255); put(3, 255, 255, 255);
+            var cv = new WbHostCanvas(4, 4);
+            cv.RegisterSource("terrain", src, 2, 2);
+            cv.DrawImageBlit("terrain", 0, 0, 4, 4, 0.5);
+            // 最近邻放大 2×：目标 (px,py) 中心 → 源 floor((px+0.5)/4*2)
+            // (0,0)/(1,0)→src(0,0) 红；(2,0)/(3,0)→src(1,0) 绿；(0,2)→src(0,1) 蓝；(3,3)→白
+            long g00 = (0L * 4 + 0) * 4, g20 = (0L * 4 + 2) * 4, g02 = (2L * 4 + 0) * 4, g33 = (3L * 4 + 3) * 4;
+            Assert.AreEqual(255, cv.Px[g00]); Assert.AreEqual(0, cv.Px[g00 + 1]);
+            Assert.AreEqual(0, cv.Px[g20]); Assert.AreEqual(255, cv.Px[g20 + 1]);
+            Assert.AreEqual(255, cv.Px[g02 + 2]);
+            Assert.AreEqual(255, cv.Px[g33]); Assert.AreEqual(255, cv.Px[g33 + 2]);
+            // alpha：sa = (128/255)*0.5 = 0.25098 → a8 = floor(64.0+0.5)=64
+            Assert.AreEqual(64, cv.Px[g00 + 3], "blit alpha");
+            // 未注册源抛
+            var cv2 = new WbHostCanvas(2, 2);
+            Assert.Throws<InvalidOperationException>(() => cv2.DrawImageBlit("overlay", 0, 0, 2, 2, 1));
+            // 源尺寸不匹配抛
+            Assert.Throws<ArgumentException>(() => cv2.RegisterSource("bad", new byte[3], 2, 2));
+        }
+
+        [Test]
+        public void Test24e_HostCanvas_TerrainFull()
+        {
+            // 确定性伪随机地形（mulberry32 同构简体——仅自洽断言用，不进对账面）
+            var st = new WbRenderState();
+            uint seed = 0x9e3779b9;
+            for (int i = 0; i < WbTerrainFull.W * WbTerrainFull.H; i++)
+            {
+                seed = seed * 1664525u + 1013904223u;
+                st.terrain[i] = (byte)(seed % 12);
+                st.variant[i] = (byte)((seed >> 8) % 256);
+                st.waterTier[i] = (byte)((seed >> 16) % 6);
+                st.owner[i] = -1;
+            }
+            st.civs.Add(null);
+            var full = WbTerrainFull.Bake(st);
+            Assert.AreEqual(WbTerrainFull.PW * WbTerrainFull.PH * 4, full.Length); // 2048×1280×4
+            // 抽查 tile 与单 tile TerrainBake 逐位一致
+            foreach (var (tx, ty) in new[] { (0, 0), (137, 83), (255, 159) })
+            {
+                var tile = new byte[64 * 4];
+                WbRender.TerrainBake(st, ty * WbTerrainFull.W + tx, tile);
+                int gx = tx * 8, gy = ty * 8;
+                for (int sy = 0; sy < 8; sy++)
+                    for (int sx = 0; sx < 8; sx++)
+                    {
+                        long fi = (((long)gy + sy) * WbTerrainFull.PW + gx + sx) * 4;
+                        int ti = (sy * 8 + sx) * 4;
+                        for (int k = 0; k < 4; k++)
+                            Assert.AreEqual(tile[ti + k], full[fi + k], $"tile({tx},{ty}) px({sx},{sy}) ch{k}");
+                    }
+            }
+            // 地形不透明：alpha 全 255（抽 4096 点）
+            for (int k = 0; k < 4096; k++)
+                Assert.AreEqual(255, full[(long)k * 997 % (full.Length / 4) * 4 + 3], $"alpha@{k}");
+        }
+
+        [Test]
+        public void Test24f_HostCanvas_PlayOps()
+        {
+            var L = new WbDrawList();
+            L.Tag("save");
+            L.Tag("setTransform", 2, 0, 0, 2, 0, 0);          // ×2 基变换（render.ts L1250 同构）
+            L.Fill("#ff0000", 0, 0, 2, 1);                    // 设备 4×2
+            L.Tag("restore");
+            L.Fill("#0000ff", 6, 0, 1, 1);                    // 恒等变换下独立蓝点
+            L.Tag("save");
+            L.Tag("translate", 1, 0);
+            L.Clear(0, 0, 1, 1);                              // 变换后清除 (1,0)
+            L.Tag("restore");
+            var cv = new WbHostCanvas(8, 8);
+            cv.PlayOps(L);
+            long i00 = (0L * 8 + 0) * 4, i30 = (0L * 8 + 3) * 4, i40 = (0L * 8 + 4) * 4;
+            Assert.AreEqual(255, cv.Px[i00]); Assert.AreEqual(255, cv.Px[i00 + 3]);       // 红块起
+            Assert.AreEqual(255, cv.Px[i30]);                                             // 红块终（4 宽）
+            Assert.AreEqual(0, cv.Px[i40 + 3]);                                           // 出块透明
+            long i60 = (0L * 8 + 6) * 4;
+            Assert.AreEqual(255, cv.Px[i60 + 2]); Assert.AreEqual(255, cv.Px[i60 + 3]);   // 蓝点
+            long i10 = (0L * 8 + 1) * 4;
+            Assert.AreEqual(0, cv.Px[i10 + 3]);                                           // clearRect 清掉 (1,0)
+            // restore 后 CTM 复位（Identity）——后续 op 不残留基变换
+            Assert.AreEqual(1.0, cv.Ctm.A);
+            // 未知 op 抛
+            var cv2 = new WbHostCanvas(2, 2);
+            Assert.Throws<InvalidOperationException>(
+                () => cv2.PlayOp(new WbDrawOp { o = "arc", a = new double[0], s = null }));
+        }
     }
 }

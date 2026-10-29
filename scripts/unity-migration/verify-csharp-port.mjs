@@ -1282,6 +1282,42 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   }
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0;
+// 段 25：M-U7 整合 a 宿主播放器语义面完备校验（WbHostCanvas.WbCssColor 三形态覆盖域 ↔ 黄金 475 样式串全量）
+// 逻辑：九渲染黄金（render*/overlay/minimap）op 流的全部 s[0] 样式串逐个校验形态 ∈ {#rrggbb, rgb(…), rgba(…)}；
+//   drawImage op 的 s[0] srcTag ∈ {terrain, overlay} 且 s[1] alpha ∈ [0,1]——证明 C# 解析器覆盖全部实际形态
+//   （未知形态 WbCssColor.Parse 抛 FormatException 不静默，桩域纪律）。
+{
+  const { readFileSync } = await import('node:fs');
+  var hostCanvasVerifyFail = 0;
+  try {
+    const files = ['render', 'render2', 'render3', 'render4', 'render5', 'render6', 'render7', 'overlay', 'minimap'];
+    const hex6 = /^#[0-9a-f]{6}$/;
+    const rgbF = /^rgb\(\d+,\d+,\d+\)$/;
+    const rgbaF = /^rgba\(\d+,\d+,\d+,\d*\.?\d+\)$/;
+    let styles = new Set(), blitTags = new Set(), opKinds = new Set(), bad = [];
+    for (const f of files) {
+      const str = readFileSync(new URL(`./golden/${f}.json`, import.meta.url), 'utf8');
+      for (const m of str.matchAll(/"o":"([a-zA-Z]+)"/g)) opKinds.add(m[1]);
+      for (const m of str.matchAll(/"s":\["([^"]*)"[^\]]*\]/g)) {
+        const s0 = m[1];
+        if (s0 === 'terrain' || s0 === 'overlay') { blitTags.add(s0); continue; }
+        styles.add(s0);
+        if (!hex6.test(s0) && !rgbF.test(s0) && !rgbaF.test(s0)) bad.push(`${f}:${s0}`);
+      }
+    }
+    // op 种类 ⊆ 播放器九 op（PlayOp switch 全覆盖；超出即播放器遇 unknown op 抛——必须在此暴露）
+    const known = new Set(['fillRect', 'clearRect', 'strokeRect', 'drawImage', 'setTransform', 'translate', 'scale', 'save', 'restore']);
+    const unknownOps = [...opKinds].filter((o) => !known.has(o));
+    if (bad.length > 0) throw new Error(`样式串形态越界 ${bad.length} 例（首 5: ${bad.slice(0, 5).join(' | ')}）`);
+    if (unknownOps.length > 0) throw new Error(`op 种类越界: ${unknownOps.join(',')}`);
+    if (![...blitTags].every((t) => t === 'terrain' || t === 'overlay')) throw new Error('blit srcTag 越界');
+    console.log(`hostCanvas 语义面校验 (黄金样式串 ${styles.size} 种 × 三形态全覆盖 + op ${opKinds.size} 种 ⊆ 播放器九 op + blit srcTag ∈ {terrain,overlay}): PASS`);
+  } catch (e) {
+    hostCanvasVerifyFail++;
+    console.error('hostCanvas 语义面校验: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);

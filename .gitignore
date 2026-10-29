@@ -59,3 +59,10 @@ server.log
 .zscripts/*.rate
 # Skills directory
 /skills/tool-results/
+# dotnet 编译产物（Task 133 重清理：obj-core/obj-tests 沙箱回滚后复发跟踪）
+unity/pixel-world-box/obj-core/
+unity/pixel-world-box/obj-tests/
+unity/pixel-world-box/bin/
+unity/pixel-world-box/bin-tests/
+# 沙箱工具临时产物
+/tool-results/
