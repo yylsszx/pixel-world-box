@@ -2002,6 +2002,8 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                         startTick = wd["startTick"]?.Value<int>() ?? 0,
                         startYear = wd["startYear"]?.Value<int>() ?? 0,
                         total = wd["total"]?.Value<bool>() ?? false,
+                        scoreA = wd["scoreA"]?.Value<double>() ?? 0, // M-U3f recentVictory 窗口判定域（CVT55）
+                        scoreB = wd["scoreB"]?.Value<double>() ?? 0,
                         giveUpAt = wd["giveUpAt"]?.Value<int>() ?? 0,
                         reason = wd["reason"]?.ToString() ?? "border",
                         reasonText = wd["reasonText"]?.ToString() ?? "",
@@ -2016,20 +2018,38 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             if (sc["fixture"]["armies"] != null)
                 foreach (var ar in (sc["fixture"]["armies"] as JArray ?? new JArray()))
                 {
+                    // gen mkArmy 同构全字段（缺字段 = 状态机门控漂移 → rng 流断裂，ARM10 类）
+                    var members = new List<int>();
+                    if (ar["members"] != null) foreach (var m in (JArray)ar["members"]) members.Add(m.Value<int>());
                     var a = new WbArmy
                     {
                         id = ar["id"].Value<int>(), civ = ar["civ"].Value<int>(),
                         name = ar["name"]?.ToString() ?? $"A{ar["id"].Value<int>()}",
-                        leaderId = ar["leaderId"]?.Value<int>() ?? -1,
+                        leaderId = ar["leaderId"]?.Value<int>() ?? -1, // civtick gen mkArmy 契约：无 members[0] 回退（与 army 域不同）
                         x = ar["x"]?.Value<double>() ?? 0, y = ar["y"]?.Value<double>() ?? 0,
                         tx = ar["tx"]?.Value<double>() ?? ar["x"]?.Value<double>() ?? 0,
                         ty = ar["ty"]?.Value<double>() ?? ar["y"]?.Value<double>() ?? 0,
                         state = ar["state"]?.ToString() ?? "rally", morale = ar["morale"]?.Value<double>() ?? 1,
                         kills = ar["kills"]?.Value<double>() ?? 0, losses = ar["losses"]?.Value<double>() ?? 0,
                         tactical = ar["tactical"]?.Value<bool>() ?? false,
+                        formedTick = ar["formedTick"]?.Value<long>() ?? 0,
+                        size0 = ar["size0"]?.Value<int>() ?? members.Count,
+                        evalTick = ar["evalTick"]?.Value<long>() ?? 0,
+                        targetCiv = ar["targetCiv"]?.Value<int>() ?? -1,
+                        rot = ar["rot"]?.Value<double>() ?? 0,
                     };
-                    if (ar["members"] != null) foreach (var m in (JArray)ar["members"]) a.members.Add(m.Value<int>());
+                    if (ar["clashWith"] != null && ar["clashWith"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.clashWith = ar["clashWith"].Value<int>();
+                    if (ar["naval"] != null && ar["naval"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.naval = ar["naval"].Value<bool>();
+                    if (ar["ambush"] != null && ar["ambush"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.ambush = ar["ambush"].Value<bool>();
+                    if (ar["battleSize0"] != null && ar["battleSize0"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.battleSize0 = ar["battleSize0"].Value<int>();
+                    if (ar["marchPushTick"] != null && ar["marchPushTick"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.marchPushTick = ar["marchPushTick"].Value<long>();
+                    if (ar["supplyWarned"] != null && ar["supplyWarned"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.supplyWarned = ar["supplyWarned"].Value<bool>();
+                    if (ar["reinforced"] != null && ar["reinforced"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.reinforced = ar["reinforced"].Value<int>();
+                    if (ar["battleSince"] != null && ar["battleSince"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.battleSince = ar["battleSince"].Value<long>();
+                    a.members.AddRange(members);
                     w.armies.Add(a);
+                    foreach (int uid in a.members) if (w.unitById.TryGetValue(uid, out var mu)) mu.army = a.id;
+                    w.armySeq = System.Math.Max(w.armySeq, a.id + 1);
                 }
             if (sc["fixture"]["emIdeas"] != null)
                 foreach (var id_ in (sc["fixture"]["emIdeas"] as JArray ?? new JArray()))
@@ -2079,7 +2099,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                     w.buildings.Add(bb);
                     w.bIdx[i] = w.buildings.Count - 1;
                     w.building[i] = (byte)kind;
-                    w.bHp[i] = WbCivSim.BUILDING_DEFS[kind].hp;
+                    w.BhpSet(i, WbCivSim.BUILDING_DEFS[kind].hp);
                     var civ = WbCivSim.CivAt(w, civId);
                     if (civ != null && kind != WbCivSim.BUILD_KINDS.WALL) civ.houses++;
                 }
@@ -2089,11 +2109,12 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             var traces = (sc["traces"] as JArray ?? new JArray());
             bool hostTicks = sc["fixture"]["hostTicks"] != null && sc["fixture"]["hostTicks"].Type != JTokenType.Null && sc["fixture"]["hostTicks"].Value<bool>();
             var issues = sc["fixture"]["issue"] as JArray ?? new JArray();
-            var funds = (JArray)(sc["fixture"]["fund"] ?? new JArray());
+            var funds = sc["fixture"]["fund"] as JArray ?? new JArray(); // JSON null→空（gen sc.fund ?? [] 同构）
             for (int t = 0; t < traces.Count; t++)
             {
                 var want = (JObject)traces[t];
                 if (w.tickCount % 5 == 0) WbCivSim.RebuildCivBuildCounts(w);
+                int evWatermark = w.eventSeq; // 本 tick 新增事件 id 下界（gen newEvents = worldEvents.filter(id >= __lastEventId) 同构）
                 WbCivSim.CivsTick(w);
                 if (hostTicks)
                 {
@@ -2112,7 +2133,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                     if (w.tickCount % 300 == 23) WbCivSim.AllianceTick(w);
                 }
                 w.tickCount++;
-                AssertTrace(w, want, name, t);
+                AssertTrace(w, want, name, t, evWatermark);
             }
         }
 
@@ -2140,7 +2161,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             w.unitById[u.id] = u;
         }
 
-        private static void AssertTrace(WbWorld w, JObject want, string name, int t)
+        private static void AssertTrace(WbWorld w, JObject want, string name, int t, int evWatermark)
         {
             string ctx = $"{name} tick{t}";
             Assert.AreEqual((uint)want["rngA"].Value<long>(), w.rngA, $"{ctx} rngA");
@@ -2216,11 +2237,13 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
 
             // bHp / civBuildCounts / marketIdx
             var wantHp = (want["bHp"] as JArray ?? new JArray());
-            Assert.AreEqual(wantHp.Count, w.bHp.Count, $"{ctx} bHp count");
-            var hpSorted = new List<KeyValuePair<int, double>>(w.bHp);
-            hpSorted.Sort((a, b) => a.Key.CompareTo(b.Key)); // JS Map 迭代序 = 插入序；C# Dict 无序 → 键序对账（黄金插入序即键增序近似——回放重放插入序）
-            for (int k = 0; k < wantHp.Count; k++)
-                Assert.AreEqual(wantHp[k][0].Value<int>(), hpSorted[k].Key, $"{ctx} bHp[{k}] key");
+            var hpKeys = w.bHpKeys.Where(k => w.bHp.ContainsKey(k)).ToList(); // JS Map 插入序台账（黄金 bHp = Map dump 序）
+            Assert.AreEqual(wantHp.Count, hpKeys.Count, $"{ctx} bHp count");
+            for (int k = 0; k < wantHp.Count && k < hpKeys.Count; k++)
+            {
+                Assert.AreEqual(wantHp[k][0].Value<int>(), hpKeys[k], $"{ctx} bHp[{k}] key");
+                Assert.AreEqual(wantHp[k][1].Value<double>(), w.bHp[hpKeys[k]], $"{ctx} bHp[{k}] value");
+            }
             var wantCounts = (want["civBuildCounts"] as JArray ?? new JArray());
             Assert.AreEqual(wantCounts.Count, w.civBuildCounts.Count, $"{ctx} civBuildCounts count");
             foreach (var kv in WantCountsDict(want))
@@ -2258,13 +2281,15 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             }
 
             // newEvents（id/year/kind/text/colorHex/x/y bits）
+            // gen 协议（gen-units-civtick L322）：newEvents = worldEvents.filter(id >= 水位线) —— 本 tick 新增，非全量；
+            // worldEvents unshift 新在前 → filter 保序 = 新在前（golden [0] = 本 tick 最后产生）——C# 同序直对直
             var wantEv = (want["newEvents"] as JArray ?? new JArray());
-            Assert.AreEqual(wantEv.Count, w.worldEvents.Count, $"{ctx} newEvents count");
-            for (int e = 0; e < wantEv.Count; e++)
+            var addedEv = w.worldEvents.Where(e => e.id >= evWatermark).ToList();
+            Assert.AreEqual(wantEv.Count, addedEv.Count, $"{ctx} newEvents count");
+            for (int e = 0; e < wantEv.Count && e < addedEv.Count; e++)
             {
                 var we = (JObject)wantEv[e];
-                // worldEvents unshift：新在前 —— want newEvents 按产生序 → 对齐 worldEvents 尾部
-                var ge = w.worldEvents[w.worldEvents.Count - wantEv.Count + e];
+                var ge = addedEv[e];
                 Assert.AreEqual(we["id"].Value<int>(), ge.id, $"{ctx} ev{e} id");
                 Assert.AreEqual(we["kind"].ToString(), ge.kind, $"{ctx} ev{e} kind");
                 Assert.AreEqual(we["text"].ToString(), ge.text, $"{ctx} ev{e} text");
@@ -2518,8 +2543,11 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
         private static Dictionary<string, JArray> WantCountsDict(JObject want)
         {
             var d = new Dictionary<string, JArray>();
-            foreach (var kv in (JObject)want["civBuildCounts"])
-                d[kv.Key] = (JArray)kv.Value;
+            // 黄金 civBuildCounts = Map dump（85/85 空数组）——仅对象形状才逐键对账，数组/缺失→空表（count 断言由调用方 L2226 承担）
+            var cb = want["civBuildCounts"];
+            if (cb != null && cb.Type == JTokenType.Object)
+                foreach (var kv in (JObject)cb)
+                    d[kv.Key] = (JArray)kv.Value;
             return d;
         }
 
@@ -2582,6 +2610,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
         private void RunArmyScenario(Newtonsoft.Json.Linq.JObject sc)
         {
             string name = sc["name"].ToString();
+            WbCivSim.ClearTechModCache(); // 静态科技缓存跨场景污染防护（gen 每场景 fresh engine 同构；ARM10 robotics 类）
             var w = new WbWorld();
             w.rngA = unchecked((uint)sc["rngA0"].Value<long>());
             w.toastSeq = sc["toastSeq0"].Value<int>();
@@ -2652,7 +2681,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                     int i = b[0].Value<int>(), kind = b[1].Value<int>(), civ = b[2].Value<int>();
                     w.buildings.Add(new WbBuilding { i = i, x = i % WbWorld.W, y = i / WbWorld.W, kind = kind, civ = civ });
                     w.building[i] = (byte)kind;
-                    w.bHp[i] = WbCivSim.BUILDING_DEFS[kind].hp;
+                    w.BhpSet(i, WbCivSim.BUILDING_DEFS[kind].hp);
                     var cw = w.civs[civ];
                     if (cw != null && kind != WbCivSim.BUILD_KINDS.WALL) cw.houses++;
                 }
@@ -2712,6 +2741,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             var traces = (sc["traces"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray());
             for (int k = 0; k < traces.Count; k++)
             {
+                int evWatermark = w.eventSeq; // 本 tick 新增下界（gen filter(id >= __lastEventId) 同构；worldEvents 累积不清）
                 if (w.tickCount % 5 == 0) WbCivSim.ArmyTick(w);   // 宿主协议 engine L2561
                 w.tickCount++;
                 var want = (Newtonsoft.Json.Linq.JObject)traces[k];
@@ -2770,9 +2800,10 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                     Assert.AreEqual(ww["battles"].Value<int>(), gw.battles, $"{name} t{k} {ww["key"]} battles");
                 }
                 var wantEv = (want["newEvents"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray());
-                Assert.AreEqual(wantEv.Count, w.worldEvents.Count, $"{name} t{k} events n got=[{string.Join(",", w.worldEvents.Select(e => e.kind))}]");
-                for (int i = 0; i < wantEv.Count; i++)
-                    Assert.AreEqual(wantEv[i]["kind"].ToString(), w.worldEvents[i].kind, $"{name} t{k} ev{i} kind");
+                var addedEv = w.worldEvents.Where(e => e.id >= evWatermark).ToList(); // 本 tick 新增（新在前，golden 同序）
+                Assert.AreEqual(wantEv.Count, addedEv.Count, $"{name} t{k} events n got=[{string.Join(",", addedEv.Select(e => e.kind))}]");
+                for (int i = 0; i < wantEv.Count && i < addedEv.Count; i++)
+                    Assert.AreEqual(wantEv[i]["kind"].ToString(), addedEv[i].kind, $"{name} t{k} ev{i} kind");
                 ArmyHexEq(want["shake"], w.shake, $"{name} t{k} shake");
                 Assert.AreEqual(want["corpses"].Count(), w.corpses.Count, $"{name} t{k} corpses n");
             }
@@ -2841,6 +2872,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             if (ar["marchPushTick"] != null && ar["marchPushTick"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.marchPushTick = ar["marchPushTick"].Value<int>();
             if (ar["battleSince"] != null && ar["battleSince"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.battleSince = ar["battleSince"].Value<int>();
             if (ar["reinforced"] != null && ar["reinforced"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.reinforced = ar["reinforced"].Value<int>();
+            if (ar["supplyWarned"] != null && ar["supplyWarned"].Type != Newtonsoft.Json.Linq.JTokenType.Null) a.supplyWarned = ar["supplyWarned"].Value<bool>();
             foreach (var m in (Newtonsoft.Json.Linq.JArray)ar["members"]) a.members.Add(m.Value<int>());
             w.armies.Add(a);
             foreach (int uid in a.members) if (w.unitById.TryGetValue(uid, out var u)) u.army = a.id;
@@ -2893,10 +2925,12 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                     Assert.AreEqual(sarr.Count, gop.s.Length, ctx + $" op[{k}] s 元素数");
                     for (int j = 0; j < sarr.Count; j++)
                     {
-                        if (sarr[j].Type == Newtonsoft.Json.Linq.JTokenType.String)
-                            Assert.AreEqual(sarr[j].ToString(), gop.s[j] is string sstr ? sstr : Convert.ToString(gop.s[j], System.Globalization.CultureInfo.InvariantCulture), ctx + $" op[{k}].s[{j}] 样式串");
+                        if (sarr[j].Type == Newtonsoft.Json.Linq.JTokenType.String && gop.s[j] is string sstr)
+                            Assert.AreEqual(sarr[j].ToString(), sstr, ctx + $" op[{k}].s[{j}] 样式串");
+                        else if (sarr[j].Type == Newtonsoft.Json.Linq.JTokenType.String)
+                            Assert.AreEqual(JHexD(sarr[j]), Convert.ToDouble(gop.s[j]), ctx + $" op[{k}].s[{j}] f64hex↔数值双格式（render2 家族 hex / render5 家族数值）");
                         else
-                            Assert.AreEqual(sarr[j].Value<double>(), (double)gop.s[j], ctx + $" op[{k}].s[{j}] lineWidth");
+                            Assert.AreEqual(sarr[j].Value<double>(), Convert.ToDouble(gop.s[j]), ctx + $" op[{k}].s[{j}] lineWidth");
                     }
                 }
             }
@@ -2923,6 +2957,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
         [Test]
         public void Test11_Render_Golden()
         {
+            WbRender.ResetClearMachine(); // 黄金重放 = 独立 gen 进程 fresh 态（清屏机/太阳缓存，下同）
             var golden = LoadJson<Newtonsoft.Json.Linq.JObject>("render.json");
             var terrain = (Newtonsoft.Json.Linq.JArray)golden["terrain"];
             var props = (Newtonsoft.Json.Linq.JArray)golden["props"];
@@ -3420,7 +3455,8 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                     foreach (var r in (sc["reseed"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                     {
                         var row = (Newtonsoft.Json.Linq.JArray)r;
-                        uint got = WbSave.ReseedRng(row[0].Value<int>(), row[1].Value<int>());
+                        // 种子域 = JS number（含 0xFFFFFFFF 级 uint 值）—— long 宽读 + unchecked int32 收缩（XOR 前蓝本 ToInt32 语义）
+                        uint got = WbSave.ReseedRng(unchecked((int)row[0].Value<long>()), unchecked((int)row[1].Value<long>()));
                         Assert.AreEqual(row[2].ToString(), "0x" + got.ToString("x8"), $"ReseedRng({row[0]},{row[1]})");
                     }
                 }
@@ -3513,10 +3549,12 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                     Assert.AreEqual(sarr.Count, gop.s.Length, ctx + $" op[{k}] s 元素数");
                     for (int j = 0; j < sarr.Count; j++)
                     {
-                        if (sarr[j].Type == Newtonsoft.Json.Linq.JTokenType.String)
-                            Assert.AreEqual(sarr[j].ToString(), gop.s[j] is string sstr ? sstr : Convert.ToString(gop.s[j], System.Globalization.CultureInfo.InvariantCulture), ctx + $" op[{k}].s[{j}] 样式串");
+                        if (sarr[j].Type == Newtonsoft.Json.Linq.JTokenType.String && gop.s[j] is string sstr)
+                            Assert.AreEqual(sarr[j].ToString(), sstr, ctx + $" op[{k}].s[{j}] 样式串");
+                        else if (sarr[j].Type == Newtonsoft.Json.Linq.JTokenType.String)
+                            Assert.AreEqual(JHexD(sarr[j]), Convert.ToDouble(gop.s[j]), ctx + $" op[{k}].s[{j}] f64hex↔数值双格式（render2 家族 hex / render5 家族数值）");
                         else
-                            Assert.AreEqual(sarr[j].Value<double>(), (double)gop.s[j], ctx + $" op[{k}].s[{j}] lineWidth");
+                            Assert.AreEqual(sarr[j].Value<double>(), Convert.ToDouble(gop.s[j]), ctx + $" op[{k}].s[{j}] lineWidth");
                     }
                 }
             }
@@ -3558,6 +3596,17 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
 
         private JObject ScenarioInput(string name) => (JObject)_gold["inputs"][name].DeepClone();
 
+        /// nature.initPlates 的 plateN 派生（nature.ts L93-95：mulberry32(seed ^ 0x51ab7) 首抽 × 3 + 5）——
+        /// 宿主域常量（黄金 lifted 不含 plateN；applySave 板块恢复分支门 = pcx.Count == plateN）
+        private static int PlateNOf(int seed)
+        {
+            uint rs = unchecked((uint)(seed ^ 0x51ab7));
+            double r0 = WbRng.Mulberry32Next(ref rs);
+            return 5 + (int)(r0 * 3);
+        }
+
+        /// MkHost + 场景种子派生 PlateN（Test16/17 applySave 板块恢复分支前置）
+
         [Test]
         public void Test16_SaveRestore_Golden()
         {
@@ -3565,7 +3614,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             foreach (var sc in (JArray)_gold["scenarios"]) scenByName[(string)sc["name"]] = (JObject)sc;
 
             // —— R-legacy：容器恢复全分支 richest 场景 ——
-            var hostL = MkHost();
+            var hostL = MkHost(); hostL.PlateN = PlateNOf((int)ScenarioInput("R-legacy")["seed"]);
             foreach (var row in (JArray)scenByName["R-legacy"]["techMods"])
                 hostL.TechMods.Add(new[] { row[0].Value<double>(), BitsOf2(row[1].ToString()), BitsOf2(row[2].ToString()) });
             var stL = WbSave2.ApplySave(ScenarioInput("R-legacy"), hostL);
@@ -3624,12 +3673,13 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             Assert.AreEqual(640, hostL.AshCells, "灰烬场格数 AW×AH=32×20");
             Assert.AreEqual(2, stL.Nature.AshF.Count, "ashF 越界行（ci=640）剔除");
             Assert.AreEqual("running", stL.WorldWar["phase"].ToString());
-            CollectionAssert.AreEqual(new[] { 0, 1, 3 }, stL.WorldWar["belligerents"].Select(t => (int)t).ToArray(), "belligerents typeof number 过滤（3.5 → 3）");
+            // 蓝本 filter(typeof number) 不截断——黄金 R-legacy belligerents = [0,1,3.5]（原硬编码 [0,1,3] 系测试笔误，2026-10-29 修正）
+            CollectionAssert.AreEqual(((JArray)gL["worldWar"]["belligerents"]).Select(t => t.Value<double>()).ToArray(), stL.WorldWar["belligerents"].Select(t => t.Value<double>()).ToArray(), "belligerents typeof number 过滤（3.5 保真）");
             Assert.AreEqual(-600, stL.WwNuke, "wwTimers 复位");
             Assert.AreEqual(0, stL.Shake, "瞬态清空");
 
             // —— R-v1：trk/job legacy 迁移 ——
-            var hostV1 = MkHost();
+            var hostV1 = MkHost(); hostV1.PlateN = PlateNOf((int)ScenarioInput("R-v1")["seed"]);
             foreach (var row in (JArray)scenByName["R-v1"]["techMods"])
                 hostV1.TechMods.Add(new[] { row[0].Value<double>(), BitsOf2(row[1].ToString()), BitsOf2(row[2].ToString()) });
             var stV1 = WbSave2.ApplySave(ScenarioInput("R-v1"), hostV1);
@@ -3639,7 +3689,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             // —— units41 全量逐位（42 列直读协议；unitsToRows 同构）——
             foreach (var name in new[] { "R-fixture", "R-legacy", "R-v1" })
             {
-                var host = MkHost();
+                var host = MkHost(); host.PlateN = PlateNOf((int)ScenarioInput(name)["seed"]);
                 foreach (var row in (JArray)scenByName[name]["techMods"])
                     host.TechMods.Add(new[] { row[0].Value<double>(), BitsOf2(row[1].ToString()), BitsOf2(row[2].ToString()) });
                 var st = WbSave2.ApplySave(ScenarioInput(name), host);
@@ -3653,7 +3703,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             // —— W 组：unitsToRows 写方向（serialize save.u 对账）——
             foreach (var name in new[] { "W-fixture", "W-legacy" })
             {
-                var host = MkHost();
+                var host = MkHost(); host.PlateN = PlateNOf((int)ScenarioInput(name)["seed"]);
                 var st = WbSave2.ApplySave(ScenarioInput(name), host);
                 var rows = WbSave2.UnitsToRows(st.Units);
                 Assert.IsTrue(JToken.DeepEquals((JArray)scenByName[name]["save"]["u"], rows), $"{name} save.u 42 列逐位");
@@ -3662,7 +3712,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             // —— X 组：rowToTrigger 抛错文案逐字 ——
             foreach (var name in new[] { "X-trigger-len", "X-trigger-cond", "X-trigger-condkind", "X-trigger-action" })
             {
-                var host = MkHost();
+                var host = MkHost(); host.PlateN = PlateNOf((int)ScenarioInput(name)["seed"]);
                 Exception caught = null;
                 try { WbSave2.ApplySave(ScenarioInput(name), host); }
                 catch (Exception e) { caught = e; }
@@ -3681,7 +3731,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             foreach (var sc in (JArray)gold3["scenarios"])
             {
                 string name = (string)sc["name"];
-                var host = MkHost();
+                var host = MkHost(); host.PlateN = PlateNOf((int)sc["input"]["seed"]);
                 var hn = sc["hostNat"];
                 host.HookPlateCx = ((JArray)hn["plateCx"]).Select(t => t.Value<double>()).ToArray();
                 host.HookPlateCy = ((JArray)hn["plateCy"]).Select(t => t.Value<double>()).ToArray();
@@ -3701,11 +3751,39 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             Assert.AreEqual(6, n, "save3 场景数");
         }
 
+        private static string JsonDiffPath(JToken a, JToken b)
+        {
+            if (JToken.DeepEquals(a, b)) return "";
+            if (a == null || b == null || a.Type != b.Type) return $"{a?.Type.ToString() ?? "null"} vs {b?.Type.ToString() ?? "null"}";
+            if (a is JObject oa && b is JObject ob)
+            {
+                var keys = oa.Properties().Select(p => p.Name).Union(ob.Properties().Select(p => p.Name));
+                foreach (var k in keys)
+                {
+                    var sub = JsonDiffPath(oa[k], ob[k]);
+                    if (sub != "") return $".{k}{sub}";
+                }
+                return "?(obj keys equal?)";
+            }
+            if (a is JArray aa && b is JArray ab)
+            {
+                int m = System.Math.Max(aa.Count, ab.Count);
+                for (int i = 0; i < m; i++)
+                {
+                    var sub = JsonDiffPath(i < aa.Count ? aa[i] : null, i < ab.Count ? ab[i] : null);
+                    if (sub != "") return $"[{i}]{sub}";
+                }
+                return "?(arr equal?)";
+            }
+            return $": {a} vs {b}";
+        }
+
         /// M-U7a 渲染接线 I 黄金回放（render5.json 88 场景 → UnitScene bail→WbSprites 直调全展开 op 流逐位）
         /// 重建协议与 Test11 RunUnitScenario 同构（f64hex→double / civs color int[3] / terrainAt 门控 tile）
         [Test]
         public void Test18_Render5_Golden()
         {
+            WbRender.ResetClearMachine(); // gen-render5 独立进程 fresh 态
             var gold5 = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(FindGolden2("render5.json")));
             int n = 0;
             foreach (var sc in (Newtonsoft.Json.Linq.JArray)gold5["scenarios"])
@@ -3796,7 +3874,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             foreach (var sc in (Newtonsoft.Json.Linq.JArray)gold6["scens"])
             {
                 string name = sc["name"].ToString();
-                var ops = (sc["in"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray())["ops"];
+                var ops = sc["in"]["ops"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray(); // in={ops:[...]} 对象域
                 var outs = (sc["out"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray());
                 WbEmergence.InvalidateVisCache();                        // 场景隔离（gen vcScene 首行全清）
                 var refs = new System.Collections.Generic.Dictionary<int, WbVisCache>();
@@ -3873,6 +3951,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
         [Test]
         public void Test20_Render7_Golden()
         {
+            WbRender.ResetClearMachine(); // gen-render7 独立进程 fresh 态
             var gold7 = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(FindGolden2("render7.json")));
             int n = 0;
             foreach (var sc in (Newtonsoft.Json.Linq.JArray)gold7["scenarios"])

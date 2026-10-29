@@ -122,6 +122,7 @@ namespace PixelWorldBox.Wb
         public Dictionary<string, JObject> EmTechs = new Dictionary<string, JObject>();
         public Dictionary<string, JObject> EmIdeas = new Dictionary<string, JObject>();
         public Dictionary<int, JObject> DynRaces = new Dictionary<int, JObject>();     // info
+        public List<int> DynRacesKeys = new List<int>();   // JS Map 插入序台账（serialize dyn.races 行序 = 注册表恢复序，2026-10-29）
         public Dictionary<int, JObject> RacesOut = new Dictionary<int, JObject>();     // 注册表（host 克隆 + dyn 重注册 + rmods 补丁）
         public List<int> CivRaces = new List<int>();
         public Dictionary<int, JObject> EmergentWeapons = new Dictionary<int, JObject>();
@@ -177,6 +178,11 @@ namespace PixelWorldBox.Wb
             if (!JIsNum(t, out double v)) return d;
             return v != 0 ? v : d;
         }
+        /// <summary>JS ?? 语义（nullish：0/NaN 是合法值不回退——JNumOr 的 || 语义误伤 0 值域）</summary>
+        private static double JNumNullish(JToken t, double d)
+        {
+            return JIsNum(t, out double v) ? v : d;
+        }
         /// <summary>Number(v) || 0</summary>
         private static double JNum0(JToken t) => JNumOr(t, 0);
         /// <summary>x | 0（ToUint 域内截断；JS ToInt32 域内值等价 C# (int) 截断）</summary>
@@ -200,9 +206,20 @@ namespace PixelWorldBox.Wb
         private static double JClamp(double v, double lo, double hi) => Math.Max(lo, Math.Min(hi, v));
         private static JObject JClone(JToken t) => t == null ? null : (JObject)t.DeepClone();
         private static JArray JArrClone(JToken t) => t == null ? null : (JArray)t.DeepClone();
-        private static bool JTruthy(JToken t) =>
-            t != null && t.Type != JTokenType.Null && t.Type != JTokenType.Undefined &&
-            !(t.Type == JTokenType.Boolean && !(bool)t);
+        private static bool JTruthy(JToken t)
+        {
+            // JS 真值语义全档：false/0/NaN/''/null/undefined → falsy；对象/数组 → truthy
+            // （原实现只挡 Boolean false 与 null——Integer 0 误判 truthy，als.bonded=0 → 1 即此根因，2026-10-29 修复）
+            if (t == null || t.Type == JTokenType.Null || t.Type == JTokenType.Undefined) return false;
+            switch (t.Type)
+            {
+                case JTokenType.Boolean: return (bool)t;
+                case JTokenType.Integer: return (long)t != 0;
+                case JTokenType.Float: { double d = (double)t; return d != 0 && !double.IsNaN(d); }
+                case JTokenType.String: return ((string)t).Length > 0;
+                default: return true;
+            }
+        }
 
         /// <summary>JS Math.floor(yearF)（startYear 兜底）</summary>
         private static int JFloor(double v) => (int)Math.Floor(v);
@@ -214,7 +231,10 @@ namespace PixelWorldBox.Wb
             JObject cond;
             try
             {
-                var condText = row[2] == null || row[2].Type == JTokenType.Null ? null : row[2].ToString(Newtonsoft.Json.Formatting.None);
+                // ⚠️ JValue(string).ToString(Formatting) 返回带引号 JSON 表示 → DeserializeObject 得字符串文档非对象 —— String 格必须 Value<string>() 原始串（2026-10-29 修复）
+                var condText = row[2] == null || row[2].Type == JTokenType.Null ? null
+                    : row[2].Type == JTokenType.String ? row[2].Value<string>()
+                    : row[2].ToString(Newtonsoft.Json.Formatting.None);
                 cond = condText == null ? null : Newtonsoft.Json.JsonConvert.DeserializeObject<JObject>(condText);
             }
             catch { throw new InvalidOperationException("存档触发器条件损坏"); }
@@ -574,6 +594,7 @@ namespace PixelWorldBox.Wb
 
             // —— 涌现层恢复：动态种族重注册（L15523-15596）——
             st.DynRaces.Clear();
+            st.DynRacesKeys.Clear();
             st.EmergentWeapons.Clear();
             st.Doctrines.Clear();
             st.Defenses.Clear();
@@ -623,6 +644,7 @@ namespace PixelWorldBox.Wb
                     if (ecoN == 1) eco = "pred"; else if (ecoN == 2) eco = "herb"; else if (ecoN == 3) eco = "neutral";
                     var info = new JObject { ["parent"] = parent, ["bornYear"] = 0, ["parent2"] = p2 > 0 ? (JToken)p2 : null, ["eco"] = eco, ["cap"] = null, ["uid"] = null };
                     if (JIsNum(row[11], out double capv) && capv > 0) info["cap"] = JRound(capv);
+                    if (!st.DynRaces.ContainsKey(id)) st.DynRacesKeys.Add(id);
                     st.DynRaces[id] = info;
                     bool isCiv = JIsNum(row[13], out double f2) ? ((int)f2 & 1) != 0 : JTruthy(pdef["isCiv"]);
                     if (isCiv && !st.CivRaces.Contains(id)) st.CivRaces.Add(id);
@@ -856,7 +878,8 @@ namespace PixelWorldBox.Wb
                 ww["endTick"] = wwSave["endTick"] != null && wwSave["endTick"].Type != JTokenType.Null ? (JToken)JInt(wwSave["endTick"]) : 0;
                 var bell = new JArray();
                 if (wwSave["belligerents"] is JArray bl)
-                    foreach (var t in bl) if (JIsNum(t, out _)) bell.Add((int)t);
+                    // 蓝本 filter(typeof number) 只滤类型不截断——3.5 保 Float（save3 W3-stormbliz 黄金 3.5 + save2 R-legacy 黄金 [0,1,3.5] 双证，2026-10-29 修正）
+                    foreach (var t in bl) if (JIsNum(t, out _)) bell.Add(t);
                 ww["belligerents"] = bell;
                 ww["pop0"] = wwSave["pop0"] is JObject p0 ? p0.DeepClone() : new JObject();
                 ww["kills"] = wwSave["kills"] != null && wwSave["kills"].Type != JTokenType.Null ? (JToken)JInt(wwSave["kills"]) : 0;
@@ -1067,11 +1090,15 @@ namespace PixelWorldBox.Wb
         /// <summary>visToTuple（emergence.ts L88）：序列化 13 元组（Math.round 半上）</summary>
         public static JArray VisToTuple(JObject v)
         {
+            // JS number 单域：Math.round 产出整值 f64，JSON.stringify 写整数形（88 非 88.0）——
+            // JToken 整值发射器保证 DeepEquals 逐位（2026-10-29 修复：Float/Integer 表示分歧）
+            JValue JIntLike(double x) => double.IsNaN(x) || double.IsInfinity(x) || Math.Floor(x) != x || Math.Abs(x) >= 9.007199254740992E15
+                ? new JValue(x) : new JValue((long)x);
             return new JArray
             {
-                JNum0(v["root"]), JNum0(v["hue"]), JRound(JNum0(v["lum"]) * 100), JRound(JNum0(v["size"]) * 100),
-                JRound(JNum0(v["bulk"]) * 100), JNum0(v["horns"]), JNum0(v["spikes"]), JNum0(v["mane"]),
-                JNum0(v["tail"]), JNum0(v["ears"]), JNum0(v["glow"]), JNum0(v["pattern"]), JNum0(v["crest"]),
+                JIntLike(JNum0(v["root"])), JIntLike(JNum0(v["hue"])), JIntLike(JRound(JNum0(v["lum"]) * 100)), JIntLike(JRound(JNum0(v["size"]) * 100)),
+                JIntLike(JRound(JNum0(v["bulk"]) * 100)), JIntLike(JNum0(v["horns"])), JIntLike(JNum0(v["spikes"])), JIntLike(JNum0(v["mane"])),
+                JIntLike(JNum0(v["tail"])), JIntLike(JNum0(v["ears"])), JIntLike(JNum0(v["glow"])), JIntLike(JNum0(v["pattern"])), JIntLike(JNum0(v["crest"])),
             };
         }
 
@@ -1175,11 +1202,11 @@ namespace PixelWorldBox.Wb
         /// <summary>normalizeWarInfo（L7180）：casusText/aggressor 兜底 + lastActiveTick = 恢复后 tickCount</summary>
         public static JObject NormalizeWarInfo(JObject w, WbSaveState st, WbSaveHost h)
         {
-            double aIdx = JNumOr(w["a"], -1), bIdx = JNumOr(w["b"], -1);
+            double aIdx = JNumNullish(w["a"], -1), bIdx = JNumNullish(w["b"], -1); // ?? 语义（a=0 合法，|| 语义误判缺失→civA null→casusText 脱靶）
             var civA = aIdx >= 0 && aIdx < st.Civs.Count ? st.Civs[(int)aIdx] : null;
             var civB = bIdx >= 0 && bIdx < st.Civs.Count ? st.Civs[(int)bIdx] : null;
             string reason = w["reason"] != null && w["reason"].Type == JTokenType.String ? (string)w["reason"] : (JTruthy(w["total"]) ? "annex" : "border");
-            double goal = JNumOr(w["goal"], 0);
+            double goal = JNumNullish(w["goal"], 0);
             bool bothAlive = civA != null && JTruthy(civA["alive"]) && civB != null && JTruthy(civB["alive"]);
             string reasonText;
             if (w["reasonText"] != null && w["reasonText"].Type != JTokenType.Null) reasonText = (string)w["reasonText"];

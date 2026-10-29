@@ -804,7 +804,8 @@ for (const sc of GOLD.props) {
   cmp(`${sc.name} bails`, JSON.stringify(L.bails), JSON.stringify(sc.bails));
 }
 for (const sc of GOLD.units) {
-  const L = unitScene(sc.in);
+  // M-U7a 接线后 render.json 单元域 = 直通黄金（gen-render unitDirect）→ 镜像走 direct 分支（mrr* 直调）
+  const L = unitScene(sc.in, true);
   cmp(`${sc.name} ops(${L.ops.length} vs ${sc.ops.length})`, JSON.stringify(L.ops), JSON.stringify(sc.ops));
   cmp(`${sc.name} bails`, JSON.stringify(L.bails), JSON.stringify(sc.bails));
 }

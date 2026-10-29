@@ -603,6 +603,17 @@ namespace PixelWorldBox.Wb
         static double sunLevel = 1, sunSx = 1, sunSy = 0.45, sunLen = 0.6;
         static string sunUnitShadowStyle = "rgba(12,9,6,0.24)";
 
+        // 宿主协议：重开渲染会话（新世界/读档/黄金重放）时模块态复位 ——
+        // 蓝本模块态随页面生命周期（gen 每个 golden 文件 = 独立进程 fresh 态同构），
+        // C# 宿主/测试侧显式复位（Task 122 备忘⑤ 模块级缓存重放端显式全清同款）
+        public static void ResetClearMachine()
+        {
+            lastWcClear = null;
+            sunCacheFrame = -1;
+            sunLevel = 1; sunSx = 1; sunSy = 0.45; sunLen = 0.6;
+            sunUnitShadowStyle = "rgba(12,9,6,0.24)";
+        }
+
         // engine.sunState（昼夜太阳：晨升午盛暮敛月弧破晓翻转）
         public static void SunState(double p, out double level, out double sx, out double sy, out double len)
         {

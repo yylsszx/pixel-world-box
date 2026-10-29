@@ -317,11 +317,15 @@ namespace PixelWorldBox.Wb
 
         // ---------------- 地图层 ----------------
         public byte[] terrain = new byte[W * H];
-        public short[] owner = new short[W * H];      // Int16Array fill(-1)
+        public short[] owner = NewFillI16();          // Int16Array fill(-1)（engine.ts L161）
         public byte[] building = new byte[W * H];
         public byte[] road = new byte[W * H];
-        public sbyte[] occCiv = new sbyte[W * H];     // Int8Array fill(-1)
+        public sbyte[] occCiv = NewFillI8();          // Int8Array fill(-1)（engine.ts L475）
         public byte[] occStr = new byte[W * H];
+
+        // TS Int16Array/Int8Array .fill(-1) 的 C# 等价（字段初始化器无法内联循环 → 静态工厂）
+        private static short[] NewFillI16() { var a = new short[W * H]; for (int i = 0; i < a.Length; i++) a[i] = -1; return a; }
+        private static sbyte[] NewFillI8() { var a = new sbyte[W * H]; for (int i = 0; i < a.Length; i++) a[i] = -1; return a; }
 
         // ---------------- 对象层 ----------------
         public List<WbCiv> civs = new List<WbCiv>();
@@ -330,6 +334,9 @@ namespace PixelWorldBox.Wb
         public List<WbBuilding> buildings = new List<WbBuilding>();
         public Dictionary<int, int> bIdx = new Dictionary<int, int>();       // tile → buildings 序号
         public Dictionary<int, double> bHp = new Dictionary<int, double>();  // f64 语义（engine bHp: Map<number, number>）
+        public List<int> bHpKeys = new List<int>();     // JS Map 插入序台账（set 已有键保位换值 / delete 摘除）——测试与未来迭代序消费域
+        public void BhpSet(int i, double v) { if (!bHp.ContainsKey(i)) bHpKeys.Add(i); bHp[i] = v; }
+        public bool BhpDel(int i) { bHpKeys.Remove(i); return bHp.Remove(i); }
         public Dictionary<int, int[]> civBuildCounts = new Dictionary<int, int[]>();
         public Dictionary<int, int> marketIdx = new Dictionary<int, int>();
 

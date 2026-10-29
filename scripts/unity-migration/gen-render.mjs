@@ -90,10 +90,12 @@ const BAIL_ARGS = {
   drawQuadFine: (a) => [a[1]?.x, a[1]?.y, a[3], a[4] ? 1 : 0],
 };
 const bailCalls = [];
+let unitDirect = false; // M-U7a 接线后单元场景直通模式：精灵真实现 ops 全记录（bail 折叠契约仅地形/道具域保留，2026-10-29）
 for (const k of Object.keys(spritesNs)) {
   if (typeof spritesNs[k] !== 'function') continue;
   const orig = spritesNs[k];
   spritesNs[k] = function (...args) {
+    if (unitDirect) return orig.apply(this, args); // 直通：不折叠不标 tag（真实现 ops 进 op 流）
     const ser = BAIL_ARGS[k] ? BAIL_ARGS[k](args) : (() => {
       const u = args[1];
       return u && typeof u === 'object' ? [u.x, u.y, typeof args[2] === 'number' ? args[2] : null] : [];
@@ -423,6 +425,7 @@ function unitScenario(name, opt) {
   eng.fxPrefs = { fxDensity: 1, ambience: false, riverFlow: false, dayNight: !!opt.dayNight, hpBars: !!opt.hpBars, battleFlash: false, blood: true, corpses: true, dmgNumbers: true };
   eng.selectedId = opt.selected ? 1 : 0;
   bailCalls.length = 0;
+  unitDirect = true;  // 单元场景直通（M-U7a 后 C# WbRender.UnitScene 直调 WbSprites 全展开）
   const screen = mkCanvas(1024, 640).getContext();
   const n0 = eng.worldCtx.ops.length;
   renderMod.render(eng, screen, 1024, 640);
@@ -549,14 +552,15 @@ function findS(list, name) { const s = list.find((x) => x.name === name); if (!s
   const u1 = findS(unitScen, 'U01_person_mid');
   ok(nRect(u1) >= 5, `U01 人形中档 ≥5 rect got ${nRect(u1)}`);
   ok(u1.bails.length === 0, 'U01 无 bail');
-  ok(findS(unitScen, 'U17_person_fine_bail').bails.some((b) => b.fn === 'drawPersonFine'), 'U17 fine bail');
-  ok(findS(unitScen, 'U19_person_full_bail').bails.some((b) => b.fn === 'drawPerson'), 'U19 full bail');
-  ok(findS(unitScen, 'U21_boat_bail').bails.some((b) => b.fn === 'drawBoat'), 'U21 boat bail');
-  ok(findS(unitScen, 'U22_caravan_bail').bails.some((b) => b.fn === 'drawCaravan'), 'U22 caravan bail');
+  // M-U7a 接线后单元域直通：bail 折叠契约退役 → 精灵真实现 ops 全展开（bails 恒空）
+  ok(findS(unitScen, 'U17_person_fine_bail').bails.length === 0 && findS(unitScen, 'U17_person_fine_bail').ops.length > 10, 'U17 fine 直通展开');
+  ok(findS(unitScen, 'U19_person_full_bail').bails.length === 0 && findS(unitScen, 'U19_person_full_bail').ops.length > 10, 'U19 full 直通展开');
+  ok(findS(unitScen, 'U21_boat_bail').bails.length === 0 && findS(unitScen, 'U21_boat_bail').ops.some((o) => o.o === 'fillRect'), 'U21 boat 直通展开');
+  ok(findS(unitScen, 'U22_caravan_bail').bails.length === 0 && findS(unitScen, 'U22_caravan_bail').ops.some((o) => o.o === 'fillRect'), 'U22 caravan 直通展开');
   const u32 = findS(unitScen, 'U32_fish_on_land_skip');
   ok(u32.bails.length === 0 && nRect(u32) === 0, 'U32 离水鱼零绘制');
   ok(nRect(findS(unitScen, 'U33_fish_in_water_lod')) > 0, 'U33 水中鱼 LOD rect');
-  ok(findS(unitScen, 'U33b_fish_full_bail').bails.some((b) => b.fn === 'drawFish'), 'U33b 全绘档鱼 bail');
+  ok(findS(unitScen, 'U33b_fish_full_bail').bails.length === 0 && nRect(findS(unitScen, 'U33b_fish_full_bail')) > 0, 'U33b 全绘档鱼直通展开');
   ok(nRect(findS(unitScen, 'U46_cull_outside')) === 0, 'U46 视口外零绘制');
   const u23 = findS(unitScen, 'U23_shadow_noon');
   ok(u23.ops.some((o) => o.o === 'fillRect' && o.s && o.s[0].startsWith('rgba(12,9,6,')), 'U23 昼夜阴影 rgba(12,9,6,*)');

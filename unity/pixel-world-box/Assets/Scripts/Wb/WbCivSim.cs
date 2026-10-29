@@ -301,7 +301,7 @@ namespace PixelWorldBox.Wb
                     double baseHp = BUILDING_DEFS[b.kind].hp;
                     double max = WbMath.JsRound(baseHp * mul);
                     double cur;
-                    w.bHp[b.i] = System.Math.Min(max, (w.bHp.TryGetValue(b.i, out cur) ? cur : baseHp) + baseHp * 0.25);
+                    w.BhpSet(b.i, System.Math.Min(max, (w.bHp.TryGetValue(b.i, out cur) ? cur : baseHp) + baseHp * 0.25));
                 }
             }
         }
@@ -738,7 +738,7 @@ namespace PixelWorldBox.Wb
             w.bIdx[i] = w.buildings.Count - 1;
             w.building[i] = (byte)kind;
             // 科技工程加成：石匠/城墙等提升建筑耐久（新建筑按当前科技入帐）
-            w.bHp[i] = System.Math.Round(DefHp(kind) * TechModsOf(w, civId).bhp);
+            w.BhpSet(i, System.Math.Round(DefHp(kind) * TechModsOf(w, civId).bhp));
             w.damagedSet.Remove(i);
             WbCiv civ = CivAt(w, civId);
             if (civ != null && kind != BUILD_KINDS.WALL) civ.houses++; // 城墙不计入住宅（不虚增人口容量）
@@ -767,7 +767,7 @@ namespace PixelWorldBox.Wb
             }
             w.bIdx.Remove(i);
             w.building[i] = 0;
-            w.bHp.Remove(i);
+            w.BhpDel(i);
             w.damagedSet.Remove(i);
             w.Fx("smoke", b.x, b.y, 36, optR: 1.5);
         }
@@ -946,12 +946,11 @@ namespace PixelWorldBox.Wb
             }
             civ.tiles.Clear();
             civ.frontier.Clear();
-            for (int bi = w.buildings.Count - 1; bi >= 0; bi--)
-            {
-                // 逆序遍历 + DestroyBuilding 内部 swap-remove：快照后再逐个销毁（语义等价 [...this.buildings] 快照）
-                WbBuilding b = w.buildings[bi];
+            // 建筑拆毁（engine.ts L2219-2222）：[...this.buildings] 正序快照逐个销毁 ——
+            // ⚠️ 逆序+swap-remove 仅等价"删谁"，不等价 fx smoke 产出序（黄金 fx[0]=首个正序位）——2026-10-29 修正
+            List<WbBuilding> elimBSnap = new List<WbBuilding>(w.buildings);
+            foreach (WbBuilding b in elimBSnap)
                 if (b.civ == civ.id) DestroyBuilding(w, b.i);
-            }
             // 清理该文明的外交残留（否则 warsCount 统计与关系矩阵会永远计入亡国）
             List<string> relKeys = new List<string>(w.rel.Keys);
             foreach (string key in relKeys)

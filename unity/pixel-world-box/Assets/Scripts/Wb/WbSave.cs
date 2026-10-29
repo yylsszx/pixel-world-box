@@ -41,9 +41,10 @@ namespace PixelWorldBox.Wb
 
         // ---------------- rng 重播种（engine.ts L15348） ----------------
         // JS: this.rngA = ((this.seed ^ 0x9e3779b9) + this.tickCount) >>> 0;
+        // ⚠️ 括号序：C# + 优先级高于 ^，必须先 ^ 后 +（原译 seed ^ (K+tick) 错位→0x9e3779bb）
         public static uint ReseedRng(int seed, int tickCount)
         {
-            return (uint)(seed ^ unchecked((int)0x9e3779b9u) + tickCount);
+            return unchecked((uint)((seed ^ unchecked((int)0x9e3779b9u)) + tickCount));
         }
 
         // ---------------- base64（bytesToB64 L74 / b64ToBytes L82） ----------------

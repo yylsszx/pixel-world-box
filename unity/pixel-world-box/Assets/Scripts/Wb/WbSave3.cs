@@ -33,9 +33,19 @@ namespace PixelWorldBox.Wb
         /// <summary>JS Math.round 半上（M-U5a 全域等价已验证：Floor(v+0.5) 含 -0.5→0/-1.5→-1）</summary>
         private static double JRound(double v) => Math.Floor(v + 0.5);
         private static double JClamp(double v, double lo, double hi) => Math.Max(lo, Math.Min(hi, v));
-        private static bool JTruthy(JToken t) =>
-            t != null && t.Type != JTokenType.Null && t.Type != JTokenType.Undefined &&
-            !(t.Type == JTokenType.Boolean && !(bool)t);
+        private static bool JTruthy(JToken t)
+        {
+            // JS 真值语义全档（同 WbSave2 修复）：false/0/NaN/''/null/undefined → falsy
+            if (t == null || t.Type == JTokenType.Null || t.Type == JTokenType.Undefined) return false;
+            switch (t.Type)
+            {
+                case JTokenType.Boolean: return (bool)t;
+                case JTokenType.Integer: return (long)t != 0;
+                case JTokenType.Float: { double d = (double)t; return d != 0 && !double.IsNaN(d); }
+                case JTokenType.String: return ((string)t).Length > 0;
+                default: return true;
+            }
+        }
         private static JObject JClone(JToken t) => t == null ? null : (JObject)t.DeepClone();
         private static JArray JArrClone(JToken t) => t == null ? null : (JArray)t.DeepClone();
 
@@ -56,6 +66,24 @@ namespace PixelWorldBox.Wb
                 var v = getter(k);
                 if (v == null) continue;                   // 恢复被过滤的键 serialize 不输出（黄金域内不触发，防御）
                 arr.Add(new JArray { k, v });
+            }
+            return arr;
+        }
+
+        /// warShame 行化（蓝本 warShame.set(k,v) 恒等恢复 → serialize entries() 键原样透传——
+        /// Integer 键保 Integer 形；RowsByKey 的 ToString 键发射会把 0 变 "0" —— 2026-10-29 修复）
+        private static JArray WarShameRows(JArray input, WbSaveState st)
+        {
+            var arr = new JArray();
+            if (input == null) return arr;
+            var seen = new HashSet<string>();
+            foreach (var t in input)
+            {
+                if (!(t is JArray row) || row.Count < 1) continue;
+                string k = row[0] == null ? null : row[0].ToString();
+                if (k == null || !seen.Add(k)) continue;
+                if (!st.WarShame.TryGetValue(k, out double wv)) continue;   // 恢复被过滤的键 serialize 不输出（防御）
+                arr.Add(new JArray { row[0], wv });
             }
             return arr;
         }
@@ -181,7 +209,7 @@ namespace PixelWorldBox.Wb
             var front = new JArray();
             foreach (var r in st.Occ) front.Add(JArrClone(r));
             o["front"] = front;
-            o["warShame"] = RowsByKey(data["warShame"] as JArray, k => st.WarShame.TryGetValue(k, out double wv) ? new JValue(wv) : null);
+            o["warShame"] = WarShameRows(data["warShame"] as JArray, st);
             var dirs = new JArray();
             foreach (var d in st.Directives) dirs.Add(JClone(d));
             o["directives"] = dirs;
@@ -216,7 +244,23 @@ namespace PixelWorldBox.Wb
             o["rmods"] = RModRows(st, data["rmods"] as JArray);
             o["imods"] = RowsByKey(data["imods"] as JArray, k => st.ItemMods.TryGetValue(k, out string jv) ? new JValue(jv) : null);
             o["creg"] = CregRows(st, data["creg"] as JArray);
-            return o;
+            // JS number 单域收官：全档经 JSON.stringify——整值 f64 写整数形（128 非 128.0）。
+            // C# JValue Float 1.0 与黄金 Integer 1 在 DeepEquals/逐位协议下不同构 —— 出口统一规整（2026-10-29）
+            return (JObject)JsNumForm(o);
+        }
+
+        /// JSON.stringify 数值形规整：Float 且 floor==v（|v|<2^53）→ Integer JValue；其余结构深拷贝透传
+        internal static JToken JsNumForm(JToken t)
+        {
+            if (t is JObject jo) { var r = new JObject(); foreach (var pr in jo.Properties()) r[pr.Name] = JsNumForm(pr.Value); return r; }
+            if (t is JArray ja) { var r = new JArray(); foreach (var e in ja) r.Add(JsNumForm(e)); return r; }
+            if (t is JValue jv && jv.Type == JTokenType.Float)
+            {
+                double d = (double)jv;
+                if (!double.IsNaN(d) && !double.IsInfinity(d) && Math.Floor(d) == d && Math.Abs(d) < 9.007199254740992E15)
+                    return new JValue((long)d);
+            }
+            return t;
         }
 
         private static JArray JArrClone2(List<JArray> src)
@@ -292,19 +336,15 @@ namespace PixelWorldBox.Wb
         {
             var dyn = new JObject();
             var din = data["dyn"] as JObject;
-            // —— races：行序 = data.dyn.races 输入序；def = 恢复后注册表（st.RacesOut）；info = st.DynRaces ——
+            // —— races：行序 = 恢复后注册表序（蓝本 [...this.dynRaces.entries()]——未知种恢复即丢弃，不产行；2026-10-29 修正）——
+            // def = st.RacesOut；info = st.DynRaces（插入序台账 DynRacesKeys）
             var races = new JArray();
-            if (din?["races"] is JArray rin)
             {
-                var seen = new HashSet<int>();
-                foreach (var t in rin)
+                foreach (int id in st.DynRacesKeys)
                 {
-                    if (!(t is JArray row) || row.Count < 1) continue;
-                    if (!JIsNum(row[0], out double idd)) continue;
-                    int id = (int)idd;
-                    if (!seen.Add(id)) continue;
+                    if (!st.DynRaces.ContainsKey(id)) continue;
                     st.RacesOut.TryGetValue(id, out var def);
-                    st.DynRaces.TryGetValue(id, out var info);
+                    var info = st.DynRaces[id];
                     string name = def != null && def["name"] != null ? def["name"].ToString() : $"物种{id}";
                     int hp = (int)JRound(JNumOr(def?["hp"], 30));
                     double dmg = JRound(JNumOr(def?["dmg"], 5) * 10) / 10;
@@ -329,9 +369,11 @@ namespace PixelWorldBox.Wb
                         repro,
                         tintIdx,
                     };
+                    // ⚠️ 蓝本 row[8] = visToTuple(def.vis) 是单一嵌套数组元素（13 元组整体一位）——
+                    // 逐元素摊平=26 元错位（2026-10-29 修复；此前 verify 镜像只对镜像 vs 黄金，C# vs 黄金靠 NUnit 首跑暴露）
                     if (def != null && def["vis"] != null && def["vis"].Type != JTokenType.Null)
-                        foreach (var x in WbSave2.VisToTuple(def["vis"] as JObject)) row14.Add(x);   // visToTuple 元组展开
-                    else row14.Add(JValue.CreateNull());                                             // undefined → JSON null
+                        row14.Add(WbSave2.VisToTuple(def["vis"] as JObject));
+                    else row14.Add(JValue.CreateNull());   // undefined → JSON null
                     row14.Add(JNumOr(info?["parent2"], 0) != 0 && info != null && info["parent2"] != null && info["parent2"].Type != JTokenType.Null ? (JToken)JNum0(info["parent2"]) : 0);   // info.parent2 ?? 0
                     row14.Add(ecoN);
                     row14.Add(info != null && info["cap"] != null && info["cap"].Type != JTokenType.Null ? (JToken)JNum0(info["cap"]) : 0);   // info.cap ?? 0
