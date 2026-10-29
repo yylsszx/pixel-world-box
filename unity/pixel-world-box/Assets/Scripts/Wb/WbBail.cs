@@ -1,16 +1,20 @@
 // ============================================================
-// WbBail.cs — 类名 WbBailRelay（WbRender.cs L142 已有渲染域 WbBail 结构，避让改名）（M-U3h 第一批：case4 商队结算 / case5 殖民建城）
+// WbBail.cs — 类名 WbBailRelay（WbRender.cs L142 已有渲染域 WbBail 结构，避让改名）
+//             （M-U3h 第一批：case4 商队结算 / case5 殖民建城；第二批：case1 船全量 updateUnit 接管）
 // 蓝本: src/lib/game/engine.ts（逐行机械翻译，纪律①）
-//   wbResume L3215-3302（case4 L3286-3290 / case5 L3292-3295）+ caravanArrive L4770-4796 +
-//   updateUnitTailJS L4116-4260 + updateUnitPostJS L4262-4334 + moveUnit L5813-5876 +
-//   wallBlocks L5804-5812 + passTile L5800-5802 + foundSettlement L5704-5739 +
-//   shiftRaceRel L8054-8059 + allianceOfCiv L8061-8065 + R2=L.DRAGON L36
-// 复用（已由 M-U3b 黄金钉住）: WbCivSim.BuildBuilding L1756 / ClaimTile L1719 / AtWar L2061 / CivAt
-// 桩域（第二批随 case1/2/3 处理，触达即抛——黄金场景受控不可达）:
-//   case1 船全量 updateUnit 接管 / case2 涌现接力 / case3 建筑摧毁级联；
+//   wbResume L3215-3302（case1 L3219-3229 / case4 L3286-3290 / case5 L3292-3295）+ updateUnit 前奏 L3455-3464 +
+//   grabbedTick L5343-5376 + updateBoat L5608-5660 + disembark L5663-5697 + findLandNear L5589-5606 +
+//   caravanArrive L4770-4796 + updateUnitTailJS L4116-4260 + updateUnitPostJS L4262-4334 +
+//   moveUnit L5813-5876 + wallBlocks L5804-5812 + passTile L5800-5802 + foundSettlement L5704-5739 +
+//   shiftRaceRel L8054-8059 + allianceOfCiv L8061-8065 + R2=L.DRAGON L36 + atWar L2061-2064（WbCivSim 复用）
+// 复用（已由 M-U3b 黄金钉住）: WbCivSim.BuildBuilding L1756 / ClaimTile L1719 / AtWar L2061 / CivAt /
+//   YEAR_TICKS L1869（constants.ts L9）+ WbMath.FdHypot/FdAtan2/FdCos/FdSin/JsRound
+// 桩域（第二批余域，触达即抛——黄金场景受控不可达）:
+//   case2 涌现接力 / case3 建筑摧毁级联；updateUnit 主体（非船：战斗/职业/尾段）；
 //   tail 捕食者索敌+鱼群结队（buckets/preyGrid 宿主结构未译）、漫游逐草/蟹/水生分支；
 //   post 拾取本体 / 繁衍 boost+spawn 链；moveUnit flying/aquatic/sandswim/登船分支
-// 黄金: scripts/unity-migration/gen-units-bail.mjs（9 场景）+ bail-transcript.mjs（9/9 双链）
+// 黄金: scripts/unity-migration/gen-units-bail.mjs（22 场景：C01-C04/S01-S04/B01-B09/G01-G04）
+//   + bail-transcript.mjs（22/22 双链）
 // ============================================================
 namespace PixelWorldBox.Wb
 {
@@ -94,7 +98,11 @@ namespace PixelWorldBox.Wb
                     FoundSettlement(w, u, (int)d[0]);
                     break;
                 case 1:
-                    throw new System.InvalidOperationException("wbResume case1 船全量 updateUnit 接管未翻译（M-U3h 第二批域）");   // L3219-3229
+                    // 船单位：Rust 侧 hurt-- 未标脏（bail 早退在 dirty(s) 之前）→ JS 未同步到 h-1。
+                    // Task 50 修复：不再补偿——直接 JS 接管，updateUnit 执行唯一一次 hurt--，
+                    // Rust 的孤儿写会被下一次重打包热列覆盖 —— 与纯 JS 路径位等。
+                    UpdateUnit(w, u);
+                    break;                                                                                              // L3219-3229
                 case 2:
                     throw new System.InvalidOperationException("wbResume case2 涌现接力未翻译（M-U3h 第二批域）");                 // L3230-3257
                 case 3:
@@ -102,6 +110,183 @@ namespace PixelWorldBox.Wb
                 default:
                     throw new System.InvalidOperationException($"wbResume case {kind} 越界");
             }
+        }
+
+        // ================= updateUnit L3455-3464（case1 船可达前奏；主体域桩——bail kind1 契约 = 船单位） =================
+        public static void UpdateUnit(WbWorld w, WbU u)
+        {
+            if (u.hurt > 0) u.hurt--;                                                                                    // L3457
+            if ((u.grab ?? 0) > 0) { GrabbedTick(w, u); return; }                                                         // L3459
+            if (u.boat != 0)                                                                                             // L3461-3464
+            {
+                UpdateBoat(w, u);
+                return;
+            }
+            throw new System.InvalidOperationException("updateUnit 主体（非船域：战斗/职业/尾段）未翻译（M-U3h 第二批余域；case1 契约 = 船单位）");
+        }
+
+        // ================= grabbedTick L5343-5376（神之手指：抓取/掷飞/落地的眩晕 tick） =================
+        private static void GrabbedTick(WbWorld w, WbU u)
+        {
+            if ((u.grab ?? 0) != 0) u.grab = (u.grab ?? 0) - 2;                                                          // L5344 if (u.grab)
+            if ((u.thrT ?? 0) > 0)                                                                                       // L5345
+            {
+                // 抛物线飞行：水平速度衰减（空气阻力），落点即停
+                u.thrT = (u.thrT ?? 0) - 2;                                                                              // L5347
+                double nx = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, u.x + (u.thrVx ?? 0) * 2));             // L5348
+                double ny = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, u.y + (u.thrVy ?? 0) * 2));             // L5349
+                // 撞山即坠（其余地形掠过）
+                byte tt = w.terrain[WbWorld.Idx((int)System.Math.Floor(nx), (int)System.Math.Floor(ny))];                 // L5351
+                if (tt != WbWorld.T_MOUNTAIN) { u.x = nx; u.y = ny; }                                                    // L5352-5353
+                u.thrVx = (u.thrVx ?? 0) * 0.94;                                                                          // L5354
+                u.thrVy = (u.thrVy ?? 0) * 0.94;                                                                          // L5355
+                if (w.Rng() < 0.3) w.Fx("dust", u.x, u.y, 10);                                                            // L5356
+                if ((u.thrT ?? 0) <= 0)                                                                                   // L5357
+                {
+                    // 落地：眩晕 + 按飞行距离伤害 + 尘土特效
+                    double dist = WbMath.FdHypot(u.x - (u.thrX0 ?? u.x), u.y - (u.thrY0 ?? u.y));                          // L5359
+                    double dmg = WbMath.JsRound(dist * 2.6);                                                               // L5360
+                    u.hp -= dmg;                                                                                           // L5361
+                    u.hurt = 24;                                                                                           // L5362
+                    u.grab = System.Math.Max(u.grab ?? 0, 24);                                                              // L5363
+                    u.thrT = 0;                                                                                            // L5364
+                    for (int k = 0; k < 3; k++) w.Fx("dust", u.x + (w.Rng() - 0.5) * 1.6, u.y + (w.Rng() - 0.5) * 1.6, 20);   // L5365
+                    if (w.fxDmgNumbers && dmg > 0) w.Fx("dmg", u.x, u.y - 1, 30);                                          // L5366
+                    w.shake = System.Math.Max(w.shake, System.Math.Min(5, 1 + dist * 0.3));                                 // L5367
+                }
+                if (u.hp <= 0) u.dead = 1;                                                                                 // L5369
+            }
+            else if ((u.grab ?? 0) <= 0)                                                                                  // L5370
+            {
+                // 眩晕结束：清账归队
+                u.grab = 0;                                                                                               // L5371
+                u.thrVx = 0;                                                                                              // L5372
+                u.thrVy = 0;                                                                                              // L5373
+            }
+        }
+
+        // ================= updateBoat L5608-5660（殖民船航海：贪心绕障/超时改向/靠岸登陆） =================
+        private static void UpdateBoat(WbWorld w, WbU u)
+        {
+            u.ageF += 2 / (double)WbCivSim.YEAR_TICKS;                                                                    // L5609
+            if (u.ageF > u.maxAge) { u.dead = 1; return; }                                                                 // L5610 年迈的殖民者可能死在航程中
+            u.boatTTL = u.boatTTL - 1;                                                                                     // L5611
+            double dx = u.tx - u.x;
+            double dy = u.ty - u.y;
+            double d = WbMath.FdHypot(dx, dy);
+            _ = d; // 蓝本 L5616 求而未读（后续判断均用平方/再求）——机械保序消 CS0219
+            // 超时后改向最近陆地；宽限期内仍找不到岸则海难
+            if (u.boatTTL <= 0)                                                                                            // L5617
+            {
+                if (u.boatTTL <= -600)                                                                                     // L5618
+                {
+                    u.dead = 1;
+                    w.Fx("skull", u.x, u.y, 46);                                                                           // L5620
+                    w.AddEvent("shipwreck", "一艘殖民船连同它的船员葬身了大海", null, u.x, u.y);                              // L5621
+                    return;
+                }
+                (double x, double y)? land = FindLandNear(w, u.x, u.y, 14);                                                 // L5624
+                if (land.HasValue) { u.tx = land.Value.x; u.ty = land.Value.y; }
+            }
+            // —— 靠岸登陆判定 —— 目标常在内陆深处：「直航前方被陆地阻断」= 已抵达面向目标的海岸
+            double baseAng = WbMath.FdAtan2(u.ty - u.y, u.tx - u.x);                                                        // L5631
+            int aheadX = (int)System.Math.Floor(u.x + WbMath.FdCos(baseAng) * 0.4);                                         // L5632
+            int aheadY = (int)System.Math.Floor(u.y + WbMath.FdSin(baseAng) * 0.4);                                         // L5633
+            bool aheadBlocked = aheadX < 0 || aheadY < 0 || aheadX >= WbWorld.W || aheadY >= WbWorld.H                      // L5634
+                || !WbWorld.IsWater(w.terrain[WbWorld.Idx(aheadX, aheadY)]);
+            if (aheadBlocked)                                                                                              // L5635
+            {
+                (double x, double y)? coast = FindLandNear(w, u.x, u.y, 2);
+                if (coast.HasValue) { u.tx = coast.Value.x; u.ty = coast.Value.y; }
+            }
+            if (WbMath.FdHypot(u.tx - u.x, u.ty - u.y) < 2.5)                                                               // L5639
+            {
+                if (Disembark(w, u)) return;
+                // 船边无岸（湖心等罕见情形）：改向目标周边海岸寻地登陆
+                if (u.boatTTL > 0)                                                                                          // L5641
+                {
+                    (double x, double y)? land2 = FindLandNear(w, u.tx, u.ty, 6);
+                    if (land2.HasValue) { u.tx = land2.Value.x; u.ty = land2.Value.y; }
+                }
+            }
+            // 航行：直航角 ± 绕障偏角依次尝试（只在水面推进；船速约行军 1.4 倍）
+            double step = 0.26;                                                                                             // L5647
+            double[] offs = { 0, 0.7, -0.7, 1.4, -1.4, 2.6, -2.6, System.Math.PI };                                          // L5649
+            foreach (double off in offs)
+            {
+                double ang = baseAng + off;
+                double nx = u.x + WbMath.FdCos(ang) * step;
+                double ny = u.y + WbMath.FdSin(ang) * step;
+                if (nx < 1 || ny < 1 || nx > WbWorld.W - 2 || ny > WbWorld.H - 2) continue;                                  // L5652
+                if (!WbWorld.IsWater(w.terrain[WbWorld.Idx((int)System.Math.Floor(nx), (int)System.Math.Floor(ny))])) continue;
+                u.x = nx;                                                                                                   // L5654
+                u.y = ny;
+                if (WbMath.FdCos(ang) != 0) u.flip = WbMath.FdCos(ang) < 0 ? 1 : 0;                                          // L5656
+                return;
+            }
+            // 完全被围（罕见）：原地等待下一 tick
+        }
+
+        // ================= disembark L5663-5697（靠岸登陆：优先处女地 > 本国 > 战时敌岸） =================
+        private static bool Disembark(WbWorld w, WbU u)
+        {
+            int x = (int)System.Math.Floor(u.x);                                                                            // L5664
+            int y = (int)System.Math.Floor(u.y);
+            int? best = null;                                                                                              // L5666
+            int bestScore = 0;
+            for (int dy2 = -1; dy2 <= 1; dy2++)                                                                             // L5668
+            {
+                for (int dx2 = -1; dx2 <= 1; dx2++)
+                {
+                    if (dx2 == 0 && dy2 == 0) continue;
+                    int xx = x + dx2;                                                                                       // L5671
+                    int yy = y + dy2;
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;
+                    int i = WbWorld.Idx(xx, yy);                                                                            // L5674
+                    int t = w.terrain[i];
+                    if (WbWorld.IsWater(t) || t == WbWorld.T_MOUNTAIN || t == WbWorld.T_LAVA) continue;
+                    int score = 0;                                                                                          // L5677
+                    if (w.owner[i] == -1 && w.building[i] == 0 && WbWorld.Buildable(t)) score = 3; // 处女地
+                    else if (w.owner[i] == u.civ && u.civ >= 0) score = 2; // 回到家门
+                    else if (u.civ >= 0 && w.owner[i] >= 0 && w.owner[i] != u.civ && WbCivSim.AtWar(w, u.civ, w.owner[i])) score = 1; // 战时入侵
+                    if (score > bestScore) { bestScore = score; best = i; }                                                  // L5680
+                }
+            }
+            if (best == null) return false;                                                                                 // L5682
+            // WBB.touchMeta() —— boat 列 wasm 镜像写点（civ 层 no-op，同 WbCivSim 先例）                                     // L5683
+            int b = best.Value;
+            double lx = (b % WbWorld.W) + 0.5;                                                                              // L5684
+            double ly = (b / WbWorld.W) + 0.5;
+            bool wasColonist = bestScore == 3;                                                                              // L5686
+            u.boat = 0;                                                                                                     // L5687
+            u.boatTTL = 0;
+            u.x = lx; u.y = ly; u.tx = lx; u.ty = ly;                                                                        // L5689-5690
+            w.Fx("spawn", lx, ly, 30);                                                                                      // L5691
+            if (wasColonist) FoundSettlement(w, u, b);                                                                       // L5692
+            return true;
+        }
+
+        // ================= findLandNear L5589-5606（环扫最近可登陆地；返回 tile 中心 +0.5） =================
+        private static (double x, double y)? FindLandNear(WbWorld w, double x, double y, int r)
+        {
+            int cx = (int)System.Math.Floor(x);
+            int cy = (int)System.Math.Floor(y);
+            for (int ring = 1; ring <= r; ring++)
+            {
+                for (int dy = -ring; dy <= ring; dy++)
+                {
+                    for (int dx = -ring; dx <= ring; dx++)
+                    {
+                        if (System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dy)) != ring) continue;
+                        int xx = cx + dx;
+                        int yy = cy + dy;
+                        if (xx < 1 || yy < 1 || xx >= WbWorld.W - 1 || yy >= WbWorld.H - 1) continue;
+                        int t = w.terrain[WbWorld.Idx(xx, yy)];
+                        if (!WbWorld.IsWater(t) && t != WbWorld.T_MOUNTAIN && t != WbWorld.T_LAVA) return (xx + 0.5, yy + 0.5);
+                    }
+                }
+            }
+            return null;
         }
 
         // ================= caravanArrive L4770-4796 =================

@@ -4253,7 +4253,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             Assert.AreEqual(256, meta["W"].Value<int>(), "meta W");
             Assert.AreEqual(160, meta["H"].Value<int>(), "meta H");
             var scenarios = (Newtonsoft.Json.Linq.JArray)golden["scenarios"];
-            Assert.AreEqual(9, scenarios.Count, "scenario count");
+            Assert.AreEqual(22, scenarios.Count, "scenario count");
             foreach (var sc in scenarios) RunBailScenario((Newtonsoft.Json.Linq.JObject)sc);
         }
 
@@ -4332,12 +4332,24 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
                     civ = u["civ"]?.Value<int>() ?? -1,
                     x = u["x"].Value<double>(),
                     y = u["y"].Value<double>(),
-                    tx = u["x"].Value<double>(),
-                    ty = u["y"].Value<double>(),
+                    tx = u["tx"] != null && u["tx"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? u["tx"].Value<double>() : u["x"].Value<double>(), // mkUnit tx: o.tx ?? o.x
+                    ty = u["ty"] != null && u["ty"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? u["ty"].Value<double>() : u["y"].Value<double>(),
+                    hp = u["hp"]?.Value<double>() ?? 10,
+                    maxHp = u["hp"]?.Value<double>() ?? 10,
                     speed = u["speed"]?.Value<double>() ?? 1,
+                    ageF = u["age"]?.Value<double>() ?? 0,
+                    maxAge = u["maxAge"]?.Value<int>() ?? 9999,
                     job = u["job"]?.Value<int>() ?? 0,
                     caravan = u["caravan"]?.Value<int>() ?? 0,
                     boat = u["boat"]?.Value<int>() ?? 0,
+                    boatTTL = u["boatTTL"]?.Value<int>() ?? 0,
+                    hurt = u["hurt"]?.Value<int>() ?? 0,
+                    grab = u["grab"] != null && u["grab"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? (int?)u["grab"].Value<int>() : null,
+                    thrT = u["thrT"] != null && u["thrT"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? (int?)u["thrT"].Value<int>() : null,
+                    thrVx = u["thrVx"] != null && u["thrVx"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? (double?)u["thrVx"].Value<double>() : null,
+                    thrVy = u["thrVy"] != null && u["thrVy"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? (double?)u["thrVy"].Value<double>() : null,
+                    thrX0 = u["thrX0"] != null && u["thrX0"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? (double?)u["thrX0"].Value<double>() : null,
+                    thrY0 = u["thrY0"] != null && u["thrY0"].Type != Newtonsoft.Json.Linq.JTokenType.Null ? (double?)u["thrY0"].Value<double>() : null,
                     dead = u["dead"]?.Value<int>() ?? 0,
                     name = $"u{u["id"].Value<int>()}",
                 };
@@ -4393,6 +4405,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             // —— dump 对账（全字段逐位）——
             Assert.AreEqual(sc["rngA"].Value<long>(), (long)w.rngA, $"{name} rngA u32");
             Assert.AreEqual(sc["eventSeq"].Value<int>(), w.eventSeq, $"{name} eventSeq");
+            AreBitsEqual(w.shake, LeD(sc["shake"].ToString()), $"{name} shake"); // grabbedTick 落地震屏（第二批）
 
             var wantU = sc["unit"];
             Assert.AreEqual(wantU["id"].Value<int>(), target.id, $"{name} unit.id");
@@ -4407,7 +4420,25 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             Assert.AreEqual(wantU["job"].Value<int>(), target.job, $"{name} unit.job");
             Assert.AreEqual(wantU["caravan"].Value<int>(), target.caravan, $"{name} unit.caravan");
             Assert.AreEqual(wantU["boat"].Value<int>(), target.boat, $"{name} unit.boat");
+            Assert.AreEqual(wantU["boatTTL"].Value<int>(), target.boatTTL, $"{name} unit.boatTTL");
             Assert.AreEqual(wantU["dead"].Value<int>(), target.dead, $"{name} unit.dead");
+            Assert.AreEqual(wantU["hurt"].Value<int>(), target.hurt, $"{name} unit.hurt");
+            // case1 消费域扩展断言（字段只加）
+            AreBitsEqual(target.ageF, LeD(wantU["age"].ToString()), $"{name} unit.age");
+            AreBitsEqual(target.hp, LeD(wantU["hp"].ToString()), $"{name} unit.hp");
+            AreBitsEqual(target.maxHp, LeD(wantU["maxHp"].ToString()), $"{name} unit.maxHp");
+            Assert.AreEqual(wantU["grab"] != null && wantU["grab"].Type != Newtonsoft.Json.Linq.JTokenType.Null
+                ? (int?)wantU["grab"].Value<int>() : null, target.grab, $"{name} unit.grab");
+            Assert.AreEqual(wantU["thrT"] != null && wantU["thrT"].Type != Newtonsoft.Json.Linq.JTokenType.Null
+                ? (int?)wantU["thrT"].Value<int>() : null, target.thrT, $"{name} unit.thrT");
+            if (wantU["thrVx"] != null && wantU["thrVx"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                AreBitsEqual(target.thrVx ?? 0, LeD(wantU["thrVx"].ToString()), $"{name} unit.thrVx");
+            else
+                Assert.IsNull(target.thrVx, $"{name} unit.thrVx");
+            if (wantU["thrVy"] != null && wantU["thrVy"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                AreBitsEqual(target.thrVy ?? 0, LeD(wantU["thrVy"].ToString()), $"{name} unit.thrVy");
+            else
+                Assert.IsNull(target.thrVy, $"{name} unit.thrVy");
 
             var wantCivs = (Newtonsoft.Json.Linq.JArray)sc["civs"];
             Assert.AreEqual(wantCivs.Count, w.civs.Count, $"{name} civs count");

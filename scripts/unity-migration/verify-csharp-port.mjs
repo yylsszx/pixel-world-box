@@ -1263,7 +1263,7 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   var bailVerifyFail = 0;
   try {
     execFileSync('node', [new URL('./bail-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'] });
-    console.log('bail 黄金回放 (bail-transcript 镜像 vs units_bail.json): PASS (9 场景 wbResume case4/5 宿主接力逐位)');
+    console.log('bail 黄金回放 (bail-transcript 镜像 vs units_bail.json): PASS (22 场景 wbResume case1/4/5 宿主接力逐位)');
   } catch (e) {
     bailVerifyFail++;
     console.error('bail 黄金回放 (bail-transcript 镜像 vs units_bail.json): FAIL');
@@ -1275,7 +1275,7 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
     execFileSync('node', [new URL('./gen-units-bail.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'] });
     const h1 = createHash('md5').update(await (await import('node:fs')).promises.readFile(goldenPath)).digest('hex');
     if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
-    console.log('bail gen det 复跑 (gen-units-bail): PASS (9 场景 rngA 逐值 det 字节级)');
+    console.log('bail gen det 复跑 (gen-units-bail): PASS (22 场景 rngA 逐值 det 字节级)');
   } catch (e) {
     bailVerifyFail++;
     console.error('bail gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));

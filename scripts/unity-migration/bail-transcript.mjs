@@ -2,12 +2,14 @@
 // ============================================================
 // bail-transcript.mjs — M-U3h 宿主接力 WbBail.cs 的 JS 独立转写（防循环论证双链）
 // 蓝本 = engine.ts 原文机械转写（零引擎导入——静态表字面量，逻辑从源码逐行转写）：
-//   wbResume L3215 case4/5 + caravanArrive L4770-4796 + updateUnitTailJS L4116-4260 +
-//   updateUnitPostJS L4262-4334 + moveUnit L5813-5876 + wallBlocks L5804 + passTile L5800 +
-//   foundSettlement L5704-5739 + buildBuilding L1756-1772 + connectRoad L1906-1929 +
-//   claimTile L1719-1754 + shiftRaceRel L8054 + allianceOfCiv L8061 + fx L9781 + addEvent L13995 +
-//   toast L13988 + rng L728-734 + RACE_REL_BASE types.ts L208 + RACES def 子表 types.ts L157-158
-// 桩域断言：捕食者索敌/鱼群/登船/繁衍 spawn/diplomacyMeet 深链——黄金场景不可达，触达即 throw（第二批译域）
+//   wbResume L3215 case1/4/5 + updateUnit 前奏 L3455-3464 + grabbedTick L5343-5376 +
+//   updateBoat L5608-5660 + disembark L5663-5697 + findLandNear L5589-5606 +
+//   caravanArrive L4770-4796 + updateUnitTailJS L4116-4260 + updateUnitPostJS L4262-4334 +
+//   moveUnit L5813-5876 + wallBlocks L5804 + passTile L5800 + foundSettlement L5704-5739 +
+//   buildBuilding L1756-1772 + connectRoad L1906-1929 + claimTile L1719-1754 + atWar L2061-2064 +
+//   shiftRaceRel L8054 + allianceOfCiv L8061 + fx L9781 + addEvent L13995 + toast L13988 +
+//   rng L728-734 + RACE_REL_BASE types.ts L208 + RACES def 子表 types.ts L157-158 + YEAR_TICKS constants.ts L9
+// 桩域断言：捕食者索敌/鱼群/登船/繁衍 spawn/diplomacyMeet 深链/updateUnit 主体——黄金场景不可达，触达即 throw（第二批余域）
 // 跑法：node scripts/unity-migration/bail-transcript.mjs（对 golden/units_bail.json 全场景全字段逐位）
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -55,7 +57,8 @@ function mkWorld(fx, golden) {
     effects: [], worldEvents: [], toasts: [],
     laws: { ...fx.laws }, rngA: fx.rngA0 >>> 0, eventSeq: fx.eventSeq0, toastSeq: fx.toastSeq0,
     yearF: 0, seasonOffset: 0, items: [], grassTiles: 0, wildCount: new Map(),
-    overlayMode: 'none', overlayDirty: false, fxPrefs: { fxDensity: 1, ambience: true },
+    overlayMode: 'none', overlayDirty: false, fxPrefs: { fxDensity: 1, ambience: true, dmgNumbers: true },
+    shake: 0,
   };
   // terrain RLE（paint 后全量）
   let pos = 0;
@@ -71,9 +74,12 @@ function mkWorld(fx, golden) {
     for (const i of civ.tiles) w.owner[i] = civ.id;
   }
   for (const u of fx.fixture.units ?? []) {
-    const un = { id: u.id, race: u.race ?? 0, civ: u.civ ?? -1, x: u.x, y: u.y, tx: u.x, ty: u.y,
+    const un = { id: u.id, race: u.race ?? 0, civ: u.civ ?? -1, x: u.x, y: u.y, tx: u.tx ?? u.x, ty: u.ty ?? u.y,
       speed: u.speed ?? 1, flip: 0, job: u.job ?? 0, king: u.king ?? 0, dead: u.dead ?? 0,
-      boat: u.boat ?? 0, boatTTL: 0, caravan: u.caravan ?? 0, hurt: 0,
+      boat: u.boat ?? 0, boatTTL: u.boatTTL ?? 0, caravan: u.caravan ?? 0, hurt: u.hurt ?? 0,
+      hp: u.hp ?? 10, maxHp: u.hp ?? 10, age: u.age ?? 0, maxAge: u.maxAge ?? 9999,
+      grab: u.grab ?? null, thrT: u.thrT ?? null, thrVx: u.thrVx ?? null, thrVy: u.thrVy ?? null,
+      thrX0: u.thrX0 ?? null, thrY0: u.thrY0 ?? null,
       chill: 0, curse: 0, detour: 0, food: 0, fert: 0, panic: 0, beachT: 0, fam: 0, fgn: 0, gene: null, lx: null, ly: null };
     w.units.push(un); w.unitById.set(un.id, un);
   }
@@ -215,6 +221,135 @@ function FoundSettlement(w, u, i) {
   Toast(w, `「${civ.name}」的殖民者发现了新大陆`, 'good');
   Fx(w, 'heart', cx, cy - 1, 40);
 }
+// atWar（engine L2061-2064 —— rel < -20）
+function AtWarT(w, a, b) {
+  const v = w.rel.get(pairKey(a, b));
+  return v !== undefined && v < -20;
+}
+// findLandNear（engine L5589-5606）
+function FindLandNear(w, x, y, r) {
+  const cx = MathFloor(x), cy = MathFloor(y);
+  for (let ring = 1; ring <= r; ring++) {
+    for (let dy = -ring; dy <= ring; dy++) {
+      for (let dx = -ring; dx <= ring; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+        const xx = cx + dx, yy = cy + dy;
+        if (xx < 1 || yy < 1 || xx >= W - 1 || yy >= H - 1) continue;
+        const t = w.terrain[idx(xx, yy)];
+        if (!isWater(t) && t !== T.MOUNTAIN && t !== T.LAVA) return { x: xx + 0.5, y: yy + 0.5 };
+      }
+    }
+  }
+  return null;
+}
+// grabbedTick（engine L5343-5376）
+function GrabbedTick(w, u) {
+  if (u.grab) u.grab -= 2;
+  if ((u.thrT ?? 0) > 0) {
+    u.thrT = (u.thrT ?? 0) - 2;
+    const nx = Math.max(0.5, Math.min(W - 0.5, u.x + (u.thrVx ?? 0) * 2));
+    const ny = Math.max(0.5, Math.min(H - 0.5, u.y + (u.thrVy ?? 0) * 2));
+    const tt = w.terrain[idx(MathFloor(nx), MathFloor(ny))];
+    if (tt !== T.MOUNTAIN) { u.x = nx; u.y = ny; }
+    u.thrVx = (u.thrVx ?? 0) * 0.94;
+    u.thrVy = (u.thrVy ?? 0) * 0.94;
+    if (Rng(w) < 0.3) Fx(w, 'dust', u.x, u.y, 10);
+    if ((u.thrT ?? 0) <= 0) {
+      const dist = Math.hypot(u.x - (u.thrX0 ?? u.x), u.y - (u.thrY0 ?? u.y));
+      const dmg = Math.round(dist * 2.6);
+      u.hp -= dmg;
+      u.hurt = 24;
+      u.grab = Math.max(u.grab ?? 0, 24);
+      u.thrT = 0;
+      for (let k = 0; k < 3; k++) Fx(w, 'dust', u.x + (Rng(w) - 0.5) * 1.6, u.y + (Rng(w) - 0.5) * 1.6, 20);
+      if (w.fxPrefs.dmgNumbers && dmg > 0) Fx(w, 'dmg', u.x, u.y - 1, 30);
+      w.shake = Math.max(w.shake, Math.min(5, 1 + dist * 0.3));
+    }
+    if (u.hp <= 0) u.dead = true;
+  } else if ((u.grab ?? 0) <= 0) {
+    u.grab = 0; u.thrVx = 0; u.thrVy = 0;
+  }
+}
+// updateBoat（engine L5608-5660；YEAR_TICKS = 40 constants.ts L9）
+const YEAR_TICKS = 40;
+function UpdateBoat(w, u) {
+  u.age += 2 / YEAR_TICKS;
+  if (u.age > u.maxAge) { u.dead = true; return; }
+  u.boatTTL = (u.boatTTL ?? 0) - 1;
+  const dx = u.tx - u.x, dy = u.ty - u.y;
+  const d = Math.hypot(dx, dy);
+  void d;
+  if ((u.boatTTL ?? 0) <= 0) {
+    if ((u.boatTTL ?? 0) <= -600) {
+      u.dead = true;
+      Fx(w, 'skull', u.x, u.y, 46);
+      AddEvent(w, 'shipwreck', '一艘殖民船连同它的船员葬身了大海', { x: u.x, y: u.y });
+      return;
+    }
+    const land = FindLandNear(w, u.x, u.y, 14);
+    if (land) { u.tx = land.x; u.ty = land.y; }
+  }
+  const baseAng = Math.atan2(u.ty - u.y, u.tx - u.x);
+  const aheadX = MathFloor(u.x + Math.cos(baseAng) * 0.4);
+  const aheadY = MathFloor(u.y + Math.sin(baseAng) * 0.4);
+  const aheadBlocked = aheadX < 0 || aheadY < 0 || aheadX >= W || aheadY >= H || !isWater(w.terrain[idx(aheadX, aheadY)]);
+  if (aheadBlocked) {
+    const coast = FindLandNear(w, u.x, u.y, 2);
+    if (coast) { u.tx = coast.x; u.ty = coast.y; }
+  }
+  if (Math.hypot(u.tx - u.x, u.ty - u.y) < 2.5) {
+    if (Disembark(w, u)) return;
+    if ((u.boatTTL ?? 0) > 0) {
+      const land = FindLandNear(w, u.tx, u.ty, 6);
+      if (land) { u.tx = land.x; u.ty = land.y; }
+    }
+  }
+  const step = 0.26;
+  for (const off of [0, 0.7, -0.7, 1.4, -1.4, 2.6, -2.6, Math.PI]) {
+    const ang = baseAng + off;
+    const nx = u.x + Math.cos(ang) * step;
+    const ny = u.y + Math.sin(ang) * step;
+    if (nx < 1 || ny < 1 || nx > W - 2 || ny > H - 2) continue;
+    if (!isWater(w.terrain[idx(MathFloor(nx), MathFloor(ny))])) continue;
+    u.x = nx; u.y = ny;
+    if (Math.cos(ang) !== 0) u.flip = Math.cos(ang) < 0 ? 1 : 0;
+    return;
+  }
+}
+// disembark（engine L5663-5697；WBB.touchMeta = boat 列 wasm 镜像写点——转写层 no-op 同 WbCivSim 先例）
+function Disembark(w, u) {
+  const x = MathFloor(u.x), y = MathFloor(u.y);
+  let best = null, bestScore = 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const xx = x + dx, yy = y + dy;
+      if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+      const i = idx(xx, yy);
+      const t = w.terrain[i];
+      if (isWater(t) || t === T.MOUNTAIN || t === T.LAVA) continue;
+      let score = 0;
+      if (w.owner[i] === -1 && w.building[i] === 0 && buildable(t)) score = 3;
+      else if (w.owner[i] === u.civ && u.civ >= 0) score = 2;
+      else if (u.civ >= 0 && w.owner[i] >= 0 && w.owner[i] !== u.civ && AtWarT(w, u.civ, w.owner[i])) score = 1;
+      if (score > bestScore) { bestScore = score; best = i; }
+    }
+  }
+  if (best == null) return false;
+  const lx = (best % W) + 0.5, ly = ((best / W) | 0) + 0.5;
+  const wasColonist = bestScore === 3;
+  u.boat = 0; u.boatTTL = 0; u.x = lx; u.y = ly; u.tx = lx; u.ty = ly;
+  Fx(w, 'spawn', lx, ly, 30);
+  if (wasColonist) FoundSettlement(w, u, best);
+  return true;
+}
+// updateUnit（engine L3455-3464 —— case1 船可达前奏；主体域（战斗/职业）桩域 GUARD）
+function UpdateUnit(w, u) {
+  if (u.hurt > 0) u.hurt--;
+  if ((u.grab ?? 0) > 0) { GrabbedTick(w, u); return; }
+  if (u.boat) { UpdateBoat(w, u); return; }
+  throw new Error('updateUnit 主体（非船域：战斗/职业/尾段）未转写（第二批余域；case1 契约 = 船单位）');
+}
 // caravanArrive（engine L4770-4796）
 function CaravanArrive(w, u) {
   const home = u.civ >= 0 ? w.civs[u.civ] : null;
@@ -331,9 +466,14 @@ function UpdateUnitPostJS(w, u) {
     throw new Error('post 繁衍门意外通过（黄金场景 rngA0 受控必败）—— boost 链深域未转写（第二批）');
   }
 }
-// wbResume（engine L3215-3302 case4/5；case1/2/3 第二批）
+// wbResume（engine L3215-3302 case1/4/5；case2/3 第二批余域）
 function WbResume(w, u, kind, d) {
   switch (kind) {
+    case 1: {
+      // 船单位：Rust 侧 hurt-- 未标脏 → 直接 JS 接管，updateUnit 执行唯一一次 hurt--（Task 50 注释语义）
+      UpdateUnit(w, u);
+      break;
+    }
     case 4: {
       CaravanArrive(w, u);
       if (UpdateUnitTailJS(w, u)) break;
@@ -345,7 +485,7 @@ function WbResume(w, u, kind, d) {
       break;
     }
     default:
-      throw new Error(`wbResume case ${kind} 未转写（第二批域：1 船/2 涌现/3 建筑摧毁）`);
+      throw new Error(`wbResume case ${kind} 未转写（第二批余域：2 涌现/3 建筑摧毁）`);
   }
 }
 
@@ -373,8 +513,14 @@ function dumpAll(w, u, fx) {
     eventSeq: w.eventSeq,
     unit: { id: u.id, race: u.race, civ: u.civ, x: hex(u.x), y: hex(u.y), tx: hex(u.tx), ty: hex(u.ty),
       speed: hex(u.speed), flip: u.flip ?? 0, job: u.job ?? 0, caravan: u.caravan ?? 0,
-      boat: u.boat ?? 0, boatTTL: u.boatTTL ?? 0, dead: u.dead ?? 0, hurt: u.hurt ?? 0 },
-    civs: fx.fixture.civs.map((c) => {
+      boat: u.boat ?? 0, boatTTL: u.boatTTL ?? 0, dead: u.dead ?? 0, hurt: u.hurt ?? 0,
+      age: hex(u.age ?? 0), hp: hex(u.hp ?? 10), maxHp: hex(u.maxHp ?? 10),
+      grab: u.grab ?? null, thrT: u.thrT ?? null,
+      thrVx: u.thrVx === undefined || u.thrVx === null ? null : hex(u.thrVx),
+      thrVy: u.thrVy === undefined || u.thrVy === null ? null : hex(u.thrVy),
+      thrX0: u.thrX0 === undefined || u.thrX0 === null ? null : hex(u.thrX0),
+      thrY0: u.thrY0 === undefined || u.thrY0 === null ? null : hex(u.thrY0) },
+    civs: (fx.fixture.civs ?? []).map((c) => {
       const cv = w.civs[c.id];
       return { id: cv.id, name: cv.name, race: cv.race, pop: cv.pop, houses: cv.houses, capital: cv.capital,
         alive: cv.alive, gold: cv.gold ?? null, knowledge: cv.knowledge ?? null, colorHex: cv.colorHex, tiles: [...cv.tiles] };
@@ -389,6 +535,7 @@ function dumpAll(w, u, fx) {
     buildingRle: rle(w.building),
     ownerRle: rle(Array.from(w.owner)),
     roadRle: rle(w.road),
+    shake: hex(w.shake),
   };
 }
 
@@ -406,8 +553,9 @@ for (const fx of golden.scenarios) {
   cmp('rngA', got.rngA, want.rngA);
   cmp('eventSeq', got.eventSeq, want.eventSeq);
   for (const k of Object.keys(got.unit)) cmp(`unit.${k}`, got.unit[k], want.unit[k]);
-  if (got.civs.length !== want.civs.length) diffs.push('civs len');
-  for (let i = 0; i < got.civs.length; i++) for (const k of Object.keys(got.civs[i])) cmp(`civs[${i}].${k}`, got.civs[i][k], want.civs[i][k]);
+  const wantCivsArr = want.civs ?? [];
+  if (got.civs.length !== wantCivsArr.length) diffs.push('civs len');
+  for (let i = 0; i < got.civs.length; i++) for (const k of Object.keys(got.civs[i])) cmp(`civs[${i}].${k}`, got.civs[i][k], wantCivsArr[i][k]);
   cmp('rel', got.rel, want.rel);
   cmp('raceRel', got.raceRel, want.raceRel);
   cmp('effects', got.effects, want.effects);
@@ -417,6 +565,7 @@ for (const fx of golden.scenarios) {
   cmp('buildingRle', got.buildingRle, want.buildingRle);
   cmp('ownerRle', got.ownerRle, want.ownerRle);
   cmp('roadRle', got.roadRle, want.roadRle);
+  cmp('shake', got.shake, want.shake);
   if (diffs.length === 0) { pass++; console.log(`PASS ${fx.name}`); }
   else { fail++; console.log(`FAIL ${fx.name}\n  ${diffs.join('\n  ')}`); }
 }

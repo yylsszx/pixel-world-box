@@ -109,10 +109,12 @@ function mkCiv(eng, o) {
 function mkUnit(eng, o) {
   const u = {
     id: o.id, race: o.race ?? 0, civ: o.civ ?? -1, x: o.x, y: o.y, tx: o.tx ?? o.x, ty: o.ty ?? o.y,
-    hp: o.hp ?? 10, maxHp: o.hp ?? 10, dmg: 1, speed: o.speed ?? 1, age: 0, maxAge: 9999, kills: 0,
+    hp: o.hp ?? 10, maxHp: o.hp ?? 10, dmg: 1, speed: o.speed ?? 1, age: o.age ?? 0, maxAge: o.maxAge ?? 9999, kills: 0,
     cd: 0, trait: 0, job: o.job ?? 0, king: o.king ?? 0, infected: 0, flip: 0,
-    name: `u${o.id}`, hurt: 0, breath: 0, parity: 0, dead: o.dead ?? 0,
-    boat: o.boat ?? 0, boatTTL: 0, caravan: o.caravan ?? 0, wep: 0, arm: 0, hlm: 0, shd: 0, bts: 0, rng: 0, amu: 0,
+    name: `u${o.id}`, hurt: o.hurt ?? 0, breath: 0, parity: 0, dead: o.dead ?? 0,
+    boat: o.boat ?? 0, boatTTL: o.boatTTL ?? 0, caravan: o.caravan ?? 0, wep: 0, arm: 0, hlm: 0, shd: 0, bts: 0, rng: 0, amu: 0,
+    // M-U3h 第二批 case1 船域扩展（旧场景不传 → undefined，dump 以 null 落盘）
+    grab: o.grab, thrT: o.thrT, thrVx: o.thrVx, thrVy: o.thrVy, thrX0: o.thrX0, thrY0: o.thrY0,
     army: null, gene: null, food: 0, fam: 0, fgn: 0, gIds: [], gVal: [],
   };
   eng.units.push(u);
@@ -134,6 +136,11 @@ function dumpUnit(u) {
     x: f64hex(u.x), y: f64hex(u.y), tx: f64hex(u.tx), ty: f64hex(u.ty),
     speed: f64hex(u.speed), flip: u.flip ? 1 : 0, job: u.job ?? 0,
     caravan: u.caravan ?? 0, boat: u.boat ?? 0, boatTTL: u.boatTTL ?? 0, dead: u.dead ?? 0, hurt: u.hurt ?? 0,
+    // M-U3h 第二批 case1 消费域扩展（字段只加：旧场景恒 0/10/null，不漂移）
+    age: f64hex(u.age ?? 0), hp: f64hex(u.hp ?? 10), maxHp: f64hex(u.maxHp ?? 10),
+    grab: u.grab ?? null, thrT: u.thrT ?? null,
+    thrVx: u.thrVx === undefined ? null : f64hex(u.thrVx), thrVy: u.thrVy === undefined ? null : f64hex(u.thrVy),
+    thrX0: u.thrX0 === undefined ? null : f64hex(u.thrX0), thrY0: u.thrY0 === undefined ? null : f64hex(u.thrY0),
   };
 }
 function dumpCiv(c) {
@@ -219,6 +226,8 @@ function runScenario(sc) {
     buildingRle: rle(eng.building),
     ownerRle: rle(Array.from(eng.owner)),
     roadRle: rle(eng.road),
+    // M-U3h 第二批：grabbedTick 落地震屏（engine this.shake L5367）
+    shake: f64hex(eng.shake),
   };
 }
 
@@ -294,12 +303,75 @@ const scenarios = [
     civs: [{ id: 0, pop: 8, capital: idx(37, 40), tiles: [idx(37, 40)] },
            { id: 1, pop: 5, capital: idx(45, 45), tiles: [idx(45, 45)] }],
     units: [{ id: 7, race: 0, civ: 0, x: 41.5, y: 41.5 }] },
+
+  // ===== case 1 船全量 updateUnit 接管（M-U3h 第二批：前奏 L3455-3464 + grabbedTick L5343-5376 +
+  //   updateBoat L5608-5660 + disembark L5663-5697 + findLandNear L5589-5606；d 参数 case1 不读，data 空）=====
+  // B01 开阔海面直航：全图 DEEP；零掷骰（updateBoat 无 rng 消费）—— 航行一步 cos>0 → flip=0
+  { name: 'B01-boat-sail-open', seed: 0x5c01, kind: 1, data: [], startTick: 0, unitId: 11,
+    paint: [[0, 0, 255, 159, DEEP]],
+    units: [{ id: 11, race: 0, x: 60.5, y: 80.5, tx: 100.5, ty: 80.5, boat: 1, boatTTL: 600 }] },
+  // B02 斜航翻面：目标在左后方 → baseAng 第二三象限 cos<0 → flip=1（flip 语义位）
+  { name: 'B02-boat-sail-flip', seed: 0x5c02, kind: 1, data: [], startTick: 0, unitId: 11,
+    paint: [[0, 0, 255, 159, DEEP]],
+    units: [{ id: 11, race: 0, x: 60.5, y: 80.5, tx: 20.5, ty: 70.5, boat: 1, boatTTL: 600 }] },
+  // B03 TTL 超时改向：boatTTL=0 → -1，> -600 → findLandNear(x,y,14) 环扫第一陆地（ring 10 首格）→
+  //   tx/ty 改锚海岸 → 直航一步（零掷骰）
+  { name: 'B03-boat-ttl-redirect', seed: 0x5c03, kind: 1, data: [], startTick: 0, unitId: 11,
+    paint: [[0, 0, 255, 159, DEEP], [70, 74, 73, 77, GRASS]],
+    units: [{ id: 11, race: 0, x: 60.5, y: 80.5, tx: 100.5, ty: 80.5, boat: 1, boatTTL: 0 }] },
+  // B04 殖民全链：船头前方陆地 → findLandNear(r=2) 改锚 → dist<2.5 → disembark 处女地 score=3 →
+  //   wasColonist → foundSettlement：建房+圈地+settle 纪事+toast+fx spawn/heart（4 掷）
+  { name: 'B04-boat-settle-colonist', seed: 0x5c04, kind: 1, data: [], startTick: 0, unitId: 11,
+    paint: [[0, 0, 255, 159, DEEP], [58, 78, 63, 83, GRASS]],
+    civs: [{ id: 0, pop: 8, tiles: [] }],
+    units: [{ id: 11, race: 0, civ: 0, x: 59.5, y: 80.5, tx: 60.5, ty: 80.5, boat: 1, boatTTL: 100 }] },
+  // B05 海难：boatTTL ≤ -600 → dead + fx skull（2 掷）+ shipwreck 纪事
+  { name: 'B05-boat-shipwreck', seed: 0x5c05, kind: 1, data: [], startTick: 0, unitId: 11,
+    paint: [[0, 0, 255, 159, DEEP]],
+    units: [{ id: 11, race: 0, x: 60.5, y: 80.5, tx: 100.5, ty: 80.5, boat: 1, boatTTL: -601 }] },
+  // B06 寿终 + 前奏 hurt--：age 41→41.05 > maxAge 40 → dead（hurt 5→4 验证前奏唯一递减）
+  { name: 'B06-boat-age-death', seed: 0x5c06, kind: 1, data: [], startTick: 0, unitId: 11,
+    paint: [[0, 0, 255, 159, DEEP]],
+    units: [{ id: 11, race: 0, x: 60.5, y: 80.5, tx: 100.5, ty: 80.5, boat: 1, boatTTL: 100, age: 41, maxAge: 40, hurt: 5 }] },
+  // B07 回家门登陆：3×3 内陆地全为本国领土（owner==u.civ）→ score=2 → 非殖民下船（fx spawn 2 掷，无 settlement）
+  { name: 'B07-boat-home-landing', seed: 0x5c07, kind: 1, data: [], startTick: 0, unitId: 11,
+    paint: [[0, 0, 255, 159, DEEP], [59, 79, 60, 80, GRASS]],
+    civs: [{ id: 0, pop: 8, tiles: [idx(59, 79), idx(60, 79), idx(59, 80), idx(60, 80)] }],
+    units: [{ id: 11, race: 0, civ: 0, x: 58.5, y: 79.5, tx: 59.5, ty: 80.5, boat: 1, boatTTL: 100 }] },
+  // B08 战时敌岸登陆：3×3 内陆地全为敌国领土 + rel -30 → atWar → score=1 → 敌岸可登（战争舰队域）
+  { name: 'B08-boat-war-landing', seed: 0x5c08, kind: 1, data: [], startTick: 0, unitId: 11,
+    paint: [[0, 0, 255, 159, DEEP], [59, 79, 60, 80, GRASS]],
+    civs: [{ id: 0, pop: 8, tiles: [] }, { id: 1, pop: 8, tiles: [idx(59, 79), idx(60, 79), idx(59, 80), idx(60, 80)] }],
+    units: [{ id: 11, race: 0, civ: 0, x: 58.5, y: 79.5, tx: 59.5, ty: 80.5, boat: 1, boatTTL: 100 }],
+    rel: [[0, 1, -30]] },
+  // B09 下船失败改向：tx=自身（dist 0<2.5）→ 3×3 全水 → disembark false → boatTTL>0 →
+  //   findLandNear(tx,ty,6) 环扫 6 改锚 → 直航一步（零掷骰）
+  { name: 'B09-boat-no-shore-redirect', seed: 0x5c09, kind: 1, data: [], startTick: 0, unitId: 11,
+    paint: [[0, 0, 255, 159, DEEP], [66, 78, 69, 81, GRASS]],
+    units: [{ id: 11, race: 0, x: 60.5, y: 80.5, tx: 60.5, ty: 80.5, boat: 1, boatTTL: 100 }] },
+  // G01 抓取眩晕静置：grab 30→28，thrT 缺省 → else-if 28>0 不清账（零掷骰；updateBoat 不达 → TTL 不减）
+  { name: 'G01-boat-grab-idle', seed: 0x5c0a, kind: 1, data: [], startTick: 0, unitId: 11,
+    paint: [[0, 0, 255, 159, DEEP]],
+    units: [{ id: 11, race: 0, x: 60.5, y: 80.5, boat: 1, boatTTL: 100, grab: 30 }] },
+  // G02 抛物线飞行：thrT 6→4，位移+撞山判定（全水不阻）+ ×0.94 衰减 + 0.3 尘土门（种子定掷）
+  { name: 'G02-boat-throw-flight', seed: 0x5c0b, kind: 1, data: [], startTick: 0, unitId: 11,
+    paint: [[0, 0, 255, 159, DEEP]],
+    units: [{ id: 11, race: 0, x: 60.5, y: 80.5, boat: 1, boatTTL: 100, grab: 30, thrT: 6, thrVx: 1.2, thrVy: -0.4 }] },
+  // G03 落地全链：thrT 2→0 → dist 結算 dmg=round(dist×2.6) → hp-=dmg 致死 → hurt 24 + grab=max(28,24)
+  //   + 3×dust（6 掷）+ dmg fx（dmgNumbers 默认 true，2 掷）+ shake=min(5,1+dist×0.3) + hp≤0 dead
+  { name: 'G03-boat-throw-land', seed: 0x5c0c, kind: 1, data: [], startTick: 0, unitId: 11,
+    paint: [[0, 0, 255, 159, DEEP]],
+    units: [{ id: 11, race: 0, x: 60.5, y: 80.5, boat: 1, boatTTL: 100, grab: 30, thrT: 2, thrVx: 0.8, thrVy: 0.6, thrX0: 55.0, thrY0: 78.0 }] },
+  // G04 眩晕结束清账：grab 1→-1 ≤ 0 → grab/thrVx/thrVy 归零（零掷骰）
+  { name: 'G04-boat-grab-cleanup', seed: 0x5c0d, kind: 1, data: [], startTick: 0, unitId: 11,
+    paint: [[0, 0, 255, 159, DEEP]],
+    units: [{ id: 11, race: 0, x: 60.5, y: 80.5, boat: 1, boatTTL: 100, grab: 1, thrVx: 0.5, thrVy: 0.25 }] },
 ];
 
 // ---------------- 主流程 ----------------
 const out = { meta: {
   gen: 'gen-units-bail.mjs',
-  blueprint: 'engine.ts wbResume L3215-3302 case4/case5 + caravanArrive L4770 + foundSettlement L5704 + updateUnitTailJS L4116 + updateUnitPostJS L4262 + moveUnit L5813',
+  blueprint: 'engine.ts wbResume L3215-3302 case1/case4/case5 + updateUnit 前奏 L3455-3464 + caravanArrive L4770 + foundSettlement L5704 + updateUnitTailJS L4116 + updateUnitPostJS L4262 + moveUnit L5813 + grabbedTick L5343 + updateBoat L5608 + disembark L5663 + findLandNear L5589',
   W, H,
   dumpNote: 'f64 小端 16hex；rngA u32；relay 直调（engine L3148 同入口）',
 }, scenarios: [] };

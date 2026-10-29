@@ -129,6 +129,12 @@ namespace PixelWorldBox.Wb
         public double? beachT;               // engine u.beachT（postJS 水生搁浅繁衍抑制门；?? 0 语义）
         public List<int> gIds = new List<int>();
         public List<double> gVal = new List<double>();
+        // —— M-U3h 第二批 case1 船域消费（字段只加不改不重排）——
+        public int? grab;                    // engine u.grab（grabbedTick：u.grab -= 2 / Math.max(grab??0,24) / 清账 0；?? 0 语义）
+        public int? thrT;                    // engine u.thrT（抛物线飞行剩余 tick；?? 0 语义）
+        public double? thrVx, thrVy;         // engine u.thrVx/thrVy（抛掷速度，×0.94 衰减；?? 0 语义）
+        public double? thrX0, thrY0;         // engine u.thrX0/thrY0（掷出原点；?? u.x/u.y 语义 → null）
+        public double ageF;                  // engine u.age（f64 域：updateBoat u.age += 2/40；上方 int age 为旧占位不动）
     }
 
     /// Alliance/Directive/Army 空转结构（M-U3c 域；M-U3d 起联盟/旨意为真态域）
@@ -315,6 +321,8 @@ namespace PixelWorldBox.Wb
         public const int HOUSE_CAP = 4;   // population per house
         public const int WORLD_EVENTS_CAP = 80; // addEvent 上限 L14006
         public const int FX_CAP = 620;    // FX_CAPS[fxDensity=1] L9777
+        // —— M-U3h 第二批 case1 消费切片：engine fxPrefs.dmgNumbers（L271 默认 true；落地伤害数字 fx 门）——
+        public bool fxDmgNumbers = true;
 
         public const int T_DEEP = 0, T_WATER = 1, T_SAND = 2, T_GRASS = 3, T_FOREST = 4, T_HILL = 5,
                          T_MOUNTAIN = 6, T_SNOW = 7, T_LAVA = 8, T_BURNT = 9, T_ICE = 10, T_SWAMP = 11;
