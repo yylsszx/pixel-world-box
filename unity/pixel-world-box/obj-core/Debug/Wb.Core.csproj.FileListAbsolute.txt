@@ -1,9 +1,0 @@
-/home/z/my-project/unity/pixel-world-box/bin/PixelWorldBox.Wb.deps.json
-/home/z/my-project/unity/pixel-world-box/bin/PixelWorldBox.Wb.dll
-/home/z/my-project/unity/pixel-world-box/bin/PixelWorldBox.Wb.pdb
-/home/z/my-project/unity/pixel-world-box/obj-core/Debug/Wb.Core.csproj.AssemblyReference.cache
-/home/z/my-project/unity/pixel-world-box/obj-core/Debug/Wb.Core.GeneratedMSBuildEditorConfig.editorconfig
-/home/z/my-project/unity/pixel-world-box/obj-core/Debug/Wb.Core.csproj.CoreCompileInputs.cache
-/home/z/my-project/unity/pixel-world-box/obj-core/Debug/Wb.Core.sourcelink.json
-/home/z/my-project/unity/pixel-world-box/obj-core/Debug/PixelWorldBox.Wb.dll
-/home/z/my-project/unity/pixel-world-box/obj-core/Debug/PixelWorldBox.Wb.pdb
