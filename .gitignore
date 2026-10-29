@@ -1,0 +1,4 @@
+TestResults/
+
+# 沙箱本地验证软链（verify 对账台 jiti 依赖；不入库 R3 体积纪律）
+node_modules
