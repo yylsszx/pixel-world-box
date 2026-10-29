@@ -54,6 +54,12 @@ namespace PixelWorldBox.Wb
         /// names.ts BANNERS L38
         public static readonly string[] Banners = { "狮", "狼", "鹰", "鹿", "熊", "龙", "蛇", "鱼", "虎", "鸦", "马", "牛", "羊", "狐", "豹", "鲸" };
 
+        // ---------------- 家族名表（engine L1107-1108 —— M-U3h case2 newFamily 消费） ----------------
+        /// engine L1107 FAM_PRE
+        public static readonly string[] FamPre = { "霜", "烬", "暴风", "血", "铁", "荆棘", "暗影", "星", "狼", "鹰", "珊瑚", "苔", "雷", "冬", "荒", "银" };
+        /// engine L1108 FAM_POST
+        public static readonly string[] FamPost = { "牙", "羽", "痕", "鬃", "棘", "誓", "歌", "爪", "翼", "须", "蹄", "岚" };
+
         /// names.ts roman L81-91 —— 小写罗马数字（1-40；超出直接返回数字字符串），出参大写
         public static string Roman(int n)
         {

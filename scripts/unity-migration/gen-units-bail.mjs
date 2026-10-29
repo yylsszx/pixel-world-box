@@ -115,7 +115,9 @@ function mkUnit(eng, o) {
     boat: o.boat ?? 0, boatTTL: o.boatTTL ?? 0, caravan: o.caravan ?? 0, wep: 0, arm: 0, hlm: 0, shd: 0, bts: 0, rng: 0, amu: 0,
     // M-U3h 第二批 case1 船域扩展（旧场景不传 → undefined，dump 以 null 落盘）
     grab: o.grab, thrT: o.thrT, thrVx: o.thrVx, thrVy: o.thrVy, thrX0: o.thrX0, thrY0: o.thrY0,
-    army: null, gene: null, food: 0, fam: 0, fgn: 0, gIds: [], gVal: [],
+    // M-U3h 第三批 case2 涌现接力消费域（fam/fgn 旧场景硬编码 0 → 修正为透传：TS u.fam ?? 门需 undefined 语义）
+    fam: o.fam, fgn: o.fgn, gene: o.gene ?? null,
+    army: null, food: 0, gIds: [], gVal: [],
   };
   eng.units.push(u);
   eng.unitById.set(u.id, u);
@@ -142,6 +144,32 @@ function dumpUnit(u) {
     thrVx: u.thrVx === undefined ? null : f64hex(u.thrVx), thrVy: u.thrVy === undefined ? null : f64hex(u.thrVy),
     thrX0: u.thrX0 === undefined ? null : f64hex(u.thrX0), thrY0: u.thrY0 === undefined ? null : f64hex(u.thrY0),
   };
+}
+// case2 新生儿全字段 dump（spawnUnit 产物 —— 与 relay target 不同协议：全量出生态）
+function dumpChild(u) {
+  if (!u) return null;
+  return {
+    id: u.id, race: u.race, civ: u.civ ?? -1,
+    x: f64hex(u.x), y: f64hex(u.y), lx: f64hex(u.lx), ly: f64hex(u.ly), rx: f64hex(u.rx), ry: f64hex(u.ry),
+    tx: f64hex(u.tx), ty: f64hex(u.ty),
+    hp: f64hex(u.hp), maxHp: f64hex(u.maxHp), dmg: f64hex(u.dmg), speed: f64hex(u.speed),
+    tDmg: u.tDmg === undefined ? null : f64hex(u.tDmg), tHp: u.tHp === undefined ? null : f64hex(u.tHp),
+    age: f64hex(u.age), maxAge: f64hex(u.maxAge), kills: u.kills, cd: u.cd,
+    trait: u.trait ?? null,
+    gene: u.gene ? { s: f64hex(u.gene.s), d: f64hex(u.gene.d), h: f64hex(u.gene.h), r: f64hex(u.gene.r) } : null,
+    job: u.job ?? null, infected: u.infected ? 1 : 0, flip: u.flip ? 1 : 0,
+    name: u.name, hurt: u.hurt ?? 0, breath: u.breath, parity: u.parity, dead: u.dead ? 1 : 0,
+    fam: u.fam ?? null, fgn: u.fgn ?? null,
+  };
+}
+function dumpTrait(t) {
+  return { key: t.key, name: t.name, desc: t.desc, good: t.good === true ? true : undefined,
+    dmgMul: t.dmgMul === undefined ? null : f64hex(t.dmgMul), hpMul: t.hpMul === undefined ? null : f64hex(t.hpMul),
+    speedMul: t.speedMul === undefined ? null : f64hex(t.speedMul), regen: t.regen === undefined ? null : f64hex(t.regen) };
+}
+function dumpFamily(f) {
+  return { id: f.id, name: f.name, race: f.race, founded: f.founded, founder: f.founder,
+    members: f.members, heroes: f.heroes, kills: f.kills, peak: f.peak, milestones: f.milestones };
 }
 function dumpCiv(c) {
   return { id: c.id, name: c.name, race: c.race, pop: c.pop, houses: c.houses, capital: c.capital,
@@ -187,16 +215,34 @@ function runScenario(sc) {
   for (const [cid, mi] of sc.marketIdx ?? []) eng.marketIdx.set(cid, mi); // 宿主市场表（tail 商队分支消费）
   if (sc.setup) sc.setup(eng);
   eng.tickCount = sc.startTick ?? 0;
+  eng.yearF = sc.yearF ?? 0;                                              // 纪事/图谱/家族年份基准（case2 消费）
   // 夹具后清 generate 残留（同 civtick gen 纪律：黄金基线只含夹具+relay 产物）
   eng.effects.length = 0;
   eng.dirty.clear();
   eng.propsDirty.clear();
   eng.worldEvents.length = 0;
   eng.__lastEventId = eng.eventSeq;
+  // case2 域残留清理（ctor generate() 预填家族/野种计数/演化图谱——Task 129 实证 famCnt=37 污染）
+  eng.families.clear();
+  eng.familySeq = 0;
+  eng.wildCount.clear();
+  eng.dynTraits.clear();
+  eng.traitSeq = 0;
+  eng.evoNodes.length = 0;
+  eng.evoSeq = 0;
+  eng.evoIndex.clear();
+  eng.unitSeq = eng.units.reduce((m, u) => Math.max(m, u.id + 1), 0);
+  // case2 夹具（清理后施加：radiate/wildCount 属黄金基线的一部分，不可被残留清理抹除）
+  if (sc.radiate) for (const [i, v] of sc.radiate) eng.radiate[i] = v;   // 辐射场夹具（case2 高压锅门）
+  if (sc.wildCount) for (const [r, n] of sc.wildCount) eng.wildCount.set(r, n); // 野种计数夹具（case2 cap 门）
 
   const rngA0 = eng.rngA >>> 0;
   const eventSeq0 = eng.eventSeq;
   const toastSeq0 = eng.toastSeq;
+  const unitSeq0 = eng.unitSeq;
+  const familySeq0 = eng.familySeq;
+  const traitSeq0 = eng.traitSeq;
+  const evoSeq0 = eng.evoSeq;
 
   // —— relay 直调（engine L3148 同入口：wbResume(u, r.kind, r.data)）——
   const target = eng.unitById.get(sc.unitId);
@@ -207,11 +253,13 @@ function runScenario(sc) {
 
   return {
     name: sc.name, seed, startTick: sc.startTick ?? 0, kind, unitId: sc.unitId, data: [...(sc.data ?? [])],
-    laws: eng.laws, rngA0, eventSeq0, toastSeq0,
+    laws: eng.laws, rngA0, eventSeq0, toastSeq0, yearF: eng.yearF,
+    unitSeq0, familySeq0, traitSeq0, evoSeq0,
     terrainRle: rle(eng.terrain),
     // 声明式 PRE 态夹具（C#/转写回放重建源——与 civtick gen fixture 协议同构）
     fixture: { civs: sc.civs ?? null, units: sc.units ?? null, rel: sc.rel ?? null,
-      buildings: sc.buildings ?? null, alliances: sc.alliances ?? null, marketIdx: sc.marketIdx ?? null },
+      buildings: sc.buildings ?? null, alliances: sc.alliances ?? null, marketIdx: sc.marketIdx ?? null,
+      radiate: sc.radiate ?? null, wildCount: sc.wildCount ?? null, yearF: sc.yearF ?? null },
     rngA: eng.rngA >>> 0,
     eventSeq: eng.eventSeq,
     unit: dumpUnit(target),
@@ -228,6 +276,16 @@ function runScenario(sc) {
     roadRle: rle(eng.road),
     // M-U3h 第二批：grabbedTick 落地震屏（engine this.shake L5367）
     shake: f64hex(eng.shake),
+    // M-U3h 第三批 case2 POST 态（新生儿/涌现特质/演化图谱/家族/野种计数/序列器）——
+    //   child 按 id≥unitSeq0 定位（cap 门不产子时为 null，勿用末位单位——那是父代）
+    child: dumpChild(eng.units.find((uu) => uu.id >= unitSeq0) ?? null),
+    traits: [...eng.dynTraits.values()].map(dumpTrait),
+    evoNodes: eng.evoNodes.map((n) => ({ id: n.id, kind: n.kind, name: n.name, parent: n.parent ?? null,
+      year: n.year, colorHex: n.colorHex, detail: n.detail, stat: n.stat ?? null })),
+    families: [...eng.families.values()].map(dumpFamily),
+    wildCountPost: [...eng.wildCount.entries()],
+    unitSeq: eng.unitSeq, familySeq: eng.familySeq, traitSeq: eng.traitSeq, evoSeq: eng.evoSeq,
+    radiateRle: rle(Array.from(eng.radiate)),
   };
 }
 
@@ -366,12 +424,43 @@ const scenarios = [
   { name: 'G04-boat-grab-cleanup', seed: 0x5c0d, kind: 1, data: [], startTick: 0, unitId: 11,
     paint: [[0, 0, 255, 159, DEEP]],
     units: [{ id: 11, race: 0, x: 60.5, y: 80.5, boat: 1, boatTTL: 100, grab: 1, thrVx: 0.5, thrVy: 0.25 }] },
+
+  // ===== case 2 涌现接力（M-U3h 第三批：辐射放大 cg L3233-3241 + inventEmergentTrait L3318-3330 +
+  //   文明/野生双分支 L3242-3256 → spawnUnit L1283-1465 + newFamily L1111 + wildCapOf L2132；d=[s,d,h,r,branch]）=====
+  // E01 野生羊基础：cg s=1.6 强项（speed 路径）→ inventTrait 词表掷骰 + 0.25 新家族门（fam undefined）→
+  //   spawnUnit 静默野生全生态（wildAlive 预算/maxAge/flip/name/breath 掷骰 + bumpWild + heart fx）
+  { name: 'E01-emerge-wild-sheep', seed: 0x5d01, kind: 2, data: [1.6, 1.0, 1.2, 1.0, 0], startTick: 0, unitId: 5,
+    paint: [[40, 60, 80, 80, GRASS]],
+    units: [{ id: 5, race: 6, x: 60.5, y: 70.5 }] },
+  // E02 辐射高压锅：radiate[unit tile]=1 → cg 二次放大 ×2.2 钳 [0.5,2]（pg=gene??基线 → 母代无 gene → 全 1）
+  { name: 'E02-emerge-radiate-amp', seed: 0x5d02, kind: 2, data: [1.6, 1.0, 1.2, 1.0, 0], startTick: 0, unitId: 5,
+    paint: [[40, 60, 80, 80, GRASS]],
+    units: [{ id: 5, race: 6, x: 60.5, y: 70.5 }],
+    radiate: [[70 * 160 + 70, 1]] },
+  // E03 文明分支：d[4]=1 → 人类 pop/上限门已在 Rust 过 → rollJob 加权抽取 + techModsOf/govOf + pop++
+  { name: 'E03-emerge-civ-spawn', seed: 0x5d03, kind: 2, data: [1.0, 1.0, 1.0, 1.0, 1], startTick: 0, unitId: 5,
+    paint: [[40, 60, 80, 80, GRASS]],
+    civs: [{ id: 0, pop: 3, capital: idx(60, 70), tiles: [idx(60, 70)] }],
+    units: [{ id: 5, race: 0, civ: 0, x: 60.5, y: 70.5 }] },
+  // E05 regen 兕底分支：基因全中性（<1.5）→ regen+hpMul 路径（词表/数值掷骰异流）
+  { name: 'E05-emerge-regen-path', seed: 0x5d05, kind: 2, data: [1.0, 1.0, 1.0, 1.0, 0], startTick: 0, unitId: 5,
+    paint: [[40, 60, 80, 80, GRASS]],
+    units: [{ id: 5, race: 6, x: 60.5, y: 70.5 }] },
+  // E06 种群上限门：wildCount[6]=240=cap → same<cap 假 → 不产子不掷家族门（inventTrait 掷骰已耗）
+  { name: 'E06-emerge-cap-gate', seed: 0x5d06, kind: 2, data: [1.6, 1.0, 1.2, 1.0, 0], startTick: 0, unitId: 5,
+    paint: [[40, 60, 80, 80, GRASS]],
+    units: [{ id: 5, race: 6, x: 60.5, y: 70.5 }],
+    wildCount: [[6, 240]] },
+  // E07 异种子变体：同夹具异 seed → 词表/数值/家族门掷骰变体（与 E01 覆盖 0.25 门两侧可能）
+  { name: 'E07-emerge-wild-seed-b', seed: 0x5d07, kind: 2, data: [1.6, 1.0, 1.2, 1.0, 0], startTick: 0, unitId: 5,
+    paint: [[40, 60, 80, 80, GRASS]],
+    units: [{ id: 5, race: 6, x: 60.5, y: 70.5 }] },
 ];
 
 // ---------------- 主流程 ----------------
 const out = { meta: {
   gen: 'gen-units-bail.mjs',
-  blueprint: 'engine.ts wbResume L3215-3302 case1/case4/case5 + updateUnit 前奏 L3455-3464 + caravanArrive L4770 + foundSettlement L5704 + updateUnitTailJS L4116 + updateUnitPostJS L4262 + moveUnit L5813 + grabbedTick L5343 + updateBoat L5608 + disembark L5663 + findLandNear L5589',
+  blueprint: 'engine.ts wbResume L3215-3302 case1/case2/case4/case5 + updateUnit 前奏 L3455-3464 + caravanArrive L4770 + foundSettlement L5704 + updateUnitTailJS L4116 + updateUnitPostJS L4262 + moveUnit L5813 + grabbedTick L5343 + updateBoat L5608 + disembark L5663 + findLandNear L5589 + inventEmergentTrait L3318 + inventTrait emergence.ts L390 + spawnUnit L1283 + newFamily L1111 + wildCapOf L2132',
   W, H,
   dumpNote: 'f64 小端 16hex；rngA u32；relay 直调（engine L3148 同入口）',
 }, scenarios: [] };

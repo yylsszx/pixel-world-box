@@ -128,7 +128,7 @@ namespace PixelWorldBox.Wb
 
         // ---------------- techModsOf（engine L4859-4874） ----------------
         private static readonly Dictionary<int, WbTechMods> techModCache = new Dictionary<int, WbTechMods>();
-        private static WbTechMods TechModsOf(WbWorld w, int civId)
+        public static WbTechMods TechModsOf(WbWorld w, int civId)   // M-U3h case2 放宽（原 private——spawnUnit tm 消费复用）
         {
             if (civId < 0) return new WbTechMods(); // NEUTRAL_MODS
             WbTechMods cached;

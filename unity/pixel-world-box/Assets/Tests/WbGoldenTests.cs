@@ -4253,7 +4253,7 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             Assert.AreEqual(256, meta["W"].Value<int>(), "meta W");
             Assert.AreEqual(160, meta["H"].Value<int>(), "meta H");
             var scenarios = (Newtonsoft.Json.Linq.JArray)golden["scenarios"];
-            Assert.AreEqual(22, scenarios.Count, "scenario count");
+            Assert.AreEqual(28, scenarios.Count, "scenario count");
             foreach (var sc in scenarios) RunBailScenario((Newtonsoft.Json.Linq.JObject)sc);
         }
 
@@ -4266,6 +4266,11 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             w.eventSeq = sc["eventSeq0"].Value<int>();
             w.toastSeq = sc["toastSeq0"].Value<int>();
             w.yearF = 0; // 接力域不跑 tick()（黄金 yearF 恒 0 → season 0）
+            // case2 POST 对账前置序列器初值（第三批；gen dump PRE 态——mkUnit id 推进语义在 gen 夹具构造侧已固化）
+            w.unitSeq = sc["unitSeq0"].Value<int>();
+            w.familySeq = sc["familySeq0"].Value<int>();
+            w.traitSeq = sc["traitSeq0"].Value<int>();
+            w.evoSeq = sc["evoSeq0"].Value<int>();
 
             // laws 全量（golden dump eng.laws）
             var laws = sc["laws"];
@@ -4397,6 +4402,12 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             foreach (var mi in (fx["marketIdx"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
                 w.marketIdx[mi[0].Value<int>()] = mi[1].Value<int>();
 
+            // case2 夹具（第三批；同 gen/transcript 灌序：units 后 wildCount，再 radiate）
+            foreach (var wc in (fx["wildCount"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
+                w.wildCount[wc[0].Value<int>()] = wc[1].Value<int>();                      // E06 cap 门夹具
+            foreach (var rd in (fx["radiate"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()))
+                w.radiate[rd[0].Value<int>()] = (byte)rd[1].Value<int>();                   // E02 辐射高压锅夹具（fixture.radiate 稀疏对）
+
             // —— relay 直调（engine L3148 同入口）——
             int relayKind = sc["kind"].Value<int>();
             double[] relayData = (sc["data"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray()).Select(t => t.Value<double>()).ToArray();
@@ -4527,6 +4538,156 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             CollectionAssert.AreEqual(
                 (sc["roadRle"] as Newtonsoft.Json.Linq.JArray).Select(t => t.Value<int>()).ToList(),
                 RleOf(w.road.Select(rr => (int)rr)), $"{name} roadRle");
+
+            // —— case2 POST 态对账（第三批；字段只加，旧 22 场景空值同协议）——
+            AssertBailPost(w, sc, name);
+        }
+
+        /// <summary>case2 POST 态全字段逐位（gen dumpAll 尾段协议：child/traits/evoNodes/families/wildCountPost/序列器/radiateRle）</summary>
+        private void AssertBailPost(WbWorld w, Newtonsoft.Json.Linq.JObject sc, string name)
+        {
+            // child：按 id ≥ unitSeq0 定位新生儿（cap 门不产子 → null）
+            var wantChild = sc["child"] as Newtonsoft.Json.Linq.JObject;
+            int unitSeq0 = sc["unitSeq0"].Value<int>();
+            WbU child = w.units.FirstOrDefault(uu => uu.id >= unitSeq0);
+            Assert.AreEqual(wantChild == null, child == null, $"{name} child null 性");
+            if (wantChild != null && child != null)
+            {
+                Assert.AreEqual(wantChild["id"].Value<int>(), child.id, $"{name} child.id");
+                Assert.AreEqual(wantChild["race"].Value<int>(), child.race, $"{name} child.race");
+                Assert.AreEqual(wantChild["civ"].Value<int>(), child.civ, $"{name} child.civ");
+                AreBitsEqual(child.x, LeD(wantChild["x"].ToString()), $"{name} child.x");
+                AreBitsEqual(child.y, LeD(wantChild["y"].ToString()), $"{name} child.y");
+                AreBitsEqual(child.lx ?? 0, LeD(wantChild["lx"].ToString()), $"{name} child.lx");
+                AreBitsEqual(child.ly ?? 0, LeD(wantChild["ly"].ToString()), $"{name} child.ly");
+                AreBitsEqual(child.rx ?? 0, LeD(wantChild["rx"].ToString()), $"{name} child.rx");
+                AreBitsEqual(child.ry ?? 0, LeD(wantChild["ry"].ToString()), $"{name} child.ry");
+                AreBitsEqual(child.tx, LeD(wantChild["tx"].ToString()), $"{name} child.tx");
+                AreBitsEqual(child.ty, LeD(wantChild["ty"].ToString()), $"{name} child.ty");
+                AreBitsEqual(child.hp, LeD(wantChild["hp"].ToString()), $"{name} child.hp");
+                AreBitsEqual(child.maxHp, LeD(wantChild["maxHp"].ToString()), $"{name} child.maxHp");
+                AreBitsEqual(child.dmg, LeD(wantChild["dmg"].ToString()), $"{name} child.dmg");
+                AreBitsEqual(child.speed, LeD(wantChild["speed"].ToString()), $"{name} child.speed");
+                if (wantChild["tDmg"] != null && wantChild["tDmg"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    AreBitsEqual(child.tDmg ?? 0, LeD(wantChild["tDmg"].ToString()), $"{name} child.tDmg");
+                else
+                    Assert.IsNull(child.tDmg, $"{name} child.tDmg");
+                if (wantChild["tHp"] != null && wantChild["tHp"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    AreBitsEqual(child.tHp ?? 0, LeD(wantChild["tHp"].ToString()), $"{name} child.tHp");
+                else
+                    Assert.IsNull(child.tHp, $"{name} child.tHp");
+                AreBitsEqual(child.ageF, LeD(wantChild["age"].ToString()), $"{name} child.age");
+                AreBitsEqual(child.maxAgeF, LeD(wantChild["maxAge"].ToString()), $"{name} child.maxAge");
+                Assert.AreEqual(wantChild["kills"].Value<int>(), child.kills, $"{name} child.kills");
+                Assert.AreEqual(wantChild["cd"].Value<int>(), child.cd, $"{name} child.cd");
+                Assert.AreEqual(wantChild["trait"] != null && wantChild["trait"].Type != Newtonsoft.Json.Linq.JTokenType.Null
+                    ? wantChild["trait"].ToString() : null, child.traitName, $"{name} child.trait");
+                var wantGene = wantChild["gene"] as Newtonsoft.Json.Linq.JObject;
+                Assert.AreEqual(wantGene == null, child.geneC == null, $"{name} child.gene null 性");
+                if (wantGene != null && child.geneC != null)
+                {
+                    AreBitsEqual(child.geneC.s, LeD(wantGene["s"].ToString()), $"{name} child.gene.s");
+                    AreBitsEqual(child.geneC.d, LeD(wantGene["d"].ToString()), $"{name} child.gene.d");
+                    AreBitsEqual(child.geneC.h, LeD(wantGene["h"].ToString()), $"{name} child.gene.h");
+                    AreBitsEqual(child.geneC.r, LeD(wantGene["r"].ToString()), $"{name} child.gene.r");
+                }
+                Assert.AreEqual(wantChild["job"] != null && wantChild["job"].Type != Newtonsoft.Json.Linq.JTokenType.Null
+                    ? (int?)wantChild["job"].Value<int>() : null, child.jobC, $"{name} child.job");
+                Assert.AreEqual(wantChild["infected"].Value<int>(), child.infected, $"{name} child.infected");
+                Assert.AreEqual(wantChild["flip"].Value<int>(), child.flip, $"{name} child.flip");
+                Assert.AreEqual(wantChild["name"].ToString(), child.name, $"{name} child.name");
+                Assert.AreEqual(wantChild["hurt"].Value<int>(), child.hurt, $"{name} child.hurt");
+                Assert.AreEqual(wantChild["breath"].Value<int>(), child.breath, $"{name} child.breath");
+                Assert.AreEqual(wantChild["parity"].Value<int>(), child.parity, $"{name} child.parity");
+                Assert.AreEqual(wantChild["dead"].Value<int>(), child.dead, $"{name} child.dead");
+                Assert.AreEqual(wantChild["fam"] != null && wantChild["fam"].Type != Newtonsoft.Json.Linq.JTokenType.Null
+                    ? (int?)wantChild["fam"].Value<int>() : null, child.famC, $"{name} child.fam");
+                Assert.AreEqual(wantChild["fgn"] != null && wantChild["fgn"].Type != Newtonsoft.Json.Linq.JTokenType.Null
+                    ? (int?)wantChild["fgn"].Value<int>() : null, child.fgnC, $"{name} child.fgn");
+            }
+
+            // traits：dynTraits 值序 dump（单键场景字典无序敏感）
+            var wantTraits = (sc["traits"] as Newtonsoft.Json.Linq.JArray) ?? new Newtonsoft.Json.Linq.JArray();
+            Assert.AreEqual(wantTraits.Count, w.dynTraits.Count, $"{name} traits count");
+            foreach (var wt in wantTraits)
+            {
+                string tk = wt["key"].ToString();
+                Assert.IsTrue(w.dynTraits.TryGetValue(tk, out WbTrait gt), $"{name} trait {tk} missing");
+                Assert.AreEqual(wt["name"].ToString(), gt.name, $"{name} trait {tk}.name");
+                Assert.AreEqual(wt["desc"].ToString(), gt.desc, $"{name} trait {tk}.desc");
+                Assert.AreEqual(wt["good"] != null && wt["good"].Type != Newtonsoft.Json.Linq.JTokenType.Null && wt["good"].Value<bool>(), gt.good, $"{name} trait {tk}.good");
+                if (wt["dmgMul"] != null && wt["dmgMul"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    AreBitsEqual(gt.dmgMul ?? 0, LeD(wt["dmgMul"].ToString()), $"{name} trait {tk}.dmgMul");
+                else
+                    Assert.IsNull(gt.dmgMul, $"{name} trait {tk}.dmgMul");
+                if (wt["hpMul"] != null && wt["hpMul"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    AreBitsEqual(gt.hpMul ?? 0, LeD(wt["hpMul"].ToString()), $"{name} trait {tk}.hpMul");
+                else
+                    Assert.IsNull(gt.hpMul, $"{name} trait {tk}.hpMul");
+                if (wt["speedMul"] != null && wt["speedMul"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    AreBitsEqual(gt.speedMul ?? 0, LeD(wt["speedMul"].ToString()), $"{name} trait {tk}.speedMul");
+                else
+                    Assert.IsNull(gt.speedMul, $"{name} trait {tk}.speedMul");
+                if (wt["regen"] != null && wt["regen"].Type != Newtonsoft.Json.Linq.JTokenType.Null)
+                    AreBitsEqual(gt.regen ?? 0, LeD(wt["regen"].ToString()), $"{name} trait {tk}.regen");
+                else
+                    Assert.IsNull(gt.regen, $"{name} trait {tk}.regen");
+            }
+
+            // evoNodes：全字段（id 序 = 插入序，List 保真）
+            var wantEvo = (sc["evoNodes"] as Newtonsoft.Json.Linq.JArray) ?? new Newtonsoft.Json.Linq.JArray();
+            Assert.AreEqual(wantEvo.Count, w.evoNodes.Count, $"{name} evoNodes count");
+            for (int i = 0; i < wantEvo.Count; i++)
+            {
+                var we = wantEvo[i];
+                var ge = w.evoNodes[i];
+                Assert.AreEqual(we["id"].Value<int>(), ge.id, $"{name} evo{i}.id");
+                Assert.AreEqual(we["kind"].ToString(), ge.kind, $"{name} evo{i}.kind");
+                Assert.AreEqual(we["name"].ToString(), ge.name, $"{name} evo{i}.name");
+                Assert.AreEqual(we["parent"] != null && we["parent"].Type != Newtonsoft.Json.Linq.JTokenType.Null
+                    ? (int?)we["parent"].Value<int>() : null, ge.parent, $"{name} evo{i}.parent");
+                Assert.AreEqual(we["year"].Value<int>(), ge.year, $"{name} evo{i}.year");
+                Assert.AreEqual(we["colorHex"].ToString(), ge.colorHex, $"{name} evo{i}.colorHex");
+                Assert.AreEqual(we["detail"].ToString(), ge.detail, $"{name} evo{i}.detail");
+                Assert.AreEqual(we["stat"] != null && we["stat"].Type != Newtonsoft.Json.Linq.JTokenType.Null
+                    ? we["stat"].ToString() : null, ge.stat, $"{name} evo{i}.stat");
+            }
+
+            // families：全字段（id 序 = 插入序，Dictionary → 按 want 序遍历 + count）
+            var wantFam = (sc["families"] as Newtonsoft.Json.Linq.JArray) ?? new Newtonsoft.Json.Linq.JArray();
+            Assert.AreEqual(wantFam.Count, w.families.Count, $"{name} families count");
+            foreach (var wf in wantFam)
+            {
+                int fid = wf["id"].Value<int>();
+                Assert.IsTrue(w.families.TryGetValue(fid, out WbFamily gf), $"{name} family {fid} missing");
+                Assert.AreEqual(wf["name"].ToString(), gf.name, $"{name} family {fid}.name");
+                Assert.AreEqual(wf["race"].Value<int>(), gf.race, $"{name} family {fid}.race");
+                Assert.AreEqual(wf["founded"].Value<int>(), gf.founded, $"{name} family {fid}.founded");
+                Assert.AreEqual(wf["founder"].ToString(), gf.founder, $"{name} family {fid}.founder");
+                Assert.AreEqual(wf["members"].Value<int>(), gf.members, $"{name} family {fid}.members");
+                Assert.AreEqual(wf["heroes"].Value<int>(), gf.heroes, $"{name} family {fid}.heroes");
+                Assert.AreEqual(wf["kills"].Value<int>(), gf.kills, $"{name} family {fid}.kills");
+                Assert.AreEqual(wf["peak"].Value<int>(), gf.peak, $"{name} family {fid}.peak");
+                Assert.AreEqual(wf["milestones"].Value<int>(), gf.milestones, $"{name} family {fid}.milestones");
+            }
+
+            // wildCountPost：键值对（cap 门 + bumpWild 终态）
+            var wantWc = (sc["wildCountPost"] as Newtonsoft.Json.Linq.JArray) ?? new Newtonsoft.Json.Linq.JArray();
+            Assert.AreEqual(wantWc.Count, w.wildCount.Count, $"{name} wildCountPost count");
+            foreach (var wr in wantWc)
+                Assert.AreEqual(wr[1].Value<int>(), w.wildCount.TryGetValue(wr[0].Value<int>(), out int wcv) ? wcv : -1, $"{name} wildCount[{wr[0]}]");
+
+            // 序列器终值
+            Assert.AreEqual(sc["unitSeq"].Value<int>(), w.unitSeq, $"{name} unitSeq");
+            Assert.AreEqual(sc["familySeq"].Value<int>(), w.familySeq, $"{name} familySeq");
+            Assert.AreEqual(sc["traitSeq"].Value<int>(), w.traitSeq, $"{name} traitSeq");
+            Assert.AreEqual(sc["evoSeq"].Value<int>(), w.evoSeq, $"{name} evoSeq");
+
+            // radiateRle：辐射场 RLE 直比（E02 高压锅夹具 + 其余场景零场）
+            if (sc["radiateRle"] != null)
+                CollectionAssert.AreEqual(
+                    (sc["radiateRle"] as Newtonsoft.Json.Linq.JArray).Select(t => t.Value<int>()).ToList(),
+                    RleOf(w.radiate.Select(rr => (int)rr)), $"{name} radiateRle");
         }
     }
 }

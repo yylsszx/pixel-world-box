@@ -135,6 +135,11 @@ namespace PixelWorldBox.Wb
         public double? thrVx, thrVy;         // engine u.thrVx/thrVy（抛掷速度，×0.94 衰减；?? 0 语义）
         public double? thrX0, thrY0;         // engine u.thrX0/thrY0（掷出原点；?? u.x/u.y 语义 → null）
         public double ageF;                  // engine u.age（f64 域：updateBoat u.age += 2/40；上方 int age 为旧占位不动）
+        // —— M-U3h 第三批 case2 涌现接力消费（字段只加；TS u.fam/u.fgn/u.gene 为 number|undefined/object）——
+        public int? famC, fgnC;              // engine u.fam/u.fgn（?? nullish 门语义 → null；上方 int fam/fgn 旧占位不动）
+        public WbGene geneC;                 // engine u.gene（{s,d,h,r} 四维；null = TS undefined）
+        public double maxAgeF;               // engine u.maxAge（f64 域：spawnUnit def.maxAge*(0.8+rng()*0.4)；上方 int maxAge 为旧占位不动）
+        public int? jobC;                    // engine u.job（spawnUnit def.isCiv ? job : undefined → null 语义；上方 int job 旧占位不动）
     }
 
     /// Alliance/Directive/Army 空转结构（M-U3c 域；M-U3d 起联盟/旨意为真态域）
@@ -263,6 +268,36 @@ namespace PixelWorldBox.Wb
         public double? gold, stab, mil, know, repro, wear;
     }
 
+    /// <summary>Gene 四维基因（types.ts L495-502 —— M-U3h case2 涌现接力消费；TS Gene {s,d,h,r}）</summary>
+    public class WbGene
+    {
+        public double s = 1, d = 1, h = 1, r = 1;
+    }
+
+    /// <summary>TraitDef 特质定义（types.ts L247-262 —— 预设 12 条 + dynTraits 动态涌现条；M-U3h case2）</summary>
+    public class WbTrait
+    {
+        public string key, name, desc;
+        public bool good;
+        public double? dmgMul, hpMul, speedMul, regen;   // optional（undefined → null；inventTrait 分支写入）
+        public bool giant, tiny, immune;                 // 旗标切片（giant/tiny/immune 预设条；DUMP 协议外，预设域占位）
+    }
+
+    /// <summary>Family 家族谱系（engine L1107 Family 形状 —— M-U3h case2 newFamily 消费）</summary>
+    public class WbFamily
+    {
+        public int id, race, founded, members = 1, heroes, kills, peak = 1, milestones;
+        public string name, founder;
+    }
+
+    /// <summary>DynRaceDef 种化注册表条目（engine dynRaces 值形状消费切片 —— wildCapOf L2149-2157 消费 cap/eco/parent）</summary>
+    public class WbDynRace
+    {
+        public int cap;              // engine d.cap（falsy 门：0/undefined 同走 eco 分支）
+        public string eco;           // 'herb' | 'pred' | 'neutral'（cap 缺省时的生态锚）
+        public int parent;           // 种化母族（wildCapOf 递归终点）
+    }
+
     /// IdeaDef 最小态（engine emIdeas 消费域 —— inventIdea 涌现域 M-U3e+，容器先行）
     public class WbIdea
     {
@@ -369,6 +404,12 @@ namespace PixelWorldBox.Wb
         public List<object> items = new List<object>();   // engine this.items（postJS 拾取门 Count 消费；本体第二批域）
         public int grassTiles;                             // engine this.grassTiles（postJS 非文明繁衍增益）
         public Dictionary<int, int> wildCount = new Dictionary<int, int>(); // engine this.wildCount（种族 O(1) 计数）
+        // —— M-U3h 第三批 case2 涌现接力消费域（字段只加）——
+        public byte[] radiate = new byte[W * H];           // engine L164 radiate: Uint8Array（辐射场；高压锅门）
+        public Dictionary<int, WbFamily> families = new Dictionary<int, WbFamily>(); // engine this.families（家族谱系）
+        public Dictionary<string, WbTrait> dynTraits = new Dictionary<string, WbTrait>(); // engine this.dynTraits（涌现特质）
+        public Dictionary<int, WbDynRace> dynRaces = new Dictionary<int, WbDynRace>();     // engine this.dynRaces（种化注册表；wildCapOf L2149 递归消费）
+        public int unitSeq, familySeq, traitSeq;           // engine this.unitSeq/familySeq/traitSeq（evoSeq 已存在下方）
         public List<WbEv> worldEvents = new List<WbEv>();   // unshift 语义：新的在最前
         public List<WbToast> toasts = new List<WbToast>();  // onToast 回调收集（toast 本体不存储）
         public int eventSeq;

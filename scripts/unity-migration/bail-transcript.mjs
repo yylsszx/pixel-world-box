@@ -41,6 +41,63 @@ const defOf = (race) => {
   return d;
 };
 const BUILDING_HP = [0, 70, 240, 120, 40, 150, 340, 90, 110, 100, 140, 200]; // BUILDING_DEFS[kind].hp（types.ts L325-337）
+// —— M-U3h 第三批 case2 消费域静态表（机械转写，零引擎导入）——
+const MAX_UNITS2 = 2400, MAX_WILDLIFE2 = 900, MAX_WILDLIFE_AQUATIC2 = 520; // constants.ts L10-31
+const MAX_DRAGONS2 = 4, MAX_DEMONS2 = 2, MAX_TROLLS2 = 5, MAX_KRAKENS2 = 3, MAX_SANDWORMS2 = 3,
+  MAX_BASILISKS2 = 6, MAX_OGRES2 = 5, MAX_WHITEWALKERS2 = 6, MAX_HYDRAS2 = 6, MAX_VAMPIRES2 = 8; // constants.ts L19-31
+const R2D = 9, RDD = 17; // engine L36-37（R2=DRAGON / RD=DEMON）
+const AQUATIC_RACES = new Set([25, 37, 38, 39, 40]); // kraken/fish/crab/turtle/shark（RACES aquatic 全表）
+// 种族基础属性（types.ts L157-204 消费切片：name/hp/dmg/speed/maxAge/isCiv/undead——场景只用 0/6，余触达即 throw）
+const RSTAT = {
+  0: { name: '人类', hp: 60, dmg: 8, speed: 0.09, maxAge: 55, isCiv: true, undead: false },
+  6: { name: '绵羊', hp: 16, dmg: 1, speed: 0.038, maxAge: 26, isCiv: false, undead: false },
+};
+const statOf = (race) => { const s = RSTAT[race]; if (!s) throw new Error(`RSTAT race ${race} 未转写（case2 场景外）`); return s; };
+// names.ts FIRST L8-36 消费切片（unitName 池——场景只用 0/6）
+const FIRST = {
+  0: ['Alric', 'Berta', 'Corin', 'Dahlia', 'Edwin', 'Faye', 'Gareth', 'Hilda', 'Ivan', 'Jora', 'Kelvin', 'Lyra', 'Marcus', 'Nora', 'Osric', 'Petra'],
+  6: ['Wooly', 'Fluff', 'Baaald', 'Shears', 'Cloud', 'Tumble'],
+};
+// engine L1107-1108 家族名表
+const FAM_PRE = ['霜', '烬', '暴风', '血', '铁', '荆棘', '暗影', '星', '狼', '鹰', '珊瑚', '苔', '雷', '冬', '荒', '银'];
+const FAM_POST = ['牙', '羽', '痕', '鬃', '棘', '誓', '歌', '爪', '翼', '须', '蹄', '岚'];
+// emergence.ts L386-387 涌现特质词表
+const TRAIT_PREFIX = ['凶蛮', '钢筋', '魅影', '荒野', '苔藓', '血怒', '霜骨', '雷筋', '深渊', '星辉', '荆棘', '孤狼'];
+const TRAIT_BODY = ['之爪', '之躯', '之足', '血脉', '之瞳', '之鳞'];
+// types.ts L296-305 JOBS 权重/乘数（rollJob + spawnUnit 消费切片）
+const JOBS_MUL = [
+  { hp: 1, dmg: 1, speed: 1, weight: 46 },
+  { hp: 0.95, dmg: 0.9, speed: 1, weight: 24 },
+  { hp: 1.3, dmg: 1.35, speed: 1.05, weight: 14 },
+  { hp: 1.05, dmg: 1.15, speed: 1, weight: 8 },
+  { hp: 1.15, dmg: 0.95, speed: 1.05, weight: 5 },
+  { hp: 1, dmg: 0.9, speed: 1.2, weight: 2 },
+  { hp: 1.25, dmg: 1.1, speed: 1, weight: 1 },
+  { hp: 1.5, dmg: 1.5, speed: 1, weight: 0 },
+];
+// types.ts L264-276 TRAITS 预设表（spawnUnit td 消费 + inventEmergentTrait 写入目标）
+const TRAITS_ALL = {
+  strong: { key: 'strong', name: '强壮', desc: '伤害 +40%', dmgMul: 1.4, good: true },
+  tough: { key: 'tough', name: '坚韧', desc: '生命 +35%', hpMul: 1.35, good: true },
+  swift: { key: 'swift', name: '迅捷', desc: '速度 +30%', speedMul: 1.3, good: true },
+  weak: { key: 'weak', name: '羸弱', desc: '伤害 -20%', dmgMul: 0.8, good: false },
+  sickly: { key: 'sickly', name: '多病', desc: '生命 -25%', hpMul: 0.75, good: false },
+  genius: { key: 'genius', name: '天才', desc: '可能缔造传奇', good: true },
+  berserk: { key: 'berserk', name: '狂暴', desc: '伤害 +70%, 生命 -15%', dmgMul: 1.7, hpMul: 0.85, good: true },
+  lucky: { key: 'lucky', name: '幸运', desc: '命不该绝', good: true },
+  regeneration: { key: 'regeneration', name: '再生', desc: '缓慢恢复生命', regen: 0.3, good: true },
+  giant: { key: 'giant', name: '巨型', desc: '生命 +80%, 伤害 +50%, 速度 -25%', hpMul: 1.8, dmgMul: 1.5, speedMul: 0.75, giant: true, good: true },
+  tiny: { key: 'tiny', name: '侏儒', desc: '生命 -45%, 伤害 -20%, 速度 +25%', hpMul: 0.55, dmgMul: 0.8, speedMul: 1.25, tiny: true, good: true },
+  immune: { key: 'immune', name: '免疫', desc: '不会感染瘟疫与毒素', immune: true, good: true },
+};
+// names.ts roman L81-91
+function Roman(n) {
+  if (n < 1 || n > 40) return String(n);
+  const table = [[40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']];
+  let out = '', v = n;
+  for (const [val, sym] of table) { while (v >= val) { out += sym; v -= val; } }
+  return out.toUpperCase();
+}
 const FX_MINOR = new Set(['dmg', 'hit', 'smoke', 'spawn', 'heart', 'skull', 'arrow', 'coin', 'blood', 'dust']);
 const FX_CAP = 620;
 
@@ -56,10 +113,20 @@ function mkWorld(fx, golden) {
     alliances: [], allianceOf: new Map(), marketIdx: new Map(),
     effects: [], worldEvents: [], toasts: [],
     laws: { ...fx.laws }, rngA: fx.rngA0 >>> 0, eventSeq: fx.eventSeq0, toastSeq: fx.toastSeq0,
-    yearF: 0, seasonOffset: 0, items: [], grassTiles: 0, wildCount: new Map(),
+    yearF: fx.yearF ?? 0, seasonOffset: 0, items: [], grassTiles: 0, wildCount: new Map(),
     overlayMode: 'none', overlayDirty: false, fxPrefs: { fxDensity: 1, ambience: true, dmgNumbers: true },
     shake: 0,
+    // M-U3h 第三批 case2 消费域（序列器/家族/涌现特质/演化图谱/辐射场）
+    unitSeq: fx.unitSeq0, unitSeq0: fx.unitSeq0, familySeq: fx.familySeq0, traitSeq: fx.traitSeq0, evoSeq: fx.evoSeq0,
+    families: new Map(), dynTraits: new Map(), evoNodes: [], evoIndex: new Map(),
+    radiate: new Uint8Array(W * H),
   };
+  // radiate RLE（case2 高压锅门消费；夹具态全量）
+  {
+    let rpos = 0;
+    const rr = fx.radiateRle ?? [];
+    for (let k = 0; k < rr.length; k += 2) for (let j = 0; j < rr[k + 1] && rpos < W * H; j++) w.radiate[rpos++] = rr[k];
+  }
   // terrain RLE（paint 后全量）
   let pos = 0;
   const rle = fx.terrainRle ?? [];
@@ -80,9 +147,14 @@ function mkWorld(fx, golden) {
       hp: u.hp ?? 10, maxHp: u.hp ?? 10, age: u.age ?? 0, maxAge: u.maxAge ?? 9999,
       grab: u.grab ?? null, thrT: u.thrT ?? null, thrVx: u.thrVx ?? null, thrVy: u.thrVy ?? null,
       thrX0: u.thrX0 ?? null, thrY0: u.thrY0 ?? null,
-      chill: 0, curse: 0, detour: 0, food: 0, fert: 0, panic: 0, beachT: 0, fam: 0, fgn: 0, gene: null, lx: null, ly: null };
+      chill: 0, curse: 0, detour: 0, food: 0, fert: 0, panic: 0, beachT: 0, lx: null, ly: null,
+      // case2 消费域：fam/fgn undefined 语义（null）+ gene 对象（{s,d,h,r} 或 null）+ name（gen mkUnit u${id} 语义）
+      name: `u${u.id}`, kills: 0, cd: 0, breath: 0, parity: 0, king: 0, infected: 0,
+      fam: u.fam ?? null, fgn: u.fgn ?? null,
+      gene: u.gene ? { s: u.gene.s, d: u.gene.d, h: u.gene.h, r: u.gene.r } : null };
     w.units.push(un); w.unitById.set(un.id, un);
   }
+  for (const [r, n] of fx.fixture.wildCount ?? []) w.wildCount.set(r, n); // case2 cap 门夹具（清理后施加同 gen 序）
   for (const [a, b, v] of fx.fixture.rel ?? []) w.rel.set(pairKey(a, b), v);
   for (const [i, kind, civ] of fx.fixture.buildings ?? []) {
     w.buildings.push({ i, x: i % W, y: (i / W) | 0, kind, civ });
@@ -350,6 +422,260 @@ function UpdateUnit(w, u) {
   if (u.boat) { UpdateBoat(w, u); return; }
   throw new Error('updateUnit 主体（非船域：战斗/职业/尾段）未转写（第二批余域；case1 契约 = 船单位）');
 }
+// —— M-U3h 第三批 case2 涌现接力域（机械转写，零引擎导入）——
+// wildCapOf（engine L2132-2157；dynRaces 空表 → 缺省 40）
+function WildCapOf(w, race) {
+  if (race === 6) return 240;
+  if (race === 7) return 90;
+  if (race === 10) return 160;
+  if (race === 11) return 110;
+  if (race === 12) return 90;
+  if (race === 13) return 60;
+  if (race === 14) return 80;
+  if (race === 15) return 70;
+  if (race === 33) return 150;
+  if (race === 34) return 120;
+  if (race === 35) return 220;
+  if (race === 36) return 70;
+  if (race === 37) return 280;
+  if (race === 38) return 90;
+  if (race === 39) return 90;
+  if (race === 40) return 16;
+  const d = w.dynRaces ? w.dynRaces.get(race) : null;
+  if (!d) return 40;
+  if (d.cap) return d.cap;
+  if (d.eco === 'herb') return 140;
+  if (d.eco === 'pred') return 60;
+  if (d.eco === 'neutral') return 80;
+  return WildCapOf(w, d.parent);
+}
+// bumpWild（engine L1082-1087）
+function BumpWild(w, race, d) {
+  const n = (w.wildCount.get(race) ?? 0) + d;
+  if (n > 0) w.wildCount.set(race, n);
+  else w.wildCount.delete(race);
+}
+// wildAlive（engine L1089-1094）
+function WildAlive(w) {
+  let n = 0;
+  for (const v of w.wildCount.values()) n += v;
+  return n;
+}
+// wildAliveAquatic（engine L1096-1100；aquatic 旗标分账——场景无动态种）
+function WildAliveAquatic(w) {
+  let n = 0;
+  for (const [race, v] of w.wildCount) if (AQUATIC_RACES.has(race)) n += v;
+  return n;
+}
+// rollJob（engine L1472-1480）
+function RollJob(w) {
+  let total = 0;
+  for (const j of JOBS_MUL) total += j.weight;
+  let r = Rng(w) * total;
+  for (let i = 0; i < JOBS_MUL.length; i++) { r -= JOBS_MUL[i].weight; if (r <= 0) return i; }
+  return 0;
+}
+// uniqueName（engine L1522-1534；unitName = names.ts L74-77）
+function UnitNameOf(race, w) {
+  const pool = FIRST[race] ?? FIRST[0];
+  return pool[MathFloor(Rng(w) * pool.length)];
+}
+function UniqueName(w, race) {
+  const base = UnitNameOf(race, w);
+  const bl = base.length;
+  let n = 0;
+  for (const u of w.units) {
+    if (u.dead) continue;
+    const nm = u.name;
+    if (nm === base || (nm.length > bl && nm.charCodeAt(bl) === 32 && nm.startsWith(base))) n++;
+  }
+  return n === 0 ? base : `${base} ${Roman(n + 1)}`;
+}
+// newFamily（engine L1111-1133）
+function NewFamily(w, race, founder) {
+  const pre = FAM_PRE[MathFloor(Rng(w) * FAM_PRE.length)];
+  const post = FAM_POST[MathFloor(Rng(w) * FAM_POST.length)];
+  const f = {
+    id: w.familySeq++, name: pre + post, race, founded: MathFloor(w.yearF), founder: founder.name,
+    members: 1, heroes: 0, kills: 0, peak: 1, milestones: 0,
+  };
+  w.families.set(f.id, f);
+  PruneFamilies(w);
+  return f;
+}
+// pruneFamilies（engine L1135-1138）
+function PruneFamilies(w) {
+  if (w.families.size <= 240) return;
+  const dead = [...w.families.values()].filter((f) => f.members <= 0 && f.kills < 10).sort((a, b) => a.id - b.id);
+  for (let i = 0; i < 20 && i < dead.length; i++) w.families.delete(dead[i].id);
+}
+// familyMilestone（engine L1139-1149）
+function FamilyMilestone(w, f) {
+  if (f.members > f.peak) f.peak = f.members;
+  const marks = [12, 24, 40];
+  while (f.milestones < marks.length && f.members >= marks[f.milestones]) {
+    const m = marks[f.milestones++];
+    const raceName = statOf(f.race).name;
+    AddEvent(w, 'lineage', `${raceName}「${f.name}」家族枝繁叶茂 —— 族人已达 ${m} 口（先祖 ${f.founder}）`);
+  }
+}
+// inventTrait（emergence.ts L390-417）
+function InventTrait(w, gene, seq) {
+  const prefix = TRAIT_PREFIX[MathFloor(Rng(w) * TRAIT_PREFIX.length)];
+  const body = TRAIT_BODY[MathFloor(Rng(w) * TRAIT_BODY.length)];
+  const t = { key: `dt${seq}`, name: `${prefix}${body}`, desc: '', good: true };
+  const pick = Rng(w);
+  if (gene.d >= 1.5 && pick < 0.4) {
+    t.dmgMul = Math.round((1.18 + Rng(w) * 0.2) * 100) / 100;
+    if (Rng(w) < 0.4) t.hpMul = Math.round((0.88 + Rng(w) * 0.1) * 100) / 100;
+  } else if (gene.h >= 1.5 && pick < 0.7) {
+    t.hpMul = Math.round((1.2 + Rng(w) * 0.22) * 100) / 100;
+    if (Rng(w) < 0.35) t.regen = 0.02;
+  } else if (gene.s >= 1.5 && pick < 0.9) {
+    t.speedMul = Math.round((1.15 + Rng(w) * 0.18) * 100) / 100;
+    if (Rng(w) < 0.4) t.dmgMul = Math.round((1.08 + Rng(w) * 0.1) * 100) / 100;
+  } else {
+    t.regen = Math.round((0.015 + Rng(w) * 0.03) * 1000) / 1000;
+    t.hpMul = Math.round((1.1 + Rng(w) * 0.15) * 100) / 100;
+  }
+  const bits = [];
+  if (t.dmgMul) bits.push(`伤害 +${Math.round((t.dmgMul - 1) * 100)}%`);
+  if (t.hpMul) bits.push(`生命 +${Math.round((t.hpMul - 1) * 100)}%`);
+  if (t.speedMul) bits.push(`速度 +${Math.round((t.speedMul - 1) * 100)}%`);
+  if (t.regen) bits.push('缓慢再生');
+  t.desc = bits.join(' ') + '（涌现特质）';
+  return t;
+}
+// recordEvo（engine L3305-3316；720 图谱上限保留全语义）
+function RecordEvo(w, kind, name, parentKey, colorHex, detail, stat, meta) {
+  const id = w.evoSeq++;
+  const parent = parentKey ? (w.evoIndex.get(parentKey) ?? null) : null;
+  w.evoNodes.push({ id, kind, name, parent, year: MathFloor(w.yearF), colorHex, detail, stat, alive: true, meta });
+  if (w.evoNodes.length > 720) {
+    const drop = w.evoNodes.splice(0, w.evoNodes.length - 720);
+    const dropped = new Set(drop.map((n) => n.id));
+    for (const n of w.evoNodes) if (n.parent != null && dropped.has(n.parent)) n.parent = null;
+  }
+  return id;
+}
+// techModsOf 最小面（engine L4859-4874；场景 civ techs 空 → NEUTRAL；非空/emTechs 触达即 throw）
+function TechModsOf2(w, civId) {
+  if (civId < 0) return { hp: 1, dmg: 1 };
+  const c = w.civs[civId];
+  if (c && (c.techs ?? []).length > 0) throw new Error('techModsOf 非空 techs 未转写（case2 场景外）');
+  if (w.emTechs && w.emTechs.size > 0) throw new Error('emTechs 叠加未转写（case2 场景外）');
+  return { hp: 1, dmg: 1 };
+}
+// govOf（engine L8067-8070）
+const GovOf = (w, civId) => (civId < 0 ? 0 : (w.civs[civId]?.gov ?? 0));
+// spawnUnit（engine L1283-1465；静默可达域全译；announce/findCivNear/createCiv/rollTrait/devEquip/baseGene 桩 GUARD）
+function SpawnUnit(w, race, x, y, opts) {
+  const st = statOf(race);
+  if (st.isCiv && w.units.length >= MAX_UNITS2) return null;
+  if (!st.isCiv) {
+    if (st.aquatic) { if (WildAliveAquatic(w) >= MAX_WILDLIFE_AQUATIC2) return null; }
+    else if (WildAlive(w) >= MAX_WILDLIFE2) return null;
+  }
+  if (race === R2D && (w.wildCount.get(race) ?? 0) >= MAX_DRAGONS2) return null;
+  if (race === RDD && (w.wildCount.get(race) ?? 0) >= MAX_DEMONS2) return null;
+  if (race === 21 && (w.wildCount.get(race) ?? 0) >= MAX_TROLLS2) return null;
+  if (race === 22 && (w.wildCount.get(race) ?? 0) >= MAX_OGRES2) return null;
+  if (race === 23 && (w.wildCount.get(race) ?? 0) >= MAX_WHITEWALKERS2) return null;
+  if (race === 24 && (w.wildCount.get(race) ?? 0) >= MAX_VAMPIRES2) return null;
+  if (race === 25 && (w.wildCount.get(race) ?? 0) >= MAX_KRAKENS2) return null;
+  if (race === 26 && (w.wildCount.get(race) ?? 0) >= MAX_SANDWORMS2) return null;
+  if (race === 27 && (w.wildCount.get(race) ?? 0) >= MAX_BASILISKS2) return null;
+  if (race === 32 && (w.wildCount.get(race) ?? 0) >= MAX_HYDRAS2) return null;
+  x = Math.max(0.5, Math.min(W - 0.5, x));
+  y = Math.max(0.5, Math.min(H - 0.5, y));
+  let civ = opts?.civ ?? -1;
+  if (st.isCiv && civ < 0) throw new Error('findCivNear/createCiv 深链未转写（case2 场景 civ>=0 或野生）');
+  const trait = opts?.trait !== undefined ? (opts.trait || null) : (Rng(w) < 0.15 ? (() => { throw new Error('rollTrait 未转写（case2 场景恒传 trait）'); })() : null);
+  const td = trait ? TRAITS_ALL[trait] : null;
+  if (opts?.gene === undefined) throw new Error('baseGene 深链未转写（case2 场景恒传 gene）');
+  const gene = opts.gene;
+  let job = 0;
+  if (st.isCiv && civ >= 0) job = opts?.job ?? RollJob(w);
+  const jd = st.isCiv ? JOBS_MUL[job] : null;
+  const tm = st.isCiv && civ >= 0 ? TechModsOf2(w, civ) : null;
+  const tH = tm?.hp ?? 1;
+  const tD = tm?.dmg ?? 1;
+  const maxHp = Math.round(st.hp * (td?.hpMul ?? 1) * (jd?.hpMul ?? 1) * tH * (gene?.h ?? 1));
+  const u = {
+    id: w.unitSeq++, race, civ, x, y,
+    lx: x, ly: y, rx: x, ry: y, tx: x, ty: y,
+    hp: maxHp, maxHp,
+    dmg: st.dmg * (td?.dmgMul ?? 1) * (jd?.dmgMul ?? 1) * tD * (GovOf(w, civ) === 4 ? 1.15 : 1) * (gene?.d ?? 1),
+    speed: st.speed * (td?.speedMul ?? 1) * (jd?.speedMul ?? 1) * (gene?.s ?? 1),
+    tDmg: tD, tHp: tH,
+    age: 0, maxAge: st.maxAge * (0.8 + Rng(w) * 0.4), kills: 0, cd: 0,
+    trait, gene,
+    job: st.isCiv ? job : undefined,
+    infected: opts?.infected ?? false,
+    flip: Rng(w) < 0.5,
+    name: UniqueName(w, race),
+    hurt: 0, breath: 120 + MathFloor(Rng(w) * 160), parity: w.unitSeq % 2, dead: false,
+    fam: null, fgn: null,
+  };
+  w.units.push(u);
+  // WBB.touchRow —— 新行 meta 列行级增量灌入（wasm 镜像写点，转写层 no-op 同先例）
+  w.unitById.set(u.id, u);
+  if (civ >= 0 && w.civs[civ]) w.civs[civ].pop++;
+  if (!st.isCiv) BumpWild(w, race, 1);
+  if (opts?.fam !== undefined) {
+    u.fam = opts.fam;
+    u.fgn = opts.fgn ?? 1;
+    const f = w.families.get(opts.fam);
+    if (f) { f.members++; FamilyMilestone(w, f); }
+  } else if (!st.undead && Rng(w) < 0.06) {
+    const f = NewFamily(w, race, u);
+    u.fam = f.id;
+    u.fgn = 1;
+  }
+  if (opts?.gear) throw new Error('devEquip 未转写（case2 场景不传 gear）');
+  if (!opts?.silent) throw new Error('spawnUnit announce 分支未转写（case2 场景恒 silent）');
+  return u;
+}
+// inventEmergentTrait（engine L3318-3330）
+function InventEmergentTrait(w, parent, childGene) {
+  const t = InventTrait(w, childGene, w.traitSeq);
+  t.key = `dt${w.traitSeq++}`;
+  w.dynTraits.set(t.key, t);
+  TRAITS_ALL[t.key] = t;
+  RecordEvo(w, 'trait', t.name, null, '#ff5fd2', `${t.desc} —— 源自「${statOf(parent.race).name}」种群 ${MathFloor(w.yearF)} 年的极端基因个体`, t.desc, { race: parent.race });
+  AddEvent(w, 'emerge', `演化奇迹——「${statOf(parent.race).name}」种群诞生了前所未见的个体，携带着新特质「${t.name}」（${t.desc}）`, { colorHex: '#ff5fd2', x: parent.x, y: parent.y });
+  return t.key;
+}
+// wbResume case2 体（engine L3230-3257）
+function Case2(w, u, d) {
+  const cg = { s: d[0], d: d[1], h: d[2], r: d[3] };
+  // 超级演化 v4：辐射区演化高压锅（Rust 侧已定型 cg，JS 侧对辐射带出生的于代二次放大偏移）
+  const rIdx = idx(Math.max(0, Math.min(W - 1, u.x | 0)), Math.max(0, Math.min(H - 1, u.y | 0)));
+  if (w.radiate[rIdx] > 0) {
+    const pg = u.gene ?? { s: 1, d: 1, h: 1, r: 1 };
+    for (const k of ['s', 'd', 'h', 'r']) {
+      cg[k] = Math.max(0.5, Math.min(2, pg[k] + (cg[k] - pg[k]) * 2.2));
+    }
+  }
+  const traitKey = InventEmergentTrait(w, u, cg);
+  if (d[4] >= 1) {
+    // 文明分支（人口/上限门已在 Rust 通过）
+    const civ = w.civs[u.civ];
+    if (civ && civ.alive) {
+      const fam = u.fam ?? (Rng(w) < 0.25 ? NewFamily(w, u.race, u).id : undefined);
+      SpawnUnit(w, u.race, u.x + Rng(w) - 0.5, u.y + Rng(w) - 0.5, { civ: u.civ, silent: true, gene: cg, trait: traitKey ?? undefined, fam, fgn: fam !== undefined ? (u.fgn ?? 1) + 1 : undefined });
+      Fx(w, 'heart', u.x, u.y - 1, 40);
+    }
+  } else {
+    const cap = WildCapOf(w, u.race);
+    const same = w.wildCount.get(u.race) ?? 0;
+    if (same < cap) {
+      const fam = u.fam ?? (Rng(w) < 0.25 ? NewFamily(w, u.race, u).id : undefined);
+      SpawnUnit(w, u.race, u.x + Rng(w) - 0.5, u.y + Rng(w) - 0.5, { silent: true, gene: cg, trait: traitKey ?? undefined, fam, fgn: fam !== undefined ? (u.fgn ?? 1) + 1 : undefined });
+      Fx(w, 'heart', u.x, u.y - 1, 40);
+    }
+  }
+}
 // caravanArrive（engine L4770-4796）
 function CaravanArrive(w, u) {
   const home = u.civ >= 0 ? w.civs[u.civ] : null;
@@ -466,12 +792,17 @@ function UpdateUnitPostJS(w, u) {
     throw new Error('post 繁衍门意外通过（黄金场景 rngA0 受控必败）—— boost 链深域未转写（第二批）');
   }
 }
-// wbResume（engine L3215-3302 case1/4/5；case2/3 第二批余域）
+// wbResume（engine L3215-3302 case1/2/4/5；case3 第二批余域）
 function WbResume(w, u, kind, d) {
   switch (kind) {
     case 1: {
       // 船单位：Rust 侧 hurt-- 未标脏 → 直接 JS 接管，updateUnit 执行唯一一次 hurt--（Task 50 注释语义）
       UpdateUnit(w, u);
+      break;
+    }
+    case 2: {
+      // 涌现特质门已过（Rust 已消耗 0.06 掷骰）：发明特质 + 完成繁衍 spawn
+      Case2(w, u, d);
       break;
     }
     case 4: {
@@ -485,7 +816,7 @@ function WbResume(w, u, kind, d) {
       break;
     }
     default:
-      throw new Error(`wbResume case ${kind} 未转写（第二批余域：2 涌现/3 建筑摧毁）`);
+      throw new Error(`wbResume case ${kind} 未转写（第二批余域：3 建筑摧毁）`);
   }
 }
 
@@ -536,7 +867,40 @@ function dumpAll(w, u, fx) {
     ownerRle: rle(Array.from(w.owner)),
     roadRle: rle(w.road),
     shake: hex(w.shake),
+    // M-U3h 第三批 case2 POST 态（与 gen 同协议）
+    child: dumpChild(w, w.unitSeq0),
+    traits: [...w.dynTraits.values()].map(dumpTraitM),
+    evoNodes: w.evoNodes.map((n) => ({ id: n.id, kind: n.kind, name: n.name, parent: n.parent ?? null,
+      year: n.year, colorHex: n.colorHex, detail: n.detail, stat: n.stat ?? null })),
+    families: [...w.families.values()].map((f) => ({ id: f.id, name: f.name, race: f.race, founded: f.founded,
+      founder: f.founder, members: f.members, heroes: f.heroes, kills: f.kills, peak: f.peak, milestones: f.milestones })),
+    wildCountPost: [...w.wildCount.entries()],
+    unitSeq: w.unitSeq, familySeq: w.familySeq, traitSeq: w.traitSeq, evoSeq: w.evoSeq,
+    radiateRle: rle(w.radiate),
   };
+}
+// case2 新生儿 dump（gen dumpChild 同协议；按 id≥unitSeq0 定位——cap 门不产子为 null）
+function dumpChild(w, unitSeq0) {
+  const u = w.units.find((uu) => uu.id >= unitSeq0) ?? null;
+  if (!u) return null;
+  return {
+    id: u.id, race: u.race, civ: u.civ ?? -1,
+    x: hex(u.x), y: hex(u.y), lx: hex(u.lx), ly: hex(u.ly), rx: hex(u.rx), ry: hex(u.ry),
+    tx: hex(u.tx), ty: hex(u.ty),
+    hp: hex(u.hp), maxHp: hex(u.maxHp), dmg: hex(u.dmg), speed: hex(u.speed),
+    tDmg: u.tDmg === undefined ? null : hex(u.tDmg), tHp: u.tHp === undefined ? null : hex(u.tHp),
+    age: hex(u.age), maxAge: hex(u.maxAge), kills: u.kills, cd: u.cd,
+    trait: u.trait ?? null,
+    gene: u.gene ? { s: hex(u.gene.s), d: hex(u.gene.d), h: hex(u.gene.h), r: hex(u.gene.r) } : null,
+    job: u.job ?? null, infected: u.infected ? 1 : 0, flip: u.flip ? 1 : 0,
+    name: u.name, hurt: u.hurt ?? 0, breath: u.breath, parity: u.parity, dead: u.dead ? 1 : 0,
+    fam: u.fam ?? null, fgn: u.fgn ?? null,
+  };
+}
+function dumpTraitM(t) {
+  return { key: t.key, name: t.name, desc: t.desc, good: t.good === true ? true : undefined,
+    dmgMul: t.dmgMul === undefined ? null : hex(t.dmgMul), hpMul: t.hpMul === undefined ? null : hex(t.hpMul),
+    speedMul: t.speedMul === undefined ? null : hex(t.speedMul), regen: t.regen === undefined ? null : hex(t.regen) };
 }
 
 // ---------------- 主流程 ----------------
@@ -566,6 +930,18 @@ for (const fx of golden.scenarios) {
   cmp('ownerRle', got.ownerRle, want.ownerRle);
   cmp('roadRle', got.roadRle, want.roadRle);
   cmp('shake', got.shake, want.shake);
+  // case2 POST 态对账
+  for (const k of Object.keys(got.child ?? {})) cmp(`child.${k}`, got.child ? got.child[k] : null, want.child ? want.child[k] : null);
+  if ((got.child === null) !== (want.child === null)) diffs.push('child null 性不一致');
+  cmp('traits', got.traits, want.traits);
+  cmp('evoNodes', got.evoNodes, want.evoNodes);
+  cmp('families', got.families, want.families);
+  cmp('wildCountPost', got.wildCountPost, want.wildCountPost);
+  cmp('unitSeq', got.unitSeq, want.unitSeq);
+  cmp('familySeq', got.familySeq, want.familySeq);
+  cmp('traitSeq', got.traitSeq, want.traitSeq);
+  cmp('evoSeq', got.evoSeq, want.evoSeq);
+  cmp('radiateRle', got.radiateRle, want.radiateRle);
   if (diffs.length === 0) { pass++; console.log(`PASS ${fx.name}`); }
   else { fail++; console.log(`FAIL ${fx.name}\n  ${diffs.join('\n  ')}`); }
 }
