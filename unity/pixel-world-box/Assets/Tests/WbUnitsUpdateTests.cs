@@ -1,8 +1,9 @@
 // ============================================================================
-// WbUnitsUpdateTests.cs —— Test30：M-U7l updateUnit 批次一黄金回放（gen-units-update.mjs 8 场景）
-// 蓝本：engine.ts updateUnit L3455-3590 批次一 + 扫描壳 L3592-3639 + 无敌壳（C# WbBailRelay.UpdateUnit）
-// 协议：bitHex f64 位精确（禁 epsilon）/ 掷值链 pre→post rngA 态游走重建 / evt·fx·terr 事件流捕获 /
-//       muts 注入回放 / final+rngTail 终态对账 / 影子接缝八件置换（gen makeStubEng L149-173 同构）
+// WbUnitsUpdateTests.cs —— Test30：M-U7l 批次一 + M-U7m 批次二·扫描域黄金回放（gen-units-update.mjs 13 场景）
+// 蓝本：engine.ts updateUnit L3455-3590 批次一 + 扫描域 L3592-3669 批次二（isEnemyFast/isEnemy + 3×3 桶环 +
+//       血仇加权 + 恐慌传染 + 三逃离门）+ 无敌壳（C# WbBailRelay.UpdateUnit）
+// 协议：bitHex f64 位精确（禁 epsilon）/ 掷值链 pre→post rngA 态游走重建 / evt·fx·terr·scan 事件流捕获 /
+//       muts 注入回放 / final+rngTail 终态对账 / 影子接缝十件置换（gen makeStubEng 同构：批次一八件 + M-U7m MoveUnitHook/IsEnemyFastHook）
 // 黄金：Assets/StreamingAssets/WbGolden/units_update.json（scripts/unity-migration/golden/units_update.json 双写）
 // ============================================================================
 using NUnit.Framework;
@@ -21,9 +22,12 @@ namespace PixelWorldBox.Wb.Tests
         private System.Func<WbWorld, WbU, bool> _tail0;
         private System.Func<WbWorld, WbU, double> _gear0;
         private System.Action<WbWorld, string, double, double, int> _fx0;
+        private System.Action<WbWorld, WbU, double> _mv0;                                // M-U7m 三逃离门 moveUnit 接缝
+        private System.Func<WbWorld, WbU, WbU, bool> _isef0;                             // M-U7m isEnemyFast 接缝
 
         private System.Collections.Generic.List<object[]> _evt;
         private System.Collections.Generic.List<object[]> _fx;
+        private System.Collections.Generic.List<object[]> _scan;                         // M-U7m isEnemyFast 调用日志 [aId,bId,0|1]
         private double _gearRegen;
 
         [SetUp]
@@ -33,8 +37,10 @@ namespace PixelWorldBox.Wb.Tests
             _rise0 = WbBailRelay.RiseSkeletonHook; _plague0 = WbBailRelay.SpreadPlagueHook;
             _tail0 = WbBailRelay.TailJSHook; _post0 = WbBailRelay.PostJSHook;
             _gear0 = WbBailRelay.GearRegenHook; _fx0 = WbBailRelay.FxHook;
+            _mv0 = WbBailRelay.MoveUnitHook; _isef0 = WbBailRelay.IsEnemyFastHook;
             _evt = new System.Collections.Generic.List<object[]>();
             _fx = new System.Collections.Generic.List<object[]>();
+            _scan = new System.Collections.Generic.List<object[]>();
         }
 
         [TearDown]
@@ -44,6 +50,7 @@ namespace PixelWorldBox.Wb.Tests
             WbBailRelay.RiseSkeletonHook = _rise0; WbBailRelay.SpreadPlagueHook = _plague0;
             WbBailRelay.TailJSHook = _tail0; WbBailRelay.PostJSHook = _post0;
             WbBailRelay.GearRegenHook = _gear0; WbBailRelay.FxHook = _fx0;
+            WbBailRelay.MoveUnitHook = _mv0; WbBailRelay.IsEnemyFastHook = _isef0;
         }
 
         private static string FindGolden(string fileName)
@@ -104,18 +111,19 @@ namespace PixelWorldBox.Wb.Tests
             Assert.That(actual, Is.EqualTo(expected), ctx + " · " + field);
         }
 
-        // ---------------- 主回放：8 场景逐位 ----------------
+        // ---------------- 主回放：13 场景逐位（M-U7l 8 + M-U7m 扫描域 5） ----------------
         [Test]
-        public void GoldenUnitsUpdate_Replay8Cases_BitExact()
+        public void GoldenUnitsUpdate_Replay13Cases_BitExact()
         {
             var root = JObject.Parse(System.IO.File.ReadAllText(FindGolden("units_update.json")));
-            // ep 交叉锁定（C# 内联字面量 0.008/0.006/3.0 —— engineParams L39/L41/L31）
+            // ep 交叉锁定（C# 内联字面量 0.008/0.006/3.0/0.72 —— engineParams L39/L41/L31/L40）
             AssertEq("ep", "panicDecay", 0.008, (double)root["ep"]["panicDecay"]);
             AssertEq("ep", "grudgeDecay", 0.006, (double)root["ep"]["grudgeDecay"]);
             AssertEq("ep", "fireDamage", 3.0, (double)root["ep"]["fireDamage"]);
+            AssertEq("ep", "panicRout", 0.72, (double)root["ep"]["panicRout"]);   // M-U7m 溃逃阈
             var specs = (JArray)root["terrainSpecs"];
             var cases = (JArray)root["cases"];
-            Assert.That(cases.Count, Is.EqualTo(8), "场景数");
+            Assert.That(cases.Count, Is.EqualTo(13), "场景数");
             foreach (var c in cases) ReplayCase(c, specs);
         }
 
@@ -152,6 +160,20 @@ namespace PixelWorldBox.Wb.Tests
             w.units = units;
             w.rngA = (uint)(int)c["seed"];                                    // mulberry32 state0 = seed
 
+            // —— M-U7m 扫描域：scanReal 布桶 + 双接缝置换（gen makeStubEng scanReal 同构）——
+            bool scanReal = !Nul(env["scanReal"]) && (bool)env["scanReal"];
+            if (scanReal)
+            {
+                w.RebuildBuckets();   // gen 布桶同构（units 序 push；L3100-3101 懒清空世代戳首代全清等价）
+                WbBailRelay.MoveUnitHook = (ww, uu, mul) => _evt.Add(new object[] { "mv", (double)uu.id, mul });   // 'mv' 事件流
+                WbBailRelay.IsEnemyFastHook = (ww, a, b) =>
+                {                                                                                                    // 真实现包装 + 'scan' 调用日志
+                    bool v = _isef0(ww, a, b);
+                    _scan.Add(new object[] { (double)a.id, (double)b.id, v ? 1 : 0 });
+                    return v;
+                };
+            }
+
             // —— 影子接缝置换（gen makeStubEng 同构）——
             WbBailRelay.GrabbedTickHook = (ww, u) => _evt.Add(new object[] { "grab", (double)u.id });
             WbBailRelay.UpdateBoatHook = (ww, u) => _evt.Add(new object[] { "boat", (double)u.id });
@@ -165,7 +187,7 @@ namespace PixelWorldBox.Wb.Tests
             var outSteps = (JArray)c["out"];
             bool track = !Nul(env["terrainTrack"]) && (bool)env["terrainTrack"];
             int stepN = (int)c["steps"];
-            _evt.Clear(); _fx.Clear();
+            _evt.Clear(); _fx.Clear(); _scan.Clear();
 
             for (int sn = 0; sn < stepN; sn++)
             {
@@ -189,14 +211,15 @@ namespace PixelWorldBox.Wb.Tests
                         Assert.That((bool)gPerU[eu]["dead"], Is.True, ctx + " 黄金应为 dead:true 占位");
                         eu++; continue;
                     }
-                    int e0 = _evt.Count, f0 = _fx.Count;
+                    int e0 = _evt.Count, f0 = _fx.Count, s0 = _scan.Count;
                     byte[] terrU0 = (byte[])w.terrain.Clone();
                     uint pre = w.rngA;
                     WbBailRelay.UpdateUnit(w, u);
                     int draws = WalkCount(pre, w.rngA);
                     stepDraws += draws;
                     ComparePerU(ctx, gPerU[eu], u, _evt.GetRange(e0, _evt.Count - e0),
-                                _fx.GetRange(f0, _fx.Count - f0), DiffArr(terrU0, w.terrain), draws);
+                                _fx.GetRange(f0, _fx.Count - f0), DiffArr(terrU0, w.terrain), draws,
+                                _scan.GetRange(s0, _scan.Count - s0));
                     eu++;
                 }
 
@@ -257,6 +280,7 @@ namespace PixelWorldBox.Wb.Tests
             u.syk = Nul(s["syk"]) ? (double?)null : D(s["syk"]);
             u.infected = (bool)s["infected"] ? 1 : 0;
             u.grab = I(s["grab"]); u.boat = I(s["boat"]);
+            u.caravan = I(s["caravan"]);                                           // M-U7m L3641 商队门
             u.civ = I(s["civ"]); u.jobC = I(s["job"]); u.flip = (bool)s["flip"] ? 1 : 0;
             u.traitName = NS(s["trait"]);
             // traitRegen 交叉锁定：C# TraitsAll 表 ≡ 黄金 fixture 数值（gen L104 traitRegen 已解析）
@@ -302,6 +326,7 @@ namespace PixelWorldBox.Wb.Tests
                     case "infected": u.infected = (bool)v ? 1 : 0; break;
                     case "dead": u.dead = (bool)v ? 1 : 0; break;
                     case "flip": u.flip = (bool)v ? 1 : 0; break;
+                    case "caravan": u.caravan = I(v); break;                      // M-U7m 商队门（mut 注入面预留）
                     default: throw new AssertionException("未知 mut 键: " + k);
                 }
             }
@@ -334,6 +359,7 @@ namespace PixelWorldBox.Wb.Tests
             AssertEq(ctx, "dead", (bool)g["dead"], u.dead != 0);
             AssertEq(ctx, "grab", I(g["grab"]), u.grab ?? 0);
             AssertEq(ctx, "boat", I(g["boat"]), u.boat);
+            AssertEq(ctx, "caravan", I(g["caravan"]), u.caravan);                     // M-U7m 商队镜像（字段只加）
             AssertEq(ctx, "x", (string)g["x"], BitHex(u.x));
             AssertEq(ctx, "y", (string)g["y"], BitHex(u.y));
             AssertEq(ctx, "tx", (string)g["tx"], BitHex(u.tx));
@@ -342,7 +368,8 @@ namespace PixelWorldBox.Wb.Tests
 
         private void ComparePerU(string ctx, JToken g, WbU u,
             System.Collections.Generic.List<object[]> evt, System.Collections.Generic.List<object[]> fx,
-            System.Collections.Generic.List<int[]> terr, int draws)
+            System.Collections.Generic.List<int[]> terr, int draws,
+            System.Collections.Generic.List<object[]> scan)
         {
             CompareSnap(ctx, g, u);
             // evt 事件流（grab/boat/rise/plague/tail/post）
@@ -378,6 +405,16 @@ namespace PixelWorldBox.Wb.Tests
                 AssertEq(ctx + " terr[" + i + "]", "idx", (int)gt[0], terr[i][0]);
                 AssertEq(ctx + " terr[" + i + "]", "old", (int)gt[1], terr[i][1]);
                 AssertEq(ctx + " terr[" + i + "]", "new", (int)gt[2], terr[i][2]);
+            }
+            // scan 调用日志（M-U7m：isEnemyFast [aId,bId,0|1]——gen cap.scan 包装同构）
+            var gScan = (JArray)g["scan"];
+            Assert.That(scan.Count, Is.EqualTo(gScan.Count), ctx + " scan 计数");
+            for (int i = 0; i < scan.Count; i++)
+            {
+                var gs = (JArray)gScan[i];
+                AssertEq(ctx + " scan[" + i + "]", "a", (double)gs[0], (double)scan[i][0]);
+                AssertEq(ctx + " scan[" + i + "]", "b", (double)gs[1], (double)scan[i][1]);
+                AssertEq(ctx + " scan[" + i + "]", "enemy", (int)gs[2], (int)scan[i][2]);
             }
             AssertEq(ctx, "draws", (int)g["draws"], draws);
         }

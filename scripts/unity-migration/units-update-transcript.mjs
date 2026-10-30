@@ -1,10 +1,11 @@
 // ============================================================================
-// units-update-transcript.mjs —— M-U7l 切片「updateUnit 批次一」parity 镜像（零引擎导入，纪律④第二链）
-// 蓝本：src/lib/game/engine.ts updateUnit L3455-3590（批次一）+ 扫描壳 L3592-3639（空桶契约）+
+// units-update-transcript.mjs —— M-U7m 切片「updateUnit 批次二·扫描域」parity 镜像（零引擎导入，纪律④第二链）
+// 蓝本：src/lib/game/engine.ts updateUnit L3455-3590（批次一，M-U7l）+ 扫描域 L3592-3669（批次二·本切片：
+//       isEnemyFast/isEnemy + 3×3 桶环 + 血仇加权 + 恐慌传染 + 三逃离门）+ L3671+ 战斗哨兵 +
 //       无敌壳 L3927-4112（civ=-1 / 无龙契约 → tail/post 影子调用点）。
 // 消费：golden/units_update.json（gen-units-update.mjs 产物——env/units/muts 依黄金回放，
 //       races 位字节即蓝本旗标源、ep 随 JSON 分发、traitRegen 随 fixture 回显——零独立打包）。
-// 对账：perU 快照 bitHex 逐位 + evt/fx/terr 事件流 + 逐步 draws + fireSet + final + rngTail。
+// 对账：perU 快照 bitHex 逐位 + evt/fx/terr/scan 事件流（'mv'/'scan' M-U7m 新增）+ 逐步 draws + fireSet + final + rngTail。
 // 运行：node scripts/unity-migration/units-update-transcript.mjs
 // ============================================================================
 import { readFileSync } from 'node:fs';
@@ -75,6 +76,7 @@ const mkU = (s) => {
   if (s.infected) u.infected = true;
   if (s.grab) u.grab = s.grab;
   if (s.boat) u.boat = s.boat;
+  if (s.caravan) u.caravan = s.caravan;                     // M-U7m L3641 商队门（spec 回显）
   u.civ = s.civ; u.job = s.job; u.flip = s.flip;
   if (s.trait !== null && s.trait !== undefined) u.trait = s.trait;
   u._regen = s.traitRegen ?? 0;                                    // fixture 回显再生值（TRAITS 表镜像）
@@ -95,6 +97,7 @@ const snapU = (u) => ({
   sxk: u.sxk === undefined ? null : bitHex(u.sxk),
   syk: u.syk === undefined ? null : bitHex(u.syk),
   infected: !!u.infected, dead: !!u.dead, grab: u.grab ?? 0, boat: u.boat ?? 0,
+  caravan: u.caravan ?? 0,   // M-U7m 商队镜像（字段只加）
   x: bitHex(u.x), y: bitHex(u.y), tx: bitHex(u.tx), ty: bitHex(u.ty),
 });
 
@@ -104,7 +107,68 @@ const eq = (a, b, path) => {
 
 let totalDraws = 0;
 
-/** updateUnit 批次一镜像（L3455-3590 全域 + 扫描壳空桶 + 无敌壳；行号随注） */
+const BW = W / 4, BH = H / 4;                                 // engine L717-718（bw/bh——桶网格）
+
+/** isHerbivoreRace L2120-2128 镜像（静态八种 + dynRaces 递归；黄金 fixture 无动态种 → dynRaces 空） */
+const HERB_STATIC = new Set([6, 10, 11, 12, 33, 34, 35, 37]);   // SHEEP/DEER/PENGUIN/CAMEL/CHICKEN/PIG/RABBIT/FISH（types.ts R 表）
+const isHerbivoreRaceT = (race, dynRaces) => {
+  if (HERB_STATIC.has(race)) return true;                                                       // L2121-2123
+  const d = dynRaces.get(race);                                                                 // L2124
+  if (!d) return false;                                                                         // L2125
+  if (d.eco === 'herb') return true;                                                            // L2126
+  if (d.eco) return false;                                                                      // L2127
+  return isHerbivoreRaceT(d.parent, dynRaces);                                                  // L2128
+};
+
+/** isEnemy L2083-2116 镜像（敌我判定全链；atWar L2061-2064 rel 空 Map 恒 false——黄金无交战国 fixture） */
+function isEnemyT(w, a, b) {
+  if (a === b) return false;                                                                    // L2084
+  const ra = raceF(a.race), rb = raceF(b.race);                                                 // L2085-2086
+  if (ra.undead && rb.undead) return false;                                                     // L2088 亡者并肩
+  // L2095-2102 八对称分支（ZOMBIE 5/SKELETON 16/WHITEWALKER 23/DRAGON 9/DEMON 17/KRAKEN 25/SANDWORM 26/BASILISK 27——types.ts R 表）
+  if (a.race === 5 || b.race === 5) return a.race !== b.race;
+  if (a.race === 16 || b.race === 16) return a.race !== b.race;
+  if (a.race === 23 || b.race === 23) return a.race !== b.race;
+  if (a.race === 9 || b.race === 9) return a.race !== b.race;
+  if (a.race === 17 || b.race === 17) return a.race !== b.race;
+  if (a.race === 25 || b.race === 25) return a.race !== b.race;
+  if (a.race === 26 || b.race === 26) return a.race !== b.race;
+  if (a.race === 27 || b.race === 27) return a.race !== b.race;
+  if (ra.hostile && rb.isCiv) return true;                                                      // L2103
+  if (rb.hostile && ra.isCiv) return true;                                                      // L2104
+  if (ra.predator && isHerbivoreRaceT(b.race, w.dynRaces)) return true;                          // L2106
+  if (ra.predator && a.race === 8 && rb.isCiv) return true;                                      // L2107（BEAR×isCiv）
+  if (a.race === 13 && isHerbivoreRaceT(b.race, w.dynRaces)) return true;                        // L2109（SCORPION）
+  if (a.race === 14 && (isHerbivoreRaceT(b.race, w.dynRaces) || b.race === 13)) return true;     // L2111（SNAKE×SCORPION）
+  if (a.race === 40) {                                                                          // L2113（SHARK：猎鱼 + 落水陆行种）
+    if (b.race === 37) return true;
+    if (!rb.aquatic && !rb.flying) {
+      const t = w.terrain[Math.floor(b.y) * W + Math.floor(b.x)];                                // idx(floor(b.x), floor(b.y))
+      if (t === 0 || t === 1) return true;                                                       // isWater（DEEP/WATER）
+    }
+  }
+  if (a.civ >= 0 && b.civ >= 0 && a.civ !== b.civ) {                                            // L2114
+    const k = a.civ < b.civ ? a.civ * 100000 + b.civ : b.civ * 100000 + a.civ;                   // pairKey 序规格（rel 空恒 false——黄金无交战）
+    const v = w.rel.get(k);
+    return v !== undefined && v < -20;
+  }
+  return false;                                                                                 // L2115
+}
+
+/** isEnemyFast L2070-2081 镜像（野生对 LUT 缓存 + 'scan' 调用日志事件流——gen 包装同构） */
+function isEnemyFastT(w, a, b, scanLog) {
+  let v;
+  if (a.civ < 0 && b.civ < 0) {                                                                 // L2072
+    const key = a.race * 65536 + b.race;                                                        // L2073
+    const hit = w.enemyLut.get(key);                                                            // L2074
+    if (hit !== undefined) v = hit;                                                             // L2075
+    else { v = isEnemyT(w, a, b); w.enemyLut.set(key, v); }                                      // L2076-2077
+  } else v = isEnemyT(w, a, b);                                                                 // L2080
+  scanLog.push([a.id, b.id, v ? 1 : 0]);
+  return v;
+}
+
+/** updateUnit 镜像（L3455-3590 批次一 + 扫描域 L3592-3669 批次二 + L3671+ 战斗哨兵 + 无敌壳；行号随注） */
 function updateUnitT(u, ctx) {
   const r = raceF(u.race);                                                                       // L3456
   const rng = () => { totalDraws++; return ctx.raw(); };
@@ -197,10 +261,65 @@ function updateUnitT(u, ctx) {
     if (isWater(ctx.terrain[ti]) && rng() < 0.6) ctx.setT(ti, T.ICE);                             // L3588
   }
   if (u.hp <= 0) { u.dead = true; return; }                                                      // L3590 死亡门
-  // —— 扫描域壳 L3592-3639： contagious 门（契约① panic≤0.55 恒零掷）+ 空桶零迭代 ——
-  const contagious = (u.panic ?? 0) > 0.55 && rng() < 0.2;                                        // L3598
-  void contagious;
-  // JS 环（L3608-3638）：buckets 恒空（契约④）——零迭代即零语义
+  // ================= 扫描域 L3592-3669（M-U7m 批次二：WB.active() 分支不译=恒 false；JS 3×3 桶环） =================
+  let enemy = null, bestD = 7, enemyD = 7, allies = 0, foes = 0;                                  // L3578-3582（WB L3592-3606 分支不触达）
+  const contagious = (u.panic ?? 0) > 0.55 && rng() < 0.2;                                        // L3584 恐慌传染掷骰（&& 短路）
+  const cx = Math.min(BW - 1, Math.max(0, (u.x / 4) | 0));                                       // L3585
+  const cy = Math.min(BH - 1, Math.max(0, (u.y / 4) | 0));                                       // L3586
+  const uxx = u.x, uyy = u.y;                                                                    // L3587-3588
+  for (let by = cy - 1; by <= cy + 1; by++) {                                                    // L3608
+    for (let bx = cx - 1; bx <= cx + 1; bx++) {                                                  // L3609
+      if (bx < 0 || by < 0 || bx >= BW || by >= BH) continue;                                    // L3610
+      const bucket = ctx.buckets[by * BW + bx];
+      if (!bucket) continue;                                                                     // 引擎 L761 桶恒初始化——镜像未布桶 ≡ 空桶
+      for (const o of bucket) {                                                                  // L3611
+        if (o.dead || o === u) continue;                                                         // L3612
+        const ddx = o.x - uxx, ddy = o.y - uyy;                                                  // L3613-3614
+        if (isEnemyFastT(ctx, u, o, ctx.scan)) {                                                 // L3615
+          foes++;                                                                                // L3616
+          const d2 = ddx * ddx + ddy * ddy;                                                      // L3617
+          if (u.gIds == null && d2 >= bestD * bestD) continue;                                   // L3620 视野粗筛（无血仇 cull）
+          const d = Math.sqrt(d2);                                                               // L3621
+          let wd = d;                                                                            // L3623
+          if (u.gIds) {                                                                          // L3624 血仇加权：仇人心理距离更近
+            const gi = u.gIds.indexOf(o.id);                                                     // L3625
+            if (gi >= 0) wd = d * (1 - 0.42 * Math.min(1, (u.gVal?.[gi] ?? 1) / 2));              // L3626
+          }
+          if (wd < bestD) { bestD = wd; enemy = o; enemyD = d; }                                 // L3628
+        } else if (u.civ >= 0 ? o.civ === u.civ : o.race === u.race) {                            // L3629
+          allies++;                                                                              // L3630
+          if (contagious && (o.panic ?? 0) < (u.panic ?? 0) - 0.15 && ddx * ddx + ddy * ddy < 16) {// L3632（4²）
+            o.panic = Math.min(1, (o.panic ?? 0) + (u.panic ?? 0) * 0.4);                        // L3633
+          }
+        }
+      }
+    }
+  }
+  void enemyD; void allies; void foes;   // 战斗域批次三消费面（逃离三门不读——哨兵前置注记）
+  // —— 三逃离门 L3641-3669（moveUnit 走 'mv' 事件流 stub——执行语义属 M-U3h 切片） ——
+  if (enemy && (u.caravan ?? 0) > 0) {                                                           // L3641 商队不攻击——夺路而逃
+    const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3643
+    u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 4));                                // L3644
+    u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 4));                                // L3645
+    ctx.evt.push(['mv', u.id, 1.15]);                                                            // L3646（逃命加成）
+    return;                                                                                      // L3647
+  }
+  if (enemy && (u.fleeT ?? 0) > 0) {                                                             // L3652 脱离冷却：持续拉开距离
+    const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3653
+    u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 5));                                // L3654
+    u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 5));                                // L3655
+    ctx.evt.push(['mv', u.id, (u.panic ?? 0) >= 0.5 ? 1.32 : 1.18]);                              // L3656（恐慌溃逃者狂奔加速）
+    return;                                                                                      // L3657
+  }
+  if (enemy && (u.panic ?? 0) >= g.ep.panicRout && u.army == null && !r.undead) {                 // L3662 恐慌溃逃（ep 随 JSON 分发）
+    u.fleeT = 60;                                                                                // L3663
+    const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3664
+    u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 5));                                // L3665
+    u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 5));                                // L3666
+    ctx.evt.push(['mv', u.id, 1.3]);                                                             // L3667（夺路狂奔）
+    return;                                                                                      // L3668
+  }
+  if (enemy) throw new Error('SENTINEL: 战斗/远程/神经域批次三（L3671+；黄金 13 场景 enemy 均经三门退出）');
   // —— 无敌路径 L3927 else 壳 ——
   if (u.race === 9) throw new Error('SENTINEL: 龙息域（黄金无龙场景）');                            // L3931
   if (r.isCiv && u.civ >= 0) throw new Error('SENTINEL: peaceful 职业域（黄金 civ=-1 契约）');      // L3937
@@ -208,7 +327,7 @@ function updateUnitT(u, ctx) {
   ctx.evt.push(['post', u.id]);                                                                  // L4112
 }
 
-// ---- 主回放：8 场景依黄金 fixtures/muts 重建 ----
+// ---- 主回放：13 场景依黄金 fixtures/muts 重建 ----
 let cases = 0;
 for (const c of g.cases) {
   const tspec = g.terrainSpecs.find((t) => t.name === c.terrain);
@@ -227,10 +346,18 @@ for (const c of g.cases) {
   const units = c.units.map(mkU);
   const raw = mulberry32(c.seed);
   const terrLog = [];
+  const buckets = new Array(BW * BH).fill(null);                       // engine L761（未布桶 ≡ 空桶——批次一场景契约④）
+  if (c.env.scanReal) {
+    for (const u of units) {                                           // gen 布桶同构（units 序 push）
+      const ci = ((u.y / 4) | 0) * BW + ((u.x / 4) | 0);
+      (buckets[ci] ??= []).push(u);
+    }
+  }
   const ctx = {
     raw, lawsRise: c.env.lawsRise, ambience: c.env.ambience, gearRegen: c.env.gearRegen ?? 0,
     fire, radiate, terrain, fireSet,
-    evt: [], fx: [],
+    evt: [], fx: [], scan: [],
+    buckets, enemyLut: new Map(), dynRaces: new Map(), rel: new Map(),   // isEnemyFast/isEnemy 依赖面（黄金无动态种/无交战国）
     setT: (i, t) => { if (terrain[i] === t) return; const old = terrain[i]; terrain[i] = t; terrLog.push([i, old, t]); },   // setTerrain 影子（同值早退 L950 语义）
   };
 
@@ -260,7 +387,7 @@ for (const c of g.cases) {
     let eu = 0;
     for (const u of units) {
       if (u.dead) { eq({ dead: true }, gStep.units[eu], `${c.name} S${stepIdx} u${perU.length} dead`); eu++; perU.push({}); continue; }
-      const e0 = ctx.evt.length, f0 = ctx.fx.length, t0 = terrLog.length;
+      const e0 = ctx.evt.length, f0 = ctx.fx.length, t0 = terrLog.length, sc0 = ctx.scan.length;
       const d0 = totalDraws;
       updateUnitT(u, ctx);
       perU.push({
@@ -268,6 +395,7 @@ for (const c of g.cases) {
         evt: ctx.evt.slice(e0),
         fx: ctx.fx.slice(f0),
         terr: terrLog.slice(t0),
+        scan: ctx.scan.slice(sc0),
         draws: totalDraws - d0,
       });
       eu++;

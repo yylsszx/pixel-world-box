@@ -442,6 +442,8 @@ namespace PixelWorldBox.Wb
         public Dictionary<int, WbFamily> families = new Dictionary<int, WbFamily>(); // engine this.families（家族谱系）
         public Dictionary<string, WbTrait> dynTraits = new Dictionary<string, WbTrait>(); // engine this.dynTraits（涌现特质）
         public Dictionary<int, WbDynRace> dynRaces = new Dictionary<int, WbDynRace>();     // engine this.dynRaces（种化注册表；wildCapOf L2149 递归消费）
+        // —— M-U7m 扫描域（字段只加）——
+        public Dictionary<int, bool> enemyLut = new Dictionary<int, bool>();   // engine L2068 enemyLut（isEnemyFast 野生对 LUT：键 race*65536+race；鲨鱼地形分支 L2113 依赖被扫者站位而 LUT 键仅 race 对——跨格缓存污染为蓝本既有行为，机械保持）
         public int unitSeq, familySeq, traitSeq;           // engine this.unitSeq/familySeq/traitSeq（evoSeq 已存在下方）
         public List<WbEv> worldEvents = new List<WbEv>();   // unshift 语义：新的在最前
         public List<WbToast> toasts = new List<WbToast>();  // onToast 回调收集（toast 本体不存储）

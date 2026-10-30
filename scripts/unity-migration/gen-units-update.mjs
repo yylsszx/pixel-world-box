@@ -1,17 +1,23 @@
 // ============================================================================
-// gen-units-update.mjs —— M-U7l 切片「updateUnit 批次一」黄金向量（M-U2a 草稿接管：行号修正 + 双写标准化 + det 复验 df/e58480d1 链）
+// gen-units-update.mjs —— M-U7m 切片「updateUnit 批次二·扫描域」黄金向量（M-U7l 批次一 8 场景继承 + 扫描域 S9-S13 五场景）
 // 蓝本：src/lib/game/engine.ts updateUnit（现行号 L3455 入口 → L3590 hp≤0 死亡门批次一边界；
-//       扫描域空桶穿行 → L4110 tailJS/L4112 postJS 影子调用点），
+//       扫描域 L3592-3669 本切片（isEnemyFast/isEnemy + 3×3 桶环 + 血仇加权 + 恐慌传染 + 三逃离门）→
+//       L3671+ 战斗/远程/神经/职业/龙息域批次三哨兵 → L4110 tailJS/L4112 postJS 影子调用点），
 //       rust-core/src/units.rs update_unit（L2314+，交叉核对）。
 // 直接 import 现役 engine.ts（真实现，非复制），以 Object.create(GameEngine.prototype)
-// + stub 字段面驱动真 updateUnit；扫描段以空 buckets 截断（M-U2b 域），
-// TailJS/PostJS 以实例方法遮蔽 stub（切片 3/4 域，事件流契约）。
+// + stub 字段面驱动真 updateUnit；批次一场景空 buckets 截断，扫描场景 env.scanReal：
+//  布桶（units 序 push 重建同构）+ isEnemyFast 原型真实现包装（'scan' 调用日志 [aId,bId,0|1] 事件流）。
+// TailJS/PostJS 以实例方法遮蔽 stub（切片 3/4 域，事件流契约）；三逃离门的 moveUnit 以
+//  'mv' [uId, mul] 事件流 stub（移动执行语义属 M-U3h moveUnit 切片——扫描切片契约=选敌/tx·ty/mul 决策）。
 // 引擎侧效应（grabbedTick/updateBoat/riseSkeleton/spreadPlague/fx）以事件流捕获。
 // 截断契约（对 rng 消耗断点敏感，场景设计须遵守）：
-//  ① 单位 panic 注入恒 ≤0.55（contagious 掷骰属扫描段——留给切片 3）；
+//  ① 批次一场景（S1-S8）单位 panic 注入恒 ≤0.55（contagious 掷骰属扫描段）；扫描场景 S9-S13 解锁；
 //  ② civ=-1（isCiv 种族亦然）→ peaceful 职业链整段跳过（L4112 门 u.civ>=0→现 L3937）；
+//     扫描场景例外：S12 商队 human civ=1 经 L3641 商队逃离门提前 return，不触达职业域；
 //  ③ fireSet/damagedSet 空且单位非消防相关 → 消防域 && 短路零抽；
-//  ④ WB.setEnabled(false) → 扫描走 JS 空桶路径，零消耗。
+//  ④ WB.setEnabled(false) → 扫描走 JS 桶路径（WB.active() 分支不译=C# WbBail JS 接力域同构）；
+//  ⑤ 扫描场景 enemy 非空时必须经三逃离门（L3641 商队/L3652 fleeT/L3662 恐慌溃逃）退出，
+//     触达 L3671+ 战斗哨兵即设计错误。
 // 运行：bun scripts/unity-migration/gen-units-update.mjs
 // 输出：scripts/unity-migration/golden/units_update.json
 //       unity/pixel-world-box/Assets/StreamingAssets/WbGolden/units_update.json（双写）
@@ -34,10 +40,10 @@ const bitHex = (d) => {
   return [...new Uint8Array(dv.buffer)].map((b) => b.toString(16).padStart(2, '0')).join('');
 };
 
-WB.setEnabled(false); // 扫描哨兵：JS 空桶路径（C# 对账台同构零消耗）
+WB.setEnabled(false); // 扫描走 JS 桶路径（M-U7m：批次一场景空桶 / 扫描场景 scanReal 布桶——C# WbBail=JS 接力域同构）
 
 // ---- ep 真值随 JSON 分发（C# 不硬编码引擎参数） ----
-const EP = { panicDecay: ep('social.panicDecay'), grudgeDecay: ep('social.grudgeDecay'), fireDamage: ep('fire.damage') };
+const EP = { panicDecay: ep('social.panicDecay'), grudgeDecay: ep('social.grudgeDecay'), fireDamage: ep('fire.damage'), panicRout: ep('social.panicRout') };   // panicRout M-U7m 溃逃阈（engineParams L40 默认 0.72）
 
 // ---- 种族挑选（真 RACES 表扫描；位字节随 JSON 回显——C# 零独立打包） ----
 const pickRace = (pred, label) => {
@@ -52,6 +58,8 @@ const RACE_PICKS = {
   troll: pickRace((d) => Number(d.key === 'troll'), 'troll'),
   demon: pickRace((d) => d.lavaImmune && !d.flying, 'lavaImmune'),
   ww: pickRace((d) => d.key === 'whitewalker', 'whitewalker'),
+  bandit: pickRace((d) => d.hostile && !d.isCiv && !d.predator && !d.undead && !d.aquatic && !d.flying, 'bandit'),   // M-U7m S12：hostile×isCiv 敌意分支（RACES 序首命中 BANDIT id4）
+  zombie: pickRace((d) => d.undead && !d.flying && !d.aquatic, 'zombie'),                                            // M-U7m S11：L2095 ZOMBIE 对称敌意分支（序首命中 id5）
 };
 const packRace = (id) => {
   const d = RACES[id];
@@ -102,6 +110,7 @@ const U = (o) => ({
   stk: o.stk === undefined ? null : o.stk,
   sxk: o.sxk === undefined ? null : o.sxk, syk: o.syk === undefined ? null : o.syk,
   infected: !!o.infected, grab: o.grab ?? 0, boat: o.boat ?? 0,
+  caravan: o.caravan ?? 0,   // M-U7m L3641 商队门（TS Unit.caravan ?? 0 语义）
   civ: o.civ ?? -1, job: o.job ?? 0, flip: !!o.flip,
   trait: o.trait === undefined ? null : o.trait,   // trait 字符串（TS 侧 TRAITS 表查 regen 用；C# 用 traitRegen 数值）
   traitRegen: o.trait === undefined ? 0 : (TRAIT_REGEN[o.trait] ?? 0),
@@ -127,6 +136,7 @@ const mkTsUnit = (spec) => {
   if (spec.infected) u.infected = true;
   if (spec.grab) u.grab = spec.grab;
   if (spec.boat) u.boat = spec.boat;
+  if (spec.caravan) u.caravan = spec.caravan;   // M-U7m L3641（TS undefined ?? 0 语义→默认不设）
   u.civ = spec.civ; u.job = spec.job; u.flip = spec.flip;
   if (spec.trait !== null && spec.trait !== undefined) u.trait = spec.trait; // 真 TRAITS 表键——TS 再生路径查表依赖
   return u;
@@ -146,6 +156,7 @@ const snapU = (u) => ({
   sxk: u.sxk === undefined ? null : bitHex(u.sxk),
   syk: u.syk === undefined ? null : bitHex(u.syk),
   infected: !!u.infected, dead: !!u.dead, grab: u.grab ?? 0, boat: u.boat ?? 0,
+  caravan: u.caravan ?? 0,   // M-U7m 商队镜像（snapU 字段只加）
   x: bitHex(u.x), y: bitHex(u.y), tx: bitHex(u.tx), ty: bitHex(u.ty),
 });
 // ---- stub 引擎：updateUnit 前置段 + 哨兵面 ----
@@ -168,8 +179,20 @@ function makeStubEng(env, cap) {
   eng.spreadPlague = (u) => cap.evt.push(['plague', u.id]);
   eng.gearBonus = () => ({ regen: env.gearRegen ?? 0, crit: 0, armor: 0, lifesteal: 0, thorns: 0, speed: 1, ranged: 0 });
   eng.setTerrain = (i, t) => { if (eng.terrain[i] === t) return; const old = eng.terrain[i]; eng.terrain[i] = t; cap.terr.push([i, old, t]); };
-  // —— 扫描/尾段哨兵（场景契约：桶空不触达；触达即设计错误） ——
-  eng.isEnemyFast = () => { throw new Error('SCAN_SENTINEL: buckets should be empty'); };
+  // —— 扫描/尾段哨兵（场景契约：批次一场景桶空不触达；触达即设计错误） ——
+  //  M-U7m：env.scanReal 时改挂原型真实现包装（'scan' [aId,bId,0|1] 调用日志事件流——
+  //  isEnemyFast/isEnemy 走 GameEngine.prototype 原实现，LUT/dynRaces/rel 供真字段）
+  if (env.scanReal) {
+    eng.enemyLut = new Map(); eng.dynRaces = new Map(); eng.rel = new Map();   // isEnemyFast L2068 LUT + isEnemy L2124/L2061 依赖面
+    eng.isEnemyFast = (a, b) => {
+      const v = GameEngine.prototype.isEnemyFast.call(eng, a, b);
+      cap.scan.push([a.id, b.id, v ? 1 : 0]);
+      return v;
+    };
+    eng.moveUnit = (u2, mul) => cap.evt.push(['mv', u2.id, mul]);              // 三逃离门 moveUnit stub（'mv' 事件——执行语义属 M-U3h 切片）
+  } else {
+    eng.isEnemyFast = () => { throw new Error('SCAN_SENTINEL: buckets should be empty'); };
+  }
   eng.updateUnitTailJS = (u) => { cap.evt.push(['tail', u.id]); return false; };
   eng.updateUnitPostJS = (u) => { cap.evt.push(['post', u.id]); };
   return eng;
@@ -323,6 +346,66 @@ const CASES = [
     ],
     steps: 3,
   },
+  // ================= M-U7m 批次二·扫描域（S9-S13；契约⑤：enemy 非空必经三逃离门退出） =================
+  // S9 scan-select-flee：捕食者索敌最近选敌（无血仇 cull 路径 d2>=bestD² 跳过）+ fleeT 脱离门（panic null → 1.18）
+  {
+    name: 'scan-select-flee', terrain: 'plains', seed: 20261031,
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'wolf', x: 30.5, y: 30.5, fleeT: 8, civ: -1 }),   // u0：捕食者——L3615 索敌 u1（d=1）→ L3620 cull u2（d=3≥bestD²=1）→ L3652 flee 门 tx/ty+1.18
+      U({ race: 'sheep', x: 31.5, y: 30.5, civ: -1 }),            // u1：猎物（isEnemyFast LUT：predator×isHerbivoreRace）
+      U({ race: 'sheep', x: 33.5, y: 30.5, civ: -1 }),            // u2：次近猎物（L3620 无血仇 cull 实证——不入选）
+    ],
+    steps: 2,
+  },
+  // S10 grudge-rout：血仇加权选敌（舍近求远——gVal 2.0 → wd=d×(1-0.42×min(1,gVal/2)) 反超近敌）+ 恐慌传染（狼群同伴 ally 支路）+ 溃逃门
+  //    种子钉 rng<0.2（contagious=true）；gVal 血仇消磨 L3508 先于扫描（2.0→1.994，位精确随回放）；
+  //    显式 id（gids [3] 引用 u2——自增 id 跨场景漂移，血仇记录必须钉 id）；
+  //    传染受害者 = 狼群同伴 u4（wolf-wolf ally 支路——sheep 是 enemy 支路不传染 L3629）+ fleeT 门退出
+  {
+    name: 'grudge-rout', terrain: 'plains', seed: findSeed((s) => mulberry32(s)() < 0.2, 1, 5000),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ id: 1, race: 'wolf', x: 50.5, y: 70.5, panic: 0.8, gids: [3], gval: [2.0], civ: -1 }),  // u0：血仇记录 [id3]——L3624-3628 加权后 wd(远仇 3.162)≈1.838 < wd(近敌 2) → 选仇敌；L3662 溃逃 1.3 → 次拍 fleeT 门 1.32
+      U({ id: 2, race: 'sheep', x: 52.5, y: 70.5, civ: -1 }),                                     // u1：近敌（id2，无血仇记录 → wd=d=2）——else 路径
+      U({ id: 3, race: 'sheep', x: 53.5, y: 71.5, civ: -1 }),                                     // u2：远仇敌（id3）——加权胜出（enemy=u2，tx≈45.757 非 45.5）
+      U({ id: 4, race: 'wolf', x: 51.5, y: 71.5, fleeT: 8, civ: -1 }),                            // u3：狼群同伴——u0 桶序首遇（ally 支路）→ 传染 panic=0.3168 → 自身 fleeT 门 1.18×2 拍
+    ],
+    steps: 2,
+  },
+  // S11 undead-terror：ZOMBIE 对称敌意分支（L2095 a/b 双向 return a.race!==b.race）+ 溃逃门（生者）/ fleeT 门（亡者——undead 被 L3662 排除）
+  {
+    name: 'undead-terror', terrain: 'plains', seed: 314159,
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'human', x: 70.5, y: 70.5, panic: 0.8, civ: -1 }),     // u0：见僵尸 → L2095 敌意 → L3662 溃逃 1.3（army null / 非 undead）→ 次拍 L3652 fleeT 门 1.32（panic≥0.5）
+      U({ race: 'zombie', x: 71.5, y: 70.5, fleeT: 8, civ: -1 }),      // u1：L2095 对称分支（a.race===ZOMBIE）→ enemy → 溃逃门被 undead 排除 → L3652 fleeT 门 1.18×2 拍
+    ],
+    steps: 2,
+  },
+  // S12 caravan-flee：商队遇敌夺路而逃（L3641 门——caravan>0 优先于 fleeT/溃逃）+ hostile×isCiv 敌意分支 + 溃逃门
+  {
+    name: 'caravan-flee', terrain: 'plains', seed: 271828,
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'human', x: 110.5, y: 110.5, caravan: 1, civ: 1 }),  // u0：满载行商（civ=1）——isEnemy(bandit hostile×human isCiv) → L3641 商队门 tx/ty+1.15（不触达 L3937 职业域哨兵——契约⑤'）
+      U({ race: 'bandit', x: 111.5, y: 110.5, panic: 0.8, civ: -1 }),// u1：劫匪（hostile）→ 敌意成立 → L3662 溃逃 1.3
+    ],
+    steps: 2,
+  },
+  // S13 allies-cull：同族 ally 计数 + 敌群计数（foes++ 先于 cull——d≥7 敌入选失败仍计入）+ contagious 掷骰 false 路径（rng≥0.2 零写入）
+  //    u3 wolf 位于 u0 桶邻域但 d=7.07≥7（cull）且不在 u1/u2 桶邻域（d≥7 cull 或桶外）——敌方零入选，全员经 else 路径退出
+  {
+    name: 'allies-cull', terrain: 'plains', seed: findSeed((s) => mulberry32(s)() >= 0.2, 1, 5000),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'sheep', x: 130.5, y: 70.5, panic: 0.8, civ: -1 }),  // u0：panic 0.792>0.55 → contagious 掷骰（钉 ≥0.2 → false 零写入）；enemy=null（u3 cull）→ 溃逃门不触发（L3662 需 enemy）→ else 路径
+      U({ race: 'sheep', x: 127.5, y: 70.5, civ: -1 }),              // u1：同族 ally（cell 31——u3 桶邻域外）
+      U({ race: 'sheep', x: 126.5, y: 73.5, civ: -1 }),              // u2：同族 ally（cell 31——u3 桶邻域外）
+      U({ race: 'wolf', x: 135.5, y: 75.5, civ: -1 }),               // u3：敌（cell 33,18）——u0 视角 foes++ 后 d²=50≥49 cull；u3 视角 u0 同样 cull、u1/u2 桶外 → enemy=null → else 路径
+    ],
+    steps: 2,
+  },
 ];
 
 // ---- mut 处理（数值字段 null → undefined，与 mkTsUnit 语义一致） ----
@@ -349,7 +432,7 @@ const out = { w: W, h: H, ep: EP, raceIds, races: raceTable, terrainSpecs: Objec
 const sanity = [];
 for (const c of CASES) {
   const env = { ...c.env };
-  const cap = { fx: [], evt: [], terr: [] };
+  const cap = { fx: [], evt: [], terr: [], scan: [] };
   const eng = makeStubEng(env, cap);
   eng.terrain.set(buildGrid(TERRAIN_SPECS[c.terrain]));
   for (const [k, v] of Object.entries(env.fireInit ?? {})) {
@@ -361,6 +444,10 @@ for (const c of CASES) {
   const specs = c.units;
   const units = specs.map((s) => mkTsUnit({ ...s, race: raceIds[s.race] ?? s.race }));
   eng.units = units;
+  if (env.scanReal) {
+    // M-U7m 布桶：units 序 push（engine rebuildBuckets L3100-3101 同构——懒清空世代戳首代全清等价）
+    for (const u of units) eng.buckets[((u.y / 4) | 0) * eng.bw + ((u.x / 4) | 0)].push(u);
+  }
   let draws = 0;
   const raw = mulberry32(c.seed);
   eng.rng = () => { draws++; return raw(); };
@@ -381,13 +468,14 @@ for (const c of CASES) {
     for (let i = 0; i < units.length; i++) {
       const u = units[i];
       if (u.dead) { perU.push({ dead: true }); continue; }
-      const e0 = cap.evt.length, f0 = cap.fx.length, t0 = cap.terr.length;
+      const e0 = cap.evt.length, f0 = cap.fx.length, t0 = cap.terr.length, sc0 = cap.scan.length;
       eng.updateUnit(u);
       perU.push({
         ...snapU(u),
         evt: cap.evt.slice(e0).map((e) => e.map((v) => v)),
         fx: cap.fx.slice(f0).map((f) => [f.k, f.x, f.y, f.ttl]),
         terr: cap.terr.slice(t0).map((p) => [p[0], p[1], p[2]]),
+        scan: cap.scan.slice(sc0).map((e) => e.map((v) => v)),   // M-U7m isEnemyFast 调用日志（[aId,bId,0|1] 事件流，字段只加）
         draws: draws - draw0 - perU.reduce((a, p) => a + (p.draws ?? 0), 0),
       });
     }
@@ -424,8 +512,10 @@ for (const c of CASES) {
   const fleeEndN = cap.evt.filter((e) => e[0] === 'fleeEnd').length;
   const drawSteps = outSteps.filter((o) => o.draws > 0).length;
   const terrN = cap.terr.length;
+  const scanN = cap.scan.length;
+  const mvN = cap.evt.filter((e) => e[0] === 'mv').length;
   const deadN = units.filter((u) => u.dead).length;
-  sanity.push(`${c.name}: steps=${outSteps.length} rngSteps=${drawSteps} draws=${draws} evt=${evtN}(rise=${riseN},plague=${plagueN},tail=${tailN},grab=${grabN},boat=${boatN},fleeEnd=${fleeEndN}) fx=${fxN} terr=${terrN} dead=${deadN}/${units.length}`);
+  sanity.push(`${c.name}: steps=${outSteps.length} rngSteps=${drawSteps} draws=${draws} evt=${evtN}(rise=${riseN},plague=${plagueN},tail=${tailN},grab=${grabN},boat=${boatN},fleeEnd=${fleeEndN},mv=${mvN}) fx=${fxN} terr=${terrN} scan=${scanN} dead=${deadN}/${units.length}`);
 }
 
 const json = JSON.stringify(out);

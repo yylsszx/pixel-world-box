@@ -267,9 +267,12 @@ namespace PixelWorldBox.Wb
         internal static System.Action<WbWorld, WbU> PostJSHook = (w, u) => UpdateUnitPostJS(w, u);
         internal static System.Func<WbWorld, WbU, double> GearRegenHook = (w, u) => throw new System.NotImplementedException("gearBonus 未译域（装备再生域）；黄金回放由 Test30 置换 env.gearRegen");
         internal static System.Action<WbWorld, string, double, double, int> FxHook = (w, k, x, y, ttl) => w.Fx(k, x, y, ttl);
+        // —— M-U7m 扫描域双接缝（黄金 'mv'/'scan' 事件流；默认 = 真实现）——
+        internal static System.Action<WbWorld, WbU, double> MoveUnitHook = (w, u, mul) => MoveUnit(w, u, mul);                            // 三逃离门 moveUnit（执行语义属 M-U3h 移动切片——黄金 'mv' [uId,mul] 事件对账面）
+        internal static System.Func<WbWorld, WbU, WbU, bool> IsEnemyFastHook = (w, a, b) => IsEnemyFast(w, a, b);                          // L3615 桶扫描索敌（黄金 'scan' [aId,bId,0|1] 调用日志对账面）
 
-        // ================= updateUnit L3455-4113（批次一 L3455-3590 全译 + 扫描壳 L3592-3639 + 无敌壳 L3927/4110-4112；
-        //                  战斗/职业/龙息域哨兵隔离——黄金 8 场景 enemy≡null/civ=-1 契约外，M-U2b 余域） =================
+        // ================= updateUnit L3455-4113（批次一 L3455-3590 全译 + 扫描域 L3592-3669 批次二全译（M-U7m）+
+        //                  无敌壳 L3927/4110-4112；战斗/远程/神经/职业/龙息域 L3671-4108 哨兵隔离——批次三余域） =================
         public static void UpdateUnit(WbWorld w, WbU u)
         {
             var def = RStats[u.race];                                                                                    // L3456
@@ -406,15 +409,15 @@ namespace PixelWorldBox.Wb
             }
             if (u.hp <= 0) { u.dead = 1; return; }                                                                       // L3590（hp≤0 死亡门——批次一边界）
 
-            // ================= 扫描域壳 L3592-3639（黄金契约：桶空零迭代；WB.active() 分支不译——C# WbBail=JS 接力域，rust-core UnitsBatch 结构性并行，M-U2b 注记） =================
-            int enemy = -1;                                                                                              // L3593（WB 分支不触达 → 恒 -1）
-            double bestD = 7, enemyD = 7;                                                                                // L3594-3595
-            int allies = 0, foes = 0;                                                                                    // L3596-3597
-            bool contagious = (u.panic ?? 0) > 0.55 && w.Rng() < 0.2;                                                    // L3598（&& 短路——黄金契约① panic≤0.55 恒零掷）
-            int cx = System.Math.Min(WbWorld.BKW - 1, System.Math.Max(0, (int)(u.x / 4)));                                     // L3599
-            int cy = System.Math.Min(WbWorld.BKH - 1, System.Math.Max(0, (int)(u.y / 4)));
-            double uxx = u.x, uyy = u.y;                                                                                 // L3600-3601
-            _ = (bestD, enemyD, allies, foes, uxx, uyy, contagious);                                                     // M-U2b 扫描体待译消费面（黄金契约恒初值：桶空零迭代）
+            // ================= 扫描域 L3592-3669（M-U7m 批次二全译：WB.active() 分支不译——C# WbBail=JS 接力域，rust-core UnitsBatch 结构性并行；
+            //                  JS 3×3 桶扫描环 + isEnemyFast/isEnemy 敌意判定 + 血仇加权选敌 + 恐慌传染 + ally 计数 + 三逃离门） =================
+            WbU enemy = null;                                                                                            // L3578（WB.scan L3592-3606 分支不触达 → JS 环独占赋值）
+            double bestD = 7, enemyD = 7;                                                                                // L3579-3580（仇人加权「心理距离」与真实距离分离：选敌用加权、特征喂真实）
+            int allies = 0, foes = 0;                                                                                    // L3581-3582
+            bool contagious = (u.panic ?? 0) > 0.55 && w.Rng() < 0.2;                                                    // L3584 恐慌传染掷骰（&& 短路——panic≤0.55 恒零掷）
+            int cx = System.Math.Min(WbWorld.BKW - 1, System.Math.Max(0, (int)(u.x / 4)));                               // L3585
+            int cy = System.Math.Min(WbWorld.BKH - 1, System.Math.Max(0, (int)(u.y / 4)));                               // L3586
+            double uxx = u.x, uyy = u.y;                                                                                 // L3587-3588
             for (int by = cy - 1; by <= cy + 1; by++)                                                                    // L3608
                 for (int bx = cx - 1; bx <= cx + 1; bx++)                                                                // L3609
                 {
@@ -424,15 +427,73 @@ namespace PixelWorldBox.Wb
                     foreach (var o in bucket)                                                                            // L3611
                     {
                         if (o.dead != 0 || object.ReferenceEquals(o, u)) continue;                                       // L3612
-                        throw new System.InvalidOperationException("SCAN_SENTINEL: 敌意/同袍判定域未翻译（M-U2b；黄金契约：桶空不触达——非空桶抵达即设计错误）");   // L3614 isEnemyFast 哨兵同构
+                        double ddx = o.x - uxx, ddy = o.y - uyy;                                                         // L3613-3614
+                        if (IsEnemyFastHook(w, u, o))                                                                    // L3615（接缝默认真实现；黄金 'scan' 调用日志对账面）
+                        {
+                            foes++;                                                                                      // L3616
+                            double d2 = ddx * ddx + ddy * ddy;                                                           // L3617
+                            // 视野粗筛（平方空间）：无血仇记录时超出当前最优直接跳过；有血仇时心理距离可被拉近，必须实距结算   // L3618-3619
+                            if (u.gIdsN == null && d2 >= bestD * bestD) continue;                                            // L3620
+                            double d = System.Math.Sqrt(d2);                                                             // L3621
+                            // 血仇加权：仇人「心理距离」更近——复仇优先锁定（涌现：舍近求远扑向仇敌）                       // L3622
+                            double wd = d;                                                                               // L3623
+                            if (u.gIdsN != null)                                                                         // L3624
+                            {
+                                int gi = u.gIdsN.IndexOf(o.id);                                                          // L3625
+                                if (gi >= 0) wd = d * (1 - 0.42 * System.Math.Min(1, (u.gValN != null && gi < u.gValN.Count ? u.gValN[gi] : 1) / 2));   // L3626（u.gVal?.[gi] ?? 1）
+                            }
+                            if (wd < bestD) { bestD = wd; enemy = o; enemyD = d; }                                       // L3628
+                        }
+                        else if (u.civ >= 0 ? o.civ == u.civ : o.race == u.race)                                         // L3629（同国同袍 / 野生同族——狼群/羊群）
+                        {
+                            allies++;                                                                                    // L3630
+                            // 恐慌传染：惊恐传给近旁更冷静的同族（0.4×self，封顶 1）——兽群雪崩的微观动力（4² 平方距离判定）  // L3631
+                            if (contagious && (o.panic ?? 0) < (u.panic ?? 0) - 0.15 && ddx * ddx + ddy * ddy < 16)      // L3632
+                            {
+                                o.panic = System.Math.Min(1, (o.panic ?? 0) + (u.panic ?? 0) * 0.4);                     // L3633
+                            }
+                        }
                     }
                 }
+            _ = enemyD;                                                                                                  // L3580 战斗/神经域批次三消费面（逃离三门不读）
+            _ = (allies, foes);                                                                                          // L3581-3582 同上（神经决策特征）
 
-            if (enemy >= 0) throw new System.InvalidOperationException("战斗/远程/神经域批次二未翻译（L3641-3925；黄金 8 场景 enemy≡null 契约不触达）");   // L3641
+            // —— 三逃离门 L3641-3669（moveUnit 经 MoveUnitHook 接缝——黄金 'mv' [uId,mul] 事件对账面） ——
+            if (enemy != null && u.caravan > 0)                                                                          // L3641（(u.caravan ?? 0) > 0——int 镜像默认 0）
+            {
+                // 深度打磨：商队不攻击 — 满载行商遇敌只会夺路而逃（可被劫杀，贸易中断）                                // L3642
+                double ang = System.Math.Atan2(u.y - enemy.y, u.x - enemy.x);                                            // L3643
+                u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, u.x + System.Math.Cos(ang) * 4));               // L3644
+                u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, u.y + System.Math.Sin(ang) * 4));               // L3645
+                MoveUnitHook(w, u, 1.15);                                                                                // L3646 逃命加成
+                return;                                                                                                  // L3647
+            }
+            // —— 脱离冷却：战或逃/伤重脱离期间持续拉开距离，不接战（瞬态 fleeT）——                                  // L3650
+            // 恐慌溃逃者狂奔加速（1.18 → 1.32：夺路而逃顾不上队形）                                                        // L3651
+            if (enemy != null && u.fleeT > 0)                                                                            // L3652（(u.fleeT ?? 0) > 0）
+            {
+                double ang = System.Math.Atan2(u.y - enemy.y, u.x - enemy.x);                                            // L3653
+                u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, u.x + System.Math.Cos(ang) * 5));               // L3654
+                u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, u.y + System.Math.Sin(ang) * 5));               // L3655
+                MoveUnitHook(w, u, (u.panic ?? 0) >= 0.5 ? 1.32 : 1.18);                                                 // L3656
+                return;                                                                                                  // L3657
+            }
+            // —— 涌现社会内核：恐慌溃逃 —— 恐惧压倒理性（网络判「战」也夺路而逃）；军团与亡灵除外 ——                 // L3660
+            //    雪崩的宏观形态：狼群突入羊群 → 目击羊恐慌 → 同族传染 → 整群突破 0.72 阈值集体狂奔                    // L3661
+            if (enemy != null && (u.panic ?? 0) >= 0.72 && u.army == null && !def.undead)                                // L3662（ep('social.panicRout') engineParams L40 默认 0.72——黄金 ep.panicRout 交叉锁定）
+            {
+                u.fleeT = 60;                                                                                            // L3663
+                double ang = System.Math.Atan2(u.y - enemy.y, u.x - enemy.x);                                            // L3664
+                u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, u.x + System.Math.Cos(ang) * 5));               // L3665
+                u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, u.y + System.Math.Sin(ang) * 5));               // L3666
+                MoveUnitHook(w, u, 1.3);                                                                                 // L3667 夺路狂奔
+                return;                                                                                                  // L3668
+            }
+            if (enemy != null) throw new System.InvalidOperationException("战斗/远程/神经域批次三未翻译（L3671-3925；黄金 13 场景 enemy 均经三门退出——触达即设计错误）");   // L3674
             // ================= 无敌路径 L3927 else 壳 =================
             // collectEnemyGone(u.id, this.tickCount) L3929——Task 38 在线采集模块域（引擎外会话 state；黄金未捕获面，no-op）
-            if (u.race == R2_DRAGON) throw new System.InvalidOperationException("龙息域批次二未翻译（L3931-3936 u.race===R2；黄金无龙场景不触达）");          // L3931
-            if (def.isCiv && u.civ >= 0) throw new System.InvalidOperationException("peaceful 职业域批次二未翻译（L3937-4108；黄金 civ=-1 契约不触达）");   // L3937
+            if (u.race == R2_DRAGON) throw new System.InvalidOperationException("龙息域批次三未翻译（L3931-3936 u.race===R2；黄金无龙场景不触达）");          // L3931
+            if (def.isCiv && u.civ >= 0) throw new System.InvalidOperationException("peaceful 职业域批次三未翻译（L3937-4108；黄金 civ=-1 契约不触达）");   // L3937
             if (TailJSHook(w, u)) return;                                                                                // L4110（尾段早退：猎物命中/密度场导航 → 跳过拾取与繁衍）
             PostJSHook(w, u);                                                                                            // L4112
         }
@@ -1131,6 +1192,56 @@ namespace PixelWorldBox.Wb
             if (d.eco == "herb") return true;                                                               // L2127
             if (d.eco != null) return false;
             return IsHerbivoreRace(w, d.parent);                                                            // L2129 递归母族
+        }
+
+        // ================= 敌意判定域（isEnemyFast/isEnemy 机械翻译——M-U7m 扫描域批次二） =================
+        // isEnemyFast L2070-2081（桶扫描专用快速通道）：野生 vs 野生命中 LUT（引擎私有缓存随 World 实例——
+        // LUT 键仅 race 对，鲨鱼地形分支 L2113 依赖被扫者站位——跨格缓存污染为蓝本既有行为，机械保持）
+        private static bool IsEnemyFast(WbWorld w, WbU a, WbU b)
+        {
+            if (a.civ < 0 && b.civ < 0)                                                                     // L2072
+            {
+                int key = a.race * 65536 + b.race;                                                          // L2073
+                if (w.enemyLut.TryGetValue(key, out bool hit)) return hit;                                  // L2074-2075
+                bool v = IsEnemy(w, a, b);                                                                  // L2076
+                w.enemyLut[key] = v;                                                                        // L2077
+                return v;
+            }
+            return IsEnemy(w, a, b);                                                                        // L2080
+        }
+
+        // isEnemy L2083-2116（敌我判定全链；atWar L2061-2064 走 WbCivSim.AtWar 同源译件；
+        // 天使/凤凰/树人/巫妖/九头蛇无专门分支——恶魔/亡灵五族/巨龙/克拉肯/沙虫/蛇怪的「与众生为敌」对称覆盖，蓝本 L2089-2093 注记）
+        private static bool IsEnemy(WbWorld w, WbU a, WbU b)
+        {
+            if (object.ReferenceEquals(a, b)) return false;                                                 // L2084
+            var ra = RStats[a.race]; var rb = RStats[b.race];                                               // L2085-2086
+            if (ra.undead && rb.undead) return false;                                                       // L2088 亡者阵营并肩作战争夺生者的世界
+            if (a.race == WbConstants.R_ZOMBIE || b.race == WbConstants.R_ZOMBIE) return a.race != b.race;              // L2095
+            if (a.race == WbConstants.R_SKELETON || b.race == WbConstants.R_SKELETON) return a.race != b.race;          // L2096 亡灵与众人为敌
+            if (a.race == R_WHITEWALKER || b.race == R_WHITEWALKER) return a.race != b.race;                // L2097 寒冰之主与众生为敌
+            if (a.race == R2_DRAGON || b.race == R2_DRAGON) return a.race != b.race;                        // L2098
+            if (a.race == WbConstants.R_DEMON || b.race == WbConstants.R_DEMON) return a.race != b.race;                // L2099 恶魔烧毁一切
+            if (a.race == WbConstants.R_KRAKEN || b.race == WbConstants.R_KRAKEN) return a.race != b.race;              // L2100 深海巨怪袭击一切（含船只）
+            if (a.race == WbConstants.R_SANDWORM || b.race == WbConstants.R_SANDWORM) return a.race != b.race;          // L2101 沙虫吞一切
+            if (a.race == WbConstants.R_BASILISK || b.race == WbConstants.R_BASILISK) return a.race != b.race;          // L2102 蛇怪与众生为敌
+            if (ra.hostile && rb.isCiv) return true;                                                        // L2103
+            if (rb.hostile && ra.isCiv) return true;                                                        // L2104
+            // 捕食者把食草动物（绵羊/鹿/企鹅/骆驼及其演化后裔）当作猎物                                                  // L2105
+            if (ra.predator && IsHerbivoreRace(w, b.race)) return true;                                     // L2106
+            if (ra.predator && a.race == WbConstants.R_BEAR && rb.isCiv) return true;                       // L2107
+            // 蝎子主动袭击小型食草动物（沙漠小猎手）                                                                    // L2108
+            if (a.race == WbConstants.R_SCORPION && IsHerbivoreRace(w, b.race)) return true;                // L2109
+            // 蛇也是沙漠猎手：猎小型食草动物与蝎子（蛇吃蝎子是沙漠生态的真实关系）                                      // L2110
+            if (a.race == WbConstants.R_SNAKE && (IsHerbivoreRace(w, b.race) || b.race == WbConstants.R_SCORPION)) return true;   // L2111
+            // 鲨鱼：捕食鱼群（isHerbivoreRace 含鱼）与落水的游泳单位（陆行种族在水里就是猎物）                      // L2112
+            if (a.race == WbConstants.R_SHARK)
+            {
+                if (b.race == R_FISH) return true;                                                          // L2113a
+                if (!rb.aquatic && !rb.flying && WbWorld.IsWater(w.terrain[WbWorld.Idx((int)System.Math.Floor(b.x), (int)System.Math.Floor(b.y))])) return true;   // L2113b
+            }
+            if (a.civ >= 0 && b.civ >= 0 && a.civ != b.civ) return WbCivSim.AtWar(w, a.civ, b.civ);         // L2114
+            return false;                                                                                   // L2115
         }
 
         // maybeBoardForWar L5740-5791（战时隔海登船跨海远征：编队 board 闭包 + 直线跨水 45% 采样）
