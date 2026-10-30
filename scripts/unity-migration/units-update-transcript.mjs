@@ -196,6 +196,26 @@ const spreadPlagueT = (ctx, u, rng) => {                                        
   }
 };
 
+// ================= M-U7v：wallDefenseOf 城墙防御域独立转写（零引擎导入） =================
+// 蓝本：engine.ts L1813-1826。civ<0 早退 1 → 单位脚下 tile 3×3 邻域 building[i]==WALL(11) && b.civ===u.civ → 0.72；
+//   纯查表零掷（存量无墙场景恒 1 与旧桩位等价）；BUILDING_DEFS.WALL=11（types.ts L325-337）。
+const wallDefenseOfT = (ctx, u) => {
+  if (u.civ < 0) return 1;                                                            // L1814
+  const x = Math.floor(u.x), y = Math.floor(u.y);                                      // L1815
+  for (let dy = -1; dy <= 1; dy++) {                                                  // L1816
+    for (let dx = -1; dx <= 1; dx++) {                                                // L1817
+      const xx = x + dx, yy = y + dy;                                                 // L1818
+      if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;                            // L1819
+      const i = yy * W + xx;                                                          // L1820 idx
+      if (ctx.building[i] !== 11) continue;                                            // L1821 BUILD_KINDS.WALL
+      const bi = ctx.bIdx.get(i);
+      const b = bi === undefined ? null : (ctx.buildings[bi] ?? null);                 // L1822（bIdx.get ?? -1 契约）
+      if (b && b.civ === u.civ) return 0.72;                                           // L1823 借墙而战
+    }
+  }
+  return 1;                                                                            // L1825
+};
+
 const snapU = (u) => ({
   age: bitHex(u.age), hp: bitHex(u.hp), maxAge: bitHex(u.maxAge), maxHp: bitHex(u.maxHp),
   hurt: u.hurt === undefined ? null : bitHex(u.hurt), cd: bitHex(u.cd ?? 0), atk: bitHex(u.atk ?? 0),
@@ -914,7 +934,7 @@ function updateUnitT(u, ctx) {
         const gA = r.isCiv ? { crit: 0, armor: 0, lifesteal: 0, thorns: 0, regen: ctx.gearRegen, speed: 1, ranged: 0 } : null;   // L3840（gearBonus stub 同构）
         const gD = raceF(enemy.race).isCiv ? { crit: 0, armor: 0, lifesteal: 0, thorns: 0, regen: ctx.gearRegen, speed: 1, ranged: 0 } : null;   // L3841
         let dmg = u.dmg * (0.8 + rng() * 0.4) * (u.bless ? 1.3 : 1) * (u.curse ? 0.75 : 1);        // L3843 神力 ×1.3 / 诅咒 ×0.75
-        dmg *= 1;                                                                                  // L3845（wallDefenseOf 中性 1——无建筑契约；建筑结算随装备域）
+        dmg *= wallDefenseOfT(ctx, enemy);                                                         // L3845 M-U7v 清偿（借墙而战 0.72——纯查表零掷）
         const dPhase = ctx.dayPhase;                                                               // L3847
         if (dPhase > 0.5 && dPhase < 0.9 && !r.nightsight) dmg *= 0.92;                            // L3848 夜战混乱减益（黑暗视觉豁免）
         let crit = false;

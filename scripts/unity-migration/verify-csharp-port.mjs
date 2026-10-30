@@ -1506,7 +1506,7 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   var unitsUpdateVerifyFail = 0;
   try {
     execFileSync('node', [new URL('./units-update-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
-    console.log('units-update 黄金回放 (units-update-transcript 镜像 vs units_update.json): PASS (54 场景 快照逐位 + evt/fx/terr/scan 事件流 + 逐步 draws + fireSet + final/rngTail)');
+    console.log('units-update 黄金回放 (units-update-transcript 镜像 vs units_update.json): PASS (55 场景 快照逐位 + evt/fx/terr/scan 事件流 + 逐步 draws + fireSet + final/rngTail)');
   } catch (e) {
     unitsUpdateVerifyFail++;
     console.error('units-update 黄金回放: FAIL');
@@ -1519,7 +1519,7 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
     execFileSync('bun', [new URL('./gen-units-update.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
     const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
     if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
-    console.log('units-update gen det 复跑 (gen-units-update · bun): PASS (54 场景 sanity + GameEngine 真实现 + det 字节级)');
+    console.log('units-update gen det 复跑 (gen-units-update · bun): PASS (55 场景 sanity + GameEngine 真实现 + det 字节级)');
   } catch (e) {
     unitsUpdateVerifyFail++;
     console.error('units-update gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -1530,7 +1530,7 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
     // —— M-U7u 伞效应纠偏（M-U7t 遗留②）：结构断言改计数汇总式（fail 收集不中断——全部检查必跑，末端汇总 throw）——
     const fails = [];
     const fail = (m) => fails.push(m);
-    if (!Array.isArray(g.cases) || g.cases.length !== 54) fail('场景数 ≠ 54');   // M-U7u：52→54（S53 plague-spread/S54 plague-medicine 入链；52 口径 M-U7t）
+    if (!Array.isArray(g.cases) || g.cases.length !== 55) fail('场景数 ≠ 55');   // M-U7v：54→55（S55 wall-defense 入链；54 口径 M-U7u）
     for (const c of g.cases) {
       if (c.out.length !== c.steps) fail(c.name + ' steps ≠ out');
       if (!Array.isArray(c.final) || c.final.length < c.units.length) fail(c.name + ' final 缺失');   // M-U7t：spawn 使 final ≥ units spec（S2 骷髅 4→5——Test30 units.Count 动态对账先证）
@@ -1541,7 +1541,7 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
     //  M-U7q 起 S29-S36 亦标 scanReal；M-U7r 起 S37-S50 peaceful 域 14 场景扫描环零 foe 合法空——M-U7t 纠偏：计数 28→44
     //  旧断言 throw 先于 for 检查历轮未真正执行——本次修复后首次全量暴露，空 scan 14 场景黄金实证合法）——
     const scanCases = g.cases.filter((c) => c.env.scanReal);
-    if (scanCases.length !== 46) fail('scanReal 场景数 ≠ 46');   // M-U7u：44→46（S53/S54 scanReal 布桶）
+    if (scanCases.length !== 47) fail('scanReal 场景数 ≠ 47');   // M-U7v：46→47（S55 scanReal 布桶）
     const scanNonEmpty = scanCases.filter((c) => c.out.reduce((a, s) => a + s.units.reduce((b, u) => b + ((u.scan ?? []).length), 0), 0) > 0);
     if (scanNonEmpty.length < 30) fail('scanReal 非空场景数 < 30（S9-S36 + S51/S52 下限防漏标）');   // peaceful 域 14 场景合法空豁免
     if (g.ep.panicRout !== 0.72) fail('ep.panicRout ≠ 0.72');
@@ -1600,13 +1600,16 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
     if (!p53 || !p53.final[1]?.infected || p53.final[2]?.infected || p53.final[4]?.infected) fail('plague-spread 传播签名缺失（u1 染/u2 免疫跳过/u4 距离败）');
     const p54 = g.cases.find((x) => x.name === 'plague-medicine');
     if (!p54 || !p54.final[1]?.infected || !p54.final[2]?.infected) fail('plague-medicine 医学科技 0.55 双染签名缺失');
+    // M-U7v 城墙防御域结构检查：S55 troll-vs-wall 守军 0.72 减伤签名（u1 终态 hp 位串 74.68 = 90 - 26×(0.8+r×0.4)×0.72——严格墙域 d=15.32 ∈ [14.97,22.46]）
+    const w55 = g.cases.find((x) => x.name === 'wall-defense');
+    if (!w55 || w55.final[1]?.hp !== '6666a49639c05240' || !w55.out.some((s) => s.units.some((u) => (u.fx ?? []).some((f) => f[0] === 'hit')))) fail('wall-defense 借墙减伤签名缺失（u1 hp 74.68 bitHex + hit fx）');
     const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/units_update.json', import.meta.url));
     const gl = readFileSync(new URL('./golden/units_update.json', import.meta.url));
     const md5a = createHash('md5').update(sa).digest('hex');
     const md5b = createHash('md5').update(gl).digest('hex');
     if (md5a !== md5b) fail(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
     if (fails.length > 0) throw new Error(fails.join(' | '));   // M-U7u：计数汇总末端 throw——全部检查已跑完，失败全量上报（伞效应根治）
-    console.log(`units-update 台账完备 (54 场景 + scanReal 46 + neuro/远程/近战/击杀链/起尸/瘟疫签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+    console.log(`units-update 台账完备 (55 场景 + scanReal 47 + neuro/远程/近战/击杀链/起尸/瘟疫/城墙签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
   } catch (e) {
     unitsUpdateVerifyFail++;
     console.error('units-update 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));

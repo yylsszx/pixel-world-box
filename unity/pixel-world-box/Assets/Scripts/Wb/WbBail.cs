@@ -288,7 +288,9 @@ namespace PixelWorldBox.Wb
         private static readonly double[] FAcc = new double[10];                                              // neuro.ts L124-126 模块级 scratch（近战命中头十特征）
         // —— M-U7p 近战域接缝（M-U7q 起默认真实现清偿：addEvent 命名域文本面随击杀链落定 / addCorpse 贴花 push+cap / addBlood seed 掷；
         //      黄金回放仍由 Test30 置换事件捕获——gen makeStubEng 桩面同构）——
-        internal static System.Func<WbWorld, WbU, double> WallDefenseHook = (w, e) => 1.0;                   // wallDefenseOf 城墙域未译——无建筑中性 1.0；建筑结算随装备域切片
+        // —— M-U7v：wallDefenseOf 桩面真实现清偿（WallDefenseHook 接缝删除——调用面 L3845 直调 WallDefenseOf；
+        //    L1813-1826 机械翻译：civ<0 早退 1 + 3×3 邻域 building[i]==WALL && b.civ===u.civ → 0.72 借墙而战；
+        //    纯查表零掷——存量无墙场景恒 1 与桩位等价零漂移；S55 troll-vs-wall 守军 0.72 减伤入链）——
         internal static System.Func<WbWorld, double> DayPhaseHook = (w) => 0.0;                              // dayPhase 昼相时钟域未译——白天中性 0.0；时钟切片随集成域接入（0.5..0.9 黄昏窗消费 L3847-3848）
         internal static System.Action<WbWorld, string, string, string, double, double> AddEventHook = (w, kind, text, colorHex, x, y) => w.AddEvent(kind, text, colorHex, x, y);   // L3789/L3813/L3921/L3931/L3945/L1675——addEvent 真实现（命名域文本 + colorHex 渲染面）
         internal static System.Action<WbWorld, double, double, bool, bool> AddCorpseHook = (w, x, y, stone, undead) => WbCivSim.AddCorpse(w, x, y, stone, undead);                  // L3812——addCorpse 真实现（尸骸贴花 push+cap 240）
@@ -708,7 +710,7 @@ namespace PixelWorldBox.Wb
                         WbGearBonus? gA = def.isCiv ? GearBonusHook(w, u) : (WbGearBonus?)null;                          // L3840
                         WbGearBonus? gD = RStats[enemy.race].isCiv ? GearBonusHook(w, enemy) : (WbGearBonus?)null;       // L3841
                         double dmg = u.dmg * (0.8 + w.Rng() * 0.4) * (u.bless != 0 ? 1.3 : 1) * (u.curse != 0 ? 0.75 : 1);   // L3843 神力 ×1.3 / 诅咒 ×0.75
-                        dmg *= WallDefenseHook(w, enemy);                                                                // L3845 城墙防御加成（守军借墙而战）
+                        dmg *= WallDefenseOf(w, enemy);                                                                  // L3845 城墙防御加成（M-U7v 直调——Hook 接缝删除）
                         double dPhase = DayPhaseHook(w);                                                                 // L3847 昼夜互连
                         if (dPhase > 0.5 && dPhase < 0.9 && !def.nightsight) dmg *= 0.92;                                // L3848 夜战混乱减益（黑暗视觉种族豁免）
                         bool crit = false;
@@ -1903,6 +1905,30 @@ namespace PixelWorldBox.Wb
                     }
                 }
             }
+        }
+
+        // ================= wallDefenseOf L1813-1826（M-U7v 真实现清偿——城墙防御域） =================
+        // 机械翻译蓝本：engine.ts L1813-1826。守军借墙而战：civ<0 早退 1（L1814）→ 单位脚下 tile 3×3 邻域扫描（L1816-1822）
+        //   building[i]==BUILD_KINDS.WALL(11) 且建筑归属 b.civ===u.civ → 0.72（伤害减免 28%，L1823）；纯查表零掷。
+        // S55 消费面：troll 近战 civ1 守军贴自家墙 → dmg ×0.72（L3845 调用点）。
+        private static double WallDefenseOf(WbWorld w, WbU u)
+        {
+            if (u.civ < 0) return 1;                                                                                     // L1814
+            int x = (int)System.Math.Floor(u.x);                                                                         // L1815（FloorI 语义——u.x 恒 0.5..W-0.5 正域）
+            int y = (int)System.Math.Floor(u.y);                                                                         // L1815
+            for (int dy = -1; dy <= 1; dy++)                                                                             // L1816
+            {
+                for (int dx = -1; dx <= 1; dx++)                                                                         // L1817
+                {
+                    int xx = x + dx, yy = y + dy;                                                                        // L1818
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                                // L1819
+                    int i = yy * WbWorld.W + xx;                                                                         // L1820 idx
+                    if (w.building[i] != WbCivSim.BUILD_KINDS.WALL) continue;                                            // L1821
+                    WbBuilding b = w.bIdx.TryGetValue(i, out int bi) && bi >= 0 && bi < w.buildings.Count ? w.buildings[bi] : null;   // L1822（bIdx.get ?? -1 契约——越界 undefined 同构 null）
+                    if (b != null && b.civ == u.civ) return 0.72;                                                        // L1823 借墙而战：伤害减免 28%
+                }
+            }
+            return 1;                                                                                                    // L1825
         }
 
         // isHerbivoreRace L2120-2128（猎物链底层判定：静态八种 + dynRaces 递归母族）

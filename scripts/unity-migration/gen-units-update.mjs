@@ -250,7 +250,8 @@ function makeStubEng(env, cap) {
   // —— M-U7p 近战域接缝（击杀链 L3900+ 未触达——早退特技路径；文本含命名域只对账 kind/pos）——
   eng.addEvent = (kind, text, pos) => cap.evt.push(['ev', kind, bitHex(pos?.x), bitHex(pos?.y)]);
   eng.addCorpse = (x, y, bone, petrified) => cap.evt.push(['corpse', bitHex(x), bitHex(y), bone ? 1 : 0, petrified ? 1 : 0]);
-  eng.wallDefenseOf = () => 1;                                   // fixtures 无建筑——城墙域中性 1
+  // M-U7v：wallDefenseOf 遮蔽删除（原型真实现自动可达——L1813-1826 纯查表零掷：civ<0 早退 + 3×3 邻域 building[i]==WALL && b.civ===u.civ → 0.72；
+  //  bldInit 夹具真填充 eng.building/bIdx/buildings（applyPeaceFixtures L288）——存量场景无墙 → 真实现恒 1 与桩位等价零漂移）
   eng.dayPhase = () => env.dayPhase ?? 0;                        // 昼相时钟域——场景注入（dusk 窗口 0.5..0.9）
   eng.tickCount = 0;                                             // activeBattles 值 = tickCount+30（恒 30）
   eng.activeBattles = { set: (k, v) => cap.evt.push(['ab', k, v]), size: 0, delete: () => {}, *[Symbol.iterator]() {} };   // 桩面捕获 set；size<64 剩余修剪循环不触
@@ -1181,6 +1182,29 @@ const CASES = [
       U({ race: 'human', x: 181.0, y: 136.0, hp: 90, maxHp: 100, civ: 0, job: 0, cd: 0 }),
     ],
     steps: 60,
+  },
+  // ================= M-U7v 城墙防御域（S55；wallDefenseOf 真实现清偿——'恒 1' 桩消亡，借墙而战 0.72 减伤真掷面） =================
+  // S55 wall-defense：巨魔（MONSTER_LOOT f7=1 巨怪死战 + hostile×isCiv L2103 + predator）近战 civ1 守军 d=0.8<reach 0.9
+  //   → neuroAcc 命中 → dmg=26×(0.8+rng×0.4)×0.72 → u1.hp 扣减 d∈[14.97,22.46] 与无墙域 [20.8,31.2] 仅窄重叠（want 钉 d<20.5 严格墙域）；
+  //   守军贴自家墙（bldInit tile 10024=(40,39) WALL civ1，u1 位 (40,40) 3×3 邻域内 dy=-1）；troll civ-1 → wallDefenseOf(troll) 早退 1（u1 反打 dmg=1×rng×1 实证零减伤对照）；
+  //   fixture 单位绕 spawn —— dmg 必须显式传（mkTsUnit 不从 RACES 取缺省——S21 wolf dmg:10 先例；漏传 → undefined×rng=NaN 实证）；
+  //   crit 门 gA=null（troll 非 isCiv）。
+  {
+    name: 'wall-defense', terrain: 'plains', seed: meleeProbe({
+      label: 'wall-defense', steps: 2,
+      env: { bldInit: [[10024, 11, 1]] },
+      units: [
+        U({ race: 'troll', x: 41.3, y: 40.5, hp: 380, maxHp: 380, dmg: 26, civ: -1 }),
+        U({ race: 'human', x: 40.5, y: 40.5, hp: 90, maxHp: 100, dmg: 1, civ: 1, job: 0, cd: 0 }),
+      ],
+      want: (cap, us) => { const d = 90 - us[1].hp; return cap.fx.some((f) => f.k === 'hit') && d > 14.5 && d < 20.5; },
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true, bldInit: [[10024, 11, 1]] },
+    units: [
+      U({ race: 'troll', x: 41.3, y: 40.5, hp: 380, maxHp: 380, dmg: 26, civ: -1 }),
+      U({ race: 'human', x: 40.5, y: 40.5, hp: 90, maxHp: 100, dmg: 1, civ: 1, job: 0, cd: 0 }),
+    ],
+    steps: 2,
   },
 ];
 
