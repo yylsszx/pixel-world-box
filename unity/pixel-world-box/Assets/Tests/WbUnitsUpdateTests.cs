@@ -23,7 +23,7 @@ namespace PixelWorldBox.Wb.Tests
         private System.Func<WbWorld, WbU, bool> _tail0;
         private System.Func<WbWorld, WbU, WbGearBonus> _gear0;   // M-U7n：double→WbGearBonus 结构化同源
         private System.Action<WbWorld, string, double, double, int> _fx0;
-        private System.Action<WbWorld, WbU, double, double, double> _fb0, _ar0, _bm0, _bl0;   // M-U7o cast 弹道接缝四件
+        private System.Action<WbWorld, string, double, double, double, double?, double?, int?, double?, double?> _fxo0;   // M-U7s fx opts 面接缝
         private System.Func<WbWorld, WbU, double> _wall0;                                    // M-U7p 近战域接缝
         private System.Func<WbWorld, double> _day0;
         private System.Action<WbWorld, string, string, string, double, double> _aev0;   // M-U7q：+text/colorHex（addEvent 默认真实现清偿——签名扩面）
@@ -45,8 +45,7 @@ namespace PixelWorldBox.Wb.Tests
             _rise0 = WbBailRelay.RiseSkeletonHook; _plague0 = WbBailRelay.SpreadPlagueHook;
             _tail0 = WbBailRelay.TailJSHook; _post0 = WbBailRelay.PostJSHook;
             _gear0 = WbBailRelay.GearBonusHook; _fx0 = WbBailRelay.FxHook;
-            _fb0 = WbBailRelay.CastFireballHook; _ar0 = WbBailRelay.CastArrowHook;
-            _bm0 = WbBailRelay.CastBeamHook; _bl0 = WbBailRelay.CastBulletHook;
+            _fxo0 = WbBailRelay.FxOptHook;
             _wall0 = WbBailRelay.WallDefenseHook; _day0 = WbBailRelay.DayPhaseHook;
             _aev0 = WbBailRelay.AddEventHook; _acp0 = WbBailRelay.AddCorpseHook;
             _abl0 = WbBailRelay.AddBloodHook; _abt0 = WbBailRelay.MarkBattleHook;
@@ -63,8 +62,7 @@ namespace PixelWorldBox.Wb.Tests
             WbBailRelay.RiseSkeletonHook = _rise0; WbBailRelay.SpreadPlagueHook = _plague0;
             WbBailRelay.TailJSHook = _tail0; WbBailRelay.PostJSHook = _post0;
             WbBailRelay.GearBonusHook = _gear0; WbBailRelay.FxHook = _fx0;
-            WbBailRelay.CastFireballHook = _fb0; WbBailRelay.CastArrowHook = _ar0;
-            WbBailRelay.CastBeamHook = _bm0; WbBailRelay.CastBulletHook = _bl0;
+            WbBailRelay.FxOptHook = _fxo0;
             WbBailRelay.WallDefenseHook = _wall0; WbBailRelay.DayPhaseHook = _day0;
             WbBailRelay.AddEventHook = _aev0; WbBailRelay.AddCorpseHook = _acp0;
             WbBailRelay.AddBloodHook = _abl0; WbBailRelay.MarkBattleHook = _abt0;
@@ -141,7 +139,7 @@ namespace PixelWorldBox.Wb.Tests
             AssertEq("ep", "panicRout", 0.72, (double)root["ep"]["panicRout"]);   // M-U7m 溃逃阈
             var specs = (JArray)root["terrainSpecs"];
             var cases = (JArray)root["cases"];
-            Assert.That(cases.Count, Is.EqualTo(50), "场景数");
+            Assert.That(cases.Count, Is.EqualTo(52), "场景数");
             foreach (var c in cases) ReplayCase(c, specs);
         }
 
@@ -253,10 +251,11 @@ namespace PixelWorldBox.Wb.Tests
             WbBailRelay.TailJSHook = (ww, u) => { _evt.Add(new object[] { "tail", (double)u.id }); return false; };
             WbBailRelay.PostJSHook = (ww, u) => _evt.Add(new object[] { "post", (double)u.id });
             WbBailRelay.GearBonusHook = (ww, u) => new WbGearBonus { regen = _gearRegen, speed = 1 };   // gen stub 同构全对象（regen=env.gearRegen，speed=1 L3777——余零；M-U7p wspeed 首消费暴露缺省差异）
-            WbBailRelay.CastFireballHook = (ww, u2, tx, ty, dmg) => _evt.Add(new object[] { "fb", (double)u2.id, BitHex(tx), BitHex(ty), BitHex(dmg) });   // M-U7o 弹道接缝事件捕获（gen stub 同构）
-            WbBailRelay.CastArrowHook = (ww, u2, tx, ty, dmg) => _evt.Add(new object[] { "ar", (double)u2.id, BitHex(tx), BitHex(ty), BitHex(dmg) });
-            WbBailRelay.CastBeamHook = (ww, u2, tx, ty, dmg) => _evt.Add(new object[] { "bm", (double)u2.id, BitHex(tx), BitHex(ty), BitHex(dmg) });
-            WbBailRelay.CastBulletHook = (ww, u2, tx, ty, dmg) => _evt.Add(new object[] { "bl", (double)u2.id, BitHex(tx), BitHex(ty), BitHex(dmg) });
+            WbBailRelay.FxOptHook = (ww, k, x, y, ttl, x0, y0, src, r, dmg) =>   // M-U7s fx opts 面捕获（变长 fx 第 5 位 o=[x0,y0,src,r,dmg]，null→null——gen stub 同构；ttl 引擎恒整→int 落盘与 FxHook 四元同构）
+                _fx.Add(new object[] { k, BitHex(x), BitHex(y), (int)ttl,
+                    new object[] { x0.HasValue ? BitHex(x0.Value) : null, y0.HasValue ? BitHex(y0.Value) : null,
+                        src.HasValue ? (object)(int)src.Value : null,
+                        r.HasValue ? BitHex(r.Value) : null, dmg.HasValue ? BitHex(dmg.Value) : null } });
             WbBailRelay.WallDefenseHook = (ww, e2) => 1.0;   // gen stub 同构（fixtures 无建筑）
             WbBailRelay.DayPhaseHook = (ww) => Nul(env["dayPhase"]) ? 0.0 : (double)env["dayPhase"];   // gen stub env.dayPhase ?? 0 同构
             WbBailRelay.AddEventHook = (ww, kind, text, colorHex, x2, y2) => _evt.Add(new object[] { "ev", kind, BitHex(x2), BitHex(y2) });   // 文本含命名域——gen 只对账 kind/pos（M-U7q 默认真实现清偿——回放仍桩面捕获）
@@ -458,6 +457,7 @@ namespace PixelWorldBox.Wb.Tests
             u.grab = I(s["grab"]); u.boat = I(s["boat"]);
             u.caravan = I(s["caravan"]);                                           // M-U7m L3641 商队门
             u.civ = I(s["civ"]); u.jobC = I(s["job"]); u.flip = (bool)s["flip"] ? 1 : 0;
+            u.wep = Nul(s["wep"]) ? null : (object)(string)s["wep"];               // M-U7s 枪械/能量枪域（L3755/L3756 wep 字符串键）
             u.traitName = NS(s["trait"]);
             if (s["king"] != null && (int)s["king"] != 0) u.king = (int)s["king"];   // M-U7q 弑君域（witnessDeath king 分支）
             if (!Nul(s["breath"])) u.breathN = (int)s["breath"];                      // M-U7q 龙息域（undefined → null）
@@ -569,7 +569,7 @@ namespace PixelWorldBox.Wb.Tests
                     else AssertEq(ctx + " evt[" + i + "][" + k + "]", "arg", (double)ge[k], (double)ae[k]);
                 }
             }
-            // fx（影子：[k, xHex, yHex, ttl]——gen perU fx 四元组同构）
+            // fx（影子：[k, xHex, yHex, ttl(, o)]——M-U7s 变长 fx 记录：o 面可选第 5 位）
             var gFx = (JArray)g["fx"];
             Assert.That(fx.Count, Is.EqualTo(gFx.Count), ctx + " fx 计数");
             for (int i = 0; i < fx.Count; i++)
@@ -579,6 +579,19 @@ namespace PixelWorldBox.Wb.Tests
                 AssertEq(ctx + " fx[" + i + "]", "x", (string)gf[1], (string)fx[i][1]);
                 AssertEq(ctx + " fx[" + i + "]", "y", (string)gf[2], (string)fx[i][2]);
                 AssertEq(ctx + " fx[" + i + "]", "ttl", (int)gf[3], (int)fx[i][3]);
+                if (gf.Count > 4)                                                                 // M-U7s o 面（[x0,y0,src,r,dmg]，null→null）
+                {
+                    var go = (JArray)gf[4];
+                    var ao = (object[])fx[i][4];
+                    Assert.That(ao.Length, Is.EqualTo(go.Count), ctx + " fx[" + i + "] o 计数");
+                    for (int k2 = 0; k2 < go.Count; k2++)
+                    {
+                        if (go[k2] == null || go[k2].Type == JTokenType.Null) Assert.That(ao[k2], Is.Null, ctx + " fx[" + i + "].o[" + k2 + "] 应为 null");
+                        else if (go[k2].Type == JTokenType.String) AssertEq(ctx + " fx[" + i + "].o[" + k2 + "]", "arg", (string)go[k2], (string)ao[k2]);
+                        else AssertEq(ctx + " fx[" + i + "].o[" + k2 + "]", "arg", (double)go[k2], System.Convert.ToDouble(ao[k2]));   // src 槽捕获装 int——Convert 统一拆箱
+                    }
+                }
+                else Assert.That(fx[i].Length, Is.EqualTo(4), ctx + " fx[" + i + "] 应为四元（无 o 面）");
             }
             // terr 变更流（[[idx, old, new]]——setTerrain 影子同值早退语义）
             var gT = (JArray)g["terr"];

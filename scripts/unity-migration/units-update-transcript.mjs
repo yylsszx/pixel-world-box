@@ -88,6 +88,7 @@ const mkU = (s) => {
   if (s.king) u.king = s.king;                                       // M-U7q 弑君域
   if (s.breath !== null && s.breath !== undefined) u.breath = s.breath;   // M-U7q 龙息域
   if (s.fam !== null && s.fam !== undefined) u.fam = s.fam;          // M-U7q 家族战功
+  if (s.wep !== null && s.wep !== undefined) u.wep = s.wep;          // M-U7s 枪械/能量枪域（L3755/L3756 wep 字符串键）
   u._regen = s.traitRegen ?? 0;                                    // fixture 回显再生值（TRAITS 表镜像）
   return u;
 };
@@ -341,7 +342,7 @@ function dragonBreathT(u2, ctx, rng) {
     if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;                                                   // L12543
     igniteT(ctx, yy * W + xx, rng);                                                                          // L12544
   }
-  ctx.fx.push(['explosion', bitHex(tx), bitHex(ty), 16]);                                                   // L12546
+  ctx.fx.push(['explosion', bitHex(tx), bitHex(ty), 16, [null, null, null, bitHex(1.6), null]]);                                                   // L12546（opts {r:1.6}）
 }
 /** ignite L1072-1078 —— 点燃（FLAMMABLE=[GRASS,FOREST] constants.ts L65 / 建筑格；fire=150+floor(rng×90)） */
 function igniteT(ctx, i, rng) {
@@ -487,6 +488,32 @@ const warTargetT = (ctx, civId, rng) => {                                       
   for (const b of ctx.buildings) if (b.civ !== civId && atWarT(ctx, civId, b.civ)) enemies.push(b);
   if (enemies.length === 0) return null;
   return enemies[Math.floor(rng() * enemies.length)];
+};
+
+// ================= M-U7s 批次三丙二·弹道域四 cast 独立转写（engine.ts L4344-4396；fx opts 面承载对账契约——onSound 宿主回调黄金受控 undefined → no-op） =================
+const clampFxT = (v, hi) => Math.max(0.5, Math.min(hi - 0.5, v));                                            // L4345/L4369/L4375/L4383 clamp 面
+const castFireballT = (ctx, u2, tx, ty, dmg) => {                                                            // L4344-4346
+  ctx.fx.push(['fireball', bitHex(clampFxT(tx, W)), bitHex(clampFxT(ty, H)), 16,
+    [bitHex(u2.x), bitHex(u2.y), null, bitHex(dmg), null]]);                                                 // L4345（opts {r:dmg,x0,y0}）
+};
+const castArrowT = (ctx, u2, tx, ty, dmg) => {                                                               // L4368-4371
+  ctx.fx.push(['arrow', bitHex(clampFxT(tx, W)), bitHex(clampFxT(ty, H)), 12,
+    [bitHex(u2.x), bitHex(u2.y), u2.civ, bitHex(0), bitHex(dmg)]]);                                           // L4369（opts {x0,y0,src,r:0,dmg}）
+};
+const castBulletT = (ctx, u2, tx, ty, dmg, rng) => {                                                         // L4374-4378
+  ctx.fx.push(['bullet', bitHex(clampFxT(tx, W)), bitHex(clampFxT(ty, H)), 5,
+    [bitHex(u2.x), bitHex(u2.y), u2.civ, bitHex(0), bitHex(dmg)]]);                                           // L4375
+  if (rng() < 0.12) { /* onSound?.('place') 稀疏枪声——宿主回调黄金受控 undefined no-op（掷骰流消费） */ }        // L4377
+};
+const castBeamT = (ctx, u2, tx, ty, dmg, rng) => {                                                           // L4381-4396
+  const ex = clampFxT(tx, W); const ey = clampFxT(ty, H);                                                    // L4382-4383
+  const dx = ex - u2.x; const dy = ey - u2.y;                                                                // L4384-4385
+  const dl = Math.hypot(dx, dy) || 1;                                                                         // L4386（除零护栏）
+  const ox = Math.max(0.5, Math.min(W - 0.5, ex + (dx / dl) * 1.2));                                          // L4387（1.2 格过冲贯穿面）
+  const oy = Math.max(0.5, Math.min(H - 0.5, ey + (dy / dl) * 1.2));                                          // L4388
+  ctx.fx.push(['laser', bitHex(ox), bitHex(oy), 8,
+    [bitHex(u2.x), bitHex(u2.y), u2.civ, null, bitHex(dmg)]]);                                                // L4389（opts {x0,y0,src,dmg}——r 无 → null）
+  if (rng() < 0.08) { /* onSound?.('place') 稀疏嗡鸣——同上 */ }                                               // L4391
 };
 
 /** updateUnit 镜像（L3455-3590 批次一 + 扫描域 L3592-3669 批次二 + L3671+ 战斗哨兵 + 无敌壳；行号随注） */
@@ -705,7 +732,7 @@ function updateUnitT(u, ctx) {
       if (u.cd <= 0) {                                                                             // L3741
         u.cd = rd.cd;                                                                              // L3742
         u.atk = 10;                                                                                // L3743 施法动画
-        ctx.evt.push(['fb', u.id, bitHex(enemy.x + rng() * 0.6 - 0.3), bitHex(enemy.y + rng() * 0.6 - 0.3), bitHex(rd.dmg)]);   // L3744（弹道接缝事件——敌人落点抖动 2 掷 ±0.3）
+        castFireballT(ctx, u, enemy.x + rng() * 0.6 - 0.3, enemy.y + rng() * 0.6 - 0.3, rd.dmg);   // L3744（真实现——敌人落点抖动 2 掷 ±0.3）
       }
       if (stance === 2) {                                                                          // L3746 风筝带内且战且退；带外站桩吟唱
         const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                      // L3748
@@ -722,9 +749,9 @@ function updateUnitT(u, ctx) {
         let mul = 1;                                                                               // L3760
         if (r.isCiv && u.civ >= 0) throw new Error('SENTINEL: techModsOf archer 消费未镜像（civ>=0 黄金契约外）');
         const aim = leadAimT(rng, enemy, beam ? 8 : gun ? 5 : 12);                                 // L3762 弹道预测（内含 2 掷——计数闭包透传）
-        if (beam) ctx.evt.push(['bm', u.id, bitHex(aim.x), bitHex(aim.y), bitHex(u.dmg * 0.75 * mul)]);   // L3763
-        else if (gun) ctx.evt.push(['bl', u.id, bitHex(aim.x), bitHex(aim.y), bitHex(u.dmg * mul)]);      // L3764
-        else ctx.evt.push(['ar', u.id, bitHex(aim.x), bitHex(aim.y), bitHex(u.dmg * mul)]);               // L3765
+        if (beam) castBeamT(ctx, u, aim.x, aim.y, u.dmg * 0.75 * mul, rng);                        // L3763（真实现）
+        else if (gun) castBulletT(ctx, u, aim.x, aim.y, u.dmg * mul, rng);                          // L3764（真实现）
+        else castArrowT(ctx, u, aim.x, aim.y, u.dmg * mul);                                         // L3765（真实现）
       }
       if (stance === 2) {                                                                          // L3767 近距风筝带
         const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                      // L3769
@@ -742,10 +769,10 @@ function updateUnitT(u, ctx) {
           enemy.hurt = 20;                                                                         // L3783
           if (rng() < 0.3) {                                                                       // L3784
             enemy.dead = true; enemy.boat = 0;                                                     // L3785/L3787（syncDead no-op）
-            ctx.fx.push(['explosion', bitHex(enemy.x), bitHex(enemy.y), 16]);                      // L3788
+            ctx.fx.push(['explosion', bitHex(enemy.x), bitHex(enemy.y), 16, [null, null, null, bitHex(1.6), null]]);                      // L3788（opts {r:1.6}）
             ctx.evt.push(['ev', 'shipwreck', bitHex(enemy.x), bitHex(enemy.y)]);                   // L3789（文本命名域不译——gen 只对账 kind/pos）
           } else {
-            ctx.fx.push(['tsunami', bitHex(enemy.x), bitHex(enemy.y), 12]);                        // L3791
+            ctx.fx.push(['tsunami', bitHex(enemy.x), bitHex(enemy.y), 12, [null, null, null, bitHex(2.5), null]]);                        // L3791（opts {r:2.5,quiet}——quiet 渲染面）
           }
           return;                                                                                  // L3793
         }
@@ -923,7 +950,7 @@ function updateUnitT(u, ctx) {
         }
         if (job === 3 && u.cd <= 0 && rng() < 0.1) {                                                       // L4048
           const bi = enemyBuildingNearT(ctx, u, 5);                                                        // L4049（JOBS[3].ranged ?? 5——types.ts L300）
-          if (bi >= 0) { u.cd = 18; ctx.evt.push(['ar', u.id, bitHex((bi % W) + 0.5), bitHex(((bi / W) | 0) + 0.5), bitHex(u.dmg)]); }   // L4050-4053（castArrow 接缝）
+          if (bi >= 0) { u.cd = 18; castArrowT(ctx, u, (bi % W) + 0.5, ((bi / W) | 0) + 0.5, u.dmg); }   // L4050-4053（castArrow 真实现——M-U7s）
         }
         if (!inArmy) {                                                                                     // L4056
           if (rng() < 0.05 && maybeBoardForWarT(ctx, u)) return;                                           // L4057（跨海远征——d<8 早退）

@@ -299,11 +299,10 @@ namespace PixelWorldBox.Wb
                 foreach (var k in expired) w.activeBattles.Remove(k);                                       // JS Map 迭代中删除安全——C# 两段式同构
             }
         };
-        // —— M-U7o 远程域 cast 弹道接缝（弹道实体生成属 projectiles 未译域——黄金 'fb'/'ar'/'bm'/'bl' 事件对账；默认哨兵，Test30 置换事件捕获）——
-        internal static System.Action<WbWorld, WbU, double, double, double> CastFireballHook = (w, u, tx, ty, dmg) => throw new System.NotImplementedException("castFireball 未译域（弹道生成域批次三乙二）；黄金回放由 Test30 置换 'fb' 事件捕获");   // L3744 调用面
-        internal static System.Action<WbWorld, WbU, double, double, double> CastArrowHook = (w, u, tx, ty, dmg) => throw new System.NotImplementedException("castArrow 未译域（弹道生成域批次三乙二）；黄金回放由 Test30 置换 'ar' 事件捕获");     // L3765 调用面（L3267/L4050 守城箭随件）
-        internal static System.Action<WbWorld, WbU, double, double, double> CastBeamHook = (w, u, tx, ty, dmg) => throw new System.NotImplementedException("castBeam 未译域（弹道生成域批次三乙二）；黄金回放由 Test30 置换 'bm' 事件捕获");     // L3763 调用面
-        internal static System.Action<WbWorld, WbU, double, double, double> CastBulletHook = (w, u, tx, ty, dmg) => throw new System.NotImplementedException("castBullet 未译域（弹道生成域批次三乙二）；黄金回放由 Test30 置换 'bl' 事件捕获");   // L3764 调用面
+        // —— M-U7s：fx opts 面接缝（弹道/爆炸/海啸 opts 承载 —— 可空参对齐 TS opts undefined→null；默认真实现 = w.Fx 全参存储；
+        //  Test30 置换事件捕获 o 面与黄金变长 fx 记录对账）——
+        internal static System.Action<WbWorld, string, double, double, double, double?, double?, int?, double?, double?> FxOptHook =
+            (w, k, x, y, ttl, x0, y0, src, r, dmg) => w.Fx(k, x, y, ttl, optR: r, optCiv: src, optX0: x0, optY0: y0, optDmg: dmg);
 
         // ================= updateUnit L3455-4113（批次一 L3455-3590 全译 + 扫描域 L3592-3669 批次二全译（M-U7m）+
         //                  无敌壳 L3927/4110-4112；战斗/远程/近战/神经/击杀/龙息域 L3671-3978 M-U7n~M-U7q 全译；peaceful 职业域 L3981-4109 哨兵保留——批次三余域） =================
@@ -600,7 +599,7 @@ namespace PixelWorldBox.Wb
                     {
                         u.cd = rd.cd;                                                                                    // L3742
                         u.atk = 10;                                                                                      // L3743 施法动画
-                        CastFireballHook(w, u, enemy.x + w.Rng() * 0.6 - 0.3, enemy.y + w.Rng() * 0.6 - 0.3, rd.dmg);    // L3744（弹道生成域接缝——敌人落点抖动 2 掷 ±0.3）
+                        CastFireball(w, u, enemy.x + w.Rng() * 0.6 - 0.3, enemy.y + w.Rng() * 0.6 - 0.3, rd.dmg);    // L3744（M-U7s 真实现——敌人落点抖动 2 掷 ±0.3）
                     }
                     if (stance == 2)                                                                                     // L3746 风筝带内且战且退；带外站桩吟唱（旧版无条件后撤会自行退出射程——震荡根治）
                     {
@@ -621,9 +620,9 @@ namespace PixelWorldBox.Wb
                         u.atk = 10;                                                                                      // L3759 拉弓/瞄准动画
                         double mul = (def.isCiv && u.civ >= 0) ? WbCivSim.TechModsOf(w, u.civ).archer : 1;               // L3760（techMods 弹药科技倍率）
                         var aim = LeadAim(w, enemy, beam ? 8 : gun ? 5 : 12);                                            // L3762 弹道预测：瞄准目标提前量（飞行期间目标仍在移动；内含 2 掷）
-                        if (beam) CastBeamHook(w, u, aim.x, aim.y, u.dmg * 0.75 * mul);                                  // L3763
-                        else if (gun) CastBulletHook(w, u, aim.x, aim.y, u.dmg * mul);                                   // L3764
-                        else CastArrowHook(w, u, aim.x, aim.y, u.dmg * mul);                                             // L3765
+                        if (beam) CastBeam(w, u, aim.x, aim.y, u.dmg * 0.75 * mul);                                  // L3763（M-U7s 真实现）
+                        else if (gun) CastBullet(w, u, aim.x, aim.y, u.dmg * mul);                                   // L3764（M-U7s 真实现）
+                        else CastArrow(w, u, aim.x, aim.y, u.dmg * mul);                                             // L3765（真实现——L2720 存量）
                     }
                     if (stance == 2)                                                                                     // L3767 近距风筝带内拉开距离——网络连续判定替代硬阈值
                     {
@@ -649,12 +648,12 @@ namespace PixelWorldBox.Wb
                             {
                                 enemy.dead = 1;                                                                          // L3785
                                 enemy.boat = 0;                                                                          // L3787（WB.syncDead L3786 WASM 镜像 no-op 注记）
-                                FxHook(w, "explosion", enemy.x, enemy.y, 16);                                            // L3788（opts r:1.6 渲染面——fx 事件流不可见）
+                                FxOptHook(w, "explosion", enemy.x, enemy.y, 16, null, null, null, 1.6, null);            // L3788（opts {r:1.6}——M-U7s o 面清偿）
                                 AddEventHook(w, "shipwreck", $"「{enemy.name ?? ""}」的航船被克拉肯拖入了深渊", null, enemy.x, enemy.y);   // L3789（M-U7q：addEvent 命名域文本面清偿）
                             }
                             else
                             {
-                                FxHook(w, "tsunami", enemy.x, enemy.y, 12);                                              // L3791（quiet——同上）
+                                FxOptHook(w, "tsunami", enemy.x, enemy.y, 12, null, null, null, 2.5, null);              // L3791（opts {r:2.5,quiet}——quiet 渲染面丢弃；M-U7s o 面清偿）
                             }
                             return;                                                                                      // L3793
                         }
@@ -926,7 +925,7 @@ namespace PixelWorldBox.Wb
                             if (bi >= 0)                                                                                          // L4051
                             {
                                 u.cd = 18;                                                                                        // L4052
-                                CastArrowHook(w, u, (bi % WbWorld.W) + 0.5, ((bi / WbWorld.W) | 0) + 0.5, u.dmg);                   // L4053（弹道实体生成属 projectiles 未译域——'ar' 事件流契约，L3765 战斗链同构）
+                                CastArrow(w, u, (bi % WbWorld.W) + 0.5, ((bi / WbWorld.W) | 0) + 0.5, u.dmg);                   // L4053（M-U7s 真实现——L2720 存量直调，L3270 守城箭同构）
                             }
                         }
                         // 军团成员：阵位/冲锋目标由 armyTick 统一驱动（不再自行寻的/登船）
@@ -1155,7 +1154,7 @@ namespace PixelWorldBox.Wb
                 if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                                          // L12543
                 IgniteE(w, yy * WbWorld.W + xx);                                                                               // L12544（idx(xx,yy)=yy*W+xx 列主序）
             }
-            FxHook(w, "explosion", tx, ty, 16);                                                                                // L12546（opts r:1.6 渲染面——fx 事件流不可见）
+            FxOptHook(w, "explosion", tx, ty, 16, null, null, null, 1.6, null);                                                // L12546（opts {r:1.6}——M-U7s o 面清偿）
         }
 
         /// engine ignite L1072-1078 —— 点燃（FLAMMABLE=[GRASS,FOREST] constants.ts L65 / 建筑格；fire=150+floor(rng×90)）
@@ -2716,11 +2715,11 @@ namespace PixelWorldBox.Wb
             }
         }
 
-        // ================= castArrow（engine L4368-4370 机械翻译） =================
+        // ================= castArrow（engine L4368-4370 机械翻译；M-U7s 清偿入 FxOptHook——update 域 o 面捕获契约与 case3 真存储双兼容） =================
         private static void CastArrow(WbWorld w, WbU u, double tx, double ty, double dmg)
         {
-            w.Fx("arrow", WbMath.JsMax(0.5, WbMath.JsMin(WbWorld.W - 0.5, tx)), WbMath.JsMax(0.5, WbMath.JsMin(WbWorld.H - 0.5, ty)), 12,
-                optR: 0, optCiv: u.civ, optX0: u.x, optY0: u.y, optDmg: dmg);                   // L4369 {x0,y0,src,r:0,dmg} spread 覆盖
+            FxOptHook(w, "arrow", WbMath.JsMax(0.5, WbMath.JsMin(WbWorld.W - 0.5, tx)), WbMath.JsMax(0.5, WbMath.JsMin(WbWorld.H - 0.5, ty)), 12,
+                u.x, u.y, u.civ, 0.0, dmg);                                                     // L4369 {x0,y0,src,r:0,dmg} spread 覆盖
         }
 
         // ================= enemyBuildingNear（engine L4396-4417 机械翻译：单位周边半径 r 最近敌国建筑 tile） =================
@@ -2749,6 +2748,38 @@ namespace PixelWorldBox.Wb
                 }
             }
             return best;
+        }
+
+        // ================= castFireball/castBullet/castBeam（engine L4344-4396 机械翻译——M-U7s 弹道域真实现清偿；CastArrow 存量 L2720 同批清偿入 FxOptHook） =================
+
+        /// engine castFireball L4344-4346 —— 法师火球：特效从施法者飞向目标点（fx opts {r:dmg, x0, y0} 渲染弹道；伤害在施法链已结算）
+        private static void CastFireball(WbWorld w, WbU u, double tx, double ty, double dmg)
+        {
+            FxOptHook(w, "fireball", WbMath.JsMax(0.5, WbMath.JsMin(WbWorld.W - 0.5, tx)), WbMath.JsMax(0.5, WbMath.JsMin(WbWorld.H - 0.5, ty)), 16,
+                u.x, u.y, null, dmg, null);                                                     // L4345（clamp 0.5..W-0.5/H-0.5）
+        }
+
+        /// engine castBullet L4374-4378 —— 步枪射击：高速曳光弹道（命中结算同箭矢；ttl 短 → 弹速快）+ 0.12 稀疏枪声门
+        private static void CastBullet(WbWorld w, WbU u, double tx, double ty, double dmg)
+        {
+            FxOptHook(w, "bullet", WbMath.JsMax(0.5, WbMath.JsMin(WbWorld.W - 0.5, tx)), WbMath.JsMax(0.5, WbMath.JsMin(WbWorld.H - 0.5, ty)), 5,
+                u.x, u.y, u.civ, 0.0, dmg);                                                     // L4375（opts {x0,y0,src,r:0,dmg}）
+            if (w.Rng() < 0.12) { /* onSound?.('place') 稀疏枪声反馈——宿主回调黄金受控 undefined no-op（掷骰流消费） */ }   // L4377
+        }
+
+        /// engine castBeam L4381-4396 —— 能量步枪：贯穿激光束（1.2 格过冲面 + dl=hypot||1 除零护栏）+ 0.08 稀疏嗡鸣门
+        private static void CastBeam(WbWorld w, WbU u, double tx, double ty, double dmg)
+        {
+            double ex = WbMath.JsMax(0.5, WbMath.JsMin(WbWorld.W - 0.5, tx));                    // L4382
+            double ey = WbMath.JsMax(0.5, WbMath.JsMin(WbWorld.H - 0.5, ty));                    // L4383
+            double dx = ex - u.x;                                                                // L4384
+            double dy = ey - u.y;                                                                // L4385
+            double dl = WbMath.FdHypot(dx, dy);
+            if (dl == 0) dl = 1;                                                                 // L4386（hypot||1 除零护栏）
+            double ox = WbMath.JsMax(0.5, WbMath.JsMin(WbWorld.W - 0.5, ex + dx / dl * 1.2));    // L4387（1.2 格过冲穿射）
+            double oy = WbMath.JsMax(0.5, WbMath.JsMin(WbWorld.H - 0.5, ey + dy / dl * 1.2));    // L4388
+            FxOptHook(w, "laser", ox, oy, 8, u.x, u.y, u.civ, null, dmg);                         // L4389（opts {x0,y0,src,dmg}——r 无 → null）
+            if (w.Rng() < 0.08) { /* onSound?.('place') 稀疏的能量嗡鸣——同上 */ }                    // L4391
         }
 
         // ================= nearestEnemyBuilding（engine L4421-4431 机械翻译：全表扫描最近敌国交战建筑） =================

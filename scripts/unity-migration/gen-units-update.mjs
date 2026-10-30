@@ -127,6 +127,7 @@ const U = (o) => ({
   sxk: o.sxk === undefined ? null : o.sxk, syk: o.syk === undefined ? null : o.syk,
   infected: !!o.infected, grab: o.grab ?? 0, boat: o.boat ?? 0,
   caravan: o.caravan ?? 0,   // M-U7m L3641 商队门（TS Unit.caravan ?? 0 语义）
+  wep: o.wep === undefined ? null : o.wep,   // M-U7s 枪械/能量枪域（undefined 恒 null 非触发单位）
   dmg: o.dmg === undefined ? null : o.dmg,   // M-U7n 战斗域 myPow/foePow（TS undefined→null；snapU 条件对账）
   kills: o.kills ?? 0,       // M-U7n F_FLIGHT[8]/F_STANCE[11]（TS Unit.kills spawn 初值 0）
   civ: o.civ ?? -1, job: o.job ?? 0, flip: !!o.flip,
@@ -163,6 +164,7 @@ const mkTsUnit = (spec) => {
   if (spec.king) u.king = spec.king;                                                     // M-U7q 弑君域 L1177（witnessDeath king 分支）
   if (spec.breath !== null && spec.breath !== undefined) u.breath = spec.breath;         // M-U7q 龙息域 L3973（undefined→NaN 门永不触达——非龙单位天然）
   if (spec.fam !== null && spec.fam !== undefined) u.fam = spec.fam;                     // M-U7q 家族战功 L3925（case2 谱系域镜像）
+  if (spec.wep !== null && spec.wep !== undefined) u.wep = spec.wep;                     // M-U7s 枪械/能量枪域（L3755 gun / L3756 beam——wep 字符串键）
   return u;
 };
 const snapU = (u) => ({
@@ -204,7 +206,12 @@ function makeStubEng(env, cap) {
   eng.buckets = Array.from({ length: eng.bw * eng.bh }, () => []);
   eng.laws = { undeadRise: env.lawsRise, zombieInfect: env.zombInf ?? true };   // M-U7q：zombieInfect L3905 门（默认 true——types.ts DEFAULT_LAWS）
   eng.fxPrefs = { get ambience() { return env.ambience; } };
-  eng.fx = (kind, x, y, ttl) => cap.fx.push({ k: kind, x: bitHex(x), y: bitHex(y), ttl });
+  eng.fx = (kind, x, y, ttl, opts) => {                                                            // M-U7s：fx opts 面弹道清偿——变长记录（无 opts 四元不变；有 opts 第 5 位 o=[x0,y0,src,r,dmg]，undefined→null）
+    if (opts == null) cap.fx.push({ k: kind, x: bitHex(x), y: bitHex(y), ttl });
+    else cap.fx.push({ k: kind, x: bitHex(x), y: bitHex(y), ttl,
+      o: [opts.x0 === undefined ? null : bitHex(opts.x0), opts.y0 === undefined ? null : bitHex(opts.y0),
+          opts.src === undefined ? null : opts.src, opts.r === undefined ? null : bitHex(opts.r), opts.dmg === undefined ? null : bitHex(opts.dmg)] });
+  };
   eng.grabbedTick = (u) => cap.evt.push(['grab', u.id]);
   eng.updateBoat = (u) => cap.evt.push(['boat', u.id]);
   eng.riseSkeleton = (x, y) => cap.evt.push(['rise', bitHex(x), bitHex(y)]);
@@ -225,11 +232,8 @@ function makeStubEng(env, cap) {
   } else {
     eng.isEnemyFast = () => { throw new Error('SCAN_SENTINEL: buckets should be empty'); };
   }
-  // —— M-U7o 远程域 cast 弹道接缝（弹道实体生成属 projectiles 未译域——调用面事件捕获 'fb'/'ar'/'bm'/'bl'；leadAim 真实现直调：纯数学 + 实例 rng 2 掷）——
-  eng.castFireball = (u2, tx, ty, dmg) => cap.evt.push(['fb', u2.id, bitHex(tx), bitHex(ty), bitHex(dmg)]);
-  eng.castArrow = (u2, tx, ty, dmg) => cap.evt.push(['ar', u2.id, bitHex(tx), bitHex(ty), bitHex(dmg)]);
-  eng.castBeam = (u2, tx, ty, dmg) => cap.evt.push(['bm', u2.id, bitHex(tx), bitHex(ty), bitHex(dmg)]);
-  eng.castBullet = (u2, tx, ty, dmg) => cap.evt.push(['bl', u2.id, bitHex(tx), bitHex(ty), bitHex(dmg)]);
+  // —— M-U7s：cast 四接缝真实现清偿（castFireball/castArrow/castBullet/castBeam L4344-4396 走原型——fx opts 面承载对账契约；
+  //  onSound 宿主回调黄金受控 undefined → 可选链 no-op；leadAim 真实现直调：纯数学 + 实例 rng 2 掷）——
   // —— M-U7p 近战域接缝（击杀链 L3900+ 未触达——早退特技路径；文本含命名域只对账 kind/pos）——
   eng.addEvent = (kind, text, pos) => cap.evt.push(['ev', kind, bitHex(pos?.x), bitHex(pos?.y)]);
   eng.addCorpse = (x, y, bone, petrified) => cap.evt.push(['corpse', bitHex(x), bitHex(y), bone ? 1 : 0, petrified ? 1 : 0]);
@@ -1006,7 +1010,7 @@ const CASES = [
                 '1': { id: 1, name: '炎国', alive: true, pop: 3, stability: 70, colorHex: '#e63946' } }, relInit: { '0-1': -50 },
         bldInit: [[10284, 1, 1]] },
       units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 3, dmg: 5, cd: 0, tx: 42.5, ty: 40.5 })],
-      want: (cap, us) => cap.evt.some((e) => e[0] === 'ar' && e[2] === bitHex(44.5)) && us[0].cd === 16
+      want: (cap, us) => cap.fx.some((f) => f.k === 'arrow' && f.x === bitHex(44.5) && f.o[2] === 0 && f.o[4] !== null) && us[0].cd === 16
         && !cap.fx.some((f) => f.k === 'hit'),
     }),
     env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
@@ -1070,6 +1074,46 @@ const CASES = [
       bldInit: [[10281, 1, 1]] },
     units: [U({ race: 'human', x: 50.5, y: 50.5, civ: 0, job: 0, cd: 0 })],
     steps: 1,
+  },
+
+  // ================= M-U7s 批次三丙二·弹道域真实现清偿（S51-S52；castFireball/castArrow/castBullet/castBeam L4344-4396 走原型——fx opts 面承载对账契约） =================
+  // S51 musket-bullet：火枪手（job3 + wep musket L3755 gun=true）vs 僵尸 d=2.5 ∈ (1.4,5] → cd 0→15 + leadAim(5) 2 掷
+  //    → castBullet 真实现：fx 'bullet' clamp + o=[x0,y0,src,r=0,dmg] + 0.12 枪声门 1 掷（onSound 宿主回调 no-op——gate 命中/未中可观察面同构，单场景覆盖掷骰流）
+  {
+    name: 'musket-bullet', terrain: 'plains', seed: meleeProbe({
+      label: 'musket-bullet', steps: 2, env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+      units: [
+        U({ race: 'human', x: 200.5, y: 80.5, hp: 50, maxHp: 100, dmg: 6, job: 3, civ: -1, wep: 'musket' }),
+        U({ race: 'zombie', x: 203, y: 80.5, hp: 10, maxHp: 10, dmg: 1, civ: -1 }),
+      ],
+      want: (cap, us) => cap.fx.some((f) => f.k === 'bullet' && f.o[3] !== null && f.o[4] !== null) && us[0].cd === 13
+        && !cap.evt.some((e) => e[0] === 'bl'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'human', x: 200.5, y: 80.5, hp: 50, maxHp: 100, dmg: 6, job: 3, civ: -1, wep: 'musket' }),
+      U({ race: 'zombie', x: 203, y: 80.5, hp: 10, maxHp: 10, dmg: 1, civ: -1 }),
+    ],
+    steps: 2,
+  },
+  // S52 laser-beam：能量枪兵（wep laser_rifle L3756 beam=true）vs 僵尸 d=2.5 → cd 0→12 + leadAim(8) 2 掷
+  //    → castBeam 真实现：1.2 格过冲贯穿面（dl=hypot||1 除零护栏）+ fx 'laser' o=[x0,y0,src,r=undefined→null,dmg×0.75] + 0.08 嗡鸣门 1 掷
+  {
+    name: 'laser-beam', terrain: 'plains', seed: meleeProbe({
+      label: 'laser-beam', steps: 2, env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+      units: [
+        U({ race: 'human', x: 210.5, y: 80.5, hp: 50, maxHp: 100, dmg: 6, job: 3, civ: -1, wep: 'laser_rifle' }),
+        U({ race: 'zombie', x: 213, y: 80.5, hp: 10, maxHp: 10, dmg: 1, civ: -1 }),
+      ],
+      want: (cap, us) => cap.fx.some((f) => f.k === 'laser' && f.o[3] === null && f.o[4] !== null) && us[0].cd === 10
+        && !cap.evt.some((e) => e[0] === 'bm'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'human', x: 210.5, y: 80.5, hp: 50, maxHp: 100, dmg: 6, job: 3, civ: -1, wep: 'laser_rifle' }),
+      U({ race: 'zombie', x: 213, y: 80.5, hp: 10, maxHp: 10, dmg: 1, civ: -1 }),
+    ],
+    steps: 2,
   },
 ];
 
@@ -1142,7 +1186,7 @@ for (const c of CASES) {
       perU.push({
         ...snapU(u),
         evt: cap.evt.slice(e0).map((e) => e.map((v) => v)),
-        fx: cap.fx.slice(f0).map((f) => [f.k, f.x, f.y, f.ttl]),
+        fx: cap.fx.slice(f0).map((f) => (f.o === undefined ? [f.k, f.x, f.y, f.ttl] : [f.k, f.x, f.y, f.ttl, f.o])),   // M-U7s：变长 fx 记录（o 面字段只加）
         terr: cap.terr.slice(t0).map((p) => [p[0], p[1], p[2]]),
         scan: cap.scan.slice(sc0).map((e) => e.map((v) => v)),   // M-U7m isEnemyFast 调用日志（[aId,bId,0|1] 事件流，字段只加）
         draws: draws - draw0 - perU.reduce((a, p) => a + (p.draws ?? 0), 0),
