@@ -1,5 +1,5 @@
 // ============================================================================
-// WbUnitsUpdateTests.cs —— Test30：M-U7l 批次一 + M-U7m 批次二·扫描域黄金回放（gen-units-update.mjs 13 场景）
+// WbUnitsUpdateTests.cs —— Test30：M-U7l 批次一 + M-U7m 批次二·扫描域 + M-U7n 批次三甲·神经域黄金回放（gen-units-update.mjs 17 场景）
 // 蓝本：engine.ts updateUnit L3455-3590 批次一 + 扫描域 L3592-3669 批次二（isEnemyFast/isEnemy + 3×3 桶环 +
 //       血仇加权 + 恐慌传染 + 三逃离门）+ 无敌壳（C# WbBailRelay.UpdateUnit）
 // 协议：bitHex f64 位精确（禁 epsilon）/ 掷值链 pre→post rngA 态游走重建 / evt·fx·terr·scan 事件流捕获 /
@@ -20,7 +20,7 @@ namespace PixelWorldBox.Wb.Tests
         private System.Action<WbWorld, WbU> _grab0, _boat0, _plague0, _post0;
         private System.Action<WbWorld, double, double> _rise0;
         private System.Func<WbWorld, WbU, bool> _tail0;
-        private System.Func<WbWorld, WbU, double> _gear0;
+        private System.Func<WbWorld, WbU, WbGearBonus> _gear0;   // M-U7n：double→WbGearBonus 结构化同源
         private System.Action<WbWorld, string, double, double, int> _fx0;
         private System.Action<WbWorld, WbU, double> _mv0;                                // M-U7m 三逃离门 moveUnit 接缝
         private System.Func<WbWorld, WbU, WbU, bool> _isef0;                             // M-U7m isEnemyFast 接缝
@@ -36,7 +36,7 @@ namespace PixelWorldBox.Wb.Tests
             _grab0 = WbBailRelay.GrabbedTickHook; _boat0 = WbBailRelay.UpdateBoatHook;
             _rise0 = WbBailRelay.RiseSkeletonHook; _plague0 = WbBailRelay.SpreadPlagueHook;
             _tail0 = WbBailRelay.TailJSHook; _post0 = WbBailRelay.PostJSHook;
-            _gear0 = WbBailRelay.GearRegenHook; _fx0 = WbBailRelay.FxHook;
+            _gear0 = WbBailRelay.GearBonusHook; _fx0 = WbBailRelay.FxHook;
             _mv0 = WbBailRelay.MoveUnitHook; _isef0 = WbBailRelay.IsEnemyFastHook;
             _evt = new System.Collections.Generic.List<object[]>();
             _fx = new System.Collections.Generic.List<object[]>();
@@ -49,7 +49,7 @@ namespace PixelWorldBox.Wb.Tests
             WbBailRelay.GrabbedTickHook = _grab0; WbBailRelay.UpdateBoatHook = _boat0;
             WbBailRelay.RiseSkeletonHook = _rise0; WbBailRelay.SpreadPlagueHook = _plague0;
             WbBailRelay.TailJSHook = _tail0; WbBailRelay.PostJSHook = _post0;
-            WbBailRelay.GearRegenHook = _gear0; WbBailRelay.FxHook = _fx0;
+            WbBailRelay.GearBonusHook = _gear0; WbBailRelay.FxHook = _fx0;
             WbBailRelay.MoveUnitHook = _mv0; WbBailRelay.IsEnemyFastHook = _isef0;
         }
 
@@ -111,9 +111,9 @@ namespace PixelWorldBox.Wb.Tests
             Assert.That(actual, Is.EqualTo(expected), ctx + " · " + field);
         }
 
-        // ---------------- 主回放：13 场景逐位（M-U7l 8 + M-U7m 扫描域 5） ----------------
+        // ---------------- 主回放：17 场景逐位（M-U7l 8 + M-U7m 扫描域 5 + M-U7n 神经域 4） ----------------
         [Test]
-        public void GoldenUnitsUpdate_Replay13Cases_BitExact()
+        public void GoldenUnitsUpdate_Replay17Cases_BitExact()
         {
             var root = JObject.Parse(System.IO.File.ReadAllText(FindGolden("units_update.json")));
             // ep 交叉锁定（C# 内联字面量 0.008/0.006/3.0/0.72 —— engineParams L39/L41/L31/L40）
@@ -123,7 +123,7 @@ namespace PixelWorldBox.Wb.Tests
             AssertEq("ep", "panicRout", 0.72, (double)root["ep"]["panicRout"]);   // M-U7m 溃逃阈
             var specs = (JArray)root["terrainSpecs"];
             var cases = (JArray)root["cases"];
-            Assert.That(cases.Count, Is.EqualTo(13), "场景数");
+            Assert.That(cases.Count, Is.EqualTo(17), "场景数");
             foreach (var c in cases) ReplayCase(c, specs);
         }
 
@@ -181,7 +181,7 @@ namespace PixelWorldBox.Wb.Tests
             WbBailRelay.SpreadPlagueHook = (ww, u) => _evt.Add(new object[] { "plague", (double)u.id });
             WbBailRelay.TailJSHook = (ww, u) => { _evt.Add(new object[] { "tail", (double)u.id }); return false; };
             WbBailRelay.PostJSHook = (ww, u) => _evt.Add(new object[] { "post", (double)u.id });
-            WbBailRelay.GearRegenHook = (ww, u) => _gearRegen;
+            WbBailRelay.GearBonusHook = (ww, u) => new WbGearBonus { regen = _gearRegen };   // gen stub 同构全对象（regen=env.gearRegen 余零）
             WbBailRelay.FxHook = (ww, k, x, y, ttl) => _fx.Add(new object[] { k, BitHex(x), BitHex(y), ttl });
 
             var outSteps = (JArray)c["out"];

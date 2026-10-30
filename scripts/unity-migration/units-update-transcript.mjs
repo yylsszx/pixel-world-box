@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 
 const GOLDEN = new URL('./golden/units_update.json', import.meta.url);
 const g = JSON.parse(readFileSync(GOLDEN, 'utf8'));
+// M-U7n：neuro 权重数据（gen-neurodefs.mjs 产物——生成数据面，非引擎导入；f32 语义以 fround 镜像）
+const NW = JSON.parse(readFileSync(new URL('./golden/neuro_weights.json', import.meta.url), 'utf8'));
 
 const W = g.w, H = g.h;
 const T = { DEEP: 0, WATER: 1, SAND: 2, GRASS: 3, FOREST: 4, LAVA: 8, SNOW: 7, ICE: 10, BURNT: 9 };
@@ -40,7 +42,7 @@ const mulberry32 = (a) => {
   };
 };
 
-/** 种族旗标访问器（golden.races 位字节 = types.ts L157-204 打包面——镜像唯一旗标源） */
+/** 种族旗标访问器（golden.races 位字节 = types.ts L157-204 打包面——镜像唯一旗标源；ranged/reach M-U7n 扩展字段随 JSON） */
 const raceF = (id) => {
   const r = g.races[String(id)];
   if (!r) throw new Error('race flags missing: ' + id);
@@ -48,6 +50,7 @@ const raceF = (id) => {
     hostile: !!(r.flags & 1), isCiv: !!(r.flags & 2), undead: !!(r.flags & 4),
     predator: !!(r.flags & 8), lavaImmune: !!(r.flags & 16),
     flying: !!(r.tbf0 & 32), aquatic: !!(r.tbf0 & 64), beach: !!(r.tbf1 & 8),
+    ranged: r.ranged ?? null, reach: r.reach ?? null,   // M-U7n（MAGE ranged / KRAKEN 2.4 / SANDWORM 1.6 / BASILISK 1.4 / SHARK 1.3——fixture 种族均 null→reach ?? 0.9）
   };
 };
 
@@ -77,6 +80,8 @@ const mkU = (s) => {
   if (s.grab) u.grab = s.grab;
   if (s.boat) u.boat = s.boat;
   if (s.caravan) u.caravan = s.caravan;                     // M-U7m L3641 商队门（spec 回显）
+  if (s.dmg !== null && s.dmg !== undefined) u.dmg = s.dmg;   // M-U7n 战斗域（undefined 保持）
+  u.kills = s.kills;                          // M-U7n（spawn 初值 0 镜像）
   u.civ = s.civ; u.job = s.job; u.flip = s.flip;
   if (s.trait !== null && s.trait !== undefined) u.trait = s.trait;
   u._regen = s.traitRegen ?? 0;                                    // fixture 回显再生值（TRAITS 表镜像）
@@ -98,6 +103,8 @@ const snapU = (u) => ({
   syk: u.syk === undefined ? null : bitHex(u.syk),
   infected: !!u.infected, dead: !!u.dead, grab: u.grab ?? 0, boat: u.boat ?? 0,
   caravan: u.caravan ?? 0,   // M-U7m 商队镜像（字段只加）
+  dmg: u.dmg === undefined ? null : bitHex(u.dmg),   // M-U7n（undefined→null 条件对账）
+  kills: u.kills ?? 0,       // M-U7n
   x: bitHex(u.x), y: bitHex(u.y), tx: bitHex(u.tx), ty: bitHex(u.ty),
 });
 
@@ -167,6 +174,38 @@ function isEnemyFastT(w, a, b, scanLog) {
   scanLog.push([a.id, b.id, v ? 1 : 0]);
   return v;
 }
+
+// ================= NeuroCore 镜像（M-U7n 批次三甲：neuro.ts dequantize L25-43 + fwd L108-121 +
+// neuroStance argmax + neuroFlight RL 头默认；权重源 golden/neuro_weights.json——gen-neurodefs.mjs 机械生成） =================
+const fround = Math.fround;   // Float32Array 语义镜像（f32 舍入）
+function dequantizeT(spec) {
+  const dq = (q, s) => q.map((v) => fround(v * s));   // L27-30：f64 乘积 → f32 存储
+  return { arch: spec.arch, w1: dq(spec.w1q, spec.sw1), b1: dq(spec.b1q, spec.sb1), w2: dq(spec.w2q, spec.sw2), b2: dq(spec.b2q, spec.sb2) };
+}
+const HEADS = { acc: dequantizeT(NW.acc), stance: dequantizeT(NW.stance), flightBc: dequantizeT(NW.flightBc), flightRl: dequantizeT(NW.flightRl) };
+const hid = {};   // 模块级 scratch（按头复用——单线程）
+function fwdT(h, f) {
+  const nH = h.arch[1], nIn = h.arch[0], nOut = h.arch[2];
+  hid[h] ??= new Array(nH).fill(0);
+  const H = hid[h];
+  const out = new Array(nOut);
+  for (let t = 0; t < nH; t++) {
+    let s = h.b1[t];
+    for (let i = 0; i < nIn; i++) s += f[i] * h.w1[i * nH + t];   // f64 累积（w1 f32 值提升）
+    H[t] = fround(Math.tanh(s));                                   // tanh f64 → f32 存储
+  }
+  for (let j = 0; j < nOut; j++) {
+    let s = h.b2[j];
+    for (let t = 0; t < nH; t++) s += H[t] * h.w2[t * nOut + j];
+    out[j] = fround(s);
+  }
+  return out;
+}
+function neuroStanceT(f) { const o = fwdT(HEADS.stance, f); let best = 0; for (let j = 1; j < o.length; j++) if (o[j] > o[best]) best = j; return best; }   // L185-203
+function neuroFlightT(f) { const o = fwdT(HEADS.flightRl, f); return o[1] > o[0] ? 1 : 0; }   // L209-233（'rl' 默认头；softmax logp 在线采集不译）
+const MONSTER_LOOT_T = new Set([9, 25, 26, 27, 21, 22, 23, 24, 17]);   // engine L6918（DRAGON/KRAKEN/SANDWORM/BASILISK/TROLL/OGRE/WHITEWALKER/VAMPIRE/DEMON）
+const F_FLIGHT = new Array(9);    // neuro.ts L126（模块级 scratch）
+const F_STANCE = new Array(12);   // neuro.ts L125
 
 /** updateUnit 镜像（L3455-3590 批次一 + 扫描域 L3592-3669 批次二 + L3671+ 战斗哨兵 + 无敌壳；行号随注） */
 function updateUnitT(u, ctx) {
@@ -319,15 +358,84 @@ function updateUnitT(u, ctx) {
     ctx.evt.push(['mv', u.id, 1.3]);                                                             // L3667（夺路狂奔）
     return;                                                                                      // L3668
   }
-  if (enemy) throw new Error('SENTINEL: 战斗/远程/神经域批次三（L3671+；黄金 13 场景 enemy 均经三门退出）');
-  // —— 无敌路径 L3927 else 壳 ——
-  if (u.race === 9) throw new Error('SENTINEL: 龙息域（黄金无龙场景）');                            // L3931
-  if (r.isCiv && u.civ >= 0) throw new Error('SENTINEL: peaceful 职业域（黄金 civ=-1 契约）');      // L3937
-  ctx.evt.push(['tail', u.id]);                                                                  // L4110
-  ctx.evt.push(['post', u.id]);                                                                  // L4112
+  // ================= 神经决策域 L3671-3702（M-U7n 批次三甲：战或逃——465 参微型网络 RL 头） =================
+  if (enemy && (!r.isCiv || r.hostile) && !r.undead) {                                              // L3674（亡灵不知恐惧）
+    let myPow = u.dmg + u.hp / 8;                                                                  // L3676
+    if (u.gIds) {                                                                                  // L3677 血仇上头：对仇敌战力自信 +20%
+      const gi = u.gIds.indexOf(enemy.id);                                                         // L3678
+      if (gi >= 0) myPow *= 1 + 0.2 * Math.min(1, (u.gVal?.[gi] ?? 1) / 2);                        // L3679
+    }
+    const foePow = enemy.dmg + enemy.hp / 8;                                                       // L3681
+    F_FLIGHT[0] = Math.max(0, u.hp) / u.maxHp;                                                     // L3682
+    F_FLIGHT[1] = r.predator ? Math.max(0, Math.min(1, 1 - (u.food ?? 70) / 160)) : 0.5;           // L3683（饿兽拼命）
+    F_FLIGHT[2] = myPow / (myPow + foePow);                                                        // L3684
+    F_FLIGHT[3] = Math.max(0, enemy.hp) / enemy.maxHp;                                             // L3685
+    F_FLIGHT[4] = Math.min(12, enemyD) / 12;                                                       // L3686
+    F_FLIGHT[5] = isHerbivoreRaceT(enemy.race, ctx.dynRaces) ? 1 : 0;                              // L3687
+    F_FLIGHT[6] = Math.min(3, Math.max(0, foes - 1)) / 3;                                          // L3688
+    F_FLIGHT[7] = MONSTER_LOOT_T.has(u.race) ? 1 : 0;                                              // L3689
+    F_FLIGHT[8] = Math.min(20, u.kills) / 20;                                                      // L3690
+    const flAct = neuroFlightT(F_FLIGHT);                                                          // L3691
+    void flAct; // collectDecision L3693——Task 38 在线采集域（引擎外会话 state；黄金未捕获面，no-op）
+    if (flAct === 1) {                                                                             // L3694
+      u.fleeT = 40;                                                                                // L3695（20 次更新内脱离接触）
+      const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3696
+      u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 5));                                // L3697
+      u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 5));                                // L3698
+      ctx.evt.push(['mv', u.id, 1.2]);                                                             // L3699
+      return;                                                                                      // L3700
+    }
+  }
+  if (enemy) {                                                                                     // L3704
+    const rd = raceF(u.race).ranged ?? null;                                                       // L3705（ranged 随 races 位字节——fixture 种族均 null）
+    // L3707：JOBS[3].ranged ?? 5 = 5（types.ts L300）+ gearBonus(u).ranged（gen stub ranged 0）+ techModsOf(u.civ).range（civ>=0 场景无——短路 0）
+    const bowRange = ((u.job === 3 ? 5 : 0) || (r.isCiv ? 0 : 0)) + (r.isCiv && u.civ >= 0 ? 0 : 0);
+    // —— 神经决策核心②：战斗姿态（L3708-3729）——
+    let myPow2 = u.dmg + u.hp / 8;                                                                 // L3711
+    if (u.gIds) {                                                                                  // L3712 血仇上头
+      const gi = u.gIds.indexOf(enemy.id);                                                         // L3713
+      if (gi >= 0) myPow2 *= 1 + 0.2 * Math.min(1, (u.gVal?.[gi] ?? 1) / 2);                       // L3714
+    }
+    const foePow2 = enemy.dmg + enemy.hp / 8;                                                      // L3716
+    F_STANCE[0] = Math.min(12, enemyD) / 12;                                                       // L3717
+    F_STANCE[1] = Math.max(0, u.hp) / u.maxHp;                                                     // L3718
+    F_STANCE[2] = Math.max(0, enemy.hp) / enemy.maxHp;                                             // L3719
+    F_STANCE[3] = rd || bowRange > 0 ? 1 : 0;                                                      // L3720
+    F_STANCE[4] = Math.min(8, rd ? rd.range : bowRange) / 8;                                       // L3721
+    F_STANCE[5] = Math.min(2, raceF(u.race).reach ?? 0.9) / 2;                                     // L3722
+    F_STANCE[6] = rd ? 1 : 0;                                                                      // L3723
+    F_STANCE[7] = myPow2 / (myPow2 + foePow2);                                                     // L3724
+    F_STANCE[8] = Math.min(4, allies) / 4;                                                         // L3725
+    F_STANCE[9] = u.army != null ? 1 : 0;                                                          // L3726
+    F_STANCE[10] = r.isCiv ? 1 : 0;                                                                // L3727
+    F_STANCE[11] = Math.min(20, u.kills) / 20;                                                     // L3728
+    const stance = neuroStanceT(F_STANCE);                                                         // L3729
+    if (stance === 3) {                                                                            // L3730 伤重脱离
+      u.fleeT = 50;                                                                                // L3732
+      const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3733
+      u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 6));                                // L3734
+      u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 6));                                // L3735
+      ctx.evt.push(['mv', u.id, 1.15]);                                                            // L3736
+      return;                                                                                      // L3737
+    }
+    // —— L3739-3963 攻击链体哨兵（门条件全求值——wild rd null / bowRange 0 短路不触达；黄金 S14-S17 契约）——
+    if (rd && enemyD > 1.6 && enemyD <= rd.range) throw new Error('SENTINEL: 法师远程火球域（L3739-3752）');                        // L3739
+    if (bowRange > 0 && enemyD > 1.4 && enemyD <= bowRange) throw new Error('SENTINEL: 弓手/火枪/能量枪域（L3753-3773）');            // L3753
+    if (enemyD < (raceF(u.race).reach ?? 0.9)) throw new Error('SENTINEL: 近战执行域（L3774-3957）');                                // L3774
+    if (stance === 2 && (rd || bowRange > 0)) throw new Error('SENTINEL: 射程死区风筝域（L3958-3963）');                              // L3958
+    // —— L3964-3967 追击尾（攻击链 else）—— if/else 落出后入 L4112 postJS（无 tail——L4110 tailJS 在 else 块内）
+    if (!u.detour) { u.tx = enemy.x; u.ty = enemy.y; }                                             // L3965（绕行期间不覆写——卡死自愈）
+    ctx.evt.push(['mv', u.id, 1.25]);                                                              // L3966
+  } else {
+    // —— 无敌路径 else 壳（现行号 L3968 起；C# 侧旧注 L3927 系引擎行号漂移——行为同构） ——
+    if (u.race === 9) throw new Error('SENTINEL: 龙息域（黄金无龙场景）');                            // L3972（现号；C# 旧注 L3931）
+    if (r.isCiv && u.civ >= 0) throw new Error('SENTINEL: peaceful 职业域（黄金 civ=-1 契约）');      // L3974+（现号；C# 旧注 L3937）
+    ctx.evt.push(['tail', u.id]);                                                                  // L4110（tailJS 仅 else 路径——gen stub 恒 false 不早退）
+  }
+  ctx.evt.push(['post', u.id]);                                                                    // L4112（if/else 之外恒调——S15 僵尸追击 post-only 实证）
 }
 
-// ---- 主回放：13 场景依黄金 fixtures/muts 重建 ----
+// ---- 主回放：17 场景依黄金 fixtures/muts 重建 ----
 let cases = 0;
 for (const c of g.cases) {
   const tspec = g.terrainSpecs.find((t) => t.name === c.terrain);

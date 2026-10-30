@@ -1499,14 +1499,14 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   }
 }
 
-// 段 30：M-U7l 批次一 + M-U7m 批次二·扫描域三链（units-update-transcript 镜像 13 场景逐位 + gen det 复跑〔bun——.ts 直导入〕+ 双写 md5 + 台账）
+// 段 30：M-U7l 批次一 + M-U7m 批次二·扫描域 + M-U7n 批次三甲·神经域三链（units-update-transcript 镜像 17 场景逐位 + gen det 复跑〔bun——.ts 直导入〕+ 双写 md5 + 台账）
 {
   const { execFileSync } = await import('node:child_process');
   const { createHash, } = await import('node:crypto');
   var unitsUpdateVerifyFail = 0;
   try {
     execFileSync('node', [new URL('./units-update-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
-    console.log('units-update 黄金回放 (units-update-transcript 镜像 vs units_update.json): PASS (13 场景 快照逐位 + evt/fx/terr/scan 事件流 + 逐步 draws + fireSet + final/rngTail)');
+    console.log('units-update 黄金回放 (units-update-transcript 镜像 vs units_update.json): PASS (17 场景 快照逐位 + evt/fx/terr/scan 事件流 + 逐步 draws + fireSet + final/rngTail)');
   } catch (e) {
     unitsUpdateVerifyFail++;
     console.error('units-update 黄金回放: FAIL');
@@ -1519,7 +1519,7 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
     execFileSync('bun', [new URL('./gen-units-update.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
     const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
     if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
-    console.log('units-update gen det 复跑 (gen-units-update · bun): PASS (13 场景 sanity + GameEngine 真实现 + det 字节级)');
+    console.log('units-update gen det 复跑 (gen-units-update · bun): PASS (17 场景 sanity + GameEngine 真实现 + det 字节级)');
   } catch (e) {
     unitsUpdateVerifyFail++;
     console.error('units-update gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -1527,27 +1527,35 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   try {
     const { readFileSync } = await import('node:fs');
     const g = JSON.parse(readFileSync(new URL('./golden/units_update.json', import.meta.url), 'utf8'));
-    if (!Array.isArray(g.cases) || g.cases.length !== 13) throw new Error('场景数 ≠ 13');
+    if (!Array.isArray(g.cases) || g.cases.length !== 17) throw new Error('场景数 ≠ 17');
     for (const c of g.cases) {
       if (c.out.length !== c.steps) throw new Error(c.name + ' steps ≠ out');
       if (!Array.isArray(c.final) || c.final.length !== c.units.length) throw new Error(c.name + ' final 缺失');
       if (!Array.isArray(c.rngTail) || c.rngTail.length !== 4) throw Error(c.name + ' rngTail 缺失');
       for (const s of c.out) if (!Array.isArray(s.fireSet)) throw new Error(c.name + ' fireSet 缺失');
     }
-    // M-U7m 扫描域结构检查：scanReal 场景必有非空 scan 调用日志 + ep.panicRout 分发
+    // M-U7m 扫描域结构检查：scanReal 场景必有非空 scan 调用日志 + ep.panicRout 分发（M-U7n 起 S14-S17 亦标 scanReal——9 场景）
     const scanCases = g.cases.filter((c) => c.env.scanReal);
-    if (scanCases.length !== 5) throw new Error('scanReal 场景数 ≠ 5');
+    if (scanCases.length !== 9) throw new Error('scanReal 场景数 ≠ 9');
     for (const c of scanCases) {
       const scanN = c.out.reduce((a, s) => a + s.units.reduce((b, u) => b + ((u.scan ?? []).length), 0), 0);
       if (scanN === 0) throw new Error(c.name + ' scanReal 场景 scan 日志空');
     }
     if (g.ep.panicRout !== 0.72) throw new Error('ep.panicRout ≠ 0.72');
+    // M-U7n 神经域结构检查：S14-S17 四场景在册 + mv 事件乘数签名（flight 1.2 / retreat 1.15 / chase 1.25——L3699/L3736/L3964）
+    const neuroMv = { 'flight-flee': 1.2, 'stance-retreat': 1.15, 'stance-chase': 1.25, 'grudge-chase': 1.25 };
+    for (const [nm, mul] of Object.entries(neuroMv)) {
+      const c = g.cases.find((x) => x.name === nm);
+      if (!c) throw new Error('neuro 场景缺失 ' + nm);
+      const mvs = c.out.flatMap((s) => s.units.flatMap((u) => (u.evt ?? []).filter((e) => e[0] === 'mv').map((e) => e[2])));
+      if (!mvs.includes(mul)) throw new Error(nm + ' mv 乘数签名缺失 ' + mul);
+    }
     const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/units_update.json', import.meta.url));
     const gl = readFileSync(new URL('./golden/units_update.json', import.meta.url));
     const md5a = createHash('md5').update(sa).digest('hex');
     const md5b = createHash('md5').update(gl).digest('hex');
     if (md5a !== md5b) throw new Error(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
-    console.log(`units-update 台账完备 (13 场景 + scanReal 5 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+    console.log(`units-update 台账完备 (17 场景 + scanReal 9 + neuro 4 mv 签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
   } catch (e) {
     unitsUpdateVerifyFail++;
     console.error('units-update 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));

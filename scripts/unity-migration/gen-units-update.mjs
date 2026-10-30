@@ -1,9 +1,9 @@
 // ============================================================================
-// gen-units-update.mjs —— M-U7m 切片「updateUnit 批次二·扫描域」黄金向量（M-U7l 批次一 8 场景继承 + 扫描域 S9-S13 五场景）
+// gen-units-update.mjs —— M-U7n 切片「updateUnit 批次三甲·神经决策域」黄金向量（M-U7m 13 场景继承 + 神经域 S14-S17 四场景）
 // 蓝本：src/lib/game/engine.ts updateUnit（现行号 L3455 入口 → L3590 hp≤0 死亡门批次一边界；
-//       扫描域 L3592-3669 本切片（isEnemyFast/isEnemy + 3×3 桶环 + 血仇加权 + 恐慌传染 + 三逃离门）→
-//       L3671+ 战斗/远程/神经/职业/龙息域批次三哨兵 → L4110 tailJS/L4112 postJS 影子调用点），
-//       rust-core/src/units.rs update_unit（L2314+，交叉核对）。
+//       扫描域 L3592-3669 批次二 → 神经决策域 L3671-3738 本切片（neuroFlight 战或逃 + neuroStance 姿态 +
+//       两 flee 出口 fleeT=40/50）→ L3739+ 远程/近战执行域批次三乙哨兵 → L4110 tailJS/L4112 postJS 影子调用点），
+//       rust-core/src/units.rs update_unit（L2314+，交叉核对）+ neuro.ts/neuro-weights.ts/neuro-flight-rl.ts（权重面 gen-neurodefs.mjs 机械转写）。
 // 直接 import 现役 engine.ts（真实现，非复制），以 Object.create(GameEngine.prototype)
 // + stub 字段面驱动真 updateUnit；批次一场景空 buckets 截断，扫描场景 env.scanReal：
 //  布桶（units 序 push 重建同构）+ isEnemyFast 原型真实现包装（'scan' 调用日志 [aId,bId,0|1] 事件流）。
@@ -16,8 +16,8 @@
 //     扫描场景例外：S12 商队 human civ=1 经 L3641 商队逃离门提前 return，不触达职业域；
 //  ③ fireSet/damagedSet 空且单位非消防相关 → 消防域 && 短路零抽；
 //  ④ WB.setEnabled(false) → 扫描走 JS 桶路径（WB.active() 分支不译=C# WbBail JS 接力域同构）；
-//  ⑤ 扫描场景 enemy 非空时必须经三逃离门（L3641 商队/L3652 fleeT/L3662 恐慌溃逃）退出，
-//     触达 L3671+ 战斗哨兵即设计错误。
+//  ⑤ 扫描场景 enemy 非空时必须经三逃离门（L3641 商队/L3652 fleeT/L3662 恐慌溃逃）或神经域出口（L3694 战或逃 fleeT=40/
+//     L3730 姿态脱离 fleeT=50）退出，或敌距 ≥ reach fall-through else 路径；触达 L3739+ 远程/近战哨兵即设计错误。
 // 运行：bun scripts/unity-migration/gen-units-update.mjs
 // 输出：scripts/unity-migration/golden/units_update.json
 //       unity/pixel-world-box/Assets/StreamingAssets/WbGolden/units_update.json（双写）
@@ -60,6 +60,7 @@ const RACE_PICKS = {
   ww: pickRace((d) => d.key === 'whitewalker', 'whitewalker'),
   bandit: pickRace((d) => d.hostile && !d.isCiv && !d.predator && !d.undead && !d.aquatic && !d.flying, 'bandit'),   // M-U7m S12：hostile×isCiv 敌意分支（RACES 序首命中 BANDIT id4）
   zombie: pickRace((d) => d.undead && !d.flying && !d.aquatic, 'zombie'),                                            // M-U7m S11：L2095 ZOMBIE 对称敌意分支（序首命中 id5）
+  bear: pickRace((d) => Number(d.key === 'bear'), 'bear'),                                                           // M-U7n S14/S17：强敌锚（dmg 19 hp 95——RStats 一致）
 };
 const packRace = (id) => {
   const d = RACES[id];
@@ -67,6 +68,8 @@ const packRace = (id) => {
     flags: (d.hostile ? 1 : 0) | (d.isCiv ? 2 : 0) | (d.undead ? 4 : 0) | (d.predator ? 8 : 0) | (d.lavaImmune ? 16 : 0),
     tbf0: (d.flying ? 32 : 0) | (d.aquatic ? 64 : 0) | (d.sandswim ? 128 : 0),
     tbf1: (d.coldBlood ? 4 : 0) | (d.beach ? 8 : 0),
+    ranged: d.ranged ?? null,   // M-U7n L3705（MAGE {range 6.5, dmg 18, cd 26}——fixture 种族均 null）
+    reach: d.reach ?? null,     // M-U7n L3722/L3774（KRAKEN 2.4 / SANDWORM 1.6 / BASILISK 1.4 / SHARK 1.3——?? 0.9 语义随 C#/镜像）
   };
 };
 const raceIds = {};
@@ -111,6 +114,8 @@ const U = (o) => ({
   sxk: o.sxk === undefined ? null : o.sxk, syk: o.syk === undefined ? null : o.syk,
   infected: !!o.infected, grab: o.grab ?? 0, boat: o.boat ?? 0,
   caravan: o.caravan ?? 0,   // M-U7m L3641 商队门（TS Unit.caravan ?? 0 语义）
+  dmg: o.dmg === undefined ? null : o.dmg,   // M-U7n 战斗域 myPow/foePow（TS undefined→null；snapU 条件对账）
+  kills: o.kills ?? 0,       // M-U7n F_FLIGHT[8]/F_STANCE[11]（TS Unit.kills spawn 初值 0）
   civ: o.civ ?? -1, job: o.job ?? 0, flip: !!o.flip,
   trait: o.trait === undefined ? null : o.trait,   // trait 字符串（TS 侧 TRAITS 表查 regen 用；C# 用 traitRegen 数值）
   traitRegen: o.trait === undefined ? 0 : (TRAIT_REGEN[o.trait] ?? 0),
@@ -137,6 +142,8 @@ const mkTsUnit = (spec) => {
   if (spec.grab) u.grab = spec.grab;
   if (spec.boat) u.boat = spec.boat;
   if (spec.caravan) u.caravan = spec.caravan;   // M-U7m L3641（TS undefined ?? 0 语义→默认不设）
+  if (spec.dmg !== null && spec.dmg !== undefined) u.dmg = spec.dmg;   // M-U7n（undefined 保持——战斗域消费）
+  u.kills = spec.kills;                          // M-U7n（spawn 初值 0 镜像）
   u.civ = spec.civ; u.job = spec.job; u.flip = spec.flip;
   if (spec.trait !== null && spec.trait !== undefined) u.trait = spec.trait; // 真 TRAITS 表键——TS 再生路径查表依赖
   return u;
@@ -157,6 +164,8 @@ const snapU = (u) => ({
   syk: u.syk === undefined ? null : bitHex(u.syk),
   infected: !!u.infected, dead: !!u.dead, grab: u.grab ?? 0, boat: u.boat ?? 0,
   caravan: u.caravan ?? 0,   // M-U7m 商队镜像（snapU 字段只加）
+  dmg: u.dmg === undefined ? null : bitHex(u.dmg),   // M-U7n 战斗域（undefined→null 条件对账）
+  kills: u.kills ?? 0,       // M-U7n（spawn 初值 0）
   x: bitHex(u.x), y: bitHex(u.y), tx: bitHex(u.tx), ty: bitHex(u.ty),
 });
 // ---- stub 引擎：updateUnit 前置段 + 哨兵面 ----
@@ -403,6 +412,49 @@ const CASES = [
       U({ race: 'sheep', x: 127.5, y: 70.5, civ: -1 }),              // u1：同族 ally（cell 31——u3 桶邻域外）
       U({ race: 'sheep', x: 126.5, y: 73.5, civ: -1 }),              // u2：同族 ally（cell 31——u3 桶邻域外）
       U({ race: 'wolf', x: 135.5, y: 75.5, civ: -1 }),               // u3：敌（cell 33,18）——u0 视角 foes++ 后 d²=50≥49 cull；u3 视角 u0 同样 cull、u1/u2 桶外 → enemy=null → else 路径
+    ],
+    steps: 2,
+  },
+  // ================= M-U7n 批次三甲·神经决策域（S14-S17；L3671-3738 神经 + L3964-3967 追击尾；契约：远程/弓/近战/风筝体哨兵不可达） =================
+  //  敌选约束实证：狼只看食草动物（isEnemy predator×isHerbivore——熊非猎物非敌对，视野零敌）→ 强敌场景改羊/僵尸/野人对
+  // S14 flight-flee：残血狼（dmg 0.2 hp 2）vs 羊 → neuroFlight=1（F[0]=0.02 + F[2]=0.45/3.45=0.130）→ L3694 fleeT=40 + 'mv' 1.2 → 次拍 L3652 fleeT 门 1.18
+  {
+    name: 'flight-flee', terrain: 'plains', seed: 404,
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'wolf', x: 150.5, y: 80.5, hp: 2, maxHp: 100, dmg: 0.2, civ: -1 }),  // u0：残血狼（fixture dmg 低设——网络输入驱动；food 账本 69→F[1]=0.569）
+      U({ race: 'sheep', x: 152.5, y: 80.5, hp: 16, maxHp: 16, dmg: 1, civ: -1 }),   // u1：羊（isEnemy predator×isHerbivore=唯一可见敌；F[5]=1）
+    ],
+    steps: 2,
+  },
+  // S15 stance-retreat：重伤野人（dmg 2 hp 5）vs 僵尸 → flight 块 isCiv 非敌对跳过（L3674 门）→ neuroStance=3 伤重脱离（F[10]=1 isCiv + F[7]=0.183）→ fleeT=50 + 'mv' 1.15
+  //    gearBonus(u).ranged 消费（L3707 isCiv 短路入——gen stub ranged:0；C# GearBonusHook 置换）；僵尸自身 undead→flight 排除→stance0→追击
+  {
+    name: 'stance-retreat', terrain: 'plains', seed: 415,
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'human', x: 160.5, y: 80.5, hp: 5, maxHp: 100, dmg: 2, civ: -1 }),   // u0：重伤野人
+      U({ race: 'zombie', x: 162.5, y: 80.5, hp: 46, maxHp: 46, dmg: 6, civ: -1 }),  // u1：僵尸（L2095 对称敌意）
+    ],
+    steps: 2,
+  },
+  // S16 stance-chase：满血狼 vs 羊 → neuroFlight=0 死战 + neuroStance=0 追击接敌 → 无 rd/bow/近战（d=2≥0.9）→ L3964 追击尾：tx/ty=敌位 + 'mv' 1.25 ×2 拍
+  {
+    name: 'stance-chase', terrain: 'plains', seed: 426,
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'wolf', x: 170.5, y: 80.5, hp: 100, maxHp: 100, dmg: 10, civ: -1 }), // u0：满血狼（F_FLIGHT[2]=0.88→0）
+      U({ race: 'sheep', x: 172.5, y: 80.5, hp: 16, maxHp: 16, dmg: 1, civ: -1 }),   // u1：羊（F_FLIGHT[5]=1）
+    ],
+    steps: 2,
+  },
+  // S17 grudge-chase：血仇狼（dmg 0.5 hp 10 gval 2.0）vs 羊 → myPow ×(1+0.2×min(1,gVal/2)) L3677-3679 + L3711-3715 双头消费 → flight=0 + stance 追击 → 'mv' 1.25
+  {
+    name: 'grudge-chase', terrain: 'plains', seed: 437,
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ id: 1, race: 'wolf', x: 180.5, y: 80.5, hp: 10, maxHp: 100, dmg: 0.5, gids: [2], gval: [2.0], civ: -1 }), // u0：血仇狼
+      U({ id: 2, race: 'sheep', x: 182.5, y: 80.5, hp: 16, maxHp: 16, dmg: 1, civ: -1 }),                          // u1：仇敌羊
     ],
     steps: 2,
   },

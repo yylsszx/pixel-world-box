@@ -25,6 +25,13 @@ using System.Linq;
 
 namespace PixelWorldBox.Wb
 {
+    /// <summary>装备加成七元组（engine.ts L1498 gearBonus 返回类型结构机械转写：armor/crit/lifesteal/thorns/regen/ranged/speed；
+    ///          装备域本体未译——GearBonusHook 接缝由 Test30 桩同构供给 regen=env.gearRegen 余零；GEAR_EMPTY 快路径 speed=1 特例随件注记）</summary>
+    public struct WbGearBonus
+    {
+        public double armor, crit, lifesteal, thorns, regen, ranged, speed;
+    }
+
     public static class WbBailRelay
     {
         // ---------------- RACES 接力域子表（types.ts L157-204 机械转写，11 消费字段） ----------------
@@ -265,11 +272,15 @@ namespace PixelWorldBox.Wb
         internal static System.Action<WbWorld, WbU> SpreadPlagueHook = (w, u) => throw new System.NotImplementedException("spreadPlague 未译域（瘟疫传播域批次二）");
         internal static System.Func<WbWorld, WbU, bool> TailJSHook = (w, u) => UpdateUnitTailJS(w, u);
         internal static System.Action<WbWorld, WbU> PostJSHook = (w, u) => UpdateUnitPostJS(w, u);
-        internal static System.Func<WbWorld, WbU, double> GearRegenHook = (w, u) => throw new System.NotImplementedException("gearBonus 未译域（装备再生域）；黄金回放由 Test30 置换 env.gearRegen");
+        internal static System.Func<WbWorld, WbU, WbGearBonus> GearBonusHook = (w, u) => throw new System.NotImplementedException("gearBonus 未译域（装备域）；黄金回放由 Test30 置换 gen stub 同构全对象（regen=env.gearRegen，余零）");   // M-U7n：double→WbGearBonus 结构化（L3707 ranged 消费入；regen 域 L3559 同源）
         internal static System.Action<WbWorld, string, double, double, int> FxHook = (w, k, x, y, ttl) => w.Fx(k, x, y, ttl);
         // —— M-U7m 扫描域双接缝（黄金 'mv'/'scan' 事件流；默认 = 真实现）——
         internal static System.Action<WbWorld, WbU, double> MoveUnitHook = (w, u, mul) => MoveUnit(w, u, mul);                            // 三逃离门 moveUnit（执行语义属 M-U3h 移动切片——黄金 'mv' [uId,mul] 事件对账面）
         internal static System.Func<WbWorld, WbU, WbU, bool> IsEnemyFastHook = (w, a, b) => IsEnemyFast(w, a, b);                          // L3615 桶扫描索敌（黄金 'scan' [aId,bId,0|1] 调用日志对账面）
+        // —— M-U7n 神经域特征 scratch（neuro.ts L124-126 模块级复用同构）+ MONSTER_LOOT（engine L6918）——
+        private static readonly double[] FFlight = new double[9];
+        private static readonly double[] FStance = new double[12];
+        private static readonly System.Collections.Generic.HashSet<int> MonsterLoot = new System.Collections.Generic.HashSet<int> { R2_DRAGON, R_KRAKEN, R_SANDWORM, R_BASILISK, R_TROLL, R_OGRE, R_WHITEWALKER, R_VAMPIRE, WbConstants.R_DEMON };   // engine L6918
 
         // ================= updateUnit L3455-4113（批次一 L3455-3590 全译 + 扫描域 L3592-3669 批次二全译（M-U7m）+
         //                  无敌壳 L3927/4110-4112；战斗/远程/神经/职业/龙息域 L3671-4108 哨兵隔离——批次三余域） =================
@@ -379,7 +390,7 @@ namespace PixelWorldBox.Wb
             if (u.hp > 0 && u.hp < u.maxHp)                                                                              // L3557
             {
                 double gbRegen = 0;                                                                                      // L3558 gb = def.isCiv ? gearBonus(u) : null
-                if (def.isCiv) gbRegen = GearRegenHook(w, u);                                                            // L3559（gearBonus 装备域未译——接缝；黄金 shadow 面 = env.gearRegen）
+                if (def.isCiv) gbRegen = GearBonusHook(w, u).regen;                                                        // L3559（gearBonus 装备域未译——接缝；黄金 shadow 面 = env.gearRegen）
                 double rg = (u.traitName != null ? (TraitsAll.TryGetValue(u.traitName, out var tr) && tr.regen.HasValue ? tr.regen.Value : 0) : 0)
                           + gbRegen + (u.race == R_TROLL ? 0.35 : 0);                                                    // L3560
                 if (rg > 0) u.hp = System.Math.Min(u.maxHp, u.hp + rg);                                                  // L3561-3562
@@ -489,13 +500,94 @@ namespace PixelWorldBox.Wb
                 MoveUnitHook(w, u, 1.3);                                                                                 // L3667 夺路狂奔
                 return;                                                                                                  // L3668
             }
-            if (enemy != null) throw new System.InvalidOperationException("战斗/远程/神经域批次三未翻译（L3671-3925；黄金 13 场景 enemy 均经三门退出——触达即设计错误）");   // L3674
-            // ================= 无敌路径 L3927 else 壳 =================
-            // collectEnemyGone(u.id, this.tickCount) L3929——Task 38 在线采集模块域（引擎外会话 state；黄金未捕获面，no-op）
-            if (u.race == R2_DRAGON) throw new System.InvalidOperationException("龙息域批次三未翻译（L3931-3936 u.race===R2；黄金无龙场景不触达）");          // L3931
-            if (def.isCiv && u.civ >= 0) throw new System.InvalidOperationException("peaceful 职业域批次三未翻译（L3937-4108；黄金 civ=-1 契约不触达）");   // L3937
-            if (TailJSHook(w, u)) return;                                                                                // L4110（尾段早退：猎物命中/密度场导航 → 跳过拾取与繁衍）
-            PostJSHook(w, u);                                                                                            // L4112
+            // ================= 神经决策域 L3671-3702（M-U7n 批次三甲：战或逃——465 参微型网络 RL 头；行号随注） =================
+            //    教师策略：饿兽拼命、伤兽弃猎、巨怪死战、弱兽避强（亡灵不知恐惧，不参与战或逃）
+            if (enemy != null && (!def.isCiv || def.hostile) && !def.undead)                                             // L3674
+            {
+                double myPow = u.dmg + u.hp / 8;                                                                         // L3676
+                if (u.gIdsN != null)                                                                                     // L3677 血仇上头：对仇敌战力自信 +20%（涌现复仇勇士）
+                {
+                    int gi = u.gIdsN.IndexOf(enemy.id);                                                                  // L3678
+                    if (gi >= 0) myPow *= 1 + 0.2 * System.Math.Min(1, (u.gValN != null && gi < u.gValN.Count ? u.gValN[gi] : 1) / 2);   // L3679
+                }
+                double foePow = enemy.dmg + enemy.hp / 8;                                                                // L3681
+                FFlight[0] = System.Math.Max(0, u.hp) / u.maxHp;                                                         // L3682
+                FFlight[1] = def.predator ? System.Math.Max(0, System.Math.Min(1, 1 - (u.foodN ?? 70) / 160)) : 0.5;     // L3683（饿兽拼命）
+                FFlight[2] = myPow / (myPow + foePow);                                                                   // L3684
+                FFlight[3] = System.Math.Max(0, enemy.hp) / enemy.maxHp;                                                 // L3685
+                FFlight[4] = System.Math.Min(12, enemyD) / 12;                                                           // L3686
+                FFlight[5] = IsHerbivoreRace(w, enemy.race) ? 1 : 0;                                                     // L3687
+                FFlight[6] = System.Math.Min(3, System.Math.Max(0, foes - 1)) / 3;                                       // L3688
+                FFlight[7] = MonsterLoot.Contains(u.race) ? 1 : 0;                                                       // L3689
+                FFlight[8] = System.Math.Min(20, u.kills) / 20;                                                          // L3690
+                int flAct = WbNeuro.NeuroFlight(FFlight);                                                                // L3691（collectDecision L3693——Task 38 在线采集域 no-op）
+                if (flAct == 1)                                                                                          // L3694
+                {
+                    u.fleeT = 40;                                                                                        // L3695（20 次更新内脱离接触）
+                    double ang = System.Math.Atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3696
+                    u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, u.x + System.Math.Cos(ang) * 5));           // L3697
+                    u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, u.y + System.Math.Sin(ang) * 5));           // L3698
+                    MoveUnitHook(w, u, 1.2);                                                                             // L3699
+                    return;                                                                                              // L3700
+                }
+            }
+
+            if (enemy != null)                                                                                           // L3704
+            {
+                var rd = RStats[u.race].ranged;                                                                          // L3705
+                // L3707：弓手/持弓者/火枪兵射程（拉开距离放风筝；线膛枪科技加射程）——(A || B) + C
+                double jr = (u.jobC ?? 0) == 3 ? (JobDefs[3].ranged != 0 ? JobDefs[3].ranged : 5) : 0;                   // L3707a JOBS[3].ranged ?? 5（types.ts L300 archer=5）
+                double gr = def.isCiv ? GearBonusHook(w, u).ranged : 0;                                                  // L3707b（isCiv 短路入——GearBonusHook 接缝）
+                double tr = (def.isCiv && u.civ >= 0) ? WbCivSim.TechModsOf(w, u.civ).range : 0;                         // L3707c（线膛枪科技射程）
+                double bowRange = (jr != 0 ? jr : gr) + tr;                                                              // L3707（A||B 真值序——0 falsy）
+                // —— 神经决策核心②：战斗姿态（追击接敌/原地坚守/且战且退/伤重脱离）——                            // L3708-3710
+                double myPow2 = u.dmg + u.hp / 8;                                                                        // L3711
+                if (u.gIdsN != null)                                                                                     // L3712 血仇上头
+                {
+                    int gi = u.gIdsN.IndexOf(enemy.id);                                                                  // L3713
+                    if (gi >= 0) myPow2 *= 1 + 0.2 * System.Math.Min(1, (u.gValN != null && gi < u.gValN.Count ? u.gValN[gi] : 1) / 2);   // L3714
+                }
+                double foePow2 = enemy.dmg + enemy.hp / 8;                                                               // L3716
+                FStance[0] = System.Math.Min(12, enemyD) / 12;                                                           // L3717
+                FStance[1] = System.Math.Max(0, u.hp) / u.maxHp;                                                         // L3718
+                FStance[2] = System.Math.Max(0, enemy.hp) / enemy.maxHp;                                                 // L3719
+                FStance[3] = (rd != null || bowRange > 0) ? 1 : 0;                                                       // L3720
+                FStance[4] = System.Math.Min(8, rd != null ? rd.range : bowRange) / 8;                                   // L3721
+                FStance[5] = System.Math.Min(2, RStats[u.race].reach ?? 0.9) / 2;                                        // L3722
+                FStance[6] = rd != null ? 1 : 0;                                                                         // L3723
+                FStance[7] = myPow2 / (myPow2 + foePow2);                                                                // L3724
+                FStance[8] = System.Math.Min(4, allies) / 4;                                                             // L3725
+                FStance[9] = u.army != null ? 1 : 0;                                                                     // L3726
+                FStance[10] = def.isCiv ? 1 : 0;                                                                         // L3727
+                FStance[11] = System.Math.Min(20, u.kills) / 20;                                                         // L3728
+                int stance = WbNeuro.NeuroStance(FStance);                                                               // L3729
+                if (stance == 3)                                                                                         // L3730 伤重脱离：劣势散兵撤出战斗保全性命
+                {
+                    u.fleeT = 50;                                                                                        // L3732
+                    double ang = System.Math.Atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3733
+                    u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, u.x + System.Math.Cos(ang) * 6));           // L3734
+                    u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, u.y + System.Math.Sin(ang) * 6));           // L3735
+                    MoveUnitHook(w, u, 1.15);                                                                            // L3736
+                    return;                                                                                              // L3737
+                }
+                // —— L3739-3963 攻击链体哨兵（门条件全求值——wild rd null / bowRange 0 短路不触达；黄金 S14-S17 契约）——
+                if (rd != null && enemyD > 1.6 && enemyD <= rd.range) throw new System.InvalidOperationException("法师远程火球域批次三乙未翻译（L3739-3752）");                          // L3739
+                if (bowRange > 0 && enemyD > 1.4 && enemyD <= bowRange) throw new System.InvalidOperationException("弓手/火枪/能量枪域批次三乙未翻译（L3753-3773）");                    // L3753
+                if (enemyD < (RStats[u.race].reach ?? 0.9)) throw new System.InvalidOperationException("近战执行域批次三乙未翻译（L3774-3957：neuroAcc/装备结算/城墙/昼夜/毒/击杀链）");     // L3774
+                if (stance == 2 && (rd != null || bowRange > 0)) throw new System.InvalidOperationException("射程死区风筝域批次三乙未翻译（L3958-3963）");                                // L3958
+                // —— L3964-3967 追击尾（攻击链 else）—— if/else 落出后入 L4112 postJS（无 tail——L4110 tailJS 在 else 块内）
+                if ((u.detour ?? 0) == 0) { u.tx = enemy.x; u.ty = enemy.y; }                                            // L3965（绕行期间不覆写——卡死自愈）
+                MoveUnitHook(w, u, 1.25);                                                                                // L3966
+            }
+            else
+            {
+                // ================= 无敌路径 else 壳（现行号 L3968 起；旧注 L3927 系引擎行号漂移——行为同构） =================
+                // collectEnemyGone(u.id, this.tickCount) L3970——Task 38 在线采集模块域（引擎外会话 state；黄金未捕获面，no-op）
+                if (u.race == R2_DRAGON) throw new System.InvalidOperationException("龙息域批次三乙未翻译（L3972-3978 u.race===R2；黄金无龙场景不触达）");          // L3972
+                if (def.isCiv && u.civ >= 0) throw new System.InvalidOperationException("peaceful 职业域批次三乙未翻译（L3981-4109；黄金 civ=-1 契约不触达）");   // L3981
+                if (TailJSHook(w, u)) return;                                                                            // L4110（尾段早退：猎物命中/密度场导航——仅 else 路径，S15 僵尸追击 post-only 实证）
+            }
+            PostJSHook(w, u);                                                                                            // L4112（if/else 之外恒调——敌对追击路径亦达）
         }
 
         // ================= grabbedTick L5343-5376（神之手指：抓取/掷飞/落地的眩晕 tick） =================
@@ -1373,7 +1465,13 @@ namespace PixelWorldBox.Wb
             public bool isCiv, undead, aquatic;   // aquatic = wildAliveAquatic L1098 消费切片
             // —— M-U7l updateUnit 批次一消费字段追加（types.ts L157-204 逐行机械转写；字段只加）——
             public bool hostile, predator, lavaImmune, flying, beach;
+            // —— M-U7n 批次三甲消费字段追加（字段只加）——
+            public WbRangedDef ranged;   // types.ts L122 ranged?: RangedDef（仅 MAGE L175 {range 6.5, dmg 18, cd 26}——批次三乙远程域消费）
+            public double? reach;        // types.ts L120 reach?（KRAKEN 2.4/SANDWORM 1.6/BASILISK 1.4/SHARK 1.3；undefined → ?? 0.9）
         }
+
+        /// <summary>RangedDef 消费切片（types.ts L115-119：range/dmg/cd——L3705 rd/L3744 castFireball 消费面）</summary>
+        public sealed class WbRangedDef { public double range, dmg; public int cd; }
 
         public static readonly RaceStat[] RStats = new RaceStat[41]
         {
@@ -1395,16 +1493,16 @@ namespace PixelWorldBox.Wb
             new RaceStat{ name="雪狼",   hp=38,  dmg=11,  speed=0.088, maxAge=24,   predator=true },                            // L172 SNOWWOLF
             new RaceStat{ name="骷髅",   hp=55,  dmg=14,  speed=0.075, maxAge=9999, undead=true, hostile=true },                     // L173 SKELETON
             new RaceStat{ name="恶魔",   hp=600, dmg=30,  speed=0.085, maxAge=9999, hostile=true, predator=true, lavaImmune=true },  // L174 DEMON
-            new RaceStat{ name="法师",   hp=50,  dmg=6,   speed=0.07,  maxAge=200,  hostile=true },                             // L175 MAGE（ranged 域属战斗批次二未转写）
+            new RaceStat{ name="法师",   hp=50,  dmg=6,   speed=0.07,  maxAge=200,  hostile=true, ranged=new WbRangedDef{ range=6.5, dmg=18, cd=26 } },   // L175 MAGE（ranged 随 M-U7n 转写——批次三乙远程域消费）
             new RaceStat{ name="蜥蜴人", hp=66,  dmg=10,  speed=0.095, maxAge=70,   isCiv=true  },                     // L177 LIZARD
             new RaceStat{ name="哥布林", hp=40,  dmg=6,   speed=0.108, maxAge=34,   isCiv=true  },                     // L178 GOBLIN
             new RaceStat{ name="巨魔",   hp=380, dmg=26,  speed=0.06,  maxAge=400,  hostile=true, predator=true },               // L179 TROLL
             new RaceStat{ name="食人魔", hp=300, dmg=34,  speed=0.052, maxAge=120, hostile=true, predator=true },                                   // L180 OGRE
             new RaceStat{ name="白行者", hp=240, dmg=20,  speed=0.075, maxAge=9999, undead=true, hostile=true },                     // L181 WHITEWALKER
             new RaceStat{ name="吸血鬼", hp=140, dmg=16,  speed=0.118, maxAge=9999, undead=true, hostile=true },                     // L182 VAMPIRE
-            new RaceStat{ name="克拉肯", hp=520, dmg=30,  speed=0.07,  maxAge=9999, aquatic=true, hostile=true, predator=true },                                  // L184 KRAKEN
-            new RaceStat{ name="沙虫",   hp=420, dmg=40,  speed=0.14,  maxAge=9999, hostile=true, predator=true },                                  // L185 SANDWORM
-            new RaceStat{ name="蛇怪",   hp=90,  dmg=14,  speed=0.11,  maxAge=400, hostile=true, predator=true },                                   // L186 BASILISK
+            new RaceStat{ name="克拉肯", hp=520, dmg=30,  speed=0.07,  maxAge=9999, aquatic=true, hostile=true, predator=true, reach=2.4 },                                  // L184 KRAKEN
+            new RaceStat{ name="沙虫",   hp=420, dmg=40,  speed=0.14,  maxAge=9999, hostile=true, predator=true, reach=1.6 },                                  // L185 SANDWORM
+            new RaceStat{ name="蛇怪",   hp=90,  dmg=14,  speed=0.11,  maxAge=400, hostile=true, predator=true, reach=1.4 },                                   // L186 BASILISK
             new RaceStat{ name="天使",   hp=240, dmg=22,  speed=0.105, maxAge=9999, flying=true, lavaImmune=true },                                  // L188 ANGEL
             new RaceStat{ name="凤凰",   hp=200, dmg=18,  speed=0.12,  maxAge=9999, flying=true, lavaImmune=true },                                  // L189 PHOENIX
             new RaceStat{ name="树人",   hp=320, dmg=26,  speed=0.055, maxAge=9999 },                                  // L190 ENT
@@ -1417,7 +1515,7 @@ namespace PixelWorldBox.Wb
             new RaceStat{ name="鱼",     hp=6,   dmg=0.5, speed=0.075, maxAge=10,   aquatic=true },                                    // L198 FISH
             new RaceStat{ name="蟹",     hp=16,  dmg=3,   speed=0.03,  maxAge=16,   aquatic=true },                                    // L199 CRAB
             new RaceStat{ name="龟",     hp=40,  dmg=1,   speed=0.028, maxAge=120,  aquatic=true },                                   // L200 TURTLE
-            new RaceStat{ name="鲨鱼",   hp=85,  dmg=18,  speed=0.1,   maxAge=40,   aquatic=true, predator=true },                                   // L201 SHARK
+            new RaceStat{ name="鲨鱼",   hp=85,  dmg=18,  speed=0.1,   maxAge=40,   aquatic=true, predator=true, reach=1.3 },                                   // L201 SHARK
         };
 
         private static RaceStat StatOf(int race)
@@ -1460,14 +1558,14 @@ namespace PixelWorldBox.Wb
         private static readonly string[] TraitBody = { "之爪", "之躯", "之足", "血脉", "之瞳", "之鳞" };
 
         // ---------------- JOBS 消费切片（types.ts L296-305 机械转写 —— rollJob weight + spawnUnit hpMul/dmgMul/speedMul；蓝本字段名 hpMul 系（WbCivSim.WbJobMul 系 setJob 相对换算切片，异源）） ----------------
-        public struct JobCase2 { public double hpMul, dmgMul, speedMul, weight; }
+        public struct JobCase2 { public double hpMul, dmgMul, speedMul, weight; public int ranged; }   // M-U7n：ranged 只加（types.ts L291 ranged?: number——archer L300 = 5，L3707 消费）
 
         public static readonly JobCase2[] JobDefs = new JobCase2[8]
         {
             new JobCase2{ hpMul=1,    dmgMul=1,    speedMul=1,    weight=46 },  // L297 peasant
             new JobCase2{ hpMul=0.95, dmgMul=0.9,  speedMul=1,    weight=24 },  // L298 farmer
             new JobCase2{ hpMul=1.3,  dmgMul=1.35, speedMul=1.05, weight=14 },  // L299 warrior
-            new JobCase2{ hpMul=1.05, dmgMul=1.15, speedMul=1,    weight=8  },  // L300 archer
+            new JobCase2{ hpMul=1.05, dmgMul=1.15, speedMul=1,    weight=8,  ranged=5 },  // L300 archer（ranged 5——L3707 JOBS[3].ranged ?? 5 消费）
             new JobCase2{ hpMul=1.15, dmgMul=0.95, speedMul=1.05, weight=5  },  // L301 builder
             new JobCase2{ hpMul=1,    dmgMul=0.9,  speedMul=1.2,  weight=2  },  // L302 merchant
             new JobCase2{ hpMul=1.25, dmgMul=1.1,  speedMul=1,    weight=1  },  // L303 noble
