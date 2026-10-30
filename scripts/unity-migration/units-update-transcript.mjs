@@ -50,7 +50,8 @@ const raceF = (id) => {
     hostile: !!(r.flags & 1), isCiv: !!(r.flags & 2), undead: !!(r.flags & 4),
     predator: !!(r.flags & 8), lavaImmune: !!(r.flags & 16),
     flying: !!(r.tbf0 & 32), aquatic: !!(r.tbf0 & 64), beach: !!(r.tbf1 & 8),
-    ranged: r.ranged ?? null, reach: r.reach ?? null,   // M-U7n（MAGE ranged / KRAKEN 2.4 / SANDWORM 1.6 / BASILISK 1.4 / SHARK 1.3——fixture 种族均 null→reach ?? 0.9）
+    nightsight: !!(r.tbf1 & 16),   // M-U7p（ORC/GOBLIN——L3848 昼战减益豁免；字段只加）
+    ranged: r.ranged ?? null, reach: r.reach ?? null, speed: r.speed,   // M-U7n + M-U7p L3824 敏捷差
   };
 };
 
@@ -212,9 +213,12 @@ function leadAimT(rng, enemy, ttl) {
     y: Math.max(0.5, Math.min(H - 0.5, enemy.y + vy * ttl + rng() * 0.4 - 0.2)),                 // L4356（抖动 1 掷）
   };
 }
+/** neuroAcc L166-179 镜像（sigmoid；neuroStats 面板统计零行为面不译；teacherAcc enabled=false 分支不译） */
+function neuroAccT(f) { return 1 / (1 + Math.exp(-fwdT(HEADS.acc, f)[0])); }                     // L175
 const MONSTER_LOOT_T = new Set([9, 25, 26, 27, 21, 22, 23, 24, 17]);   // engine L6918（DRAGON/KRAKEN/SANDWORM/BASILISK/TROLL/OGRE/WHITEWALKER/VAMPIRE/DEMON）
 const F_FLIGHT = new Array(9);    // neuro.ts L126（模块级 scratch）
 const F_STANCE = new Array(12);   // neuro.ts L125
+const F_ACC = new Array(10);      // neuro.ts L124（M-U7p 近战命中头 scratch）
 
 /** updateUnit 镜像（L3455-3590 批次一 + 扫描域 L3592-3669 批次二 + L3671+ 战斗哨兵 + 无敌壳；行号随注） */
 function updateUnitT(u, ctx) {
@@ -459,8 +463,89 @@ function updateUnitT(u, ctx) {
         u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 3));                              // L3771
         ctx.evt.push(['mv', u.id, 0.7]);                                                           // L3772
       }
-    } else if (enemyD < (raceF(u.race).reach ?? 0.9)) throw new Error('SENTINEL: 近战执行域（L3774-3957）');   // L3774
-    else if (stance === 2 && (rd || bowRange > 0)) {                                               // L3958 射程死区（近到无法开火、远于触及）
+    } else if (enemyD < (raceF(u.race).reach ?? 0.9)) {                                            // L3774 近战执行主链（M-U7p 批次三乙二-a；击杀链 L3901+ 哨兵保留）
+      if (u.cd <= 0) {                                                                             // L3775
+        const wspeed = 1;                                                                          // L3777（gearBonus stub speed=1 同构——装备域切片随件）
+        u.cd = Math.round(14 / wspeed);                                                            // L3778
+        u.atk = 12;                                                                                // L3779
+        if (u.race === 25 && enemy.boat) {                                                         // L3781 克拉肯触手拖拽
+          enemy.hp -= u.dmg * 2;                                                                   // L3782
+          enemy.hurt = 20;                                                                         // L3783
+          if (rng() < 0.3) {                                                                       // L3784
+            enemy.dead = true; enemy.boat = 0;                                                     // L3785/L3787（syncDead no-op）
+            ctx.fx.push(['explosion', bitHex(enemy.x), bitHex(enemy.y), 16]);                      // L3788
+            ctx.evt.push(['ev', 'shipwreck', bitHex(enemy.x), bitHex(enemy.y)]);                   // L3789（文本命名域不译——gen 只对账 kind/pos）
+          } else {
+            ctx.fx.push(['tsunami', bitHex(enemy.x), bitHex(enemy.y), 12]);                        // L3791
+          }
+          return;                                                                                  // L3793
+        }
+        if (u.race === 26 && enemy.hp <= enemy.maxHp * 0.4) {                                      // L3796 沙虫吞噬
+          enemy.hp = 0; enemy.dead = true; u.kills++;                                              // L3797-3800
+          u.food = Math.min(160, (u.food ?? 0) + 50 + Math.round(enemy.maxHp * 0.6));              // L3801
+          ctx.fx.push(['blood', bitHex(enemy.x), bitHex(enemy.y), 16]);                            // L3802
+          if (ctx.dmgNumbers) ctx.fx.push(['dmg', bitHex(enemy.x), bitHex(enemy.y), 26]);          // L3803
+          return;                                                                                  // L3804
+        }
+        if (u.race === 27 && rng() < 0.08) {                                                       // L3807 蛇怪石化凝视
+          enemy.hp = 0; enemy.dead = true; u.kills++;                                              // L3808-3811
+          ctx.evt.push(['corpse', bitHex(enemy.x), bitHex(enemy.y), 1, 0]);                        // L3812（stone=true）
+          ctx.evt.push(['ev', 'petrify', bitHex(enemy.x), bitHex(enemy.y)]);                       // L3813
+          if (ctx.dmgNumbers) ctx.fx.push(['dmg', bitHex(enemy.x), bitHex(enemy.y), 30]);          // L3814
+          return;                                                                                  // L3815
+        }
+        {                                                                                          // L3820 neuroAcc 命中头
+          const rd2 = raceF(enemy.race);                                                           // L3821
+          const eix = Math.floor(Math.max(0, Math.min(W - 1, enemy.x))) + Math.floor(Math.max(0, Math.min(H - 1, enemy.y))) * W;   // L3822
+          F_ACC[0] = Math.min(20, u.kills) / 20;                                                   // L3823
+          F_ACC[1] = Math.min(0.5, Math.max(0, (rd2.speed - r.speed) * 7)) * 2;                    // L3824 目标敏捷差
+          F_ACC[2] = enemy.trait === 'tiny' ? 1 : 0;                                               // L3825
+          F_ACC[3] = enemy.trait === 'swift' ? 1 : 0;                                              // L3826
+          F_ACC[4] = enemy.trait === 'giant' ? 1 : 0;                                              // L3827
+          F_ACC[5] = u.trait === 'tiny' ? 1 : 0;                                                   // L3828
+          F_ACC[6] = u.bless ? 1 : 0;                                                              // L3829
+          F_ACC[7] = u.curse ? 1 : 0;                                                              // L3830
+          F_ACC[8] = ctx.terrain[eix] === T.FOREST ? 1 : 0;                                        // L3831 林间掩护
+          F_ACC[9] = ctx.terrain[eix] === T.MOUNTAIN ? 1 : 0;                                      // L3832 山地高下差
+          if (rng() > Math.max(0.35, Math.min(0.97, neuroAccT(F_ACC)))) {                          // L3833
+            if (ctx.dmgNumbers && rng() < 0.55) ctx.fx.push(['dmg', bitHex(enemy.x), bitHex(enemy.y - 0.4), 20]);   // L3835
+            return;                                                                                // L3836
+          }
+        }
+        const gA = r.isCiv ? { crit: 0, armor: 0, lifesteal: 0, thorns: 0, regen: ctx.gearRegen, speed: 1, ranged: 0 } : null;   // L3840（gearBonus stub 同构）
+        const gD = raceF(enemy.race).isCiv ? { crit: 0, armor: 0, lifesteal: 0, thorns: 0, regen: ctx.gearRegen, speed: 1, ranged: 0 } : null;   // L3841
+        let dmg = u.dmg * (0.8 + rng() * 0.4) * (u.bless ? 1.3 : 1) * (u.curse ? 0.75 : 1);        // L3843 神力 ×1.3 / 诅咒 ×0.75
+        dmg *= 1;                                                                                  // L3845（wallDefenseOf 中性 1——无建筑契约；建筑结算随装备域）
+        const dPhase = ctx.dayPhase;                                                               // L3847
+        if (dPhase > 0.5 && dPhase < 0.9 && !r.nightsight) dmg *= 0.92;                            // L3848 夜战混乱减益（黑暗视觉豁免）
+        let crit = false;
+        if (gA && gA.crit > 0 && rng() * 100 < gA.crit) { dmg *= 2.2; crit = true; }               // L3850-3852
+        if (gD && gD.armor > 0) dmg *= 1 - gD.armor / 100;                                         // L3854
+        enemy.hp -= dmg;                                                                           // L3855
+        enemy.hurt = 20;                                                                           // L3856
+        ctx.fx.push(['hit', bitHex((u.x + enemy.x) / 2), bitHex((u.y + enemy.y) / 2), 6]);         // L3857 命中特效（中点）
+        if (ctx.blood && dmg >= 5 && rng() < 0.5) ctx.evt.push(['blood', bitHex(enemy.x), bitHex(enemy.y)]);   // L3859 血溅（贴花域接缝——桩面 evt 捕获）
+        const traitImmune = false;                                                                 // L3861 门右段（TRAITS immune 查表——fixtures trait 恒 null 同构；免疫特质域随件）
+        if (u.race === 27 && rng() < 0.45 && !enemy.infected && !traitImmune) {                    // L3861 蛇怪毒牙
+          enemy.infected = true;                                                                   // L3862
+          if (ctx.dmgNumbers) ctx.fx.push(['dmg', bitHex(enemy.x), bitHex(enemy.y - 0.8), 26]);    // L3863
+        }
+        if (ctx.dmgNumbers && (crit || dmg >= 12 || rng() < 0.4)) {                                // L3866 伤害数字
+          ctx.fx.push(['dmg', bitHex(enemy.x), bitHex(enemy.y), 26]);                              // L3867
+        }
+        if (u.race === 24 && u.hp > 0) {                                                           // L3870 吸血鬼吮血
+          u.hp = Math.min(u.maxHp, u.hp + dmg * 0.6);                                              // L3871
+          if (ctx.dmgNumbers && rng() < 0.4) ctx.fx.push(['heart', bitHex(u.x), bitHex(u.y - 0.5), 18]);   // L3872
+        }
+        if (gA && gA.lifesteal > 0 && u.hp > 0) u.hp = Math.min(u.maxHp, u.hp + (dmg * gA.lifesteal) / 100);   // L3875-3876 装备吸血
+        if (gD && gD.thorns > 0) { u.hp -= gD.thorns; u.hurt = 14; if (u.hp <= 0) u.dead = true; } // L3879-3882 反伤（u=攻击者）
+        if (u.race === 13 && rng() < 0.3 && !enemy.infected && !traitImmune) { enemy.infected = true; if (ctx.dmgNumbers) ctx.fx.push(['dmg', bitHex(enemy.x), bitHex(enemy.y - 0.8), 26]); }   // L3885-3887 蝎子毒刺
+        if (u.race === 14 && rng() < 0.3 && !enemy.infected && !traitImmune) { enemy.infected = true; if (ctx.dmgNumbers) ctx.fx.push(['dmg', bitHex(enemy.x), bitHex(enemy.y - 0.8), 26]); }   // L3890-3892 蛇毒牙
+        const bi = Math.floor(enemy.y) * W + Math.floor(enemy.x);                                  // L3895 idx(y,x)=y*W+x
+        ctx.evt.push(['ab', bi, ctx.tickCount + 30]);                                              // L3896（activeBattles 桩面捕获；修剪循环 size<64 不触）
+        if (enemy.hp <= 0) throw new Error('SENTINEL: 击杀链域（L3901-3957）');                      // L3901
+      }
+    } else if (stance === 2 && (rd || bowRange > 0)) {                                               // L3958 射程死区（近到无法开火、远于触及）
       const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3960
       u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 3));                                // L3961
       u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 3));                                // L3962
@@ -506,6 +591,7 @@ for (const c of g.cases) {
   }
   const ctx = {
     raw, lawsRise: c.env.lawsRise, ambience: c.env.ambience, gearRegen: c.env.gearRegen ?? 0,
+    dmgNumbers: false, blood: false, dayPhase: c.env.dayPhase ?? 0, tickCount: 0,   // M-U7p 近战域（gen 桩面 fxPrefs undefined-falsy + tickCount=0 同构）
     fire, radiate, terrain, fireSet,
     evt: [], fx: [], scan: [],
     buckets, enemyLut: new Map(), dynRaces: new Map(), rel: new Map(),   // isEnemyFast/isEnemy 依赖面（黄金无动态种/无交战国）

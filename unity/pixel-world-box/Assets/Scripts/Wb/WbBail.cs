@@ -281,6 +281,23 @@ namespace PixelWorldBox.Wb
         private static readonly double[] FFlight = new double[9];
         private static readonly double[] FStance = new double[12];
         private static readonly System.Collections.Generic.HashSet<int> MonsterLoot = new System.Collections.Generic.HashSet<int> { R2_DRAGON, R_KRAKEN, R_SANDWORM, R_BASILISK, R_TROLL, R_OGRE, R_WHITEWALKER, R_VAMPIRE, WbConstants.R_DEMON };   // engine L6918
+        private static readonly double[] FAcc = new double[10];                                              // neuro.ts L124-126 模块级 scratch（近战命中头十特征）
+        // —— M-U7p 近战域接缝（默认语义注记随件；黄金 'ev'/'corpse'/'ab' 事件对账；Test30 置换事件捕获）——
+        internal static System.Func<WbWorld, WbU, double> WallDefenseHook = (w, e) => 1.0;                   // wallDefenseOf 城墙域未译——无建筑中性 1.0；建筑结算随装备域切片
+        internal static System.Func<WbWorld, double> DayPhaseHook = (w) => 0.0;                              // dayPhase 昼相时钟域未译——白天中性 0.0；时钟切片随集成域接入（0.5..0.9 黄昏窗消费 L3847-3848）
+        internal static System.Action<WbWorld, string, double, double> AddEventHook = (w, kind, x, y) => throw new System.NotImplementedException("addEvent 未译域（文本含命名域——批次三乙三随件）；黄金回放由 Test30 置换 'ev' 事件捕获");   // L3789/L3813
+        internal static System.Action<WbWorld, double, double, bool, bool> AddCorpseHook = (w, x, y, stone, undead) => throw new System.NotImplementedException("addCorpse 未译域（尸骸贴花系统批次三乙三随件）；黄金回放由 Test30 置换 'corpse' 事件捕获");   // L3812
+        internal static System.Action<WbWorld, double, double> AddBloodHook = (w, x, y) => throw new System.NotImplementedException("addBlood 未译域（血迹贴花渲染域切片随件）；黄金 fxBlood=false 契约不触达");   // L3859
+        internal static System.Action<WbWorld, int> MarkBattleHook = (w, bi) =>                             // L3895-3900 战争前线登记（默认真实现内联）
+        {
+            w.activeBattles[bi] = w.tickCount + 30;
+            if (w.activeBattles.Count > 64)                                                                 // 上限保护：过期优先淘汰
+            {
+                var expired = new System.Collections.Generic.List<int>();
+                foreach (var kv in w.activeBattles) if (kv.Value <= w.tickCount) expired.Add(kv.Key);
+                foreach (var k in expired) w.activeBattles.Remove(k);                                       // JS Map 迭代中删除安全——C# 两段式同构
+            }
+        };
         // —— M-U7o 远程域 cast 弹道接缝（弹道实体生成属 projectiles 未译域——黄金 'fb'/'ar'/'bm'/'bl' 事件对账；默认哨兵，Test30 置换事件捕获）——
         internal static System.Action<WbWorld, WbU, double, double, double> CastFireballHook = (w, u, tx, ty, dmg) => throw new System.NotImplementedException("castFireball 未译域（弹道生成域批次三乙二）；黄金回放由 Test30 置换 'fb' 事件捕获");   // L3744 调用面
         internal static System.Action<WbWorld, WbU, double, double, double> CastArrowHook = (w, u, tx, ty, dmg) => throw new System.NotImplementedException("castArrow 未译域（弹道生成域批次三乙二）；黄金回放由 Test30 置换 'ar' 事件捕获");     // L3765 调用面（L3267/L4050 守城箭随件）
@@ -615,7 +632,133 @@ namespace PixelWorldBox.Wb
                         MoveUnitHook(w, u, 0.7);                                                                         // L3772
                     }
                 }
-                else if (enemyD < (RStats[u.race].reach ?? 0.9)) throw new System.InvalidOperationException("近战执行域批次三乙未翻译（L3774-3957：neuroAcc/装备结算/城墙/昼夜/毒/击杀链）");   // L3774
+                else if (enemyD < (RStats[u.race].reach ?? 0.9))                                                         // L3774 近战执行主链（M-U7p 批次三乙二-a；击杀链 L3901-3957 哨兵保留）
+                {
+                    if (u.cd <= 0)                                                                                       // L3775
+                    {
+                        double wspeed = def.isCiv ? GearBonusHook(w, u).speed : 1;                                       // L3777 武器攻速：匕首快/巨斧慢（装备 speedMul 接入攻击节奏）
+                        u.cd = (int)System.Math.Round(14 / wspeed, System.MidpointRounding.AwayFromZero);                // L3778（JS Math.round 半上同构——ToEven 默认差异规避）
+                        u.atk = 12;                                                                                      // L3779 挥击动画窗口
+                        // —— 克拉肯：触手拖拽船只入渊（对航海者双倍伤害 + 击沉概率）——
+                        if (u.race == R_KRAKEN && enemy.boat != 0)                                                       // L3781
+                        {
+                            enemy.hp -= u.dmg * 2;                                                                       // L3782
+                            enemy.hurtN = 20;                                                                            // L3783（hurtN 镜像写法——批次一同款）
+                            if (w.Rng() < 0.3)                                                                           // L3784 击沉概率
+                            {
+                                enemy.dead = 1;                                                                          // L3785
+                                enemy.boat = 0;                                                                          // L3787（WB.syncDead L3786 WASM 镜像 no-op 注记）
+                                FxHook(w, "explosion", enemy.x, enemy.y, 16);                                            // L3788（opts r:1.6 渲染面——fx 事件流不可见）
+                                AddEventHook(w, "shipwreck", enemy.x, enemy.y);                                          // L3789
+                            }
+                            else
+                            {
+                                FxHook(w, "tsunami", enemy.x, enemy.y, 12);                                              // L3791（quiet——同上）
+                            }
+                            return;                                                                                      // L3793
+                        }
+                        // —— 沙虫：吞噬 —— 小型猎物直接囫囵吞下（血雾飞溅，连残骸都不剩）
+                        if (u.race == R_SANDWORM && enemy.hp <= enemy.maxHp * 0.4)                                       // L3796
+                        {
+                            enemy.hp = 0;                                                                                // L3797
+                            enemy.dead = 1;                                                                              // L3798（syncDead L3799 no-op）
+                            u.kills++;                                                                                   // L3800
+                            u.foodN = System.Math.Min(160, (u.foodN ?? 0) + 50 + System.Math.Floor(enemy.maxHp * 0.6 + 0.5));   // L3801（JS Math.round 半上同构）
+                            FxHook(w, "blood", enemy.x, enemy.y, 16);                                                    // L3802
+                            if (w.fxDmgNumbers) FxHook(w, "dmg", enemy.x, enemy.y, 26);                                  // L3803（text 吞噬——fx 事件流 opts 不可见）
+                            return;                                                                                      // L3804
+                        }
+                        // —— 蛇怪：石化凝视 —— 8% 概率将猎物当场化为石像 ——
+                        if (u.race == R_BASILISK && w.Rng() < 0.08)                                                      // L3807
+                        {
+                            enemy.hp = 0;                                                                                // L3808
+                            enemy.dead = 1;                                                                              // L3809（syncDead L3810 no-op）
+                            u.kills++;                                                                                   // L3811
+                            AddCorpseHook(w, enemy.x, enemy.y, true, false);                                             // L3812（stone=true——尸骸系统接缝）
+                            AddEventHook(w, "petrify", enemy.x, enemy.y);                                                // L3813
+                            if (w.fxDmgNumbers) FxHook(w, "dmg", enemy.x, enemy.y, 30);                                  // L3814（text 石化）
+                            return;                                                                                      // L3815
+                        }
+                        // —— 命中判定 → 神经决策核心①：微型网络命中头（16 隐单元 sigmoid）替代 12 分支判定链 ——
+                        {
+                            var rd2 = RStats[enemy.race];                                                                // L3821
+                            int eix = (int)System.Math.Floor(System.Math.Max(0, System.Math.Min(WbWorld.W - 1, enemy.x)))      // L3822（钳位取整——idx(y,x)=y*W+x）
+                                    + (int)System.Math.Floor(System.Math.Max(0, System.Math.Min(WbWorld.H - 1, enemy.y))) * WbWorld.W;
+                            FAcc[0] = System.Math.Min(20, u.kills) / 20;                                                 // L3823 百战老兵更准
+                            FAcc[1] = System.Math.Min(0.5, System.Math.Max(0, (rd2.speed - def.speed) * 7)) * 2;         // L3824 目标敏捷差
+                            FAcc[2] = enemy.traitName == "tiny" ? 1 : 0;                                                 // L3825 侏儒难打
+                            FAcc[3] = enemy.traitName == "swift" ? 1 : 0;                                                // L3826 迅捷难打
+                            FAcc[4] = enemy.traitName == "giant" ? 1 : 0;                                                // L3827 巨型好打
+                            FAcc[5] = u.traitName == "tiny" ? 1 : 0;                                                     // L3828
+                            FAcc[6] = u.bless != 0 ? 1 : 0;                                                              // L3829 神力准头
+                            FAcc[7] = u.curse != 0 ? 1 : 0;                                                              // L3830 诅咒失准
+                            FAcc[8] = w.terrain[eix] == WbConstants.T_FOREST ? 1 : 0;                                    // L3831 林间掩护
+                            FAcc[9] = w.terrain[eix] == WbConstants.T_MOUNTAIN ? 1 : 0;                                  // L3832 山地高下差
+                            if (w.Rng() > System.Math.Max(0.35, System.Math.Min(0.97, WbNeuro.NeuroAcc(FAcc))))          // L3833（掷骰在引擎——网络只给命中概率）
+                            {
+                                if (w.fxDmgNumbers && w.Rng() < 0.55) FxHook(w, "dmg", enemy.x, enemy.y - 0.4, 20);      // L3835 挥空闪避数字（text 闪）
+                                return;                                                                                  // L3836
+                            }
+                        }
+                        // —— 装备战斗结算：暴击 → 目标减伤 → 吸血 → 反伤 ——
+                        WbGearBonus? gA = def.isCiv ? GearBonusHook(w, u) : (WbGearBonus?)null;                          // L3840
+                        WbGearBonus? gD = RStats[enemy.race].isCiv ? GearBonusHook(w, enemy) : (WbGearBonus?)null;       // L3841
+                        double dmg = u.dmg * (0.8 + w.Rng() * 0.4) * (u.bless != 0 ? 1.3 : 1) * (u.curse != 0 ? 0.75 : 1);   // L3843 神力 ×1.3 / 诅咒 ×0.75
+                        dmg *= WallDefenseHook(w, enemy);                                                                // L3845 城墙防御加成（守军借墙而战）
+                        double dPhase = DayPhaseHook(w);                                                                 // L3847 昼夜互连
+                        if (dPhase > 0.5 && dPhase < 0.9 && !def.nightsight) dmg *= 0.92;                                // L3848 夜战混乱减益（黑暗视觉种族豁免）
+                        bool crit = false;
+                        if (gA.HasValue && gA.Value.crit > 0 && w.Rng() * 100 < gA.Value.crit)                           // L3850 暴击掷
+                        {
+                            dmg *= 2.2;                                                                                  // L3851
+                            crit = true;                                                                                 // L3852
+                        }
+                        if (gD.HasValue && gD.Value.armor > 0) dmg *= 1 - gD.Value.armor / 100;                          // L3854 目标减伤
+                        enemy.hp -= dmg;                                                                                 // L3855
+                        enemy.hurtN = 20;                                                                                // L3856
+                        FxHook(w, "hit", (u.x + enemy.x) / 2, (u.y + enemy.y) / 2, 6);                                   // L3857 命中特效（中点）
+                        if (w.fxBlood && dmg >= 5 && w.Rng() < 0.5) AddBloodHook(w, enemy.x, enemy.y);                   // L3859 血溅（贴花域接缝）
+                        if (u.race == R_BASILISK && w.Rng() < 0.45 && enemy.infected == 0                                // L3861 蛇怪毒牙（可被治疗神力清除；免疫特质者不受）
+                            && !(enemy.traitName != null && WbBailRelay.TraitsAll.TryGetValue(enemy.traitName, out var tb) && tb.immune))
+                        {
+                            enemy.infected = 1;                                                                          // L3862
+                            if (w.fxDmgNumbers) FxHook(w, "dmg", enemy.x, enemy.y - 0.8, 26);                            // L3863（text 毒）
+                        }
+                        if (w.fxDmgNumbers && (crit || dmg >= 12 || w.Rng() < 0.4))                                      // L3866 伤害数字（较大伤害或 40% 概率）
+                        {
+                            FxHook(w, "dmg", enemy.x, enemy.y, 26);                                                      // L3867（text (crit?'暴':'')+'-'+round(dmg)——opts 不可见）
+                        }
+                        if (u.race == R_VAMPIRE && u.hp > 0)                                                             // L3870 吸血鬼吮血（永生之秘）
+                        {
+                            u.hp = System.Math.Min(u.maxHp, u.hp + dmg * 0.6);                                           // L3871
+                            if (w.fxDmgNumbers && w.Rng() < 0.4) FxHook(w, "heart", u.x, u.y - 0.5, 18);                 // L3872
+                        }
+                        if (gA.HasValue && gA.Value.lifesteal > 0 && u.hp > 0)                                           // L3875 装备吸血
+                        {
+                            u.hp = System.Math.Min(u.maxHp, u.hp + dmg * gA.Value.lifesteal / 100);                      // L3876
+                        }
+                        if (gD.HasValue && gD.Value.thorns > 0)                                                          // L3879 反伤
+                        {
+                            u.hp -= gD.Value.thorns;                                                                     // L3880
+                            u.hurtN = 14;                                                                                // L3881
+                            if (u.hp <= 0) u.dead = 1;                                                                   // L3882
+                        }
+                        if (u.race == WbConstants.R_SCORPION && w.Rng() < 0.3 && enemy.infected == 0                                 // L3885 蝎子的毒刺
+                            && !(enemy.traitName != null && WbBailRelay.TraitsAll.TryGetValue(enemy.traitName, out var ts) && ts.immune))
+                        {
+                            enemy.infected = 1;                                                                          // L3886
+                            if (w.fxDmgNumbers) FxHook(w, "dmg", enemy.x, enemy.y - 0.8, 26);                            // L3887
+                        }
+                        if (u.race == WbConstants.R_SNAKE && w.Rng() < 0.3 && enemy.infected == 0                                    // L3890 蛇的毒牙（共用感染机制）
+                            && !(enemy.traitName != null && WbBailRelay.TraitsAll.TryGetValue(enemy.traitName, out var tn) && tn.immune))
+                        {
+                            enemy.infected = 1;                                                                          // L3891
+                            if (w.fxDmgNumbers) FxHook(w, "dmg", enemy.x, enemy.y - 0.8, 26);                            // L3892
+                        }
+                        MarkBattleHook(w, (int)enemy.y * WbWorld.W + (int)enemy.x);                                      // L3895-3900 战争前线登记（30 tick 衰减 + 64 上限过期淘汰）
+                        if (enemy.hp <= 0) throw new System.InvalidOperationException("击杀链域批次三乙三未翻译（L3901-3957：zombify/witnessDeath/复仇splice/家族战功/collectKill/捕食进食/屠龙计数/onWarKill/legend/白行者起尸/undeadRise）");   // L3901
+                    }
+                }
                 else if (stance == 2 && (rd != null || bowRange > 0))                                                    // L3958 射程死区（近到无法开火、远于触及）：网络判定拉开距离恢复射程（旧版会一头撞进近战）
                 {
                     double ang = System.Math.Atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3960
@@ -1526,6 +1669,7 @@ namespace PixelWorldBox.Wb
             public bool isCiv, undead, aquatic;   // aquatic = wildAliveAquatic L1098 消费切片
             // —— M-U7l updateUnit 批次一消费字段追加（types.ts L157-204 逐行机械转写；字段只加）——
             public bool hostile, predator, lavaImmune, flying, beach;
+            public bool nightsight;      // types.ts L157-204 nightsight?（ORC L160/GOBLIN L178 真夜视——L3848 昼战减益豁免；M-U7p 字段只加）
             // —— M-U7n 批次三甲消费字段追加（字段只加）——
             public WbRangedDef ranged;   // types.ts L122 ranged?: RangedDef（仅 MAGE L175 {range 6.5, dmg 18, cd 26}——批次三乙远程域消费）
             public double? reach;        // types.ts L120 reach?（KRAKEN 2.4/SANDWORM 1.6/BASILISK 1.4/SHARK 1.3；undefined → ?? 0.9）
@@ -1539,7 +1683,7 @@ namespace PixelWorldBox.Wb
             new RaceStat{ name="人类",   hp=60,  dmg=8,   speed=0.09,  maxAge=55,   isCiv=true  },                     // L157 HUMAN
             new RaceStat{ name="精灵",   hp=55,  dmg=9,   speed=0.1,   maxAge=90,   isCiv=true  },                     // L158 ELF
             new RaceStat{ name="矮人",   hp=78,  dmg=10,  speed=0.072, maxAge=120,  isCiv=true  },                     // L159 DWARF
-            new RaceStat{ name="兽人",   hp=72,  dmg=12,  speed=0.084, maxAge=48,   isCiv=true  },                     // L160 ORC
+            new RaceStat{ name="兽人",   hp=72,  dmg=12,  speed=0.084, maxAge=48,   isCiv=true, nightsight=true  },                     // L160 ORC
             new RaceStat{ name="强盗",   hp=62,  dmg=11,  speed=0.093, maxAge=45,   hostile=true },                             // L161 BANDIT
             new RaceStat{ name="僵尸",   hp=46,  dmg=6,   speed=0.05,  maxAge=9999, undead=true, hostile=true },                     // L162 ZOMBIE
             new RaceStat{ name="绵羊",   hp=16,  dmg=1,   speed=0.038, maxAge=26 },                                    // L163 SHEEP
@@ -1556,7 +1700,7 @@ namespace PixelWorldBox.Wb
             new RaceStat{ name="恶魔",   hp=600, dmg=30,  speed=0.085, maxAge=9999, hostile=true, predator=true, lavaImmune=true },  // L174 DEMON
             new RaceStat{ name="法师",   hp=50,  dmg=6,   speed=0.07,  maxAge=200,  hostile=true, ranged=new WbRangedDef{ range=6.5, dmg=18, cd=26 } },   // L175 MAGE（ranged 随 M-U7n 转写——批次三乙远程域消费）
             new RaceStat{ name="蜥蜴人", hp=66,  dmg=10,  speed=0.095, maxAge=70,   isCiv=true  },                     // L177 LIZARD
-            new RaceStat{ name="哥布林", hp=40,  dmg=6,   speed=0.108, maxAge=34,   isCiv=true  },                     // L178 GOBLIN
+            new RaceStat{ name="哥布林", hp=40,  dmg=6,   speed=0.108, maxAge=34,   isCiv=true, nightsight=true  },                     // L178 GOBLIN
             new RaceStat{ name="巨魔",   hp=380, dmg=26,  speed=0.06,  maxAge=400,  hostile=true, predator=true },               // L179 TROLL
             new RaceStat{ name="食人魔", hp=300, dmg=34,  speed=0.052, maxAge=120, hostile=true, predator=true },                                   // L180 OGRE
             new RaceStat{ name="白行者", hp=240, dmg=20,  speed=0.075, maxAge=9999, undead=true, hostile=true },                     // L181 WHITEWALKER

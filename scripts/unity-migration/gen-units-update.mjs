@@ -60,6 +60,9 @@ const RACE_PICKS = {
   ww: pickRace((d) => d.key === 'whitewalker', 'whitewalker'),
   bandit: pickRace((d) => d.hostile && !d.isCiv && !d.predator && !d.undead && !d.aquatic && !d.flying, 'bandit'),   // M-U7m S12：hostile×isCiv 敌意分支（RACES 序首命中 BANDIT id4）
   mage: pickRace((d) => d.key === 'mage', 'mage'),                                                                   // M-U7o S18/S20：race 级 rd 消费（types.ts L175 ranged{6.5,18,26}）
+  sandworm: pickRace((d) => d.key === 'sandworm', 'sandworm'),                                                       // M-U7p S24：吞噬特技（reach 1.6）
+  basilisk: pickRace((d) => d.key === 'basilisk', 'basilisk'),                                                       // M-U7p S22/S23：石化凝视/毒牙（reach 1.4）
+  vampire: pickRace((d) => d.key === 'vampire', 'vampire'),                                                          // M-U7p S27：吮血 0.6
   zombie: pickRace((d) => d.undead && !d.flying && !d.aquatic, 'zombie'),                                            // M-U7m S11：L2095 ZOMBIE 对称敌意分支（序首命中 id5）
   bear: pickRace((d) => Number(d.key === 'bear'), 'bear'),                                                           // M-U7n S14/S17：强敌锚（dmg 19 hp 95——RStats 一致）
 };
@@ -68,9 +71,10 @@ const packRace = (id) => {
   return {
     flags: (d.hostile ? 1 : 0) | (d.isCiv ? 2 : 0) | (d.undead ? 4 : 0) | (d.predator ? 8 : 0) | (d.lavaImmune ? 16 : 0),
     tbf0: (d.flying ? 32 : 0) | (d.aquatic ? 64 : 0) | (d.sandswim ? 128 : 0),
-    tbf1: (d.coldBlood ? 4 : 0) | (d.beach ? 8 : 0),
+    tbf1: (d.coldBlood ? 4 : 0) | (d.beach ? 8 : 0) | (d.nightsight ? 16 : 0),   // M-U7p：nightsight 位 16（ORC/GOBLIN——L3848 昼战减益豁免；字段只加）
     ranged: d.ranged ?? null,   // M-U7n L3705（MAGE {range 6.5, dmg 18, cd 26}——fixture 种族均 null）
     reach: d.reach ?? null,     // M-U7n L3722/L3774（KRAKEN 2.4 / SANDWORM 1.6 / BASILISK 1.4 / SHARK 1.3——?? 0.9 语义随 C#/镜像）
+    speed: d.speed,             // M-U7p L3824 neuroAcc 敏捷差特征（RACES.speed 原值）
   };
 };
 const raceIds = {};
@@ -208,6 +212,13 @@ function makeStubEng(env, cap) {
   eng.castArrow = (u2, tx, ty, dmg) => cap.evt.push(['ar', u2.id, bitHex(tx), bitHex(ty), bitHex(dmg)]);
   eng.castBeam = (u2, tx, ty, dmg) => cap.evt.push(['bm', u2.id, bitHex(tx), bitHex(ty), bitHex(dmg)]);
   eng.castBullet = (u2, tx, ty, dmg) => cap.evt.push(['bl', u2.id, bitHex(tx), bitHex(ty), bitHex(dmg)]);
+  // —— M-U7p 近战域接缝（击杀链 L3900+ 未触达——早退特技路径；文本含命名域只对账 kind/pos）——
+  eng.addEvent = (kind, text, pos) => cap.evt.push(['ev', kind, bitHex(pos?.x), bitHex(pos?.y)]);
+  eng.addCorpse = (x, y, bone, petrified) => cap.evt.push(['corpse', bitHex(x), bitHex(y), bone ? 1 : 0, petrified ? 1 : 0]);
+  eng.wallDefenseOf = () => 1;                                   // fixtures 无建筑——城墙域中性 1
+  eng.dayPhase = () => env.dayPhase ?? 0;                        // 昼相时钟域——场景注入（dusk 窗口 0.5..0.9）
+  eng.tickCount = 0;                                             // activeBattles 值 = tickCount+30（恒 30）
+  eng.activeBattles = { set: (k, v) => cap.evt.push(['ab', k, v]), size: 0, delete: () => {}, *[Symbol.iterator]() {} };   // 桩面捕获 set；size<64 剩余修剪循环不触
   eng.updateUnitTailJS = (u) => { cap.evt.push(['tail', u.id]); return false; };
   eng.updateUnitPostJS = (u) => { cap.evt.push(['post', u.id]); };
   return eng;
@@ -257,6 +268,26 @@ const WW_SEED = findWwSeed();
 const findSeed = (probe, lo, hi) => {
   for (let s = lo; s <= hi; s++) if (probe(s)) return s;
   throw new Error('no seed found in range');
+};
+
+// ---- M-U7p 近战种子寻优（findWwSeed 同款：桩面迷你仿真按事件签名搜种子） ----
+const meleeProbe = (spec) => {
+  let lastCap = null, lastUnits = null;
+  for (let s = spec.lo ?? 1; s < (spec.hi ?? 5000); s++) {
+    const cap = { fx: [], evt: [], terr: [], scan: [] };
+    const env = { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true, ...(spec.env ?? {}) };
+    const eng = makeStubEng(env, cap);
+    eng.terrain.set(buildGrid(TERRAIN_SPECS[spec.terrain ?? 'plains']));
+    const units = spec.units.map((o, i) => mkTsUnit({ ...o, id: o.id ?? i + 1, race: raceIds[o.race] ?? o.race }));
+    for (const u of units) eng.buckets[((u.y / 4) | 0) * eng.bw + ((u.x / 4) | 0)].push(u);
+    const raw = mulberry32(s); eng.rng = () => raw();
+    for (let st = 0; st < (spec.steps ?? 1); st++) for (const u of units) if (!u.dead) eng.updateUnit(u);
+    lastCap = cap; lastUnits = units;
+    if (spec.dbg) console.error('dbg s=' + s, 'evt:', JSON.stringify(cap.evt), 'scan:', JSON.stringify(cap.scan), 'fx:', cap.fx.map((f) => f.k), 'units:', units.map((u) => ({ race: u.race, dead: !!u.dead, inf: !!u.infected, hp: u.hp, fleeT: u.fleeT })));
+    if (spec.want(cap, units)) return s;
+  }
+  console.error('probe-diag evt:', JSON.stringify(lastCap?.evt), 'fx:', lastCap?.fx.map((f) => f.k), 'units:', lastUnits?.map((u) => ({ dead: u.dead, inf: !!u.infected, hp: u.hp, fleeT: u.fleeT })));
+  throw new Error('no melee seed found: ' + (spec.label ?? '?'));
 };
 
 const CASES = [
@@ -497,6 +528,130 @@ const CASES = [
     units: [
       U({ race: 'mage', x: 220.5, y: 80.5, hp: 50, maxHp: 50, dmg: 6, civ: -1 }),      // u0：法师（S18 同配比——F[7]=0.845 强势→flight 0 + stance 2）
       U({ race: 'human', x: 222, y: 80.5, hp: 10, maxHp: 10, dmg: 1, civ: -1 }),       // u1：弱野人（d=1.5 死区——法师带外站桩距离）
+    ],
+    steps: 2,
+  },
+  // ================= M-U7p 批次三乙二-a·近战执行主链（S21-S28；L3774-3899；契约：击杀链 L3900+ 哨兵不可达——致命路径均早退） =================
+  // S21 melee-hit：狼 vs 羊 d=0.8（<reach 0.9）→ cd 门 0→14（round(14/1)）+ atk=12 + neuroAcc 命中（F_ACC 十特征）→ hit fx 中点 + hp 扣减 + activeBattles 标记
+  //    gA/gD 双 null（野vs野）——零装备结算零暴击；fxPrefs blood/dmgNumbers 桩面 undefined-falsy——血溅/伤害数字零掷
+  {
+    name: 'melee-hit', terrain: 'plains', seed: meleeProbe({
+      label: 'melee-hit', units: [
+        U({ race: 'wolf', x: 240.5, y: 80.5, hp: 100, dmg: 10, civ: -1 }),
+        U({ race: 'sheep', x: 241.3, y: 80.5, hp: 16, maxHp: 16, civ: -1 }),
+      ],
+      want: (cap) => cap.fx.some((f) => f.k === 'hit') && cap.evt.some((e) => e[0] === 'ab'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'wolf', x: 240.5, y: 80.5, hp: 100, dmg: 10, civ: -1 }),
+      U({ race: 'sheep', x: 241.3, y: 80.5, hp: 16, maxHp: 16, civ: -1 }),
+    ],
+    steps: 2,
+  },
+  // S22 basilisk-petrify：蛇怪 8% 石化凝视首掷命中 → 羊当场死亡（hp=0 dead kills++）+ corpse 事件（石化 true）+ petrify ev + 早退（击杀链不触）
+  {
+    name: 'basilisk-petrify', terrain: 'plains', seed: meleeProbe({
+      label: 'basilisk-petrify', units: [
+        U({ race: 'basilisk', x: 250.5, y: 80.5, hp: 50, dmg: 5, civ: -1 }),
+        U({ race: 'sheep', x: 251.3, y: 80.5, hp: 16, maxHp: 16, civ: -1 }),
+      ],
+      want: (cap) => cap.evt.some((e) => e[0] === 'corpse' && e[3] === 1),   // addCorpse(x,y,stone,undead)——石化 stone=true
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'basilisk', x: 250.5, y: 80.5, hp: 50, dmg: 5, civ: -1 }),
+      U({ race: 'sheep', x: 251.3, y: 80.5, hp: 16, maxHp: 16, civ: -1 }),
+    ],
+    steps: 2,
+  },
+  // S23 basilisk-poison：石化首掷未中（≥0.08）→ neuroAcc 命中 → 毒牙 45% 掷中 → infected=1（hp 扣减存活）
+  {
+    name: 'basilisk-poison', terrain: 'plains', seed: meleeProbe({
+      label: 'basilisk-poison', units: [
+        U({ race: 'basilisk', x: 254.5, y: 80.5, hp: 50, dmg: 5, civ: -1 }),
+        U({ race: 'sheep', x: 255.8, y: 80.5, hp: 16, maxHp: 16, civ: -1 }),
+      ],
+      want: (cap, us) => !cap.evt.some((e) => e[0] === 'corpse') && !!us[1].infected && cap.fx.some((f) => f.k === 'hit'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'basilisk', x: 254.5, y: 80.5, hp: 50, dmg: 5, civ: -1 }),
+      U({ race: 'sheep', x: 255.8, y: 80.5, hp: 16, maxHp: 16, civ: -1 }),
+    ],
+    steps: 2,
+  },
+  // S24 sandworm-devour：沙虫 vs 残血羊（hp 5 ≤ 40%×16=6.4）→ 囫囵吞噬（零掷）：hp=0 dead kills++ + food 50+round(9.6)=60 + blood fx + 早退
+  {
+    name: 'sandworm-devour', terrain: 'plains', seed: 40424,
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'sandworm', x: 244.5, y: 80.5, hp: 100, dmg: 8, civ: -1 }),            // u0：沙虫（reach 1.6——d=1.5 入近战带）
+      U({ race: 'sheep', x: 246, y: 80.5, hp: 5, maxHp: 16, civ: -1 }),                // u1：残血羊（≤40% 席卷门）
+    ],
+    steps: 2,
+  },
+  // S25 kraken-sink：克拉肯 vs 帆船野人（boat=1）d=2.0（<reach 2.4）→ 双倍伤害 + 30% 击沉掷中 → dead + boat=0 + explosion fx + shipwreck ev + 早退
+  {
+    name: 'kraken-sink', terrain: 'plains', seed: meleeProbe({
+      label: 'kraken-sink', units: [
+        U({ race: 'kraken', x: 236.5, y: 80.5, hp: 100, dmg: 9, civ: -1 }),
+        U({ race: 'human', x: 238.5, y: 80.5, hp: 50, maxHp: 50, dmg: 1, boat: 1, civ: -1 }),
+      ],
+      want: (cap) => cap.evt.some((e) => e[0] === 'ev' && e[1] === 'shipwreck'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'kraken', x: 236.5, y: 80.5, hp: 100, dmg: 9, civ: -1 }),
+      U({ race: 'human', x: 238.5, y: 80.5, hp: 50, maxHp: 50, dmg: 1, boat: 1, civ: -1 }),
+    ],
+    steps: 2,
+  },
+  // S26 kraken-tsunami：击沉掷未中（≥0.3）→ tsunami fx（quiet）+ 帆船野人存活（hp 50-18=32）
+  {
+    name: 'kraken-tsunami', terrain: 'plains', seed: meleeProbe({
+      label: 'kraken-tsunami', units: [
+        U({ race: 'kraken', x: 226.5, y: 80.5, hp: 100, dmg: 9, civ: -1 }),
+        U({ race: 'human', x: 228.5, y: 80.5, hp: 50, maxHp: 50, dmg: 1, boat: 1, civ: -1 }),
+      ],
+      want: (cap) => cap.fx.some((f) => f.k === 'tsunami') && !cap.evt.some((e) => e[0] === 'ev'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'kraken', x: 226.5, y: 80.5, hp: 100, dmg: 9, civ: -1 }),
+      U({ race: 'human', x: 228.5, y: 80.5, hp: 50, maxHp: 50, dmg: 1, boat: 1, civ: -1 }),
+    ],
+    steps: 2,
+  },
+  // S27 vampire-drain：吸血鬼 vs 羊 d=0.8 → 命中后吮血 hp += dmg×0.6（≤maxHp 钳）——gA null 野对零装备吸血
+  {
+    name: 'vampire-drain', terrain: 'plains', seed: meleeProbe({
+      label: 'vampire-drain', units: [
+        U({ race: 'vampire', x: 216.5, y: 80.5, hp: 20, maxHp: 140, dmg: 16, civ: -1 }),   // 吸血鬼 undead——非八对称非 predator，敌意走 hostile×isCiv L2103
+        U({ race: 'human', x: 217.3, y: 80.5, hp: 50, maxHp: 50, dmg: 1, civ: -1 }),
+      ],
+      want: (cap, us) => cap.fx.some((f) => f.k === 'hit') && us[0].hp > 20,
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'vampire', x: 216.5, y: 80.5, hp: 20, maxHp: 140, dmg: 16, civ: -1 }),
+      U({ race: 'human', x: 217.3, y: 80.5, hp: 50, maxHp: 50, dmg: 1, civ: -1 }),
+    ],
+    steps: 2,
+  },
+  // S28 bless-curse-dusk：狼 bless=1 curse=1 + env.dayPhase=0.7（dusk 窗口 0.5..0.9）→ dmg ×1.3×0.75×0.92（nightsight 假）——F_ACC[6]/[7] 双 1（神力/诅咒准头）
+  {
+    name: 'bless-curse-dusk', terrain: 'plains', seed: meleeProbe({
+      label: 'bless-curse-dusk', env: { dayPhase: 0.7 }, units: [
+        U({ race: 'wolf', x: 206.5, y: 80.5, hp: 100, dmg: 10, bless: 1, curse: 1, civ: -1 }),
+        U({ race: 'sheep', x: 207.3, y: 80.5, hp: 16, maxHp: 16, civ: -1 }),
+      ],
+      want: (cap) => cap.fx.some((f) => f.k === 'hit'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true, dayPhase: 0.7 },
+    units: [
+      U({ race: 'wolf', x: 206.5, y: 80.5, hp: 100, dmg: 10, bless: 1, curse: 1, civ: -1 }),
+      U({ race: 'sheep', x: 207.3, y: 80.5, hp: 16, maxHp: 16, civ: -1 }),
     ],
     steps: 2,
   },

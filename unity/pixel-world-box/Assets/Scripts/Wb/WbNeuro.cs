@@ -107,5 +107,12 @@ namespace PixelWorldBox.Wb
             var o = Fwd(FlightRl, f);
             return o[1] > o[0] ? 1 : 0;
         }
+
+        /// <summary>neuroAcc L166-179：p = 1/(1+exp(-fwd(H_ACC,f)[0]))（sigmoid；fdlibm FdExp 位精确域——jsmath.rs L44-108 协议）；
+        ///  neuroStats 面板统计（calls/seq/timed/audits）零行为面不译；teacherAcc 回退属 enabled=false 分支不译（引擎默认 enabled=true）</summary>
+        public static double NeuroAcc(double[] f)
+        {
+            return 1 / (1 + WbMath.FdExp(-Fwd(HAcc, f)[0]));                                            // L175
+        }
     }
 }

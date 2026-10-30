@@ -385,6 +385,7 @@ namespace PixelWorldBox.Wb
         // —— M-U3h 第二批 case1 消费切片：engine fxPrefs.dmgNumbers（L271 默认 true；落地伤害数字 fx 门）——
         public bool fxDmgNumbers = true;
         public bool fxAmbience = true;      // engine fxPrefs.ambience（engine L271 默认 true —— sandswim 扬尘门消费；M-U3h 第五批）
+        public bool fxBlood = true;         // engine fxPrefs.blood（L271 默认 true —— 近战血溅门 L3859 消费；M-U7p 字段只加）
 
         public const int T_DEEP = 0, T_WATER = 1, T_SAND = 2, T_GRASS = 3, T_FOREST = 4, T_HILL = 5,
                          T_MOUNTAIN = 6, T_SNOW = 7, T_LAVA = 8, T_BURNT = 9, T_ICE = 10, T_SWAMP = 11;
@@ -444,6 +445,8 @@ namespace PixelWorldBox.Wb
         public Dictionary<int, WbDynRace> dynRaces = new Dictionary<int, WbDynRace>();     // engine this.dynRaces（种化注册表；wildCapOf L2149 递归消费）
         // —— M-U7m 扫描域（字段只加）——
         public Dictionary<int, bool> enemyLut = new Dictionary<int, bool>();   // engine L2068 enemyLut（isEnemyFast 野生对 LUT：键 race*65536+race；鲨鱼地形分支 L2113 依赖被扫者站位而 LUT 键仅 race 对——跨格缓存污染为蓝本既有行为，机械保持）
+        // —— M-U7p 近战域：engine activeBattles Map<number, number>（L3895-3900 战争前线红闪登记：键 tile，值 tickCount+30 衰减；上限 64 过期优先淘汰）——
+        public Dictionary<int, int> activeBattles = new Dictionary<int, int>();
         public int unitSeq, familySeq, traitSeq;           // engine this.unitSeq/familySeq/traitSeq（evoSeq 已存在下方）
         public List<WbEv> worldEvents = new List<WbEv>();   // unshift 语义：新的在最前
         public List<WbToast> toasts = new List<WbToast>();  // onToast 回调收集（toast 本体不存储）
