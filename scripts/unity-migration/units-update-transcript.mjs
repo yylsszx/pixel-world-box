@@ -89,8 +89,80 @@ const mkU = (s) => {
   if (s.breath !== null && s.breath !== undefined) u.breath = s.breath;   // M-U7q 龙息域
   if (s.fam !== null && s.fam !== undefined) u.fam = s.fam;          // M-U7q 家族战功
   if (s.wep !== null && s.wep !== undefined) u.wep = s.wep;          // M-U7s 枪械/能量枪域（L3755/L3756 wep 字符串键）
+  u.name = s.name ?? '';                                              // M-U7t：黄金回显 name 字段消费（uniqueNameT 遍历计数——fixture 空名面同 gen mkTsUnit）
   u._regen = s.traitRegen ?? 0;                                    // fixture 回显再生值（TRAITS 表镜像）
   return u;
+};
+
+// ================= M-U7t：riseSkeleton/spawnUnit 亡者复生域独立转写（零引擎导入） =================
+// 蓝本：names.ts L4/L20/L75-92（unitName/roman/FIRST）+ engine.ts L1283-1465 spawnUnit 骷髅消费域 +
+//       L1522-1533 uniqueName + L5171-5182 riseSkeleton + types.ts L264-277 TRAITS 键序/乘子行为面。
+// 消费域注记：名字值不进 snapU 黄金对账——unitName 池长不影响 rng 流（floor(rand()*len) 恒 1 掷），
+// FIRST_T 只转写骷髅 16 与 fallback 0 两行；TRAITS_T 全 12 键（spawn 乘子 maxHp 进对账 + regen + F_ACC tiny/swift/giant 键名消费）。
+const FIRST_T = {
+  0: ['Alric', 'Berta', 'Corin', 'Dahlia', 'Edwin', 'Faye', 'Gareth', 'Hilda', 'Ivan', 'Jora', 'Kelvin', 'Lyra', 'Marcus', 'Nora', 'Osric', 'Petra'],
+  16: ['Bones', 'Rattle', 'Marrow', 'Creak', 'Skull', 'Grin', 'Clatter', 'Dust', 'Hollow', 'Grim'],   // names.ts L20 骷髅池（S2/S35 spawn 消费域）
+};
+const unitNameT = (race, rand) => {                                                   // names.ts L75-78
+  const pool = FIRST_T[race] ?? FIRST_T[0];
+  return pool[Math.floor(rand() * pool.length)];
+};
+const romanT = (n) => {                                                               // names.ts L81-92 全转写（重名后缀消费域——不进对账但转写纪律全译）
+  if (n < 1 || n > 40) return String(n);
+  const table = [[40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']];
+  let out = ''; let v = n;
+  for (const [val, sym] of table) while (v >= val) { out += sym; v -= val; }
+  return out.toUpperCase();
+};
+const TRAITS_T = {                                                                    // types.ts L264-277 机械转写（键序即 Object.keys 序——rollTraitT 消费）
+  strong: { dmgMul: 1.4 }, tough: { hpMul: 1.35 }, swift: { speedMul: 1.3 }, weak: { dmgMul: 0.8 },
+  sickly: { hpMul: 0.75 }, genius: {}, berserk: { dmgMul: 1.7, hpMul: 0.85 }, lucky: {},
+  regeneration: { regen: 0.3 }, giant: { hpMul: 1.8, dmgMul: 1.5, speedMul: 0.75 },
+  tiny: { hpMul: 0.55, dmgMul: 0.8, speedMul: 1.25 }, immune: {},
+};
+const TRAIT_KEYS_T = Object.keys(TRAITS_T);
+const uniqueNameT = (ctx, race, rand) => {                                            // engine L1522-1533
+  const base = unitNameT(race, rand);
+  const bl = base.length; let n = 0;
+  for (const v of ctx.units) {
+    if (v.dead) continue;
+    const nm = v.name;
+    if (nm === base || (nm.length > bl && nm.charCodeAt(bl) === 32 && nm.startsWith(base))) n++;
+  }
+  return n === 0 ? base : `${base} ${romanT(n + 1)}`;
+};
+const spawnUnitT = (ctx, rng, race, x, y, o) => {                                     // engine L1283-1465 骷髅消费域（silent 野怪）
+  // 预算域：骷髅无特异 MAX 门（L1301-1312 十族不含 SKELETON）；wildAlive 门 wildCount 空表恒过（黄金 fixture 单位量 ≪ CAP）
+  const rd = raceF(race);                                                             // L1285 RACES[race]
+  const trait = o.trait !== undefined ? (o.trait || null) : (rng() < 0.15 ? TRAIT_KEYS_T[Math.floor(rng() * TRAIT_KEYS_T.length)] : null);   // L1316-1317
+  const td = trait ? TRAITS_T[trait] : null;
+  const gene = { s: 1, d: 1, h: 1, r: 1 };                                            // L1319 baseGene 空表分支零掷
+  const maxHp = Math.round(55 * (td?.hpMul ?? 1) * 1 * 1 * (gene.h ?? 1));            // L1343 RACES[16].hp=55（jd/tm 非文明 1）
+  const u = {
+    id: ctx.unitSeq++, race, civ: -1, x, y, lx: x, ly: y, rx: x, ry: y, tx: x, ty: y,   // L1344-1353
+    hp: maxHp, maxHp,
+    dmg: 14 * (td?.dmgMul ?? 1) * 1 * 1 * (gene.d ?? 1),                              // L1352（govOf(-1)=0 ≠ 4 → 1）
+    speed: 0.075 * (td?.speedMul ?? 1) * 1 * (gene.s ?? 1), tDmg: 1, tHp: 1,          // L1353-1354
+    age: 0, maxAge: 9999 * (0.8 + rng() * 0.4),                                       // L1357-1358（RACES[16].maxAge=9999）
+    kills: 0, cd: 0, trait, gene, job: undefined, infected: false, flip: rng() < 0.5,  // L1359-1363
+    name: uniqueNameT(ctx, race, rng),                                                // L1364
+    hurt: 0, breath: 120 + Math.floor(rng() * 160),                                   // L1365
+    dead: false,
+  };
+  u.parity = ctx.unitSeq % 2;                                                         // L1366（unitSeq 自增后）
+  u._regen = td?.regen ?? 0;                                                          // transcript 再生消费面 L589（u.trait ? _regen : 0）
+  ctx.units.push(u);
+  ctx.unitById.set(u.id, u);                                                          // L1361
+  if (!rd.isCiv) ctx.wildCount.set(race, (ctx.wildCount.get(race) ?? 0) + 1);          // L1372 bumpWild
+  // L1375-1380 家族谱系：骷髅 undead → !def.undead 短路零掷；L1384 gear/silent announce 域 GUARD 不触达
+  return u;
+};
+const riseSkeletonT = (ctx, rng, x, y) => {                                           // engine L5171-5182
+  const u = spawnUnitT(ctx, rng, 16, x, y, { silent: true });                          // L5172 { silent: true }
+  if (u) {
+    ctx.fx.push(['spawn', bitHex(x), bitHex(y), 30]);                                  // L5174 fx 桩捕获（零掷同构——transcript fx 通道数组形直 push ≡ gen 桩对象→组装数组形）
+    if (rng() < 0.12) ctx.evt.push(['ev', 'skeleton', bitHex(x), bitHex(y)]);          // L5176-5178 偶发播报 1/8（addEvent 桩 'ev' kind+pos 同构）
+  }
 };
 
 const snapU = (u) => ({
@@ -525,7 +597,7 @@ function updateUnitT(u, ctx) {
   if (u.boat) { ctx.evt.push(['boat', u.id]); return; }                                           // L3461-3464
   u.age += 2 / 40;                                                                               // L3465（YEAR_TICKS）
   if (u.age > u.maxAge) {                                                                        // L3466
-    if (ctx.lawsRise && r.isCiv && rng() < 0.08) ctx.evt.push(['rise', bitHex(u.x), bitHex(u.y)]);// L3467
+    if (ctx.lawsRise && r.isCiv && rng() < 0.08) riseSkeletonT(ctx, rng, u.x, u.y);   // L3467 M-U7t 清偿（真实现体内 spawn 掷链 + 0.12 播报——'rise' 桩事件消亡）
     u.dead = true; return;                                                                       // L3468
   }
   if (u.cd > 0) u.cd -= 2;                                                                       // L3471
@@ -874,8 +946,8 @@ function updateUnitT(u, ctx) {
               /* toast L3944 宿主域——gen 桩面 onToast 未挂静默 no-op 零掷 */
               ctx.evt.push(['ev', 'legend', bitHex(u.x), bitHex(u.y)]);                                 // L3945
             }
-            if (u.race === 23 && raceF(enemy.race).isCiv) ctx.evt.push(['rise', bitHex(enemy.x), bitHex(enemy.y)]);   // L3948-3949 白行者起尸（0.12 播报掷在 riseSkeleton 体内未译）
-            if (ctx.lawsRise && raceF(enemy.race).isCiv && rng() < 0.06) ctx.evt.push(['rise', bitHex(enemy.x), bitHex(enemy.y)]);   // L3952-3953 亡者复生
+            if (u.race === 23 && raceF(enemy.race).isCiv) riseSkeletonT(ctx, rng, enemy.x, enemy.y);   // L3948-3949 白行者起尸（M-U7t 清偿——真实现体内 spawn 掷链 + 0.12 播报）
+            if (ctx.lawsRise && raceF(enemy.race).isCiv && rng() < 0.06) riseSkeletonT(ctx, rng, enemy.x, enemy.y);   // L3952-3953 亡者复生 6%（M-U7t 清偿）
           }
         }
       }
@@ -1042,6 +1114,7 @@ for (const c of g.cases) {
     tension: new Map(), warShame: new Map(), warData: new Map(Object.entries(c.env.warData ?? {})),   // M-U7q 弑君之仇三账本 + 战争档案
     civs: c.env.civs ?? {}, families: new Map(Object.entries(c.env.families ?? {}).map(([k, v]) => [Number(k), { ...v }])),   // M-U7q 文明/家族谱系
     armies: c.env.armies ?? [], directives: c.env.directives ?? [], wildCount: new Map(), statDragonsSlain: 0,   // M-U7q onWarKill/bumpWild/屠龙
+    unitSeq: 0, unitById: new Map(),   // M-U7t spawnUnit 骷髅路径依赖面（L1344 id/unitSeq++ + L1361 unitById.set）
     units,   // M-U7q witnessDeath 弑君分支遍历（eng.units 桩面同构）
     bw: BW, bh: BH,   // witnessDeath 桶环网格
     setT: (i, t) => { if (terrain[i] === t) return; const old = terrain[i]; terrain[i] = t; terrLog.push([i, old, t]); },   // setTerrain 影子（同值早退 L950 语义）

@@ -7,7 +7,8 @@
 // M-U7q：击杀链 L3903-3957（zombify/witnessDeath/addGrudge 血仇记账/复仇 splice/家族战功/捕食进食/屠龙计数/onWarKill/legend/白行者起尸/
 //       undeadRise 6%）+ 龙息 L3972-3978（R2 门 + breath 重置 + dragonBreath/ignite 真实现）——桩面补真实现依赖（building/wildCount/
 //       rel·tension·warShame·warData/worldWar/armies/directives/families/civs env 注入），zombify/witnessDeath/addGrudge/onKingDeath/
-//       onWarKill/dragonBreath/ignite 走 GameEngine.prototype 真实现；riseSkeleton/fx/addEvent/addCorpse 仍桩面事件捕获；toast 真实现
+//       onWarKill/dragonBreath/ignite 走 GameEngine.prototype 真实现；riseSkeleton M-U7t 清偿走原型真实现（spawnUnit 骷髅路径依赖面
+//       unitSeq/unitById 补齐——spawn 掷值链 trait 0.15/maxAge/flip/breath/uniqueName + 0.12 播报全真；fx/addEvent/addCorpse 仍桩面事件捕获）；toast 真实现
 //       （onToast 未挂 → 静默 no-op 零掷）；collectKill/collectEnemyGone 在线采集模块域真调用（引擎外会话 state，黄金未捕获面）。
 //       snapU 字段只加：race/civ/speed/breath/king（zombify 原地转种 + 龙息域 breath 镜像）；post 态 dump（statDragons/civs/families/
 //       rel/tension/warShame/warData/directives —— NUnit Test30 post 对账面）。
@@ -73,6 +74,7 @@ const RACE_PICKS = {
   zombie: pickRace((d) => d.undead && !d.flying && !d.aquatic, 'zombie'),                                            // M-U7m S11：L2095 ZOMBIE 对称敌意分支（序首命中 id5）
   bear: pickRace((d) => Number(d.key === 'bear'), 'bear'),                                                           // M-U7n S14/S17：强敌锚（dmg 19 hp 95——RStats 一致）
   dragon: pickRace((d) => Number(d.key === 'dragon'), 'dragon'),                                                     // M-U7q S34/S36：屠龙计数 + 龙息域（L2095 对称敌意 ra!==rb）
+  skeleton: pickRace((d) => Number(d.key === 'skeleton'), 'skeleton'),                                               // M-U7t S2/S35：riseSkeleton spawn 消费域（races 位字节表随 JSON——undead 位 4 / speed 0.075）
 };
 const packRace = (id) => {
   const d = RACES[id];
@@ -165,6 +167,7 @@ const mkTsUnit = (spec) => {
   if (spec.breath !== null && spec.breath !== undefined) u.breath = spec.breath;         // M-U7q 龙息域 L3973（undefined→NaN 门永不触达——非龙单位天然）
   if (spec.fam !== null && spec.fam !== undefined) u.fam = spec.fam;                     // M-U7q 家族战功 L3925（case2 谱系域镜像）
   if (spec.wep !== null && spec.wep !== undefined) u.wep = spec.wep;                     // M-U7s 枪械/能量枪域（L3755 gun / L3756 beam——wep 字符串键）
+  u.name = spec.name ?? '';                                              // M-U7t：uniqueName L1526 遍历消费 u.name（spawn 骷髅路径首触——fixture 空名面：nm===base false + nm.length>bl false 计数 0 同构；字段只加回显）
   return u;
 };
 const snapU = (u) => ({
@@ -214,8 +217,16 @@ function makeStubEng(env, cap) {
   };
   eng.grabbedTick = (u) => cap.evt.push(['grab', u.id]);
   eng.updateBoat = (u) => cap.evt.push(['boat', u.id]);
-  eng.riseSkeleton = (x, y) => cap.evt.push(['rise', bitHex(x), bitHex(y)]);
+  // M-U7t：riseSkeleton 遮蔽删除（原型真实现自动可达——spawnUnit 骷髅路径依赖面 unitSeq/unitById 补齐；speciesBase 不补 →
+  //  baseGene 空表分支零掷同构；R.SKELETON undead:true → 家族 0.06 掷短路零掷；silent:true → announce/toast 域 GUARD 不触达）——
+  //  spawn 掷值链 trait 0.15 掷 + maxAge(0.8+rng*0.4) + flip 0.5 掷 + breath 120+floor(rng*160) + uniqueName(unitName 内掷) +
+  //  fx('spawn') 捕获（fx 桩零掷同构）+ 0.12 播报掷全真入流；主循环 for..of 快照数组动态长度语义（spawn push 当拍被迭代——
+  //  JS 数组迭代器每步重查 length ≡ C# 索引 for 每步重查 Count 同构）——
+  // eng.riseSkeleton 原遮蔽行删除
   eng.spreadPlague = (u) => cap.evt.push(['plague', u.id]);
+  eng.unitSeq = 0;                                               // L1344 id: this.unitSeq++（spawnUnit 骷髅路径首消费——0 起）
+  eng.unitById = new Map();                                      // L1361 unitById.set（spawnUnit push 面）
+  eng.speciesBase = new Map();                                   // L11030 baseGene 空表分支（speciesBase.get → undefined → {s:1,d:1,h:1,r:1} 零掷——不补则 undefined.get TypeError）
   eng.gearBonus = () => ({ regen: env.gearRegen ?? 0, crit: 0, armor: 0, lifesteal: 0, thorns: 0, speed: 1, ranged: 0 });
   eng.setTerrain = (i, t) => { if (eng.terrain[i] === t) return; const old = eng.terrain[i]; eng.terrain[i] = t; cap.terr.push([i, old, t]); };
   // —— 扫描/尾段哨兵（场景契约：批次一场景桶空不触达；触达即设计错误） ——
@@ -819,14 +830,14 @@ const CASES = [
     ],
     steps: 2,
   },
-  // S35 undead-rise：亡者复生法则（laws.undeadRise + isCiv + 6% 掷中）→ riseSkeleton 桩面 'rise' 事件（起尸 spawn 域接缝——0.12 播报掷在未译 riseSkeleton 体内）
+  // S35 undead-rise：亡者复生法则（laws.undeadRise + isCiv + 6% 掷中）→ riseSkeleton 真实现 spawn（M-U7t 清偿——want 从 'rise' 桩事件迁 units 增量；骷髅当拍入扫描环 scanReal 真对账）
   {
     name: 'undead-rise', terrain: 'plains', seed: meleeProbe({
       label: 'undead-rise', env: { lawsRise: true }, units: [
         U({ race: 'vampire', x: 140.5, y: 30.5, hp: 20, maxHp: 140, dmg: 16, civ: -1 }),
         U({ race: 'human', x: 141.3, y: 30.5, hp: 5, maxHp: 60, civ: -1 }),
       ],
-      want: (cap) => cap.evt.some((e) => e[0] === 'rise'),
+      want: (cap, units) => units.length > 2,   // M-U7t：riseSkeleton 真实现 spawn 骷髅入 units（'rise' 桩事件消亡——units 2→3 增量面）
     }),
     env: { lawsRise: true, ambience: false, gearRegen: 0, scanReal: true },
     units: [

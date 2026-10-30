@@ -246,7 +246,8 @@ namespace PixelWorldBox.Wb.Tests
             // —— 影子接缝置换（gen makeStubEng 同构）——
             WbBailRelay.GrabbedTickHook = (ww, u) => _evt.Add(new object[] { "grab", (double)u.id });
             WbBailRelay.UpdateBoatHook = (ww, u) => _evt.Add(new object[] { "boat", (double)u.id });
-            WbBailRelay.RiseSkeletonHook = (ww, x, y) => _evt.Add(new object[] { "rise", BitHex(x), BitHex(y) });
+            // M-U7t：RiseSkeletonHook 置换删除——riseSkeleton 真实现对账（gen 原型真实现同构；spawn 骷髅路径全链真掷 +
+            // fx 走 FxHook 四元捕获 + 0.12 播报走 AddEventHook 'ev' 捕获——黄金 gen 数组形 fx/evt 逐位对账）
             WbBailRelay.SpreadPlagueHook = (ww, u) => _evt.Add(new object[] { "plague", (double)u.id });
             WbBailRelay.TailJSHook = (ww, u) => { _evt.Add(new object[] { "tail", (double)u.id }); return false; };
             WbBailRelay.PostJSHook = (ww, u) => _evt.Add(new object[] { "post", (double)u.id });
@@ -458,6 +459,7 @@ namespace PixelWorldBox.Wb.Tests
             u.caravan = I(s["caravan"]);                                           // M-U7m L3641 商队门
             u.civ = I(s["civ"]); u.jobC = I(s["job"]); u.flip = (bool)s["flip"] ? 1 : 0;
             u.wep = Nul(s["wep"]) ? null : (object)(string)s["wep"];               // M-U7s 枪械/能量枪域（L3755/L3756 wep 字符串键）
+            u.name = (string)s["name"] ?? "";                                       // M-U7t：uniqueName L1526 遍历消费 u.name（spawn 骷髅路径首触——fixture 空名面同 gen mkTsUnit/mirror mkU；null → "" 同构）
             u.traitName = NS(s["trait"]);
             if (s["king"] != null && (int)s["king"] != 0) u.king = (int)s["king"];   // M-U7q 弑君域（witnessDeath king 分支）
             if (!Nul(s["breath"])) u.breathN = (int)s["breath"];                      // M-U7q 龙息域（undefined → null）

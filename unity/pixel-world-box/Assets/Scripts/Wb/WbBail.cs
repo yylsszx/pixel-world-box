@@ -268,7 +268,9 @@ namespace PixelWorldBox.Wb
         // fx 影子不掷 rng——蓝本 fx() 本体 seed/dir 2 掷（L9794-9795）属 fx 域，本黄金 8 场景 fx≡0 契约外。
         internal static System.Action<WbWorld, WbU> GrabbedTickHook = (w, u) => GrabbedTick(w, u);
         internal static System.Action<WbWorld, WbU> UpdateBoatHook = (w, u) => UpdateBoat(w, u);
-        internal static System.Action<WbWorld, double, double> RiseSkeletonHook = (w, x, y) => throw new System.NotImplementedException("riseSkeleton 未译域（亡者复生生成域批次二）");
+        // —— M-U7t：riseSkeleton 桩面真实现清偿（RiseSkeletonHook 接缝删除——调用面 L3467/L3949/L3953 直调 RiseSkeleton；
+        //    spawn 骷髅路径全链真掷：trait 0.15/maxAge/flip/breath/uniqueName + 0.12 播报；fx 走 FxHook 四元捕获通道——
+        //    gen 侧 fx 桩零掷同构，w.Fx 真存储路径 seed/dir 2 掷属渲染域切片）——
         internal static System.Action<WbWorld, WbU> SpreadPlagueHook = (w, u) => throw new System.NotImplementedException("spreadPlague 未译域（瘟疫传播域批次二）");
         internal static System.Func<WbWorld, WbU, bool> TailJSHook = (w, u) => UpdateUnitTailJS(w, u);
         internal static System.Action<WbWorld, WbU> PostJSHook = (w, u) => UpdateUnitPostJS(w, u);
@@ -317,7 +319,7 @@ namespace PixelWorldBox.Wb
             if (u.ageF > u.maxAgeF)                                                                                      // L3466
             {
                 // 亡者复生法则：寿终正寝的文明生物有小概率化为骷髅
-                if (w.laws.undeadRise && def.isCiv && w.Rng() < 0.08) RiseSkeletonHook(w, u.x, u.y);                     // L3467（&& 短路：laws/isCiv 假零掷）
+                if (w.laws.undeadRise && def.isCiv && w.Rng() < 0.08) RiseSkeleton(w, u.x, u.y);                         // L3467（&& 短路：laws/isCiv 假零掷；M-U7t 直调真实现）
                 u.dead = 1; return;                                                                                      // L3468
             }
             if (u.cd > 0) u.cd -= 2;                                                                                     // L3471
@@ -805,9 +807,9 @@ namespace PixelWorldBox.Wb
                                     AddEventHook(w, "legend", $"传奇武士 {u.name ?? ""}（{owner}）达成了 10 次击杀", null, u.x, u.y);   // L3945
                                 }
                                 if (u.race == R_WHITEWALKER && RStats[enemy.race].isCiv)                                         // L3948 白行者击杀：寒冰将其复活为骷髅
-                                    RiseSkeletonHook(w, enemy.x, enemy.y);                                                       // L3949（起尸 spawn 域接缝——0.12 播报掷在未译 riseSkeleton 体内）
+                                    RiseSkeleton(w, enemy.x, enemy.y);                                                           // L3949（M-U7t 直调真实现）
                                 if (w.laws.undeadRise && RStats[enemy.race].isCiv && w.Rng() < 0.06)                             // L3952 亡者复生法则（&& 短路：laws/isCiv 假零掷）
-                                    RiseSkeletonHook(w, enemy.x, enemy.y);                                                       // L3953
+                                    RiseSkeleton(w, enemy.x, enemy.y);                                                           // L3953（M-U7t 直调真实现）
                             }
                         }
                     }
@@ -1861,6 +1863,20 @@ namespace PixelWorldBox.Wb
             return t != WbWorld.T_DEEP && t != WbWorld.T_WATER && t != WbWorld.T_MOUNTAIN && t != WbWorld.T_LAVA; // walkable L76-78
         }
 
+        // ================= riseSkeleton L5171-5182（M-U7t 真实现清偿——亡者复生生成域） =================
+        // 机械翻译蓝本：engine.ts L5171-5182。spawnUnit 骷髅路径（silent 野怪——SpawnUnit 全链真掷：trait 0.15/maxAge/flip/breath/uniqueName）+
+        // fx('spawn') 捕获 + 0.12 偶发播报。fx 走 FxHook 四元捕获通道（gen fx 桩零掷同构——w.Fx 真存储路径 seed/dir 2 掷属渲染域切片）。
+        private static void RiseSkeleton(WbWorld w, double x, double y)
+        {
+            WbU u = SpawnUnit(w, WbConstants.R_SKELETON, x, y, new WbSpawnOpts { silent = true });                      // L5172 { silent: true }
+            if (u != null)
+            {
+                FxHook(w, "spawn", x, y, 30);                                                                            // L5174 fx('spawn', x, y, 30)
+                if (w.Rng() < 0.12)                                                                                      // L5176 偶发播报（防刷屏）：约 1/8 概率
+                    AddEventHook(w, "skeleton", "大地传来不祥的声响——一名死者化作了骷髅", null, x, y);                    // L5177 addEvent('skeleton', ..., { x, y })
+            }
+        }
+
         // isHerbivoreRace L2120-2128（猎物链底层判定：静态八种 + dynRaces 递归母族）
         private static bool IsHerbivoreRace(WbWorld w, int race)
         {
@@ -2345,6 +2361,8 @@ namespace PixelWorldBox.Wb
                 breath = 120 + (int)System.Math.Floor(w.Rng() * 160),                           // L1365
             };
             un.parity = w.unitSeq % 2;                                                          // L1366（id 自增后的 unitSeq——对象字面量求值序）
+            un.speedN = un.speed;                                                               // M-U7t：speedN 镜像写点（CompareSnap 消费——spawnUnit 真值 0.075×乘子；zombify L4328 先例同构）
+            un.breathN = un.breath;                                                             // M-U7t：breathN 镜像写点（120+floor(rng*160)——CompareSnap 消费；龙息 -=2 域随件）
             un.dead = 0;                                                                        // L1367
             w.units.Add(un);
             w.unitById[un.id] = un;                                                             // L1370（WBB.touchRow 新行 meta 行级灌入——wasm 镜像写点，C# 侧 no-op 同先例）

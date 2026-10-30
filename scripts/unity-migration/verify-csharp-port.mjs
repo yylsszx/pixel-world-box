@@ -1506,7 +1506,7 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   var unitsUpdateVerifyFail = 0;
   try {
     execFileSync('node', [new URL('./units-update-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
-    console.log('units-update 黄金回放 (units-update-transcript 镜像 vs units_update.json): PASS (36 场景 快照逐位 + evt/fx/terr/scan 事件流 + 逐步 draws + fireSet + final/rngTail)');
+    console.log('units-update 黄金回放 (units-update-transcript 镜像 vs units_update.json): PASS (52 场景 快照逐位 + evt/fx/terr/scan 事件流 + 逐步 draws + fireSet + final/rngTail)');
   } catch (e) {
     unitsUpdateVerifyFail++;
     console.error('units-update 黄金回放: FAIL');
@@ -1519,7 +1519,7 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
     execFileSync('bun', [new URL('./gen-units-update.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
     const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
     if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
-    console.log('units-update gen det 复跑 (gen-units-update · bun): PASS (36 场景 sanity + GameEngine 真实现 + det 字节级)');
+    console.log('units-update gen det 复跑 (gen-units-update · bun): PASS (52 场景 sanity + GameEngine 真实现 + det 字节级)');
   } catch (e) {
     unitsUpdateVerifyFail++;
     console.error('units-update gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -1527,20 +1527,20 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   try {
     const { readFileSync } = await import('node:fs');
     const g = JSON.parse(readFileSync(new URL('./golden/units_update.json', import.meta.url), 'utf8'));
-    if (!Array.isArray(g.cases) || g.cases.length !== 36) throw new Error('场景数 ≠ 36');
+    if (!Array.isArray(g.cases) || g.cases.length !== 52) throw new Error('场景数 ≠ 52');   // M-U7t：36→52（M-U7o 时代硬编码四轮扩面未跟——50→52 S51/S52 + M-U7t riseSkeleton 重录同数）
     for (const c of g.cases) {
       if (c.out.length !== c.steps) throw new Error(c.name + ' steps ≠ out');
-      if (!Array.isArray(c.final) || c.final.length !== c.units.length) throw new Error(c.name + ' final 缺失');
+      if (!Array.isArray(c.final) || c.final.length < c.units.length) throw new Error(c.name + ' final 缺失');   // M-U7t：spawn 使 final ≥ units spec（S2 骷髅 4→5——Test30 units.Count 动态对账先证）
       if (!Array.isArray(c.rngTail) || c.rngTail.length !== 4) throw Error(c.name + ' rngTail 缺失');
       for (const s of c.out) if (!Array.isArray(s.fireSet)) throw new Error(c.name + ' fireSet 缺失');
     }
-    // M-U7m 扫描域结构检查：scanReal 场景必有非空 scan 调用日志 + ep.panicRout 分发（M-U7n 起 S14-S17、M-U7o 起 S18-S20、M-U7p 起 S21-S28、M-U7q 起 S29-S36 亦标 scanReal——28 场景）
+    // M-U7m 扫描域结构检查：scanReal 场景布桶真实现对账 + ep.panicRout 分发（M-U7n 起 S14-S17、M-U7o 起 S18-S20、M-U7p 起 S21-S28、
+    //  M-U7q 起 S29-S36 亦标 scanReal；M-U7r 起 S37-S50 peaceful 域 14 场景扫描环零 foe 合法空——M-U7t 纠偏：计数 28→44
+    //  旧断言 throw 先于 for 检查历轮未真正执行——本次修复后首次全量暴露，空 scan 14 场景黄金实证合法）——
     const scanCases = g.cases.filter((c) => c.env.scanReal);
-    if (scanCases.length !== 28) throw new Error('scanReal 场景数 ≠ 28');
-    for (const c of scanCases) {
-      const scanN = c.out.reduce((a, s) => a + s.units.reduce((b, u) => b + ((u.scan ?? []).length), 0), 0);
-      if (scanN === 0) throw new Error(c.name + ' scanReal 场景 scan 日志空');
-    }
+    if (scanCases.length !== 44) throw new Error('scanReal 场景数 ≠ 44');
+    const scanNonEmpty = scanCases.filter((c) => c.out.reduce((a, s) => a + s.units.reduce((b, u) => b + ((u.scan ?? []).length), 0), 0) > 0);
+    if (scanNonEmpty.length < 30) throw new Error('scanReal 非空场景数 < 30（S9-S36 + S51/S52 下限防漏标）');   // peaceful 域 14 场景合法空豁免
     if (g.ep.panicRout !== 0.72) throw new Error('ep.panicRout ≠ 0.72');
     // M-U7n 神经域结构检查：S14-S17 四场景在册 + mv 事件乘数签名（flight 1.2 / retreat 1.15 / chase 1.25——L3699/L3736/L3964）
     const neuroMv = { 'flight-flee': 1.2, 'stance-retreat': 1.15, 'stance-chase': 1.25, 'grudge-chase': 1.25 };
@@ -1550,11 +1550,12 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
       const mvs = c.out.flatMap((s) => s.units.flatMap((u) => (u.evt ?? []).filter((e) => e[0] === 'mv').map((e) => e[2])));
       if (!mvs.includes(mul)) throw new Error(nm + ' mv 乘数签名缺失 ' + mul);
     }
-    // M-U7o 远程域结构检查：火球/箭施法事件在册（draws=2 随件）+ 风筝乘数签名 0.6/0.8（L3751/L3963）
+    // M-U7o 远程域结构检查：火球/箭施法签名（M-U7t 纠偏：M-U7s 弹道清偿已迁 fx opts o 面——'fb'/'ar' 桩事件消亡；
+    //  旧断言在 scanReal 计数 throw 伞下历轮未真正执行）+ 风筝乘数签名 0.6/0.8（L3751/L3963）
     const fb = g.cases.find((x) => x.name === 'mage-fireball');
-    if (!fb || !fb.out.some((s) => s.units.some((u) => (u.evt ?? []).some((e) => e[0] === 'fb' && e[4] === '0000000000003240')))) throw new Error('mage-fireball 施法事件缺失（dmg=18 bitHex）');
+    if (!fb || !fb.out.some((s) => s.units.some((u) => (u.fx ?? []).some((f) => f[0] === 'fireball' && f[4] && f[4][3] === '0000000000003240')))) throw new Error('mage-fireball 施法 fx 缺失（o[3] r=18 bitHex）');
     const ar = g.cases.find((x) => x.name === 'archer-arrow');
-    if (!ar || !ar.out.some((s) => s.units.some((u) => (u.evt ?? []).some((e) => e[0] === 'ar' && e[4] === '0000000000001840')))) throw new Error('archer-arrow 施法事件缺失（dmg=6 bitHex）');
+    if (!ar || !ar.out.some((s) => s.units.some((u) => (u.fx ?? []).some((f) => f[0] === 'arrow' && f[4] && f[4][4] === '0000000000001840')))) throw new Error('archer-arrow 施法 fx 缺失（o[4] dmg=6 bitHex）');
     const kiteMv = { 'mage-fireball': 0.6, 'kite-deadzone': 0.8 };
     for (const [nm, mul] of Object.entries(kiteMv)) {
       const c = g.cases.find((x) => x.name === nm);
@@ -1585,7 +1586,7 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
     const dslayC = g.cases.find((x) => x.name === 'dragon-slain');
     if (!dslayC || dslayC.post.statDragons !== 1) throw new Error('dragon-slain 屠龙计数缺失');
     const uriseC = g.cases.find((x) => x.name === 'undead-rise');
-    if (!uriseC || !uriseC.out.some((s) => s.units.some((u) => (u.evt ?? []).some((e) => e[0] === 'rise')))) throw new Error('undead-rise 起尸缺失');
+    if (!uriseC || uriseC.final.length !== 3 || !uriseC.out.some((s) => s.units.some((u) => (u.fx ?? []).some((f) => f[0] === 'spawn')))) throw new Error('undead-rise 起尸缺失');   // M-U7t：'rise' 桩事件消亡——spawn 骷髅签名（final 2→3 + fx 'spawn'）
     const breathC = g.cases.find((x) => x.name === 'dragon-breath');
     if (!breathC || !breathC.out.some((s) => s.fireSet.length > 0 && s.fireDiff.length > 0)) throw new Error('dragon-breath 火种缺失');
     const witC = g.cases.find((x) => x.name === 'melee-kill-witness');
@@ -1595,7 +1596,7 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
     const md5a = createHash('md5').update(sa).digest('hex');
     const md5b = createHash('md5').update(gl).digest('hex');
     if (md5a !== md5b) throw new Error(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
-    console.log(`units-update 台账完备 (36 场景 + scanReal 28 + neuro/远程/近战/击杀链签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+    console.log(`units-update 台账完备 (52 场景 + scanReal 44 + neuro/远程/近战/击杀链/起尸签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
   } catch (e) {
     unitsUpdateVerifyFail++;
     console.error('units-update 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
