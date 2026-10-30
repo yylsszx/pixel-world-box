@@ -12,8 +12,10 @@
 //   - cam 初值 (128, 80, 4.5)（engine.ts L681）
 // 演示地形（宿主域标注）：noise.ts 地形生成链未译（独立切片）——本壳用确定性 value-noise 占位
 //   （两八度 + 阈值映射 12 地形），仅保证 Unity 可跑验收与渲染链视觉验证，非蓝本不进对账面。
-// sim 接线：engine.tick() 编排层未译（M-U 系列母体编排，独立切片）——本壳暴露 TickDelegate
-//   注入点（已译子域 CivsTick/ArmyTick/EconomyTick 等由宿主装配时按需接线；默认 null = 纯渲染漫游）。
+// sim 接线：engine.tick() 母体编排已译（M-U7c' WbTickOrch——黄金 tick_orch.json 61 槽位对账面全绿）。
+//   本壳默认装配已译子域真调（RebuildCivBuildCounts/Civs/Tech/Economy/Society/Alliance/Directive/Army
+//   ——空世界安全：域函数顶展 w.civs 空表 no-op）；其余槽位留空待后续切片填肉。
+//   TickDelegate 保留为调试/自定义注入点（优先级低于 Orch 默认装配）。
 // ============================================================
 using UnityEngine;
 
@@ -32,8 +34,11 @@ namespace PixelWorldBox.Host
         public SpriteRenderer terrainRenderer;        // 空则 Awake 自动建
         public WbCameraRig rig;
 
-        /// <summary>sim 子域接线点（engine.tick() 编排层未译——M-U7 下一切片；默认纯渲染）</summary>
+        /// <summary>sim 子域接线点（调试/自定义注入；默认走 Orch 装配——见 WireOrch）</summary>
         public System.Action<PixelWorldBox.Wb.WbWorld> TickDelegate;
+
+        /// <summary>tick() 母体编排骨架（M-U7c'；61 调度槽）——NewWorld 时装配</summary>
+        public PixelWorldBox.Wb.WbTickOrch Orch;
 
         public PixelWorldBox.Wb.WbWorld World { get; private set; }
         public PixelWorldBox.Wb.WbRenderState St { get; private set; }
@@ -60,6 +65,24 @@ namespace PixelWorldBox.Host
             for (int i = 0; i < St.owner.Length; i++) St.owner[i] = -1;
             GenDemoTerrain();
             _frame = PixelWorldBox.Wb.WbTerrainFull.Bake(St);
+            WireOrch();
+        }
+
+        /// <summary>
+        /// 编排骨架装配（M-U7c'）：已译子域真调，未译槽位留空（no-op）。
+        /// 空世界安全：域函数顶层遍历 w.civs/w.armies 空表 → no-op（demo 无文明）。
+        /// </summary>
+        void WireOrch()
+        {
+            Orch = new PixelWorldBox.Wb.WbTickOrch { w = World };
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.REBUILD_CIV_BUILD_COUNTS] = () => PixelWorldBox.Wb.WbCivSim.RebuildCivBuildCounts(World);
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.CIVS] = () => PixelWorldBox.Wb.WbCivSim.CivsTick(World);
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.TECH] = () => PixelWorldBox.Wb.WbCivSim.TechTick(World);
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.ECONOMY] = () => PixelWorldBox.Wb.WbCivSim.EconomyTick(World);
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.SOCIETY] = () => PixelWorldBox.Wb.WbCivSim.SocietyTick(World);
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.ALLIANCE] = () => PixelWorldBox.Wb.WbCivSim.AllianceTick(World);
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.DIRECTIVE] = () => PixelWorldBox.Wb.WbCivSim.DirectiveTick(World);
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.ARMY] = () => PixelWorldBox.Wb.WbCivSim.ArmyTick(World);
         }
 
         void EnsureScene()
@@ -114,7 +137,9 @@ namespace PixelWorldBox.Host
 
         void TickHost()
         {
-            if (TickDelegate != null) TickDelegate(World);
+            // 编排骨架优先（M-U7c' 装配）；TickDelegate 为调试注入点
+            if (Orch != null) Orch.Tick();
+            else if (TickDelegate != null) TickDelegate(World);
         }
 
         void UploadFrame()

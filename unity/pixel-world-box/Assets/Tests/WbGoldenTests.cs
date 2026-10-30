@@ -5004,5 +5004,94 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             Assert.Throws<InvalidOperationException>(
                 () => cv2.PlayOp(new WbDrawOp { o = "arc", a = new double[0], s = null }));
         }
+
+        // ==================== Test25：tick 母体编排 WbTickOrch（M-U7c'） ====================
+        // 对账面 = 61 调度点触发序列（黄金 tick_orch.json ledger 3100 行 codes 逐位）+
+        // seasonUsed（nature.season getter 同构）+ yearFHex（f64 小端位型——JS DataView LE
+        // 与 BitConverter 同端序，IEEE754 双精度累加位型跨语言一致）+ phoenixLenMax +
+        // overlayModeConst。panicNoteCdPre 为桩域分歧非对账面（真实引擎 panic 系统写值
+        // vs 骨架恒 0——黄金仅记录）。
+        private static Newtonsoft.Json.Linq.JObject LoadOrch()
+        {
+            string[] candidates =
+            {
+                "Assets/StreamingAssets/WbGolden/tick_orch.json",
+                System.IO.Path.Combine(NUnit.Framework.TestContext.CurrentContext.TestDirectory, "Assets/StreamingAssets/WbGolden/tick_orch.json"),
+                System.IO.Path.Combine(System.IO.Directory.GetParent("Assets").FullName, "Assets/StreamingAssets/WbGolden/tick_orch.json"),
+            };
+            string path = candidates[0];
+            foreach (var c in candidates) if (System.IO.File.Exists(c)) { path = c; break; }
+            Assert.IsTrue(System.IO.File.Exists(path), "golden json not found: tick_orch.json");
+            return Newtonsoft.Json.JsonConvert.DeserializeObject<Newtonsoft.Json.Linq.JObject>(System.IO.File.ReadAllText(path));
+        }
+
+        /// double → 8 字节小端 hex（gen-tick-orch f64hex 同构：DataView LE）
+        private static string F64HexLe(double v)
+        {
+            long bits = System.BitConverter.DoubleToInt64Bits(v);
+            var sb = new System.Text.StringBuilder(16);
+            for (int i = 0; i < 8; i++) sb.Append(((byte)(bits >> (i * 8))).ToString("x2"));
+            return sb.ToString();
+        }
+
+        [Test]
+        public void Test25_TickOrch_Golden()
+        {
+            var golden = LoadOrch();
+            var meta = (Newtonsoft.Json.Linq.JObject)golden["meta"];
+            var audits = (Newtonsoft.Json.Linq.JObject)golden["audits"];
+            var ledger = (Newtonsoft.Json.Linq.JArray)golden["ledger"];
+            int ticks = meta["ticks"].Value<int>();
+            Assert.AreEqual(3100, ticks, "meta.ticks");
+            Assert.AreEqual(40, meta["yearTicks"].Value<int>(), "meta.yearTicks（YEAR_TICKS=40）");
+            Assert.AreEqual(2, meta["seasonYears"].Value<int>(), "meta.seasonYears（SEASON_YEARS=2）");
+
+            // manifest ↔ C# SlotNames 逐位（61 槽位命名+序 = NUnit 对账锚）
+            var manifest = (Newtonsoft.Json.Linq.JArray)meta["manifest"];
+            Assert.AreEqual(WbTickOrch.SlotNames.Length, manifest.Count, "槽位数 61");
+            for (int i = 0; i < manifest.Count; i++)
+                Assert.AreEqual(manifest[i].Value<string>(), WbTickOrch.SlotNames[i], $"SlotNames[{i}]");
+
+            // 装配：记录器注入全部槽位（深度守卫协议——槽位纯委托无内部再派发）
+            var w = new WbWorld();
+            var orch = new WbTickOrch { w = w };
+            var led = new System.Collections.Generic.List<int>();
+            for (int i = 0; i < WbTickOrch.SlotNames.Length; i++)
+            {
+                int slot = i;
+                orch.D[i] = () => led.Add(slot);
+            }
+            // 黄金前提回放：laws.seasons=true（lich 对账面）+ overlayMode=黄金常量
+            Assert.IsTrue(w.laws.seasons, "laws.seasons 黄金前提");
+            w.overlayMode = audits["overlayModeConst"].Value<string>();
+            w.overlayDirty = false;
+
+            var seasonReplay = new System.Collections.Generic.List<int>(ticks);
+            var yearFHexReplay = new System.Collections.Generic.List<string>(ticks);
+            for (int t = 1; t <= ticks; t++)
+            {
+                led.Clear();
+                orch.Tick();
+                Assert.AreEqual(ledger[t - 1].Value<string>(), string.Join(",", led), $"tick {t} 调度序列");
+                seasonReplay.Add(w.NatureSeason());
+                yearFHexReplay.Add(F64HexLe(w.yearF));
+            }
+
+            // audits：seasonUsed + yearFHex 逐位
+            var seasonUsed = (Newtonsoft.Json.Linq.JArray)audits["seasonUsed"];
+            var yearFHex = (Newtonsoft.Json.Linq.JArray)audits["yearFHex"];
+            for (int t = 0; t < ticks; t++)
+            {
+                Assert.AreEqual(seasonUsed[t].Value<int>(), seasonReplay[t], $"seasonUsed @tick {t + 1}");
+                Assert.AreEqual(yearFHex[t].Value<string>(), yearFHexReplay[t], $"yearFHex @tick {t + 1}");
+            }
+            // phoenix 窗口恒假实证 + overlay 常量 + density 门未触发（mode='none'）
+            Assert.AreEqual(0, audits["phoenixLenMax"].Value<int>(), "phoenixLenMax");
+            Assert.AreEqual(0, w.phoenixAshes.Count, "phoenixAshes 空窗");
+            Assert.AreEqual("none", w.overlayMode, "overlayMode 常量");
+            Assert.IsFalse(w.overlayDirty, "overlayDirty（density 门未开）");
+            // panicNoteCd 骨架域恒 0（黄金 panicNoteCdPre 桩域分歧仅记录——非对账面）
+            Assert.AreEqual(0, w.panicNoteCd, "panicNoteCd 骨架域");
+        }
     }
 }

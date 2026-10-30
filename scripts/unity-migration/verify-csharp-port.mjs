@@ -1282,6 +1282,52 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   }
 }
 
+// 段 26：M-U7c' tick 母体编排双链（orch-transcript 镜像 3100 行 ledger 逐位 + gen-tick-orch det 复跑 + 双写 md5 + manifest 槽位完备）
+{
+  const { execFileSync } = await import('node:child_process');
+  const { createHash } = await import('node:crypto');
+  var orchVerifyFail = 0;
+  try {
+    execFileSync('node', [new URL('./orch-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'] });
+    console.log('orch 黄金回放 (orch-transcript 镜像 vs tick_orch.json): PASS (3100 tick ledger 逐位 + seasonUsed + yearFHex(LE) + phoenix/overlay 审计)');
+  } catch (e) {
+    orchVerifyFail++;
+    console.error('orch 黄金回放 (orch-transcript 镜像 vs tick_orch.json): FAIL');
+    console.error(String(e.stdout ?? '').split('\n').slice(0, 10).join('\n'));
+  }
+  try {
+    const goldenPath = new URL('./golden/tick_orch.json', import.meta.url).pathname;
+    const h0 = createHash('md5').update(await (await import('node:fs')).promises.readFile(goldenPath)).digest('hex');
+    execFileSync('node', [new URL('./gen-tick-orch.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const h1 = createHash('md5').update(await (await import('node:fs')).promises.readFile(goldenPath)).digest('hex');
+    if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
+    console.log('orch gen det 复跑 (gen-tick-orch): PASS (3100 tick × 61 调度点 det 字节级)');
+  } catch (e) {
+    orchVerifyFail++;
+    console.error('orch gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+  try {
+    const { readFileSync } = await import('node:fs');
+    const g = JSON.parse(readFileSync(new URL('./golden/tick_orch.json', import.meta.url), 'utf8'));
+    if (!Array.isArray(g.meta.manifest) || g.meta.manifest.length !== 61) throw new Error('manifest 槽位数 ≠ 61: ' + (g.meta.manifest?.length ?? 'missing'));
+    if (g.ledger.length !== g.meta.ticks) throw new Error(`ledger 行数 ${g.ledger.length} ≠ meta.ticks ${g.meta.ticks}`);
+    // 双写 md5（golden/ ↔ StreamingAssets/WbGolden/）
+    const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/tick_orch.json', import.meta.url));
+    const gl = readFileSync(new URL('./golden/tick_orch.json', import.meta.url));
+    const md5a = createHash('md5').update(sa).digest('hex');
+    const md5b = createHash('md5').update(gl).digest('hex');
+    if (md5a !== md5b) throw new Error(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
+    // phoenixAshTick 零触发是协议（窗口恒假实证）；其余 60 槽位必须全窗触发
+    const fired = new Set(g.ledger.join(',').split(',').map(Number));
+    if (fired.has(46)) throw new Error('phoenixAshTick 意外触发（协议=窗口恒假）');
+    if (fired.size !== 60) throw new Error('触发槽位数 ≠ 60: ' + fired.size);
+    console.log(`orch 台账完备 (manifest 61 槽 + ledger ${g.ledger.length} 行 + 双写 md5 ${md5b.slice(0, 8)} 一致 + 覆盖 60/61): PASS`);
+  } catch (e) {
+    orchVerifyFail++;
+    console.error('orch 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
 // 段 25：M-U7 整合 a 宿主播放器语义面完备校验（WbHostCanvas.WbCssColor 三形态覆盖域 ↔ 黄金 475 样式串全量）
 // 逻辑：九渲染黄金（render*/overlay/minimap）op 流的全部 s[0] 样式串逐个校验形态 ∈ {#rrggbb, rgb(…), rgba(…)}；
 //   drawImage op 的 s[0] srcTag ∈ {terrain, overlay} 且 s[1] alpha ∈ [0,1]——证明 C# 解析器覆盖全部实际形态
@@ -1318,6 +1364,6 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   }
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0;
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);

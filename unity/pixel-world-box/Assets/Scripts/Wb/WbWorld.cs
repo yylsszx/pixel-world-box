@@ -238,6 +238,7 @@ namespace PixelWorldBox.Wb
         public bool supplyWarned;         // 补给告警已发（一次性纪事）
         public int? reinforced;           // 增援调度次数（undefined 语义 null）
         public long? battleSince;         // 会战开始 tick（落幕纪事 >50 门；undefined 语义 null）
+        public double lax, lay;           // 军旗插值快照（engine tick L2509-2511 a.lax=a.x/a.lay=a.y —— M-U7c' 编排面；字段只加）
     }
 
     /// 尸体 —— engine addCorpse L2871（decalsTick 老化宿主侧，M-U3g 只落 push+cap）
@@ -493,6 +494,8 @@ namespace PixelWorldBox.Wb
         public int tickCount;
         public double yearF;             // 黄金驱动不跑 tick() → 恒 0（夹具确认）
         public int statCivsFallen;
+        public int panicNoteCd;          // engine panicNoteCd（tick L2525 递减；panicTick 域写入 —— M-U7c' 编排面；字段只加）
+        public List<object> phoenixAshes = new List<object>(); // engine phoenixAshes（tick L2600 空窗恒假实证；凤昮灰烬条目宿主域后续定形 —— M-U7c'；字段只加）
 
         // ---------------- 基础工具（engine.ts 模块级函数） ----------------
         /// engine L34 pairKey

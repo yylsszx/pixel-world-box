@@ -401,5 +401,7 @@ namespace PixelWorldBox.Wb
         public const int NW_STANCE = 256;
         public const int NW_FBC = 576;
         public const int NW_FRL = 768;
+        // 节律（constants.ts L9 —— M-U7c' tick 母体编排；place! 序尾追加）
+        public const int YEAR_TICKS = 40;
     }
 }
