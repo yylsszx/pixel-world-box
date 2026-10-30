@@ -8,6 +8,10 @@
 //   （terrain 之上，同 y 翻转协议）；St.civs 引用同步 + St.terrainAt 相机中心 tile 直灌（黄金单 tile
 //   协议同构）+ St.frameCount 逐帧推进（sun/恐慌闪烁周期）。演示单位为宿主占位（退役条件 =
 //   spawnUnit 宿主接线落位〔updateUnit 切片随件〕）。
+//   M-U7j 性能域：地形层脏瓦片增量机制（engine.ts flushDirty 域机械翻译 = WbFrameFlush）——
+//   持久缓冲 + dirty Set 早退门（L14017）+ SetPixels32 脏盒部分上传（putImageData 脏矩形 L14286
+//   同构）+ tick 后 St 渲染面差分标脏桥（蓝本 mutation 位点内联 markDirty 的 C# 分体桥）。
+//   旧版每帧全烘 2,621,440 px + 10MB 重分配上传（性能域欠账）——净帧零烘零上传。
 // 蓝本锚：
 //   - TICK_MS = 66（constants.ts L8，~15tps）
 //   - frame() 主循环：acc 累计 + 逐 tick 让出 + 30 步硬上限（engine.ts L2708-2732 机械对齐；
@@ -22,6 +26,7 @@
 //   ——空世界安全：域函数顶展 w.civs 空表 no-op）；其余槽位留空待后续切片填肉。
 //   TickDelegate 保留为调试/自定义注入点（优先级低于 Orch 默认装配）。
 // ============================================================
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace PixelWorldBox.Host
@@ -54,7 +59,13 @@ namespace PixelWorldBox.Host
         Texture2D _tex;
         Texture2D _unitTex;
         float _acc;
-        byte[] _frame;                                // TerrainFull 输出复用缓冲
+        byte[] _frame;                                // 地形层持久缓冲（M-U7j：分配一次，flush 就地更新）
+        readonly HashSet<int> _dirty = new HashSet<int>();   // 脏瓦片集（engine.ts L708 dirty 语义）
+        // St 渲染面差分快照（M-U7j 宿主桥：域函数为纯对账面不带 markDirty 记账 → tick 后差分标脏）
+        byte[] _shTerrain, _shVariant, _shWaterTier, _shGlacier;
+        int[] _shRoad, _shOwner;
+        double[] _shRadiate;
+        int _shSeason = int.MinValue; double _shAsh = double.NaN; long _shCivSig = long.MinValue;
         PixelWorldBox.Wb.WbHostCanvas _canvas;        // 单位层持久栅格（canvas 语义：clear 增量机同构）
         int _demoSeq;
 
@@ -75,7 +86,10 @@ namespace PixelWorldBox.Host
             };
             for (int i = 0; i < St.owner.Length; i++) St.owner[i] = -1;
             ApplyWorldGen();
-            _frame = PixelWorldBox.Wb.WbTerrainFull.Bake(St);
+            _frame = new byte[PixelWorldBox.Wb.WbTerrainFull.PW * PixelWorldBox.Wb.WbTerrainFull.PH * 4];   // M-U7j：持久缓冲分配一次
+            MarkAllTerrainDirty();                    // engine.ts L950 generate 全量失效
+            FlushTerrain();                           // 全量首烘（L951 generate→flushDirty 同构）
+            SnapshotRenderFace();                     // 差分桥基线
             _canvas = null;                           // 新世界 → 单位层栅格重建（clear 机状态随世界）
             SpawnDemoUnits();
             WireOrch();
@@ -228,10 +242,11 @@ namespace PixelWorldBox.Host
                     if (++steps >= MaxStepsPerFrame) { _acc = Mathf.Min(_acc, TickMs - 1); break; }
                 }
             }
-            // 渲染派发（脏标记优化属性能域——M-U7 下一切片；本壳每帧重烘保演示简单）
+            // 渲染派发（M-U7j 脏瓦片增量：engine.ts render L1232 帧首 flushDirty 同构——
+            // 净帧早退零烘零上传；脏帧只烘脏瓦片 + SetPixels32 脏盒部分上传）
             SyncRenderState();
-            _frame = PixelWorldBox.Wb.WbTerrainFull.Bake(St);
-            UploadFrame();
+            SyncTerrainDiffs();
+            FlushTerrain();
             RenderUnits();
         }
 
@@ -242,16 +257,149 @@ namespace PixelWorldBox.Host
             else if (TickDelegate != null) TickDelegate(World);
         }
 
+        /// <summary>全量上传（仅 EnsureScene/NewWorld 一次；运行期走 UploadBox 脏盒）</summary>
         void UploadFrame()
         {
             if (_frame != null) _tex.LoadRawTextureData(_frame);
             _tex.Apply(false);
         }
 
+        // ---------------- 地形层增量 flush（M-U7j：engine.ts flushDirty 域宿主接位） ----------------
+
+        /// <summary>flushDirty 宿主消费（render.ts L1232 帧首同构）：脏帧 → 逐脏瓦片重烘 + 盒上传；净帧零成本</summary>
+        void FlushTerrain()
+        {
+            if (_frame == null) return;
+            var box = PixelWorldBox.Wb.WbFrameFlush.FlushDirty(St, _frame, _dirty);
+            if (box.Any) UploadBox(box);              // putImageData 脏矩形（L14286）↔ SetPixels32
+        }
+
+        /// <summary>蓝本 markDirty 位点显式接线 API（engine.ts L959-967）——未来域切片的等价内联记账入口</summary>
+        public void MarkTileDirty(int i) => PixelWorldBox.Wb.WbFrameFlush.MarkDirty(_dirty, i);
+        public void MarkAllTerrainDirty() => PixelWorldBox.Wb.WbFrameFlush.MarkAllDirty(_dirty);
+
+        /// <summary>SetPixels32 脏盒部分上传（旧版净帧亦全拷 10MB → 仅脏帧盒区域拷贝；行序与
+        /// LoadRawTextureData 同底起——row 0 = 纹理 v0，与既有 y 翻转协议一致）</summary>
+        void UploadBox(PixelWorldBox.Wb.WbFrameFlush.FlushBox b)
+        {
+            if (_tex == null) return;
+            var c32 = new Color32[b.Width * b.Height];
+            for (int r = 0; r < b.Height; r++)
+            {
+                int src = ((b.Y + r) * PixelWorldBox.Wb.WbTerrainFull.PW + b.X) * 4;
+                for (int c = 0; c < b.Width; c++, src += 4)
+                    c32[r * b.Width + c] = new Color32(_frame[src], _frame[src + 1], _frame[src + 2], _frame[src + 3]);
+            }
+            _tex.SetPixels32(b.X, b.Y, b.Width, b.Height, c32);
+            _tex.Apply(false);
+        }
+
+        /// <summary>
+        /// St 渲染面差分标脏桥（M-U7j）：蓝本 mutation 位点在 engine 类内联 markDirty；
+        /// C# 域函数为纯对账面不带渲染记账——宿主在 tick 后对 TerrainBake 消费面
+        /// （terrain/variant/waterTier/glacier/road/owner/radiate + season/ash/civs 混色源）差分，
+        /// 逐变更瓦片 MarkDirty（四邻语义自动覆盖邻读域），全局参变化 MarkAll（L9730 全量先例）。
+        /// 净帧成本 = 7 数组比较（~286KB 读）≈ 全烘的万分之几，无分配。
+        /// </summary>
+        void SyncTerrainDiffs()
+        {
+            if (_shTerrain == null) return;           // NewWorld 前无快照（首烘已全量）
+            DiffBytes(St.terrain, _shTerrain);        // 逐变更瓦片 MarkDirty（部分失效保脏盒最小）
+            DiffBytes(St.variant, _shVariant);
+            DiffBytes(St.waterTier, _shWaterTier);
+            DiffBytes(St.glacier, _shGlacier);
+            DiffInts(St.road, _shRoad);
+            DiffInts(St.owner, _shOwner);
+            DiffDoubles(St.radiate, _shRadiate);
+            // 全局参（季节/火山灰/疆域混色源）→ 全量失效（engine.ts L9730 全量先例）
+            if (St.season != _shSeason || St.ash != _shAsh || CivSig() != _shCivSig)
+                PixelWorldBox.Wb.WbFrameFlush.MarkAllDirty(_dirty);
+            SnapshotRenderFace();                     // 快照前滚（逐瓦片路径已在 Diff 内就地更新）
+        }
+
+        bool DiffBytes(byte[] cur, byte[] sh)
+        {
+            bool ch = false;
+            for (int i = 0; i < cur.Length; i++)
+            {
+                if (cur[i] == sh[i]) continue;
+                PixelWorldBox.Wb.WbFrameFlush.MarkDirty(_dirty, i);   // 四邻标脏（蓝本 markDirty 语义）
+                sh[i] = cur[i]; ch = true;
+            }
+            return ch;
+        }
+
+        bool DiffInts(int[] cur, int[] sh)
+        {
+            bool ch = false;
+            for (int i = 0; i < cur.Length; i++)
+            {
+                if (cur[i] == sh[i]) continue;
+                PixelWorldBox.Wb.WbFrameFlush.MarkDirty(_dirty, i);
+                sh[i] = cur[i]; ch = true;
+            }
+            return ch;
+        }
+
+        bool DiffDoubles(double[] cur, double[] sh)
+        {
+            bool ch = false;
+            for (int i = 0; i < cur.Length; i++)
+            {
+                if (cur[i].Equals(sh[i])) continue;   // NaN 安全（NaN≠NaN 避免永久假脏）
+                PixelWorldBox.Wb.WbFrameFlush.MarkDirty(_dirty, i);
+                sh[i] = cur[i]; ch = true;
+            }
+            return ch;
+        }
+
+        /// <summary>civ 混色源签名（count + color[0..2] + alive）——变化即全量失效（疆域混色全局域）</summary>
+        long CivSig()
+        {
+            long h = 1469598103934665603L;
+            var civs = St.civs;
+            if (civs == null) return h;
+            void Mix(long v) { h = (h ^ v) * 1099511628211L; }
+            Mix(civs.Count);
+            for (int k = 0; k < civs.Count; k++)
+            {
+                var c = civs[k];
+                if (c == null) { Mix(-1); continue; }
+                Mix(c.alive ? 1 : 0);
+                if (c.color != null)
+                {
+                    Mix(c.color[0]);
+                    Mix(c.color.Length > 1 ? c.color[1] : 0);
+                    Mix(c.color.Length > 2 ? c.color[2] : 0);
+                }
+            }
+            return h;
+        }
+
+        /// <summary>快照 St 渲染消费面（差分桥基准态；逐瓦片路径已在 Diff 内就地前滚）</summary>
+        void SnapshotRenderFace()
+        {
+            if (_shTerrain == null)
+            {
+                _shTerrain = new byte[St.terrain.Length]; _shVariant = new byte[St.variant.Length];
+                _shWaterTier = new byte[St.waterTier.Length]; _shGlacier = new byte[St.glacier.Length];
+                _shRoad = new int[St.road.Length]; _shOwner = new int[St.owner.Length];
+                _shRadiate = new double[St.radiate.Length];
+            }
+            System.Array.Copy(St.terrain, _shTerrain, _shTerrain.Length);
+            System.Array.Copy(St.variant, _shVariant, _shVariant.Length);
+            System.Array.Copy(St.waterTier, _shWaterTier, _shWaterTier.Length);
+            System.Array.Copy(St.glacier, _shGlacier, _shGlacier.Length);
+            System.Array.Copy(St.road, _shRoad, _shRoad.Length);
+            System.Array.Copy(St.owner, _shOwner, _shOwner.Length);
+            System.Array.Copy(St.radiate, _shRadiate, _shRadiate.Length);
+            _shSeason = St.season; _shAsh = St.ash; _shCivSig = CivSig();
+        }
+
         // ---------------- 真地形落位（M-U7g：WbWorldgen 黄金链直灌；蓝本 generate L775-779/L949 同构） ----------------
         void ApplyWorldGen()
         {
-            WbWorldGenResult gen = PixelWorldBox.Wb.WbWorldgen.GenerateWorld(unchecked((int)seed));
+            PixelWorldBox.Wb.WbWorldGenResult gen = PixelWorldBox.Wb.WbWorldgen.GenerateWorld(unchecked((int)seed));
             System.Array.Copy(gen.Terrain, St.terrain, St.terrain.Length);   // L776 this.terrain = gen.terrain
             System.Array.Copy(gen.Variant, St.variant, St.variant.Length);   // L777 this.variant = gen.variant
             // temp/moist（L778-779）渲染域不消费——overlay 温湿图自有黄金链直灌，宿主不暂存
