@@ -53,6 +53,20 @@ namespace PixelWorldBox.Wb
         public const int R_KRAKEN = 25;
         public const int R_SANDWORM = 26;
         public const int R_BASILISK = 27;
+        // —— M-U7f' worldgen 域追加（types.ts R place! 序，值 = 蓝本字面量）——
+        public const int R_WOLF = 7;
+        public const int R_DEER = 10;
+        public const int R_PENGUIN = 11;
+        public const int R_CAMEL = 12;
+        public const int R_SNOWWOLF = 15;
+        public const int R_CHICKEN = 33;
+        public const int R_PIG = 34;
+        public const int R_RABBIT = 35;
+        public const int R_FOX = 36;
+        public const int R_FISH = 37;
+        public const int R_CRAB = 38;
+        public const int R_TURTLE = 39;
+        public const int R_SHARK = 40;
 
         // ---------------- 地形枚举（lib.rs L66-76，constants.ts T） ----------------
         public const byte T_DEEP = 0;

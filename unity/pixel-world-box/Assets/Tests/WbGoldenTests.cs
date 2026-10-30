@@ -5093,5 +5093,85 @@ Assert.AreEqual((ulong)want["rng"].Value<uint>(), A.U64At(WbConstants.OFF_RNGS, 
             // panicNoteCd 骨架域恒 0（黄金 panicNoteCdPre 桩域分歧仅记录——非对账面）
             Assert.AreEqual(0, w.panicNoteCd, "panicNoteCd 骨架域");
         }
+
+        // ============================================================
+        // Test26 — M-U7f' 程序化世界生成黄金（worldgen.json 7 场景）
+        // terrain/variant/temp/moist 四全图场 gzB64 逐字节 + spawnAnimals 位级 + G09 递归重掷语义
+        // ============================================================
+        // 黄金路径回退链（WbSaveRestoreGoldenTests.FindGolden2 类内副本——跨类不可见）
+        private static string FindGolden2Wg(string fileName)
+        {
+            var candidates = new[]
+            {
+                System.IO.Path.Combine("Assets", "StreamingAssets", "WbGolden", fileName),
+                System.IO.Path.Combine("..", "..", "StreamingAssets", "WbGolden", fileName),
+                fileName,
+            };
+            foreach (var p in candidates) if (System.IO.File.Exists(p)) return p;
+            throw new System.IO.FileNotFoundException("黄金文件未找到: " + fileName);
+        }
+        private static byte[] GunzipB64(string b64)
+        {
+            byte[] raw = Convert.FromBase64String(b64);
+            using var ms = new System.IO.MemoryStream(raw);
+            using var gz = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionMode.Decompress);
+            using var outMs = new System.IO.MemoryStream();
+            gz.CopyTo(outMs);
+            return outMs.ToArray();
+        }
+        private static WbWorldGenParams WgParams(Newtonsoft.Json.Linq.JToken p)
+        {
+            if (p == null || p.Type == Newtonsoft.Json.Linq.JTokenType.Null) return null;
+            var q = new WbWorldGenParams();
+            if (p["seaBias"] != null && p["seaBias"].Type != Newtonsoft.Json.Linq.JTokenType.Null) q.SeaBias = p["seaBias"].Value<double>();
+            if (p["tempBias"] != null && p["tempBias"].Type != Newtonsoft.Json.Linq.JTokenType.Null) q.TempBias = p["tempBias"].Value<double>();
+            if (p["moistBias"] != null && p["moistBias"].Type != Newtonsoft.Json.Linq.JTokenType.Null) q.MoistBias = p["moistBias"].Value<double>();
+            if (p["warp"] != null && p["warp"].Type != Newtonsoft.Json.Linq.JTokenType.Null) q.Warp = p["warp"].Value<double>();
+            if (p["falloff"] != null && p["falloff"].Type != Newtonsoft.Json.Linq.JTokenType.Null) q.Falloff = p["falloff"].Value<double>();
+            if (p["lakes"] != null && p["lakes"].Type != Newtonsoft.Json.Linq.JTokenType.Null) q.Lakes = p["lakes"].Value<int>();
+            return q;
+        }
+
+        [Test]
+        public void Test26_Worldgen_Golden()
+        {
+            var gold = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(FindGolden2Wg("worldgen.json")));
+            var scens = (Newtonsoft.Json.Linq.JArray)gold["scens"];
+            Assert.AreEqual(7, scens.Count, "场景数 7");
+            int scenN = 0;
+            foreach (var sc in scens)
+            {
+                string name = sc["name"].ToString();
+                int seed = sc["seed"].Value<int>();
+                var parms = WgParams(sc["params"]);
+                WbWorldGenResult res = WbWorldgen.GenerateWorld(seed, parms);
+                // 四全图场逐字节（gzB64 解码 → SequenceEqual）
+                byte[] gt = GunzipB64(sc["terrainGzB64"].ToString());
+                byte[] gv = GunzipB64(sc["variantGzB64"].ToString());
+                byte[] gtp = GunzipB64(sc["tempGzB64"].ToString());
+                byte[] gm = GunzipB64(sc["moistGzB64"].ToString());
+                Assert.AreEqual(gt.Length, res.Terrain.Length, $"{name} terrain 长度");
+                Assert.IsTrue(gt.AsSpan().SequenceEqual(res.Terrain), $"{name} terrain 逐字节");
+                Assert.IsTrue(gv.AsSpan().SequenceEqual(res.Variant), $"{name} variant 逐字节");
+                Assert.IsTrue(gtp.AsSpan().SequenceEqual(res.Temp), $"{name} temp 逐字节");
+                Assert.IsTrue(gm.AsSpan().SequenceEqual(res.Moist), $"{name} moist 逐字节");
+                // spawnAnimals 位级（race 精确 + x/y double 全精度）
+                var gAnimals = (Newtonsoft.Json.Linq.JArray)sc["spawnAnimals"];
+                Assert.AreEqual(gAnimals.Count, res.SpawnAnimals.Count, $"{name} animals 数");
+                for (int i = 0; i < gAnimals.Count; i++)
+                {
+                    var g = gAnimals[i];
+                    var a = res.SpawnAnimals[i];
+                    Assert.AreEqual(g["race"].Value<int>(), a.Race, $"{name} animal[{i}].race");
+                    Assert.AreEqual(g["x"].Value<double>(), a.X, $"{name} animal[{i}].x");
+                    Assert.AreEqual(g["y"].Value<double>(), a.Y, $"{name} animal[{i}].y");
+                }
+                // G09 递归重掷语义（吸收性等价元信息——recursed=true 时 finalSeed 侧证）
+                if (name == "G09_recursion_allsea")
+                    Assert.IsTrue(sc["recursed"].Value<bool>(), "G09 递归重掷触发（吸收性等价）");
+                scenN++;
+            }
+            Assert.AreEqual(7, scenN, "回放场景数");
+        }
     }
 }
