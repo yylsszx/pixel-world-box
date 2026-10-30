@@ -131,6 +131,7 @@ const U = (o) => ({
   caravan: o.caravan ?? 0,   // M-U7m L3641 商队门（TS Unit.caravan ?? 0 语义）
   wep: o.wep === undefined ? null : o.wep,   // M-U7s 枪械/能量枪域（undefined 恒 null 非触发单位）
   dmg: o.dmg === undefined ? null : o.dmg,   // M-U7n 战斗域 myPow/foePow（TS undefined→null；snapU 条件对账）
+  speed: o.speed === undefined ? null : o.speed,   // M-U7w moveUnit 真执行消费 u.speed（undefined→null——mkTsUnit 同协议；真实 spawn 单位 speed 恒定义）
   kills: o.kills ?? 0,       // M-U7n F_FLIGHT[8]/F_STANCE[11]（TS Unit.kills spawn 初值 0）
   civ: o.civ ?? -1, job: o.job ?? 0, flip: !!o.flip,
   king: o.king ?? 0, breath: o.breath === undefined ? null : o.breath, fam: o.fam === undefined ? null : o.fam,   // M-U7q 击杀链（弑君/龙息/家族谱系——undefined 恒 null 非触发单位）
@@ -167,6 +168,9 @@ const mkTsUnit = (spec) => {
   if (spec.breath !== null && spec.breath !== undefined) u.breath = spec.breath;         // M-U7q 龙息域 L3973（undefined→NaN 门永不触达——非龙单位天然）
   if (spec.fam !== null && spec.fam !== undefined) u.fam = spec.fam;                     // M-U7q 家族战功 L3925（case2 谱系域镜像）
   if (spec.wep !== null && spec.wep !== undefined) u.wep = spec.wep;                     // M-U7s 枪械/能量枪域（L3755 gun / L3756 beam——wep 字符串键）
+  // M-U7w moveUnit 真执行消费 u.speed——夹具补真实缺省（真实 spawn L1343 speed: def.speed×乘子——夹具无基因/科技/职业乘子 → RACES 基准；
+  //  S21 dmg 显式先例同型：真实单位 speed 恒定义，undefined 是夹具缺陷。显式 spec.speed 优先——S37/S40/S42 speed:1）
+  u.speed = (spec.speed !== null && spec.speed !== undefined) ? spec.speed : RACES[spec.race].speed;
   u.name = spec.name ?? '';                                              // M-U7t：uniqueName L1526 遍历消费 u.name（spawn 骷髅路径首触——fixture 空名面：nm===base false + nm.length>bl false 计数 0 同构；字段只加回显）
   return u;
 };
@@ -241,7 +245,10 @@ function makeStubEng(env, cap) {
       cap.scan.push([a.id, b.id, v ? 1 : 0]);
       return v;
     };
-    eng.moveUnit = (u2, mul) => cap.evt.push(['mv', u2.id, mul]);              // 三逃离门 moveUnit stub（'mv' 事件——执行语义属 M-U3h 切片）
+    // M-U7w：moveUnit 遮蔽删除（原型真实现自动可达——L5813-5889 全分支：flying/aquatic/sandswim/搁浅自救/城墙阻挡/登船）——
+    //  依赖面：eng.road（L5826 道路 1.45 判定——零初始化恒门败零掷）+ eng.nature.season（L5824 coldBlood 判定——0 无冬缓滞零掷）
+    //  + 原型 maybeBoardForWar L5739（阻断分支——本链场景单位全为野怪/非作战职业 → isCiv/job 早退零掷）
+    //  'mv' 桩事件消亡——移动执行语义以 u.x/u.y 位串终态进 snapU 黄金对账（M-U3h 移动切片 19 场景 fn=="move" 直调通道姊妹证）
   } else {
     eng.isEnemyFast = () => { throw new Error('SCAN_SENTINEL: buckets should be empty'); };
   }
@@ -259,6 +266,8 @@ function makeStubEng(env, cap) {
   eng.updateUnitPostJS = (u) => { cap.evt.push(['post', u.id]); };
   // —— M-U7q 击杀链·龙息域真实现依赖面（zombify/witnessDeath/addGrudge/onKingDeath/onWarKill/dragonBreath/ignite 走原型真实现；置尾——scanReal rel 建图后 relInit 再注入）——
   eng.building = new Uint8Array(W * H);                          // L782 building: Uint8Array（ignite L1075 建筑门——fixtures 无建筑恒 0）
+  eng.road = new Uint8Array(W * H);                              // M-U7w：L5826 道路行军 1.45 判定消费面（零初始化 = 无路——门恒败零掷；env.roadInit 夹具留扩展位）
+  eng.nature = { season: env.season ?? 0 };                      // M-U7w：L5824 coldBlood×season===3 冬缓滞消费面（0 = 春——门恒败零掷；env.season 场景注入留扩展位）
   eng.wildCount = new Map();                                     // L1083 bumpWild 账本（zombify +1 真实现；无 dump 面——C# BumpWild 同构不译对账）
   eng.statDragonsSlain = 0;                                      // L229 屠龙计数（L3940 ++ 写点——post dump 对账面）
   eng.rel = new Map(); eng.tension = new Map(); eng.warShame = new Map();   // L1186-1188 弑君之仇三账本（relInit env 注入）
@@ -418,7 +427,7 @@ const CASES = [
       U({ race: 'wolf', x: 90.5, y: 70.5, hp: 100, maxHp: 100, food: 75, civ: -1 }),    // u2：75 拍耗尽 → 1.4/拍断粮
       U({ race: 'sheep', x: 100.5, y: 70.5, hp: 99.4, maxHp: 100, civ: -1 }),           // u3：非 civ 非 troll 无再生（gearBonus 不调）
     ],
-    steps: 90,
+    steps: 84,   // M-U7w：90→84 R3 黄金体积回折（1006.5KB>1MB → -6 步 ≈-17.6KB；本场景黄金对账型无 probe——断粮 75 拍后 9 拍 1.4/拍观察语义不损）
   },
   // S5 whitewalker：寒霜灵气多分支（0.08 门 + 坐标 2 抽 + FOREST 0.4/水面 0.5/踏冰 0.6 条件抽）
   //    种子寻优（上方 findWwSeed）：FOREST 0.4 门 + 踏冰 0.6 门 + 火格灭火三命中
@@ -891,12 +900,12 @@ const CASES = [
   {
     name: 'fire-rush', terrain: 'plains', seed: meleeProbe({
       label: 'fire-rush', steps: 1, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } }, fireInit: { '42,40': 5 } },
-      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
-      want: (cap, us) => cap.evt.some((e) => e[0] === 'mv' && e[2] === 1.2) && !cap.evt.some((e) => e[0] === 'tail' || e[0] === 'post'),
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0, speed: 1 })],   // M-U7w：speed 显式（真执行 moveUnit 消费 u.speed——mkTsUnit 不取 RACES 缺省，S21 dmg 先例同型）
+      want: (cap, us) => us[0].x > 40.5 && us[0].tx === 42.5 && !cap.evt.some((e) => e[0] === 'tail' || e[0] === 'post'),   // M-U7w：'mv' 桩事件消亡——真执行位移签名（x 向火心 42.5 推进 + tx=火心 + 救灾提前 return）
     }),
     env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
       civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } }, fireInit: { '42,40': 5 } },
-    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0, speed: 1 })],   // M-U7w：主 env 同步 speed（probe/主同源——S47 pristine 先例）
     steps: 1,
   },
   // S38 fire-out：贴身火 1.0 格（<1.7²）→ extinguishFire（fire 清/fireSet 删/firesOut 1/water fx/cd=max(0,10)）→ 节流门关（firesOut<3）
@@ -933,14 +942,14 @@ const CASES = [
         civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } },
         fireInit: { '44,40': 5, '45,40': 5, '46,40': 5, '44,41': 5, '45,41': 5, '46,41': 5, '44,42': 5, '45,42': 5, '46,42': 5 },
         ownerInit: { '10284': 0, '10285': 0, '10286': 0, '10540': 0, '10541': 0, '10542': 0, '10796': 0, '10797': 0, '10798': 0 } },
-      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
-      want: (cap, us, eng) => cap.evt.some((e) => e[0] === 'mv' && e[2] === 1.2) && eng.fireSet.size === 9,
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0, speed: 1 })],   // M-U7w：speed 显式（同 S37）
+      want: (cap, us, eng) => us[0].x > 40.5 && eng.fireSet.size === 9,   // M-U7w：真执行位移签名（向 9 火格质心推进）+ bigFire>8 门
     }),
     env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
       civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } },
       fireInit: { '44,40': 5, '45,40': 5, '46,40': 5, '44,41': 5, '45,41': 5, '46,41': 5, '44,42': 5, '45,42': 5, '46,42': 5 },
       ownerInit: { '10284': 0, '10285': 0, '10286': 0, '10540': 0, '10541': 0, '10542': 0, '10796': 0, '10797': 0, '10798': 0 } },
-    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0, speed: 1 })],   // M-U7w：主 env 同步 speed
     steps: 1,
   },
   // S41 idle-fallthrough：无火无损害 → 防火门 fireSet 空短路零掷 → 建筑师/路人 job 短路 → war 假 → job 链假 → 0.02 门败
@@ -949,7 +958,7 @@ const CASES = [
     name: 'idle-fallthrough', terrain: 'plains', seed: meleeProbe({
       label: 'idle-fallthrough', steps: 1, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } } },
       units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
-      want: (cap, us) => cap.evt.some((e) => e[0] === 'tail') && cap.evt.some((e) => e[0] === 'post') && !cap.evt.some((e) => e[0] === 'mv'),
+      want: (cap, us) => cap.evt.some((e) => e[0] === 'tail') && cap.evt.some((e) => e[0] === 'post') && us[0].x === 40.5 && us[0].y === 40.5,   // M-U7w：!mv 恒真化——零位移签名（tx=ty=原地 d<0.05 早退零掷）语义等强
     }),
     env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
       civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } } },
@@ -961,13 +970,13 @@ const CASES = [
     name: 'architect-commute', terrain: 'plains', seed: meleeProbe({
       label: 'architect-commute', steps: 1, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } },
         bldInit: [[10286, 1, 0]], dmgInit: { '10286': 40 } },
-      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 4, cd: 0 })],
-      want: (cap, us, eng) => cap.evt.some((e) => e[0] === 'mv' && e[2] === 1.15) && !cap.evt.some((e) => e[0] === 'tail' || e[0] === 'post')
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 4, cd: 0, speed: 1 })],   // M-U7w：speed 显式（同 S37）
+      want: (cap, us, eng) => us[0].x > 40.5 && !cap.evt.some((e) => e[0] === 'tail' || e[0] === 'post')   // M-U7w：真执行位移签名（向工地 46.5 推进）
         && us[0].tx === 46.5 && eng.damagedSet.size === 1,
     }),
     env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
       civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } }, bldInit: [[10286, 1, 0]], dmgInit: { '10286': 40 } },
-    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 4, cd: 0 })],
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 4, cd: 0, speed: 1 })],   // M-U7w：主 env 同步 speed
     steps: 1,
   },
   // S43 architect-repair：受损宅 1.0 格（<1.8²）→ cd=16 + atk=10 + repairBuilding(12×repair=12)（40→52<70 done=false → hammer fx 无纪事）

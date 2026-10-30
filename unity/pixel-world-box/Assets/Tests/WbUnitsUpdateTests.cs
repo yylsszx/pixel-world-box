@@ -4,7 +4,7 @@
 // 蓝本：engine.ts updateUnit L3455-3590 批次一 + 扫描域 L3592-3669 批次二（isEnemyFast/isEnemy + 3×3 桶环 +
 //       血仇加权 + 恐慌传染 + 三逃离门）+ 无敌壳（C# WbBailRelay.UpdateUnit）
 // 协议：bitHex f64 位精确（禁 epsilon）/ 掷值链 pre→post rngA 态游走重建 / evt·fx·terr·scan 事件流捕获 /
-//       muts 注入回放 / final+rngTail 终态对账 / 影子接缝十件置换（gen makeStubEng 同构：批次一八件 + M-U7m MoveUnitHook/IsEnemyFastHook）
+//       muts 注入回放 / final+rngTail 终态对账 / 影子接缝九件置换（gen makeStubEng 同构：批次一八件 + M-U7m IsEnemyFastHook；M-U7w MoveUnitHook 置换删除——真实现直通）
 // 黄金：Assets/StreamingAssets/WbGolden/units_update.json（scripts/unity-migration/golden/units_update.json 双写）
 // ============================================================================
 using NUnit.Framework;
@@ -28,7 +28,7 @@ namespace PixelWorldBox.Wb.Tests
         private System.Action<WbWorld, double, double, bool, bool> _acp0;
         private System.Action<WbWorld, double, double, bool> _abl0;                     // M-U7q：+big（addBlood 默认真实现清偿）
         private System.Action<WbWorld, int> _abt0;
-        private System.Action<WbWorld, WbU, double> _mv0;                                // M-U7m 三逃离门 moveUnit 接缝
+        private System.Action<WbWorld, WbU, double> _mv0;                                // M-U7m 三逃离门 moveUnit 接缝（M-U7w：备份/恢复保留——Hook 静态态防御；置换点已删）
         private System.Func<WbWorld, WbU, WbU, bool> _isef0;                             // M-U7m isEnemyFast 接缝
 
         private System.Collections.Generic.List<object[]> _evt;
@@ -233,7 +233,8 @@ namespace PixelWorldBox.Wb.Tests
             if (scanReal)
             {
                 w.RebuildBuckets();   // gen 布桶同构（units 序 push；L3100-3101 懒清空世代戳首代全清等价）
-                WbBailRelay.MoveUnitHook = (ww, uu, mul) => _evt.Add(new object[] { "mv", (double)uu.id, mul });   // 'mv' 事件流
+                // M-U7w：MoveUnitHook 置换删除——'mv' 事件流桩消亡，MoveUnit 真实现直通（gen makeStubEng L244 遮蔽删除同构；
+                //  黄金对账面 = u.x/u.y/tx/ty 位串终态；位移掷值链经 WbBail.MoveUnit L1769-1849 全分支）
                 WbBailRelay.IsEnemyFastHook = (ww, a, b) =>
                 {                                                                                                    // 真实现包装 + 'scan' 调用日志
                     bool v = _isef0(ww, a, b);
@@ -460,6 +461,11 @@ namespace PixelWorldBox.Wb.Tests
             u.caravan = I(s["caravan"]);                                           // M-U7m L3641 商队门
             u.civ = I(s["civ"]); u.jobC = I(s["job"]); u.flip = (bool)s["flip"] ? 1 : 0;
             u.wep = Nul(s["wep"]) ? null : (object)(string)s["wep"];               // M-U7s 枪械/能量枪域（L3755/L3756 wep 字符串键）
+            // M-U7w：moveUnit 真执行消费 u.speed——镜像同 gen mkTsUnit：显式 spec.speed 优先，缺省 = RStats RACES 基准（真实 spawn L1343 def.speed 夹具中性面；
+            //  speedN 镜像同步——CompareSnap speed 位串断言消费面）
+            double defSpd = WbBailRelay.RStats[u.race].speed;
+            u.speed = Nul(s["speed"]) ? defSpd : D(s["speed"]);
+            u.speedN = u.speed;
             u.name = (string)s["name"] ?? "";                                       // M-U7t：uniqueName L1526 遍历消费 u.name（spawn 骷髅路径首触——fixture 空名面同 gen mkTsUnit/mirror mkU；null → "" 同构）
             u.traitName = NS(s["trait"]);
             if (s["king"] != null && (int)s["king"] != 0) u.king = (int)s["king"];   // M-U7q 弑君域（witnessDeath king 分支）

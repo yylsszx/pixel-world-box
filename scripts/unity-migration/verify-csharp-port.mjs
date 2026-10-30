@@ -1505,7 +1505,9 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   const { createHash, } = await import('node:crypto');
   var unitsUpdateVerifyFail = 0;
   try {
-    execFileSync('node', [new URL('./units-update-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
+    // M-U7w：node→bun——moveUnitT 位移路径 Math.hypot 跨 runtime ULP 分歧（bun fdlibm vs node glibc——race7 搁浅自救 1 ULP 实证）；
+    //  黄金链口径 = bun（gen det 段同口径——M-U7t fdlibm bun 漂移定性先例）
+    execFileSync('bun', [new URL('./units-update-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
     console.log('units-update 黄金回放 (units-update-transcript 镜像 vs units_update.json): PASS (55 场景 快照逐位 + evt/fx/terr/scan 事件流 + 逐步 draws + fireSet + final/rngTail)');
   } catch (e) {
     unitsUpdateVerifyFail++;
@@ -1545,13 +1547,16 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
     const scanNonEmpty = scanCases.filter((c) => c.out.reduce((a, s) => a + s.units.reduce((b, u) => b + ((u.scan ?? []).length), 0), 0) > 0);
     if (scanNonEmpty.length < 30) fail('scanReal 非空场景数 < 30（S9-S36 + S51/S52 下限防漏标）');   // peaceful 域 14 场景合法空豁免
     if (g.ep.panicRout !== 0.72) fail('ep.panicRout ≠ 0.72');
-    // M-U7n 神经域结构检查：S14-S17 四场景在册 + mv 事件乘数签名（flight 1.2 / retreat 1.15 / chase 1.25——L3699/L3736/L3964）
-    const neuroMv = { 'flight-flee': 1.2, 'stance-retreat': 1.15, 'stance-chase': 1.25, 'grudge-chase': 1.25 };
-    for (const [nm, mul] of Object.entries(neuroMv)) {
+    // M-U7n 神经域结构检查：S14-S17 四场景在册 + M-U7w 位移签名（'mv' 桩事件消亡——真执行位移：快照 x/y bitHex ≠ spec 初值 bitHex 即位移发生；
+    //  乘数正确性由 probe want 位移签名 + transcript 逐位对账承载——本段保留分支触达哨兵语义）
+    const bHexV = (v) => { const b = new ArrayBuffer(8); new Float64Array(b)[0] = v; return new BigUint64Array(b)[0].toString(16).padStart(16, '0'); };   // gen bitHex 同构（无前缀 16 hex）
+    const neuroMv = ['flight-flee', 'stance-retreat', 'stance-chase', 'grudge-chase'];
+    for (const nm of neuroMv) {
       const c = g.cases.find((x) => x.name === nm);
       if (!c) { fail('neuro 场景缺失 ' + nm); continue; }
-      const mvs = c.out.flatMap((s) => s.units.flatMap((u) => (u.evt ?? []).filter((e) => e[0] === 'mv').map((e) => e[2])));
-      if (!mvs.includes(mul)) fail(nm + ' mv 乘数签名缺失 ' + mul);
+      const u0 = c.units[0];
+      const moved = c.out.some((s) => s.units.some((u) => u.x !== undefined && u.y !== undefined && (u.x !== bHexV(u0.x) || u.y !== bHexV(u0.y))));
+      if (!moved) fail(nm + ' 位移签名缺失（M-U7w 真执行）');
     }
     // M-U7o 远程域结构检查：火球/箭施法签名（M-U7t 纠偏：M-U7s 弹道清偿已迁 fx opts o 面——'fb'/'ar' 桩事件消亡；
     //  旧断言在 scanReal 计数 throw 伞下历轮未真正执行）+ 风筝乘数签名 0.6/0.8（L3751/L3963）
@@ -1559,12 +1564,13 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
     if (!fb || !fb.out.some((s) => s.units.some((u) => (u.fx ?? []).some((f) => f[0] === 'fireball' && f[4] && f[4][3] === '0000000000003240')))) fail('mage-fireball 施法 fx 缺失（o[3] r=18 bitHex）');
     const ar = g.cases.find((x) => x.name === 'archer-arrow');
     if (!ar || !ar.out.some((s) => s.units.some((u) => (u.fx ?? []).some((f) => f[0] === 'arrow' && f[4] && f[4][4] === '0000000000001840')))) fail('archer-arrow 施法 fx 缺失（o[4] dmg=6 bitHex）');
-    const kiteMv = { 'mage-fireball': 0.6, 'kite-deadzone': 0.8 };
-    for (const [nm, mul] of Object.entries(kiteMv)) {
+    const kiteMv = ['mage-fireball', 'kite-deadzone'];
+    for (const nm of kiteMv) {
       const c = g.cases.find((x) => x.name === nm);
       if (!c) { fail('风筝场景缺失 ' + nm); continue; }
-      const mvs = c.out.flatMap((s) => s.units.flatMap((u) => (u.evt ?? []).filter((e) => e[0] === 'mv').map((e) => e[2])));
-      if (!mvs.includes(mul)) fail(nm + ' 风筝乘数签名缺失 ' + mul);
+      const u0 = c.units[0];
+      const moved = c.out.some((s) => s.units.some((u) => u.x !== undefined && u.y !== undefined && (u.x !== bHexV(u0.x) || u.y !== bHexV(u0.y))));
+      if (!moved) fail(nm + ' 风筝位移签名缺失（M-U7w 真执行）');
     }
     // M-U7p 近战域结构检查：三特异种族特技（石化 corpse stone=1/吞噬/击沉 shipwreck）+ 命中 hit fx + ab 登记 + 吸血回血
     const petrify = g.cases.find((x) => x.name === 'basilisk-petrify');

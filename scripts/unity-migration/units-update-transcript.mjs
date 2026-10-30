@@ -5,7 +5,7 @@
 //       onKingDeath/onWarKill/dragonBreath/ignite 七助手独立转写）+ 无敌壳 L3968-4112。
 // 消费：golden/units_update.json（gen-units-update.mjs 产物——env/units/muts 依黄金回放，
 //       races 位字节即蓝本旗标源、ep 随 JSON 分发、traitRegen 随 fixture 回显——零独立打包）。
-// 对账：perU 快照 bitHex 逐位 + evt/fx/terr/scan 事件流（'mv'/'scan' M-U7m 新增）+ 逐步 draws + fireSet + final + rngTail。
+// 对账：perU 快照 bitHex 逐位 + evt/fx/terr/scan 事件流（M-U7w 起 mv 桩消亡——moveUnitT 位移真执行；scan M-U7m）+ 逐步 draws + fireSet + final + rngTail。
 // 运行：node scripts/unity-migration/units-update-transcript.mjs
 // ============================================================================
 import { readFileSync } from 'node:fs';
@@ -51,6 +51,7 @@ const raceF = (id) => {
     predator: !!(r.flags & 8), lavaImmune: !!(r.flags & 16),
     flying: !!(r.tbf0 & 32), aquatic: !!(r.tbf0 & 64), beach: !!(r.tbf1 & 8),
     nightsight: !!(r.tbf1 & 16),   // M-U7p（ORC/GOBLIN——L3848 昼战减益豁免；字段只加）
+    coldBlood: !!(r.tbf1 & 4),     // M-U7w moveUnit L5824 冷血缓滞消费（packRace tbf1 位 4）
     ranged: r.ranged ?? null, reach: r.reach ?? null, speed: r.speed,   // M-U7n + M-U7p L3824 敏捷差
   };
 };
@@ -89,6 +90,8 @@ const mkU = (s) => {
   if (s.breath !== null && s.breath !== undefined) u.breath = s.breath;   // M-U7q 龙息域
   if (s.fam !== null && s.fam !== undefined) u.fam = s.fam;          // M-U7q 家族战功
   if (s.wep !== null && s.wep !== undefined) u.wep = s.wep;          // M-U7s 枪械/能量枪域（L3755/L3756 wep 字符串键）
+  // M-U7w moveUnit 真执行消费 u.speed——镜像同 gen mkTsUnit：显式 spec.speed 优先，缺省 = 黄金 races 表 RACES 基准（真实 spawn L1343 def.speed 夹具中性面）
+  u.speed = (s.speed !== null && s.speed !== undefined) ? s.speed : raceF(s.race).speed;
   u.name = s.name ?? '';                                              // M-U7t：黄金回显 name 字段消费（uniqueNameT 遍历计数——fixture 空名面同 gen mkTsUnit）
   u._regen = s.traitRegen ?? 0;                                    // fixture 回显再生值（TRAITS 表镜像）
   return u;
@@ -606,6 +609,84 @@ const maybeBoardForWarT = (ctx, u) => {                                         
   if (d < 8) return false;                                                                                    // L5749 近距正常行军
   throw new Error('SENTINEL: 跨海登船域属 bail 黄金 D09-D12 契约——update 切片 d<8 早退外不可达');
 };
+// ================= M-U7w：moveUnit 独立转写（零引擎导入——'mv' 桩事件消亡，位移真执行） =================
+// 蓝本：engine.ts L5813-5889 全分支机械翻译（flying 钳制 / aquatic 搁浅自救+深水改向 / sandswim 扬尘 /
+//       城墙阻挡 wallBlocks L5804-5812 / passTile L5800-5802 / 阻断登船早退链+随机改向绕行）。
+// 黄金对账面 = u.x/u.y/tx/ty 位串终态（flip 不进 update snapU——写点保留机械翻译完整）。
+// 依赖面：ctx.road/nature.season（M-U7w ctx 新增——零初始化恒门败零掷）+ raceF.coldBlood（tbf1 位 4 解包）。
+const passTileT = (swimming, onMountain, t) => {                                                              // L5800-5802
+  if (swimming) return t !== T.LAVA && t !== T.MOUNTAIN;
+  if (onMountain) return t !== T.DEEP && t !== T.WATER && t !== T.LAVA;
+  return t !== T.DEEP && t !== T.WATER && t !== T.MOUNTAIN && t !== T.LAVA;                                   // walkable L76-78
+};
+const wallBlocksT = (ctx, x, y, u, swimming) => {                                                             // L5804-5812
+  if (swimming) return false;                                                                                 // L5877 内联闭包 swimming 恒 false
+  const i = y * W + x;
+  if (ctx.building[i] !== 11) return false;                                                                   // BUILD_KINDS.WALL=11
+  const b = ctx.buildings[ctx.bIdx.get(i) ?? -1];
+  if (!b || b.civ === u.civ) return false;                                                                    // 己方城墙自家随便走
+  if (u.civ >= 0) return atWarT(ctx, b.civ, u.civ);                                                           // 中立/盟友通行，交战国被拦
+  return raceF(u.race).hostile;                                                                               // 无国籍野怪：天生敌意者被拦
+};
+const moveUnitT = (ctx, u, mul) => {                                                                          // L5813-5889
+  const def = raceF(u.race);
+  const dx = u.tx - u.x;
+  const dy = u.ty - u.y;
+  const d = Math.hypot(dx, dy);
+  if (d < 0.05) return;                                                                                       // L5817
+  let step = u.speed * 2 * mul * (u.chill ? 0.55 : 1) * (u.curse ? 0.75 : 1);                                 // L5820 寒冻/诅咒
+  if (ctx.terrain[Math.floor(u.y) * W + Math.floor(u.x)] === T.SWAMP) step *= 0.6;                            // L5822 沼泽陷足
+  if (def.coldBlood && ctx.nature.season === 3) step *= 0.6;                                                  // L5824 冷血缓滞（冬）
+  if (ctx.road[Math.floor(u.y) * W + Math.floor(u.x)] > 0) step *= 1.45;                                      // L5826 道路行军
+  const nx = u.x + (dx / d) * step;
+  const ny = u.y + (dy / d) * step;
+  if (dx !== 0) u.flip = dx < 0;                                                                              // L5830
+  if (def.flying) {                                                                                           // L5832-5835
+    u.x = Math.max(0.5, Math.min(W - 0.5, nx));
+    u.y = Math.max(0.5, Math.min(H - 0.5, ny));
+    return;
+  }
+  const cur = ctx.terrain[Math.floor(u.y) * W + Math.floor(u.x)];                                             // L5843
+  if (def.aquatic) {                                                                                          // L5844-5860
+    const nt = ctx.terrain[Math.floor(ny) * W + Math.floor(nx)];
+    if (nt === T.DEEP || nt === T.WATER || (def.beach && nt === T.SAND)) { u.x = nx; u.y = ny; }
+    else if (!isWater(cur) && !def.beach) {
+      const f = 0.7;                                                                                          // L5850 搁浅自救（×0.7 蹒跚）
+      u.x = Math.max(0.5, Math.min(W - 0.5, u.x + (nx - u.x) * f));
+      u.y = Math.max(0.5, Math.min(H - 0.5, u.y + (ny - u.y) * f));
+      u.flip = dx < 0;
+    }
+    else {
+      u.tx = Math.max(1, Math.min(W - 2, u.x + (ctx.raw() * 2 - 1) * 8));                                     // L5855-5856 留深水随机改向
+      u.ty = Math.max(1, Math.min(H - 2, u.y + (ctx.raw() * 2 - 1) * 8));
+    }
+    return;
+  }
+  if (def.sandswim) {                                                                                         // L5861-5870
+    const nt = ctx.terrain[Math.floor(ny) * W + Math.floor(nx)];
+    if (nt === T.SAND || nt === T.GRASS || nt === T.BURNT) { u.x = nx; u.y = ny; }
+    else {
+      u.tx = Math.max(1, Math.min(W - 2, u.x + (ctx.raw() * 2 - 1) * 6));
+      u.ty = Math.max(1, Math.min(H - 2, u.y + (ctx.raw() * 2 - 1) * 6));
+    }
+    if (ctx.ambience && ctx.raw() < 0.08) ctx.fx.push(['dust', bitHex(u.x), bitHex(u.y + 0.5), 12]);          // L5872 沙泳扬尘（fx 四元数组镜像）
+    return;
+  }
+  const swimming = cur === T.DEEP || cur === T.WATER;
+  const onMountain = cur === T.MOUNTAIN;
+  const passX = !wallBlocksT(ctx, Math.floor(nx), Math.floor(u.y), u, swimming)
+    && passTileT(swimming, onMountain, ctx.terrain[Math.floor(u.y) * W + Math.floor(nx)]);                   // L5877-5878
+  const passY = !wallBlocksT(ctx, Math.floor(u.x), Math.floor(ny), u, swimming)
+    && passTileT(swimming, onMountain, ctx.terrain[Math.floor(ny) * W + Math.floor(u.x)]);                   // L5879-5880
+  if (passX && passY) { u.x = nx; u.y = ny; }
+  else if (passX) u.x = nx;
+  else if (passY) u.y = ny;
+  else {
+    if (maybeBoardForWarT(ctx, u)) return;                                                                    // L5883 阻断→登船早退链
+    u.tx = Math.max(1, Math.min(W - 2, u.x + (ctx.raw() * 2 - 1) * 6));                                       // L5885-5886 随机改向绕行
+    u.ty = Math.max(1, Math.min(H - 2, u.y + (ctx.raw() * 2 - 1) * 6));
+  }
+};
 const warTargetT = (ctx, civId, rng) => {                                                                    // L5728-5734
   const enemies = [];
   for (const b of ctx.buildings) if (b.civ !== civId && atWarT(ctx, civId, b.civ)) enemies.push(b);
@@ -767,19 +848,19 @@ function updateUnitT(u, ctx) {
     }
   }
   void enemyD; void allies; void foes;   // 战斗域批次三消费面（逃离三门不读——哨兵前置注记）
-  // —— 三逃离门 L3641-3669（moveUnit 走 'mv' 事件流 stub——执行语义属 M-U3h 切片） ——
+  // —— 三逃离门 L3641-3669（M-U7w：moveUnitT 真执行转写——位移进 x/y 位串对账面） ——
   if (enemy && (u.caravan ?? 0) > 0) {                                                           // L3641 商队不攻击——夺路而逃
     const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3643
     u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 4));                                // L3644
     u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 4));                                // L3645
-    ctx.evt.push(['mv', u.id, 1.15]);                                                            // L3646（逃命加成）
+    moveUnitT(ctx, u, 1.15);                                                            // L3646（逃命加成）
     return;                                                                                      // L3647
   }
   if (enemy && (u.fleeT ?? 0) > 0) {                                                             // L3652 脱离冷却：持续拉开距离
     const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3653
     u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 5));                                // L3654
     u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 5));                                // L3655
-    ctx.evt.push(['mv', u.id, (u.panic ?? 0) >= 0.5 ? 1.32 : 1.18]);                              // L3656（恐慌溃逃者狂奔加速）
+    moveUnitT(ctx, u, (u.panic ?? 0) >= 0.5 ? 1.32 : 1.18);                              // L3656（恐慌溃逃者狂奔加速）
     return;                                                                                      // L3657
   }
   if (enemy && (u.panic ?? 0) >= g.ep.panicRout && u.army == null && !r.undead) {                 // L3662 恐慌溃逃（ep 随 JSON 分发）
@@ -787,7 +868,7 @@ function updateUnitT(u, ctx) {
     const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3664
     u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 5));                                // L3665
     u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 5));                                // L3666
-    ctx.evt.push(['mv', u.id, 1.3]);                                                             // L3667（夺路狂奔）
+    moveUnitT(ctx, u, 1.3);                                                             // L3667（夺路狂奔）
     return;                                                                                      // L3668
   }
   // ================= 神经决策域 L3671-3702（M-U7n 批次三甲：战或逃——465 参微型网络 RL 头） =================
@@ -814,7 +895,7 @@ function updateUnitT(u, ctx) {
       const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3696
       u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 5));                                // L3697
       u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 5));                                // L3698
-      ctx.evt.push(['mv', u.id, 1.2]);                                                             // L3699
+      moveUnitT(ctx, u, 1.2);                                                             // L3699
       return;                                                                                      // L3700
     }
   }
@@ -847,7 +928,7 @@ function updateUnitT(u, ctx) {
       const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3733
       u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 6));                                // L3734
       u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 6));                                // L3735
-      ctx.evt.push(['mv', u.id, 1.15]);                                                            // L3736
+      moveUnitT(ctx, u, 1.15);                                                            // L3736
       return;                                                                                      // L3737
     }
     // —— L3739-3966 攻击链体 if/else 链（M-U7o 批次三乙一：远程域镜像；近战域 L3774-3957 哨兵保留）——
@@ -861,7 +942,7 @@ function updateUnitT(u, ctx) {
         const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                      // L3748
         u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 3));                              // L3749
         u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 3));                              // L3750
-        ctx.evt.push(['mv', u.id, 0.6]);                                                           // L3751
+        moveUnitT(ctx, u, 0.6);                                                           // L3751
       }
     } else if (bowRange > 0 && enemyD > 1.4 && enemyD <= bowRange) {                               // L3753 弓手/火枪兵/能量枪兵
       const gun = u.wep === 'musket' || u.wep === 'rifle';                                         // L3755
@@ -880,7 +961,7 @@ function updateUnitT(u, ctx) {
         const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                      // L3769
         u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 3));                              // L3770
         u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 3));                              // L3771
-        ctx.evt.push(['mv', u.id, 0.7]);                                                           // L3772
+        moveUnitT(ctx, u, 0.7);                                                           // L3772
       }
     } else if (enemyD < (raceF(u.race).reach ?? 0.9)) {                                            // L3774 近战执行主链（M-U7p 批次三乙二-a；击杀链 L3901+ 哨兵保留）
       if (u.cd <= 0) {                                                                             // L3775
@@ -1006,10 +1087,10 @@ function updateUnitT(u, ctx) {
       const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3960
       u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 3));                                // L3961
       u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 3));                                // L3962
-      ctx.evt.push(['mv', u.id, 0.8]);                                                            // L3963
+      moveUnitT(ctx, u, 0.8);                                                            // L3963
     } else {
       if (!u.detour) { u.tx = enemy.x; u.ty = enemy.y; }                                           // L3965（绕行期间不覆写——卡死自愈）
-      ctx.evt.push(['mv', u.id, 1.25]);                                                            // L3966
+      moveUnitT(ctx, u, 1.25);                                                            // L3966
     }
   } else {
     // —— 无敌路径 else 壳（现行号 L3968 起；C# 侧旧注 L3927 系引擎行号漂移——行为同构） ——
@@ -1038,7 +1119,7 @@ function updateUnitT(u, ctx) {
             u.cd = Math.max(u.cd, 10);                                                                   // L3997 泼水动作
           } else {
             u.tx = fxp; u.ty = fyp;                                                                      // L3999-4000
-            ctx.evt.push(['mv', u.id, 1.2]);                                                             // L4001（moveUnit 接缝——赶赴火场）
+            moveUnitT(ctx, u, 1.2);                                                             // L4001（moveUnit 接缝——赶赴火场）
             return;                                                                                       // L4002（本 tick 优先救灾）
           }
         }
@@ -1054,7 +1135,7 @@ function updateUnitT(u, ctx) {
             repairBuildingT(ctx, di, 12 * 1, u);                                                         // L4016（× techModsOf.repair——NEUTRAL 1 契约）
           } else {
             u.tx = b.x + 0.5; u.ty = b.y + 0.5;                                                          // L4018-4019
-            ctx.evt.push(['mv', u.id, 1.15]);                                                            // L4020（赶赴工地）
+            moveUnitT(ctx, u, 1.15);                                                            // L4020（赶赴工地）
             return;                                                                                       // L4021
           }
         }
@@ -1155,6 +1236,8 @@ for (const c of g.cases) {
     raw, lawsRise: c.env.lawsRise, zombieInfect: c.env.zombInf ?? true, ambience: c.env.ambience, gearRegen: c.env.gearRegen ?? 0,
     dmgNumbers: false, blood: false, dayPhase: c.env.dayPhase ?? 0, tickCount: 0,   // M-U7p 近战域（gen 桩面 fxPrefs undefined-falsy + tickCount=0 同构）
     fire, radiate, terrain, fireSet, building: new Uint8Array(W * H),               // M-U7q ignite 建筑门（M-U7r bldInit 注入面）
+    road: new Uint8Array(W * H),                                                    // M-U7w moveUnit L5826 道路 1.45 判定消费面（零初始化 = 无路恒门败零掷）
+    nature: { season: c.env.season ?? 0 },                                          // M-U7w moveUnit L5824 coldBlood×season===3 消费面（0 = 春门恒败零掷）
     // —— M-U7r peaceful 职业域依赖面（gen applyPeaceFixtures 同构；独立转写）——
     owner: (() => { const a = new Int16Array(W * H).fill(-1); for (const [k, v] of Object.entries(c.env.ownerInit ?? {})) a[Number(k)] = v; return a; })(),
     buildings: [], bIdx: new Map(), bHp: new Map(), damagedSet: new Set(),
