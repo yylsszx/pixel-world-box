@@ -1306,7 +1306,7 @@ namespace PixelWorldBox.Wb
         }
 
         // ================= spawnUnit（engine L1283-1465 机械翻译；静默可达域全译；桩域 GUARD） =================
-        private static WbU SpawnUnit(WbWorld w, int race, double x, double y, WbSpawnOpts o)
+        public static WbU SpawnUnit(WbWorld w, int race, double x, double y, WbSpawnOpts o)   // M-U7k：public（宿主 generate L936 重放接线；语义零改动）
         {
             RaceStat st = StatOf(race);                                                         // L1285 RACES[race]（越界蓝本 undefined.hp throw ≡ StatOf throw）
             // 预算分轨：文明人口受 MAX_UNITS 限制；野生动物有独立的 MAX_WILDLIFE 生态预算
@@ -1337,9 +1337,7 @@ namespace PixelWorldBox.Wb
             if (o != null && o.trait != null) trait = o.trait.Length > 0 ? o.trait : null;
             else trait = w.Rng() < 0.15 ? RollTrait(w) : null;                                  // L1316 未传 → 0.15 门随机抽（M-U3h 第五批繁衍链 traitKey=null 可达）
             WbTrait td = trait != null && TraitsAll.TryGetValue(trait, out WbTrait td0) ? td0 : null;   // L1327 TRAITS[trait]
-            if (o == null || o.gene == null)                                                    // L1329-1330 GUARD
-                throw new System.InvalidOperationException("baseGene 深链未转写（case2 场景恒传 gene）");
-            WbGene gene = o.gene;
+            WbGene gene = (o != null && o.gene != null) ? o.gene : BaseGene(race);              // L1319 ?? baseGene(race)（M-U7k：世界生成可达域——空表分支零掷）
             int job = 0;                                                                        // L1333
             if (st.isCiv && civ >= 0) job = o.job.HasValue ? o.job.Value : RollJob(w);          // L1334-1335
             JobCase2? jd = st.isCiv ? JobDefs[job] : (JobCase2?)null;                           // L1336 JOBS[job]（非文明 null）
@@ -1406,6 +1404,15 @@ namespace PixelWorldBox.Wb
         }
 
         private static int WildCnt(WbWorld w, int race) => w.wildCount.TryGetValue(race, out int v) ? v : 0;   // (this.wildCount.get(race) ?? 0) 助手
+
+        // ================= baseGene（engine L11029-11034 机械翻译——世界生成可达域） =================
+        // speciesBase 世界生成期恒空表（L829 generate clear；set 仅演化域 L11213/11360/11508/11594 未译）
+        // → 本切片可达域 = 空表分支：零掷恒 {1,1,1,1}；四维抖动分支（j(v)=max(0.5,min(2, v*(1+(rng()-0.5)*0.1)))，
+        //   求值序 s→d→h→r 各 1 掷）随物种演化切片与 WbWorld.speciesBase 字段一同补全
+        private static WbGene BaseGene(int race)
+        {
+            return new WbGene { s = 1, d = 1, h = 1, r = 1 };                                   // L11030-11031 空表分支
+        }
 
         // ================= newFamily（engine L1111-1133 机械翻译） =================
         private static WbFamily NewFamily(WbWorld w, int race, WbU founder)

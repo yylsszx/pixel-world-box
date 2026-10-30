@@ -12,6 +12,10 @@
 //   持久缓冲 + dirty Set 早退门（L14017）+ SetPixels32 脏盒部分上传（putImageData 脏矩形 L14286
 //   同构）+ tick 后 St 渲染面差分标脏桥（蓝本 mutation 位点内联 markDirty 的 C# 分体桥）。
 //   旧版每帧全烘 2,621,440 px + 10MB 重分配上传（性能域欠账）——净帧零烘零上传。
+//   M-U7k 河域：generate() L905-949 宿主等价全链——SoilInit（worldsim L125）→ spawnUnit 重放
+//   （L936，M-U3h 译件）→ SeedRivers（nature.ts L1094-1108，nature.rng 独立流）→
+//   RebuildWaterTiers（L949）；engine.rngA = (seed ^ 0x9e3779b9)>>>0（L773）同流续抽。
+//   SpawnDemoUnits 演示占位退役（M-U7i 注记退役条件达成——真动物即 gen.SpawnAnimals 重放）。
 // 蓝本锚：
 //   - TICK_MS = 66（constants.ts L8，~15tps）
 //   - frame() 主循环：acc 累计 + 逐 tick 让出 + 30 步硬上限（engine.ts L2708-2732 机械对齐；
@@ -67,7 +71,6 @@ namespace PixelWorldBox.Host
         double[] _shRadiate;
         int _shSeason = int.MinValue; double _shAsh = double.NaN; long _shCivSig = long.MinValue;
         PixelWorldBox.Wb.WbHostCanvas _canvas;        // 单位层持久栅格（canvas 语义：clear 增量机同构）
-        int _demoSeq;
 
         void Awake()
         {
@@ -91,51 +94,7 @@ namespace PixelWorldBox.Host
             FlushTerrain();                           // 全量首烘（L951 generate→flushDirty 同构）
             SnapshotRenderFace();                     // 差分桥基线
             _canvas = null;                           // 新世界 → 单位层栅格重建（clear 机状态随世界）
-            SpawnDemoUnits();
             WireOrch();
-        }
-
-        /// <summary>演示单位（宿主占位：静态陈列供 UnitScene 精灵层视觉验收——无 unitsTick 不更新；
-        /// 退役条件 = spawnUnit 宿主接线落位）</summary>
-        void SpawnDemoUnits()
-        {
-            int[] races = { 0, 0, 6, 7, 21, 34, 33, 10 };   // 人×2/羊/狼/巨魔/猪/鸡/鹿（静态 RDEF 41 族域）
-            int cx = PixelWorldBox.Wb.WbWorld.W / 2, cy = PixelWorldBox.Wb.WbWorld.H / 2;
-            (int gx, int gy) = FindGrassNear(cx, cy);
-            double bx = gx + 0.5, by = gy + 0.5;
-            double[] offs = { 0, 0, -2.5, 1.5, 2.5, 1.5, -2, -2, 3, -1, 1.5, 2.5, -1.5, -2.5, 2, 2 };
-            for (int k = 0; k < races.Length; k++)
-            {
-                var u = new PixelWorldBox.Wb.WbU
-                {
-                    id = ++_demoSeq, race = races[k], civ = -1,
-                    x = System.Math.Clamp(bx + offs[k * 2], 1.5, PixelWorldBox.Wb.WbWorld.W - 1.5),
-                    y = System.Math.Clamp(by + offs[k * 2 + 1], 1.5, PixelWorldBox.Wb.WbWorld.H - 1.5),
-                    hp = 10, maxHp = 10, name = "demo" + _demoSeq,
-                };
-                u.tx = u.x; u.ty = u.y;
-                World.units.Add(u);
-            }
-            World.RebuildBuckets();
-        }
-
-        /// <summary>宿主域：近邻草格搜索（演示单位落位；螺旋半径 12 兜底中心）</summary>
-        (int, int) FindGrassNear(int cx, int cy)
-        {
-            for (int r = 0; r <= 12; r++)
-            {
-                for (int dy = -r; dy <= r; dy++)
-                {
-                    for (int dx = -r; dx <= r; dx++)
-                    {
-                        if (System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dy)) != r) continue;
-                        int x = cx + dx, y = cy + dy;
-                        if (x < 1 || y < 1 || x >= PixelWorldBox.Wb.WbWorld.W - 1 || y >= PixelWorldBox.Wb.WbWorld.H - 1) continue;
-                        if (St.terrain[y * PixelWorldBox.Wb.WbWorld.W + x] == PixelWorldBox.Wb.WbConstants.T_GRASS) return (x, y);
-                    }
-                }
-            }
-            return (cx, cy);
         }
 
         /// <summary>
@@ -396,15 +355,22 @@ namespace PixelWorldBox.Host
             _shSeason = St.season; _shAsh = St.ash; _shCivSig = CivSig();
         }
 
-        // ---------------- 真地形落位（M-U7g：WbWorldgen 黄金链直灌；蓝本 generate L775-779/L949 同构） ----------------
+        // ---------------- 真地形落位（M-U7g/M-U7k：WbWorldgen 黄金链直灌；蓝本 generate L771-952 宿主等价） ----------------
         void ApplyWorldGen()
         {
             PixelWorldBox.Wb.WbWorldGenResult gen = PixelWorldBox.Wb.WbWorldgen.GenerateWorld(unchecked((int)seed));
             System.Array.Copy(gen.Terrain, St.terrain, St.terrain.Length);   // L776 this.terrain = gen.terrain
             System.Array.Copy(gen.Variant, St.variant, St.variant.Length);   // L777 this.variant = gen.variant
             // temp/moist（L778-779）渲染域不消费——overlay 温湿图自有黄金链直灌，宿主不暂存
-            PixelWorldBox.Wb.WbWorldgen.RebuildWaterTiers(St.terrain, St.waterTier);   // L949 rebuildWaterTiers（pre-river 域）
-            // gen.SpawnAnimals → spawnUnit（L936）留 unitsTick 切片（unitsTick 主体未译——M-U7 余量）
+            // —— M-U7k 河域：generate() L905-949 宿主等价全链（蓝本序保真）——
+            PixelWorldBox.Wb.WbWorldgen.SoilInit(St.terrain, World.soilF);   // worldsim initFromTerrain L125（soilF = SOIL_BASE[t] ?? 128）
+            World.rngA = (uint)(unchecked((int)seed) ^ unchecked((int)0x9e3779b9u));   // L773 engine.rngA 起流
+            World.unitSeq = 1; World.toastSeq = 1; World.eventSeq = 1;              // L919-924 计数器重置段（civSeq 0——civilian 域未触达）
+            foreach (var a in gen.SpawnAnimals)                              // L936 spawnUnit 逐只重放（M-U3h 译件；silent 恒真）
+                PixelWorldBox.Wb.WbBailRelay.SpawnUnit(World, a.Race, a.X, a.Y, new PixelWorldBox.Wb.WbBailRelay.WbSpawnOpts { silent = true });
+            World.RebuildBuckets();                                          // 桶层一次性重建（蓝本懒重建；静态世界一次等价）
+            PixelWorldBox.Wb.WbWorldgen.SeedRivers(World, St.terrain, gen.Moist, unchecked((int)seed));   // L941 nature.seedRivers（M-U7k 译件）
+            PixelWorldBox.Wb.WbWorldgen.RebuildWaterTiers(St.terrain, St.waterTier);   // L949 rebuildWaterTiers（post-river 全量）
         }
     }
 }

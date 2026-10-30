@@ -386,5 +386,200 @@ namespace PixelWorldBox.Wb
         {
             for (int i = 0; i < terrain.Length; i++) waterTier[i] = WaterTierAt(terrain, i);
         }
+
+        // ================= 河域（M-U7k：engine.ts carveRiver L12282-12392 + carveLake L12394-12411 +
+        // encodeRiverDir L62-71 + fx spawn 2 掷 L9781-9799 + nature.ts seedRivers L1094-1108 宿主接力） =================
+        // 域口径：generate() L941 seedRivers 时点宿主接力（蓝本 generate L905-949 序：worldsim initFromTerrain
+        // soilF 段 → L936 spawnUnit 逐只 → L941 seedRivers → L949 rebuildWaterTiers）；engine.rngA =
+        // (seed ^ 0x9e3779b9)>>>0（L773）由宿主起流，spawnUnit 重放 + carveRiver/fx 同流续抽。
+        // setTerrain 簿记（amb/frozen/flood/wet/fire/owner/building/markDirty）在世界生成域均为 no-op
+        // （空表/全 -1/L950 dirty 全量兜底）——terrain 直写等价（M-U7g 宿主接力先例）。
+        static readonly int[] SoilBase = { 40, 45, 64, 142, 152, 112, 66, 92, 30, 96, 45 };   // worldsim.ts L31-34 [T.DEEP..T.ICE]；SWAMP 等 → ?? 128
+        const int Brush = 3;                                                                   // engine.ts L686 brush = 3（世界生成期无笔刷 UI）
+        static readonly (int, int)[] RiverDirs = { (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1) };   // L63-65
+
+        static bool IsWaterT(int t) => t == WbConstants.T_DEEP || t == WbConstants.T_WATER;    // constants.ts L67-69
+
+        /// <summary>worldsim.ts L168-170 soilMulAt（soilF/255 → 0.6..1.4 肥力乘数）</summary>
+        public static double SoilMulAt(WbWorld w, int j) => 0.6 + w.soilF[j] / 255.0 * 0.8;
+
+        /// <summary>worldsim.ts initFromTerrain L125 段（SOIL_BASE[t] ?? 128——世界生成期土壤肥力初值）</summary>
+        public static void SoilInit(byte[] terrain, byte[] soilF)
+        {
+            for (int i = 0; i < terrain.Length; i++)
+            {
+                int t = terrain[i];
+                soilF[i] = (byte)(t < SoilBase.Length ? SoilBase[t] : 128);
+            }
+        }
+
+        /// <summary>engine.ts L62-71 encodeRiverDir（RIVER_DIRS L63-65 八向 + Math.sign 匹配）</summary>
+        public static int EncodeRiverDir(int dx, int dy)
+        {
+            for (int k = 0; k < 8; k++)
+                if (RiverDirs[k].Item1 == Math.Sign(dx) && RiverDirs[k].Item2 == Math.Sign(dy)) return k + 1;
+            return 0;
+        }
+
+        /// <summary>engine.ts L9781-9799 fx（世界生成可达域：spawn kind；L9794 seed+dir 恒 2 掷；
+        /// cap 620 = FX_CAPS[1] 满载逐出域世界生成不触达——fx 总数 ≤ 数十）</summary>
+        static void FxSpawn(WbWorld w, double x, double y, double ttl)
+        {
+            w.effects.Add(new WbFx
+            {
+                kind = "spawn", x = x, y = y, x0 = x, y0 = y, r = 1, age = 0, ttl = ttl,
+                seed = (int)Math.Floor(w.Rng() * 65536), dir = w.Rng() * Math.PI * 2,          // L9794 2 掷（Task 138 基本单位）
+            });
+        }
+
+        /// <summary>engine.ts L12394-12411 carveLake（内流湖/火山口湖；山区淹没山体 + 湖畔绿洲）</summary>
+        public static void CarveLake(WbWorld w, byte[] terrain, int cx, int cy, int r)
+        {
+            int W = WbConstants.W, H = WbConstants.H;
+            for (int dy = -r - 1; dy <= r + 1; dy++)                                               // L12396
+            {
+                for (int dx = -r - 1; dx <= r + 1; dx++)
+                {
+                    int xx = cx + dx, yy = cy + dy;
+                    if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;                          // L12399
+                    double d = WbNoise.V8Hypot(dx, dy);                                            // L12400（V8 hypot 语义——sqrt 72/289 整数格点分歧）
+                    if (d <= r)
+                    {
+                        terrain[yy * W + xx] = WbConstants.T_WATER;                                // L12403
+                    }
+                    else if (d <= r + 1)
+                    {
+                        int j = yy * W + xx;
+                        if (terrain[j] == WbConstants.T_SAND || terrain[j] == WbConstants.T_BURNT) terrain[j] = WbConstants.T_GRASS;   // L12406
+                    }
+                }
+            }
+            FxSpawn(w, cx + 0.5, cy + 0.5, 30);                                                    // L12410（2 掷）
+        }
+
+        /// <summary>engine.ts L12282-12392 carveRiver（BFS 距水场 + 加权随机下降游走 + 圆形刻蚀绕山 + 沿岸灌溉）</summary>
+        public static bool CarveRiver(WbWorld w, byte[] terrain, byte[] moistMap, double wx, double wy, int? widthOverride)
+        {
+            int W = WbConstants.W, H = WbConstants.H, N = W * H;
+            int sx = (int)Math.Max(0, Math.Min(W - 1, Math.Floor(wx)));                            // L12283
+            int sy = (int)Math.Max(0, Math.Min(H - 1, Math.Floor(wy)));                            // L12284
+            int start = sy * W + sx;                                                               // L12285
+            if (IsWaterT(terrain[start])) return false;                                            // L12286（零掷）
+            int[] dist = new int[N];                                                               // L12289 Int32Array
+            for (int i = 0; i < N; i++) dist[i] = -1;
+            int[] queue = new int[N];                                                              // L12290
+            int qh = 0, qt = 0;
+            for (int i = 0; i < N; i++)
+                if (IsWaterT(terrain[i])) { dist[i] = 0; queue[qt++] = i; }                        // L12292-12294
+            while (qh < qt)                                                                        // L12295-12304（山体阻断 → 绕山而行）
+            {
+                int i = queue[qh++];
+                int x = i % W, y = i / W;
+                int d = dist[i];
+                if (x > 0 && dist[i - 1] == -1 && terrain[i - 1] != WbConstants.T_MOUNTAIN) { dist[i - 1] = d + 1; queue[qt++] = i - 1; }
+                if (x < W - 1 && dist[i + 1] == -1 && terrain[i + 1] != WbConstants.T_MOUNTAIN) { dist[i + 1] = d + 1; queue[qt++] = i + 1; }
+                if (y > 0 && dist[i - W] == -1 && terrain[i - W] != WbConstants.T_MOUNTAIN) { dist[i - W] = d + 1; queue[qt++] = i - W; }
+                if (y < H - 1 && dist[i + W] == -1 && terrain[i + W] != WbConstants.T_MOUNTAIN) { dist[i + W] = d + 1; queue[qt++] = i + W; }
+            }
+            if (dist[start] == -1)                                                                 // L12305-12312（山脉环抱洼地 → 内流湖）
+            {
+                CarveLake(w, terrain, sx, sy, Math.Max(2, Brush));                                 // L12307
+                w.AddEvent("river", "群山之间诞生了一泓内流湖");                                    // L12309（toast/onSound 宿主 UI 域不译——零 rng）
+                return true;
+            }
+            int width = widthOverride.HasValue ? widthOverride.Value : Math.Max(0, (Brush - 1) / 2);   // L12315（自然河 genesis 传 0 单宽涓流）
+            byte[] visited = new byte[N];                                                          // L12316
+            int cx = sx, cy = sy, carved = 0;
+            bool reached = false;
+            for (int steps = 0; steps < 400; steps++)                                              // L12320
+            {
+                int i = cy * W + cx;                                                               // L12321
+                if (visited[i] != 0) break;                                                        // L12322 防绕圈（零掷）
+                visited[i] = 1;
+                if (dist[i] == 0) { reached = true; break; }                                       // L12324 抵海（零掷）
+                int curD = dist[i];                                                                // L12327
+                var cands = new List<int>(); var wts = new List<double>();                         // L12328-12329
+                for (int dy = -1; dy <= 1; dy++)
+                {
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        if (dx == 0 && dy == 0) continue;
+                        int xx = cx + dx, yy = cy + dy;
+                        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+                        int j = yy * W + xx;
+                        if (dist[j] < 0 || dist[j] >= curD) continue;                              // L12336 只降不升
+                        cands.Add(j);
+                        wts.Add(1.0 / (1 + (curD - dist[j]) * 0.5));                               // L12338 快降权重高 → 蜿蜒
+                    }
+                }
+                if (cands.Count == 0) { CarveLake(w, terrain, cx, cy, Math.Max(2, width + 1)); break; }   // L12341-12344 洼地成湖
+                double total = 0;
+                foreach (double wt in wts) total += wt;                                            // L12346-12347
+                double r = w.Rng() * total;                                                        // L12348（1 掷）
+                int pick = cands[0];                                                               // L12349
+                for (int k = 0; k < cands.Count; k++) { r -= wts[k]; if (r <= 0) { pick = cands[k]; break; } }   // L12350
+                int nx = pick % W, ny = pick / W;                                                  // L12351-12352
+                int dirCode = EncodeRiverDir(nx - cx, ny - cy);                                    // L12353
+                for (int dy = -width; dy <= width; dy++)                                           // L12355-12368 刻河道（圆形绕山）
+                {
+                    for (int dx = -width; dx <= width; dx++)
+                    {
+                        if (dx * dx + dy * dy > width * width + 0.5) continue;
+                        int xx = cx + dx, yy = cy + dy;
+                        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+                        int j = yy * W + xx;
+                        if (terrain[j] == WbConstants.T_MOUNTAIN) continue;                        // L12361 河绕山不穿山
+                        if (terrain[j] != WbConstants.T_WATER) { terrain[j] = WbConstants.T_WATER; carved++; }   // L12362
+                        if (dirCode > 0)
+                        {
+                            w.riverDir[j] = (byte)dirCode;                                         // L12364
+                            if (w.riverTiles.Add(j)) w.riverTilesList.Add(j);                      // L12365（Set.add 重复 no-op → 插入序等价）
+                        }
+                    }
+                }
+                int ir = width + 1;                                                                // L12369-12380 沿岸灌溉
+                for (int dy = -ir; dy <= ir; dy++)
+                {
+                    for (int dx = -ir; dx <= ir; dx++)
+                    {
+                        int xx = cx + dx, yy = cy + dy;
+                        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+                        int j = yy * W + xx;
+                        int t = terrain[j];
+                        if (t == WbConstants.T_SAND || t == WbConstants.T_BURNT) terrain[j] = WbConstants.T_GRASS;            // L12377 绿洲
+                        else if (t == WbConstants.T_GRASS && w.Rng() < 0.05 * SoilMulAt(w, j)) terrain[j] = WbConstants.T_FOREST;   // L12378（&& 短路 1 掷/GRASS 格）
+                    }
+                }
+                cx = nx; cy = ny;                                                                  // L12381-12382
+            }
+            if (carved > 0)                                                                        // L12384-12390
+            {
+                FxSpawn(w, wx, wy, 30);                                                            // L12385（2 掷）
+                w.AddEvent("river", reached ? "一条大河诞生了，蜿蜒流向大海" : "一条河在洼地尽头汇成了湖");   // L12387
+                return true;
+            }
+            return false;                                                                          // L12391
+        }
+
+        /// <summary>nature.ts L1094-1108 seedRivers（世界生成期自然河网——湿润高地源头刻 8-13 条河；
+        /// nature.rng = mulberry32(seed ^ 0x7ea12d)（L89）独立流，与 engine.rngA 双流并轨）</summary>
+        public static void SeedRivers(WbWorld w, byte[] terrain, byte[] moistMap, int seed)
+        {
+            uint natA = (uint)(seed ^ 0x7ea12d);                                                   // L89
+            double Nat() => WbNoise.Mulberry32Next(ref natA);
+            int n = 8 + (int)Math.Floor(Nat() * 6);                                                // L1096（nature 流 1 掷）
+            int carved = 0;
+            for (int tr = 0; tr < n * 16 && carved < n; tr++)                                      // L1098
+            {
+                int x = 6 + (int)Math.Floor(Nat() * (WbConstants.W - 12));                         // L1099（2 掷/try）
+                int y = 6 + (int)Math.Floor(Nat() * (WbConstants.H - 12));                         // L1100
+                int i = y * WbConstants.W + x;
+                int t = terrain[i];
+                if (t != WbConstants.T_MOUNTAIN && t != WbConstants.T_HILL) continue;              // L1103
+                if (moistMap[i] < 115) continue;                                                   // L1104（115/255 ≈ 0.45 干旱门）
+                if (CarveRiver(w, terrain, moistMap, x + 0.5, y + 0.5, 0)) carved++;               // L1105
+            }
+            if (carved > 0) w.AddEvent("river", $"这个年轻的世界有了自己的河网——{carved} 条大河从山地奔向海洋");   // L1107
+        }
     }
 }

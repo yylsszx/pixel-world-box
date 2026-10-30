@@ -438,6 +438,12 @@ namespace PixelWorldBox.Wb
         public int eventSeq;
         public int toastSeq;
 
+        // —— M-U7k 河域（字段只加）——
+        public byte[] soilF = new byte[W * H];                 // worldsim.ts L54 soilF: Uint8Array（initFromTerrain L125 SOIL_BASE[t] ?? 128 世界生成期初值）
+        public byte[] riverDir = new byte[W * H];              // engine L257 riverDir: Uint8Array（0 非河 / 1-8 八向；carveRiver L12364 写）
+        public HashSet<int> riverTiles = new HashSet<int>();   // engine L259 riverTiles: Set<number>（成员判定；add 重复 no-op）
+        public List<int> riverTilesList = new List<int>();     // 插入序镜像（JS Set 迭代序；黄金 riverTiles dump 对账面）
+
         // ---------------- 集合层（M-U3c 战争/联盟/图谱域） ----------------
         public Dictionary<string, WbWarData> warData = new Dictionary<string, WbWarData>();  // key 'a-b'（a<b）
         public HashSet<string> totalWars = new HashSet<string>();
