@@ -131,6 +131,7 @@ namespace PixelWorldBox.Host
             Orch.D[PixelWorldBox.Wb.WbTickOrch.ALLIANCE] = () => PixelWorldBox.Wb.WbCivSim.AllianceTick(World);
             Orch.D[PixelWorldBox.Wb.WbTickOrch.DIRECTIVE] = () => PixelWorldBox.Wb.WbCivSim.DirectiveTick(World);
             Orch.D[PixelWorldBox.Wb.WbTickOrch.ARMY] = () => PixelWorldBox.Wb.WbCivSim.ArmyTick(World);
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.REGROW] = () => PixelWorldBox.Wb.WbBailRelay.RegrowTick(World);   // M-U8b：regrowTick 已译域真调（空表安全：regrow.Count==0 顶层早退）
         }
 
         void EnsureScene()

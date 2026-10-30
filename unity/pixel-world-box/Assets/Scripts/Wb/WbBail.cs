@@ -1941,7 +1941,8 @@ namespace PixelWorldBox.Wb
         //   L974 ambTouch（氛围候选表——ambience 域未译，harness env.ambience:false 桩域）；
         //   L976 worldsim.onTerrainChanged（glacier worldsim 未译——M-U7z 桥不覆盖面同注记）；
         //   L977-978 markDirty+propsDirty（渲染簿记——sim 侧 no-op，渲染面由宿主 SyncWorldFace 桥 +
-        //     SyncTerrainDiffs 差分记账承接，M-U7z）；L979 regrow.delete（regrowTick 未译域）；
+        //     SyncTerrainDiffs 差分记账承接，M-U7z）；L979 regrow.delete 自 M-U8b 起点亮（regrowTick 已译——
+        //     焦土再生成计时随地形覆写作废）；
         //   L981-984 frozen/flood/wet 贴花集（冬季贴花域未译——WbWorld 无容器，后续域切片入链时补）；
         //   L1006 refreshWaterTierAround（waterTier worldgen 渲染专属未译）。
         // 级联零掷：全支路查表/集合记账，无 rng 消费——S1-S56 黄金掷值链零漂移（黄金 md5 fd09587b 不变的充要前提）。
@@ -1952,6 +1953,7 @@ namespace PixelWorldBox.Wb
             byte prev = w.terrain[i];                                                                                    // L970
             if (prev == t) return;                                                                                       // L971 同值早退
             w.terrain[i] = t;                                                                                            // L972
+            w.regrow.Remove(i);                                                                                          // L979（M-U8b 点亮：焦土复苏计时随地形覆写作废——regrowTick 已译件；同值早退 L971 不触达）
             if (!WbWorld.IsWater(t) && w.riverDir[i] > 0)                                                                // L986 河道被覆写为非水地形 → 清流向场（水工具画的普通水不算河，不补录）
             {
                 w.riverDir[i] = 0;                                                                                       // L987
@@ -1976,6 +1978,36 @@ namespace PixelWorldBox.Wb
                 w.road[i] = 0;                                                                                           // L1003
             }
             // L1006 refreshWaterTierAround（waterTier worldgen 渲染专属未译——no-op 注记）
+        }
+
+        // ================= regrowTick L2830-2840（M-U8b regrow 域核心——sim 域切片） =================
+        // 机械翻译蓝本：engine.ts L2830-2840。焦土复苏时钟：%60 节律（WbTickOrch REGROW 槽 L2544 前半）；
+        //   到期表逐项核对 tickCount>=at → 出账 → BURNT 复绿（setTerrain 全级联承接——L979 同键出账幂等）。
+        // 蓝本冗余门 L2835（terrain===BURNT && owner>=0 || terrain===BURNT——两侧同含 BURNT，与
+        //   terrain===BURNT 逻辑等价）：机械保持不化简（纪律①）。
+        // 零掷域：本函数无 rng/无 nature/worldsim 依赖（生产面 L2825 fireTick、L12116 啃食、L10663
+        //   rainRegrow 未译——到期表载入后纯删面）→ S1-S56 黄金掷值链零漂移（零新黄金充要前提）。
+        // 迭代语义：JS Map for...of + 体内 delete（删除当前项安全，续走插入序后继）。C# Dictionary
+        //   迭代中变更为 UB → 到期键快照二段式：先按枚举序收齐到期键，再逐键 delete+setTerrain。
+        //   快照序=活 Map 序（字段注记：载入后纯删面，枚举序=插入序稳定）；到期判定在快照前后
+        //   不可变（tickCount/at 零写入）+ setTerrain 级联对本域仅同键出账（L979）无跨格写入 →
+        //   快照语义=蓝本逐项即时删（充要）。
+        internal static void RegrowTick(WbWorld w)
+        {
+            if (w.regrow.Count == 0) return;                                                                             // L2831
+            System.Collections.Generic.List<int> due = new System.Collections.Generic.List<int>();                      // 到期键快照（插入序；蓝本 L2832 for...of 的 C# 变更安全等价形）
+            foreach (System.Collections.Generic.KeyValuePair<int, long> kv in w.regrow)                                  // L2832
+            {
+                if (w.tickCount >= kv.Value) due.Add(kv.Key);                                                            // L2833
+            }
+            foreach (int i in due)
+            {
+                w.regrow.Remove(i);                                                                                      // L2834
+                if (w.terrain[i] == WbConstants.T_BURNT && w.owner[i] >= 0 || w.terrain[i] == WbConstants.T_BURNT)       // L2835（蓝本冗余门——机械保持）
+                {
+                    SetTerrain(w, i, WbConstants.T_GRASS);                                                               // L2836
+                }
+            }
         }
 
         // isHerbivoreRace L2120-2128（猎物链底层判定：静态八种 + dynRaces 递归母族）

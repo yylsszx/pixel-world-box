@@ -480,6 +480,9 @@ namespace PixelWorldBox.Wb
         public byte[] fire = new byte[W * H];                  // engine L783 fire: Uint8Array（火场强度；fireTick 槽未译域——本切片批次一门只读 + 白行者灭火写点）
         public HashSet<int> fireSet = new HashSet<int>();      // engine L166 fireSet: Set<number>（火格索引集合；国民防灾 bigFire 域消费切片）
 
+        // —— M-U8b regrow 域（字段只加）——
+        public Dictionary<int, long> regrow = new Dictionary<int, long>();  // engine L167 regrow: Map<number, number>（焦土复苏计时表 tile → 到期 tick；JS Map 插入序。生产面 fireTick L2825/过度啃食 L12116/rainRegrow L10663 未译、save 桥不入 sim → 本域载入后纯删面：Dictionary 枚举序=插入序且删后无补位，regrowTick 快照迭代序=活 Map 序）
+
         // ---------------- 集合层（M-U3c 战争/联盟/图谱域） ----------------
         public Dictionary<string, WbWarData> warData = new Dictionary<string, WbWarData>();  // key 'a-b'（a<b）
         public HashSet<string> totalWars = new HashSet<string>();
