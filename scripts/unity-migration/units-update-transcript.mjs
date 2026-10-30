@@ -62,7 +62,7 @@ const mkU = (s) => {
   if (s.hp !== undefined) u.hp = s.hp;
   if (s.maxHp !== undefined) u.maxHp = s.maxHp;
   if (s.hurt !== null) u.hurt = s.hurt;
-  if (s.cd) u.cd = s.cd;
+  if (s.cd !== undefined && s.cd !== null) u.cd = s.cd;   // M-U7o：与 gen mkTsUnit 同修——cd=0 显式落位（远程域 u.cd<=0 门）
   if (s.atk) u.atk = s.atk;
   if (s.chill !== null) u.chill = s.chill;
   if (s.fleeT) u.fleeT = s.fleeT;
@@ -203,6 +203,15 @@ function fwdT(h, f) {
 }
 function neuroStanceT(f) { const o = fwdT(HEADS.stance, f); let best = 0; for (let j = 1; j < o.length; j++) if (o[j] > o[best]) best = j; return best; }   // L185-203
 function neuroFlightT(f) { const o = fwdT(HEADS.flightRl, f); return o[1] > o[0] ? 1 : 0; }   // L209-233（'rl' 默认头；softmax logp 在线采集不译）
+/** leadAim L4351-4357 镜像（目标提前量 + 落点抖动 2 掷——rng 计数闭包透传） */
+function leadAimT(rng, enemy, ttl) {
+  const vx = enemy.x - (enemy.lx ?? enemy.x);                                                    // L4352（lx/ly undefined → 自身——桩面均不触）
+  const vy = enemy.y - (enemy.ly ?? enemy.y);                                                    // L4353
+  return {
+    x: Math.max(0.5, Math.min(W - 0.5, enemy.x + vx * ttl + rng() * 0.4 - 0.2)),                 // L4355（钳 0.5..W-0.5；抖动 1 掷）
+    y: Math.max(0.5, Math.min(H - 0.5, enemy.y + vy * ttl + rng() * 0.4 - 0.2)),                 // L4356（抖动 1 掷）
+  };
+}
 const MONSTER_LOOT_T = new Set([9, 25, 26, 27, 21, 22, 23, 24, 17]);   // engine L6918（DRAGON/KRAKEN/SANDWORM/BASILISK/TROLL/OGRE/WHITEWALKER/VAMPIRE/DEMON）
 const F_FLIGHT = new Array(9);    // neuro.ts L126（模块级 scratch）
 const F_STANCE = new Array(12);   // neuro.ts L125
@@ -418,14 +427,48 @@ function updateUnitT(u, ctx) {
       ctx.evt.push(['mv', u.id, 1.15]);                                                            // L3736
       return;                                                                                      // L3737
     }
-    // —— L3739-3963 攻击链体哨兵（门条件全求值——wild rd null / bowRange 0 短路不触达；黄金 S14-S17 契约）——
-    if (rd && enemyD > 1.6 && enemyD <= rd.range) throw new Error('SENTINEL: 法师远程火球域（L3739-3752）');                        // L3739
-    if (bowRange > 0 && enemyD > 1.4 && enemyD <= bowRange) throw new Error('SENTINEL: 弓手/火枪/能量枪域（L3753-3773）');            // L3753
-    if (enemyD < (raceF(u.race).reach ?? 0.9)) throw new Error('SENTINEL: 近战执行域（L3774-3957）');                                // L3774
-    if (stance === 2 && (rd || bowRange > 0)) throw new Error('SENTINEL: 射程死区风筝域（L3958-3963）');                              // L3958
-    // —— L3964-3967 追击尾（攻击链 else）—— if/else 落出后入 L4112 postJS（无 tail——L4110 tailJS 在 else 块内）
-    if (!u.detour) { u.tx = enemy.x; u.ty = enemy.y; }                                             // L3965（绕行期间不覆写——卡死自愈）
-    ctx.evt.push(['mv', u.id, 1.25]);                                                              // L3966
+    // —— L3739-3966 攻击链体 if/else 链（M-U7o 批次三乙一：远程域镜像；近战域 L3774-3957 哨兵保留）——
+    if (rd && enemyD > 1.6 && enemyD <= rd.range) {                                                // L3739 法师远程火球：拉开距离释放（风筝走位）
+      if (u.cd <= 0) {                                                                             // L3741
+        u.cd = rd.cd;                                                                              // L3742
+        u.atk = 10;                                                                                // L3743 施法动画
+        ctx.evt.push(['fb', u.id, bitHex(enemy.x + rng() * 0.6 - 0.3), bitHex(enemy.y + rng() * 0.6 - 0.3), bitHex(rd.dmg)]);   // L3744（弹道接缝事件——敌人落点抖动 2 掷 ±0.3）
+      }
+      if (stance === 2) {                                                                          // L3746 风筝带内且战且退；带外站桩吟唱
+        const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                      // L3748
+        u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 3));                              // L3749
+        u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 3));                              // L3750
+        ctx.evt.push(['mv', u.id, 0.6]);                                                           // L3751
+      }
+    } else if (bowRange > 0 && enemyD > 1.4 && enemyD <= bowRange) {                               // L3753 弓手/火枪兵/能量枪兵
+      const gun = u.wep === 'musket' || u.wep === 'rifle';                                         // L3755
+      const beam = u.wep === 'laser_rifle';                                                        // L3756
+      if (u.cd <= 0) {                                                                             // L3757
+        u.cd = beam ? 12 : gun ? 15 : 18;                                                          // L3758 能量武器射速最快
+        u.atk = 10;                                                                                // L3759 拉弓/瞄准动画
+        let mul = 1;                                                                               // L3760
+        if (r.isCiv && u.civ >= 0) throw new Error('SENTINEL: techModsOf archer 消费未镜像（civ>=0 黄金契约外）');
+        const aim = leadAimT(rng, enemy, beam ? 8 : gun ? 5 : 12);                                 // L3762 弹道预测（内含 2 掷——计数闭包透传）
+        if (beam) ctx.evt.push(['bm', u.id, bitHex(aim.x), bitHex(aim.y), bitHex(u.dmg * 0.75 * mul)]);   // L3763
+        else if (gun) ctx.evt.push(['bl', u.id, bitHex(aim.x), bitHex(aim.y), bitHex(u.dmg * mul)]);      // L3764
+        else ctx.evt.push(['ar', u.id, bitHex(aim.x), bitHex(aim.y), bitHex(u.dmg * mul)]);               // L3765
+      }
+      if (stance === 2) {                                                                          // L3767 近距风筝带
+        const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                      // L3769
+        u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 3));                              // L3770
+        u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 3));                              // L3771
+        ctx.evt.push(['mv', u.id, 0.7]);                                                           // L3772
+      }
+    } else if (enemyD < (raceF(u.race).reach ?? 0.9)) throw new Error('SENTINEL: 近战执行域（L3774-3957）');   // L3774
+    else if (stance === 2 && (rd || bowRange > 0)) {                                               // L3958 射程死区（近到无法开火、远于触及）
+      const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3960
+      u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 3));                                // L3961
+      u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 3));                                // L3962
+      ctx.evt.push(['mv', u.id, 0.8]);                                                            // L3963
+    } else {
+      if (!u.detour) { u.tx = enemy.x; u.ty = enemy.y; }                                           // L3965（绕行期间不覆写——卡死自愈）
+      ctx.evt.push(['mv', u.id, 1.25]);                                                            // L3966
+    }
   } else {
     // —— 无敌路径 else 壳（现行号 L3968 起；C# 侧旧注 L3927 系引擎行号漂移——行为同构） ——
     if (u.race === 9) throw new Error('SENTINEL: 龙息域（黄金无龙场景）');                            // L3972（现号；C# 旧注 L3931）

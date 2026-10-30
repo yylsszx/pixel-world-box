@@ -59,6 +59,7 @@ const RACE_PICKS = {
   demon: pickRace((d) => d.lavaImmune && !d.flying, 'lavaImmune'),
   ww: pickRace((d) => d.key === 'whitewalker', 'whitewalker'),
   bandit: pickRace((d) => d.hostile && !d.isCiv && !d.predator && !d.undead && !d.aquatic && !d.flying, 'bandit'),   // M-U7m S12：hostile×isCiv 敌意分支（RACES 序首命中 BANDIT id4）
+  mage: pickRace((d) => d.key === 'mage', 'mage'),                                                                   // M-U7o S18/S20：race 级 rd 消费（types.ts L175 ranged{6.5,18,26}）
   zombie: pickRace((d) => d.undead && !d.flying && !d.aquatic, 'zombie'),                                            // M-U7m S11：L2095 ZOMBIE 对称敌意分支（序首命中 id5）
   bear: pickRace((d) => Number(d.key === 'bear'), 'bear'),                                                           // M-U7n S14/S17：强敌锚（dmg 19 hp 95——RStats 一致）
 };
@@ -127,7 +128,7 @@ const mkTsUnit = (spec) => {
   if (spec.hp !== undefined) u.hp = spec.hp;
   if (spec.maxHp !== undefined) u.maxHp = spec.maxHp;
   if (spec.hurt !== null) u.hurt = spec.hurt; // null ≡ undefined——TS Math.max(undefined,2)=NaN 怪癖保持
-  if (spec.cd) u.cd = spec.cd;
+  if (spec.cd !== undefined && spec.cd !== null) u.cd = spec.cd;   // M-U7o：cd=0 显式落位（真实 spawn 单位 cd 恒定义——L3742/L3757 u.cd<=0 门依赖；旧 falsy 丢弃致远程域永不施法）
   if (spec.atk) u.atk = spec.atk;
   if (spec.chill !== null) u.chill = spec.chill;
   if (spec.fleeT) u.fleeT = spec.fleeT;
@@ -202,6 +203,11 @@ function makeStubEng(env, cap) {
   } else {
     eng.isEnemyFast = () => { throw new Error('SCAN_SENTINEL: buckets should be empty'); };
   }
+  // —— M-U7o 远程域 cast 弹道接缝（弹道实体生成属 projectiles 未译域——调用面事件捕获 'fb'/'ar'/'bm'/'bl'；leadAim 真实现直调：纯数学 + 实例 rng 2 掷）——
+  eng.castFireball = (u2, tx, ty, dmg) => cap.evt.push(['fb', u2.id, bitHex(tx), bitHex(ty), bitHex(dmg)]);
+  eng.castArrow = (u2, tx, ty, dmg) => cap.evt.push(['ar', u2.id, bitHex(tx), bitHex(ty), bitHex(dmg)]);
+  eng.castBeam = (u2, tx, ty, dmg) => cap.evt.push(['bm', u2.id, bitHex(tx), bitHex(ty), bitHex(dmg)]);
+  eng.castBullet = (u2, tx, ty, dmg) => cap.evt.push(['bl', u2.id, bitHex(tx), bitHex(ty), bitHex(dmg)]);
   eng.updateUnitTailJS = (u) => { cap.evt.push(['tail', u.id]); return false; };
   eng.updateUnitPostJS = (u) => { cap.evt.push(['post', u.id]); };
   return eng;
@@ -455,6 +461,42 @@ const CASES = [
     units: [
       U({ id: 1, race: 'wolf', x: 180.5, y: 80.5, hp: 10, maxHp: 100, dmg: 0.5, gids: [2], gval: [2.0], civ: -1 }), // u0：血仇狼
       U({ id: 2, race: 'sheep', x: 182.5, y: 80.5, hp: 16, maxHp: 16, dmg: 1, civ: -1 }),                          // u1：仇敌羊
+    ],
+    steps: 2,
+  },
+  // ================= M-U7o 批次三乙一·远程域（S18-S20；L3739-3773 法师火球/弓手火枪能量枪 + L3958-3963 死区风筝；契约：近战/龙息/peaceful 哨兵不可达） =================
+  // S18 mage-fireball：野法师（R.MAGE rd{range 6.5,dmg 18,cd 26}）vs 野人（hostile×isCiv L2103 敌意）d=2.0 ∈ (1.6,6.5]
+  //    → cd 0→26 + atk=10 + 抖动 2 掷（enemy ±0.3）→ 'fb' [id,bitHex×3]；次拍 cd 26-2=24>0 零掷零事件
+  //    野人 isCiv 非敌对 → flight 块跳过（L3674 门）；弱势 F[7]=0.155 → stance 3 伤重脱离 'mv' 1.15
+  {
+    name: 'mage-fireball', terrain: 'plains', seed: 40418,
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'mage', x: 190.5, y: 80.5, hp: 50, maxHp: 50, dmg: 6, civ: -1 }),      // u0：野法师（R.MAGE 自然值 hp50/dmg6；race 级 rd 消费）
+      U({ race: 'human', x: 192.5, y: 80.5, hp: 10, maxHp: 10, dmg: 1, civ: -1 }),     // u1：弱野人（F[7]=12.25/14.5=0.845 法师强势→flight 0）
+    ],
+    steps: 2,
+  },
+  // S19 archer-arrow：弓手（jobC=3 → JOBS[3].ranged=5 types.ts L300）vs 僵尸（L2095 对称敌意）d=2.5 ∈ (1.4,5]
+  //    → cd 0→18 + atk=10 + leadAim 12 拍提前量 2 掷（lx/ly undefined → vx=vy=0）→ 'ar' [id,bitHex×3 dmg=6×1]
+  //    mul=1（civ=-1 → L3759 isCiv&&civ>=0 假）；gun/beam=false（wep 空）；僵尸 undead → flight 排除（L3674 门）
+  {
+    name: 'archer-arrow', terrain: 'plains', seed: 40419,
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'human', x: 200.5, y: 80.5, hp: 50, maxHp: 100, dmg: 6, job: 3, civ: -1 }),  // u0：弓手（强势 F[7]=0.845 → stance 0 非脱离）
+      U({ race: 'zombie', x: 203, y: 80.5, hp: 10, maxHp: 10, dmg: 1, civ: -1 }),             // u1：弱僵尸（F[7]=0.155 → stance 3 溃逃 'mv' 1.15）
+    ],
+    steps: 2,
+  },
+  // S20 kite-deadzone：S18 同配比法师/野人（stance=2 已证）仅改间距 d=1.5 ∈ 射程死区（<1.6 无法球 / >0.9 reach 非近战）
+  //    → rd 带门假 → 死区风筝 L3960-3963 拉开距离 'mv' 0.8（stance=2 且战且退——旧版一头撞进近战的根治位）
+  {
+    name: 'kite-deadzone', terrain: 'plains', seed: 40420,
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'mage', x: 220.5, y: 80.5, hp: 50, maxHp: 50, dmg: 6, civ: -1 }),      // u0：法师（S18 同配比——F[7]=0.845 强势→flight 0 + stance 2）
+      U({ race: 'human', x: 222, y: 80.5, hp: 10, maxHp: 10, dmg: 1, civ: -1 }),       // u1：弱野人（d=1.5 死区——法师带外站桩距离）
     ],
     steps: 2,
   },

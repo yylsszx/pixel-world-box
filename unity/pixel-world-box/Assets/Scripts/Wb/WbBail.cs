@@ -281,6 +281,11 @@ namespace PixelWorldBox.Wb
         private static readonly double[] FFlight = new double[9];
         private static readonly double[] FStance = new double[12];
         private static readonly System.Collections.Generic.HashSet<int> MonsterLoot = new System.Collections.Generic.HashSet<int> { R2_DRAGON, R_KRAKEN, R_SANDWORM, R_BASILISK, R_TROLL, R_OGRE, R_WHITEWALKER, R_VAMPIRE, WbConstants.R_DEMON };   // engine L6918
+        // —— M-U7o 远程域 cast 弹道接缝（弹道实体生成属 projectiles 未译域——黄金 'fb'/'ar'/'bm'/'bl' 事件对账；默认哨兵，Test30 置换事件捕获）——
+        internal static System.Action<WbWorld, WbU, double, double, double> CastFireballHook = (w, u, tx, ty, dmg) => throw new System.NotImplementedException("castFireball 未译域（弹道生成域批次三乙二）；黄金回放由 Test30 置换 'fb' 事件捕获");   // L3744 调用面
+        internal static System.Action<WbWorld, WbU, double, double, double> CastArrowHook = (w, u, tx, ty, dmg) => throw new System.NotImplementedException("castArrow 未译域（弹道生成域批次三乙二）；黄金回放由 Test30 置换 'ar' 事件捕获");     // L3765 调用面（L3267/L4050 守城箭随件）
+        internal static System.Action<WbWorld, WbU, double, double, double> CastBeamHook = (w, u, tx, ty, dmg) => throw new System.NotImplementedException("castBeam 未译域（弹道生成域批次三乙二）；黄金回放由 Test30 置换 'bm' 事件捕获");     // L3763 调用面
+        internal static System.Action<WbWorld, WbU, double, double, double> CastBulletHook = (w, u, tx, ty, dmg) => throw new System.NotImplementedException("castBullet 未译域（弹道生成域批次三乙二）；黄金回放由 Test30 置换 'bl' 事件捕获");   // L3764 调用面
 
         // ================= updateUnit L3455-4113（批次一 L3455-3590 全译 + 扫描域 L3592-3669 批次二全译（M-U7m）+
         //                  无敌壳 L3927/4110-4112；战斗/远程/神经/职业/龙息域 L3671-4108 哨兵隔离——批次三余域） =================
@@ -570,14 +575,60 @@ namespace PixelWorldBox.Wb
                     MoveUnitHook(w, u, 1.15);                                                                            // L3736
                     return;                                                                                              // L3737
                 }
-                // —— L3739-3963 攻击链体哨兵（门条件全求值——wild rd null / bowRange 0 短路不触达；黄金 S14-S17 契约）——
-                if (rd != null && enemyD > 1.6 && enemyD <= rd.range) throw new System.InvalidOperationException("法师远程火球域批次三乙未翻译（L3739-3752）");                          // L3739
-                if (bowRange > 0 && enemyD > 1.4 && enemyD <= bowRange) throw new System.InvalidOperationException("弓手/火枪/能量枪域批次三乙未翻译（L3753-3773）");                    // L3753
-                if (enemyD < (RStats[u.race].reach ?? 0.9)) throw new System.InvalidOperationException("近战执行域批次三乙未翻译（L3774-3957：neuroAcc/装备结算/城墙/昼夜/毒/击杀链）");     // L3774
-                if (stance == 2 && (rd != null || bowRange > 0)) throw new System.InvalidOperationException("射程死区风筝域批次三乙未翻译（L3958-3963）");                                // L3958
-                // —— L3964-3967 追击尾（攻击链 else）—— if/else 落出后入 L4112 postJS（无 tail——L4110 tailJS 在 else 块内）
-                if ((u.detour ?? 0) == 0) { u.tx = enemy.x; u.ty = enemy.y; }                                            // L3965（绕行期间不覆写——卡死自愈）
-                MoveUnitHook(w, u, 1.25);                                                                                // L3966
+                // —— L3739-3966 攻击链体 if/else 链（M-U7o 批次三乙一：远程域全译；近战域 L3774-3957 哨兵保留）——
+                if (rd != null && enemyD > 1.6 && enemyD <= rd.range)                                                    // L3739 法师远程火球：拉开距离释放（风筝走位）
+                {
+                    if (u.cd <= 0)                                                                                       // L3741
+                    {
+                        u.cd = rd.cd;                                                                                    // L3742
+                        u.atk = 10;                                                                                      // L3743 施法动画
+                        CastFireballHook(w, u, enemy.x + w.Rng() * 0.6 - 0.3, enemy.y + w.Rng() * 0.6 - 0.3, rd.dmg);    // L3744（弹道生成域接缝——敌人落点抖动 2 掷 ±0.3）
+                    }
+                    if (stance == 2)                                                                                     // L3746 风筝带内且战且退；带外站桩吟唱（旧版无条件后撤会自行退出射程——震荡根治）
+                    {
+                        double ang = System.Math.Atan2(u.y - enemy.y, u.x - enemy.x);                                    // L3748
+                        u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, u.x + System.Math.Cos(ang) * 3));       // L3749
+                        u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, u.y + System.Math.Sin(ang) * 3));       // L3750
+                        MoveUnitHook(w, u, 0.6);                                                                         // L3751
+                    }
+                }
+                else if (bowRange > 0 && enemyD > 1.4 && enemyD <= bowRange)                                             // L3753 弓手/火枪兵/能量枪兵：射程内射击，近身时后撤
+                {
+                    string wepS = u.wep as string;                                                                       // L3755（wep object 协议：string key / int 0 无装备——as string 同构 === 语义）
+                    bool gun = wepS == "musket" || wepS == "rifle";                                                      // L3755
+                    bool beam = wepS == "laser_rifle";                                                                   // L3756
+                    if (u.cd <= 0)                                                                                       // L3757
+                    {
+                        u.cd = beam ? 12 : gun ? 15 : 18;                                                                // L3758 能量武器射速最快
+                        u.atk = 10;                                                                                      // L3759 拉弓/瞄准动画
+                        double mul = (def.isCiv && u.civ >= 0) ? WbCivSim.TechModsOf(w, u.civ).archer : 1;               // L3760（techMods 弹药科技倍率）
+                        var aim = LeadAim(w, enemy, beam ? 8 : gun ? 5 : 12);                                            // L3762 弹道预测：瞄准目标提前量（飞行期间目标仍在移动；内含 2 掷）
+                        if (beam) CastBeamHook(w, u, aim.x, aim.y, u.dmg * 0.75 * mul);                                  // L3763
+                        else if (gun) CastBulletHook(w, u, aim.x, aim.y, u.dmg * mul);                                   // L3764
+                        else CastArrowHook(w, u, aim.x, aim.y, u.dmg * mul);                                             // L3765
+                    }
+                    if (stance == 2)                                                                                     // L3767 近距风筝带内拉开距离——网络连续判定替代硬阈值
+                    {
+                        double ang = System.Math.Atan2(u.y - enemy.y, u.x - enemy.x);                                    // L3769
+                        u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, u.x + System.Math.Cos(ang) * 3));       // L3770
+                        u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, u.y + System.Math.Sin(ang) * 3));       // L3771
+                        MoveUnitHook(w, u, 0.7);                                                                         // L3772
+                    }
+                }
+                else if (enemyD < (RStats[u.race].reach ?? 0.9)) throw new System.InvalidOperationException("近战执行域批次三乙未翻译（L3774-3957：neuroAcc/装备结算/城墙/昼夜/毒/击杀链）");   // L3774
+                else if (stance == 2 && (rd != null || bowRange > 0))                                                    // L3958 射程死区（近到无法开火、远于触及）：网络判定拉开距离恢复射程（旧版会一头撞进近战）
+                {
+                    double ang = System.Math.Atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3960
+                    u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, u.x + System.Math.Cos(ang) * 3));           // L3961
+                    u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, u.y + System.Math.Sin(ang) * 3));           // L3962
+                    MoveUnitHook(w, u, 0.8);                                                                             // L3963
+                }
+                else
+                {
+                    // —— L3964-3966 追击尾（攻击链 else）—— 落出后入 L4112 postJS（无 tail——L4110 tailJS 在敌空 else 块内）
+                    if ((u.detour ?? 0) == 0) { u.tx = enemy.x; u.ty = enemy.y; }                                        // L3965（绕行期间不覆写——卡死自愈）
+                    MoveUnitHook(w, u, 1.25);                                                                            // L3966
+                }
             }
             else
             {
@@ -588,6 +639,16 @@ namespace PixelWorldBox.Wb
                 if (TailJSHook(w, u)) return;                                                                            // L4110（尾段早退：猎物命中/密度场导航——仅 else 路径，S15 僵尸追击 post-only 实证）
             }
             PostJSHook(w, u);                                                                                            // L4112（if/else 之外恒调——敌对追击路径亦达）
+        }
+
+        // ================= leadAim L4351-4357（弹道预测：目标提前量 + 落点抖动 2 掷——M-U7o 远程域消费） =================
+        private static (double x, double y) LeadAim(WbWorld w, WbU enemy, double ttl)
+        {
+            double vx = enemy.x - (enemy.lx ?? enemy.x);                                                                 // L4352（lx/ly 插值锚 undefined → 自身——gen/Test30 桩面均不触 lx）
+            double vy = enemy.y - (enemy.ly ?? enemy.y);                                                                 // L4353
+            double x = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, enemy.x + vx * ttl + w.Rng() * 0.4 - 0.2)); // L4355（钳 0.5..W-0.5；抖动 1 掷）
+            double y = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, enemy.y + vy * ttl + w.Rng() * 0.4 - 0.2)); // L4356（抖动 1 掷）
+            return (x, y);
         }
 
         // ================= grabbedTick L5343-5376（神之手指：抓取/掷飞/落地的眩晕 tick） =================
