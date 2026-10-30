@@ -10,10 +10,8 @@
 //   - frame() 主循环：acc 累计 + 逐 tick 让出 + 30 步硬上限（engine.ts L2708-2732 机械对齐；
 //     帧预算实测域（performance.now 消费）不进本壳——宿主域简化为步数上限同构）
 //   - cam 初值 (128, 80, 4.5)（engine.ts L681）
-// 真地形落位（M-U7g）：WbWorldgen.GenerateWorld（M-U7f' 黄金链）直灌 + WbWorldgen.RebuildWaterTiers
-//   （水深域 L1011-1050 机械翻译，黄金 waterdepth.json 4 场景 + 镜像 4/4 + Test27）——演示 value-noise
-//   占位退役。域口径：pre-river（蓝本 generate L939 seedRivers 刻河属 nature.ts 未译域，河网切片落位
-//   时宿主须刻河后重算水深）；gen.spawnAnimals → spawnUnit（L936）留 unitsTick 切片接线。
+// 演示地形（宿主域标注）：noise.ts 地形生成链未译（独立切片）——本壳用确定性 value-noise 占位
+//   （两八度 + 阈值映射 12 地形），仅保证 Unity 可跑验收与渲染链视觉验证，非蓝本不进对账面。
 // sim 接线：engine.tick() 母体编排已译（M-U7c' WbTickOrch——黄金 tick_orch.json 61 槽位对账面全绿）。
 //   本壳默认装配已译子域真调（RebuildCivBuildCounts/Civs/Tech/Economy/Society/Alliance/Directive/Army
 //   ——空世界安全：域函数顶展 w.civs 空表 no-op）；其余槽位留空待后续切片填肉。
@@ -30,7 +28,7 @@ namespace PixelWorldBox.Host
 
         [Header("World")]
         public int speed = 0;                         // 0 = 暂停（engine this.speed 语义）
-        public uint seed = 20261029;                  // worldgen 种子（蓝本 generate(seed) 域——gen-waterdepth S1 同源）
+        public uint seed = 20261029;                  // 演示地形种子（宿主域）
 
         [Header("Scene")]
         public SpriteRenderer terrainRenderer;        // 空则 Awake 自动建
@@ -55,7 +53,7 @@ namespace PixelWorldBox.Host
             EnsureScene();
         }
 
-        /// <summary>世界构建 + 真地形落位（M-U7g：GenerateWorld + 水深全量重算；蓝本 generate L771-952 宿主等价）</summary>
+        /// <summary>世界构建 + 演示地形（noise.ts 切片前的宿主占位——确定性可复现）</summary>
         public void NewWorld()
         {
             World = new PixelWorldBox.Wb.WbWorld();
@@ -65,7 +63,7 @@ namespace PixelWorldBox.Host
                 fxDayNight = true, fxHpBars = true,     // engine fxPrefs 默认（L271 域）
             };
             for (int i = 0; i < St.owner.Length; i++) St.owner[i] = -1;
-            ApplyWorldGen();
+            GenDemoTerrain();
             _frame = PixelWorldBox.Wb.WbTerrainFull.Bake(St);
             WireOrch();
         }
@@ -150,15 +148,47 @@ namespace PixelWorldBox.Host
             _tex.Apply(false);
         }
 
-        // ---------------- 真地形落位（M-U7g：WbWorldgen 黄金链直灌；蓝本 generate L775-779/L949 同构） ----------------
-        void ApplyWorldGen()
+        // ---------------- 演示地形（宿主占位：确定性 value-noise 两八度 + 阈值映射） ----------------
+        void GenDemoTerrain()
         {
-            WbWorldGenResult gen = PixelWorldBox.Wb.WbWorldgen.GenerateWorld(unchecked((int)seed));
-            System.Array.Copy(gen.Terrain, St.terrain, St.terrain.Length);   // L776 this.terrain = gen.terrain
-            System.Array.Copy(gen.Variant, St.variant, St.variant.Length);   // L777 this.variant = gen.variant
-            // temp/moist（L778-779）渲染域不消费——overlay 温湿图自有黄金链直灌，宿主不暂存
-            PixelWorldBox.Wb.WbWorldgen.RebuildWaterTiers(St.terrain, St.waterTier);   // L949 rebuildWaterTiers（pre-river 域）
-            // gen.SpawnAnimals → spawnUnit（L936）留 unitsTick 切片（unitsTick 主体未译——M-U7 余量）
+            int W = PixelWorldBox.Wb.WbWorld.W, H = PixelWorldBox.Wb.WbWorld.H;
+            uint s = seed;
+            System.Func<double, double, double> vnoise = (x, y) =>
+            {
+                // 整数格 value noise（确定性 LCG 哈希 + 平滑插值）——宿主演示域，非蓝本
+                int xi = (int)System.Math.Floor(x), yi = (int)System.Math.Floor(y);
+                double fx = x - xi, fy = y - yi;
+                double sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+                double h(int a, int b)
+                {
+                    uint k = (uint)(a * 374761393 + b * 668265263) ^ s;
+                    k = (k ^ (k >> 13)) * 1274126177u;
+                    return (k >> 8) / (double)(1u << 24);
+                }
+                return (h(xi, yi) * (1 - sx) + h(xi + 1, yi) * sx) * (1 - sy)
+                     + (h(xi, yi + 1) * (1 - sx) + h(xi + 1, yi + 1) * sx) * sy;
+            };
+            for (int y = 0; y < H; y++)
+            {
+                for (int x = 0; x < W; x++)
+                {
+                    int i = y * W + x;
+                    double n = vnoise(x / 22.0, y / 22.0) * 0.65 + vnoise(x / 9.0, y / 9.0) * 0.35;
+                    byte t;
+                    if (n < 0.34) t = 0;              // DEEP
+                    else if (n < 0.42) t = 1;         // WATER
+                    else if (n < 0.47) t = 2;         // SAND
+                    else if (n < 0.62) t = 3;         // GRASS
+                    else if (n < 0.72) t = 4;         // FOREST
+                    else if (n < 0.80) t = 5;         // HILL
+                    else t = 6;                        // MOUNTAIN
+                    St.terrain[i] = t;
+                    St.variant[i] = (byte)((x * 31 + y * 17 + (int)(n * 100)) & 255);
+                    St.waterTier[i] = t == 1 ? (byte)(2 - (int)((n - 0.34) * 30))
+                                    : t == 0 ? (byte)(3 + (int)((0.34 - n) * 30)) : (byte)0;
+                    if (St.waterTier[i] > 5) St.waterTier[i] = 5;
+                }
+            }
         }
     }
 }
