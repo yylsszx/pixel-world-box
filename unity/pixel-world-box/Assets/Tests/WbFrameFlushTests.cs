@@ -210,5 +210,196 @@ namespace PixelWorldBox.Tests
                 $"(净帧省 {bakeMs / (cleanMs + 1e-9):F0}× bake + 10MB 上传) | 16-tile flush = {flush16Ms:F3} ms");
             Assert.That(cleanMs, Is.LessThan(bakeMs));        // 净帧必然远廉（方向性断言，非定时脆断）
         }
+
+        // ================= M-U7y props 层增量机制语义面（engine.ts flushProps 域） =================
+
+        const int T_FOREST = WbRender.T_FOREST;   // 4
+        const int T_SNOW = WbRender.T_SNOW;       // 7
+
+        /// <summary>props 栅格：新画布 + scale(2) 基变换（宿主 NewWorld 同构——用户 4px 格 → 设备 8px 格）</summary>
+        static WbHostCanvas MakePropsCanvas()
+        {
+            var c = new WbHostCanvas(PW, PH);
+            c.SetTransform(2, 0, 0, 2, 0, 0);   // 蓝本 propsCtx ×2 变换永不重置（engine.ts L750）
+            return c;
+        }
+
+        // ---------------- markPropsDirty 单 tile 语义（engine.ts L978 位点——无四邻，对照 markDirty L959-967） ----------------
+
+        [Test]
+        public void Test28_MarkPropsDirty_SingleTile_NoNeighbors()
+        {
+            var d = new HashSet<int>();
+            WbFrameFlush.MarkPropsDirty(d, 5 * W + 5);        // 内部点 → 仅本体（蓝本 propsDirty 无四邻语义）
+            Assert.That(d, Is.EquivalentTo(new[] { 5 * W + 5 }));
+            d.Clear();
+            WbFrameFlush.MarkPropsDirty(d, 0);                // 角点同型（无边界卫分支——纯 Add）
+            Assert.That(d, Is.EquivalentTo(new[] { 0 }));
+        }
+
+        // ---------------- flushProps 早退门（engine.ts L14300） ----------------
+
+        [Test]
+        public void Test28_FlushProps_EarlyExit_NoTouch()
+        {
+            var st = MakeState();
+            var canvas = MakePropsCanvas();
+            var before = (byte[])canvas.Px.Clone();
+            var d = new HashSet<int>();
+            var box = WbFrameFlush.FlushProps(st, canvas, d);
+            Assert.That(box.Any, Is.False);                   // 净帧零上传
+            Assert.That(canvas.Px, Is.EquivalentTo(before));  // 早退门零触碰持久栅格
+            Assert.That(d, Is.Empty);
+        }
+
+        // ---------------- flushProps 盒换算（engine.ts L14416-14422 安全垫 -12/-14/+22） ----------------
+
+        [Test]
+        public void Test28_FlushProps_BoxConversion_SafetyPad()
+        {
+            var st = MakeState();
+            var canvas = MakePropsCanvas();
+            var d = new HashSet<int>();
+            const int tile = 40 * W + 40;                     // 内部点 tile (40,40)
+            st.terrain[tile] = T_FOREST;                      // 树 tile（fill 域非平凡——保证盒来自真实 flush）
+            WbFrameFlush.MarkPropsDirty(d, tile);
+            var box = WbFrameFlush.FlushProps(st, canvas, d);
+            // 蓝本式：bx=max(0,40*8-12)=308, by=max(0,40*8-14)=306, bx1=min(2048,40*8+22)=342, by1=342
+            Assert.That(box.Any, Is.True);
+            Assert.That(box.X, Is.EqualTo(308));
+            Assert.That(box.Y, Is.EqualTo(306));
+            Assert.That(box.Width, Is.EqualTo(34));
+            Assert.That(box.Height, Is.EqualTo(36));
+            Assert.That(d, Is.Empty);                         // L14415 flush 后清空
+        }
+
+        // ---------------- flushProps 树绘制 + 清除语义（clearRect 外扩 + 分支着色） ----------------
+
+        [Test]
+        public void Test28_FlushProps_TreePaint_ThenClear_WipesCanopy()
+        {
+            var st = MakeState();
+            var canvas = MakePropsCanvas();
+            var d = new HashSet<int>();
+            const int tx = 50, ty = 60;
+            const int tile = ty * W + tx;
+            st.terrain[tile] = T_FOREST;
+            WbFrameFlush.MarkPropsDirty(d, tile);
+            WbFrameFlush.FlushProps(st, canvas, d);
+            // 树冠溢出区（tile 上方设备行 ty*8-6 .. ty*8-1——clearRect 外扩 y*4-3 用户 ×2）非零 alpha（树冠 Fill 落地）
+            bool canopyPainted = false;
+            for (int y = ty * 8 - 6; y < ty * 8; y++)
+                for (int x = tx * 8; x < tx * 8 + 8; x++)
+                    if (canvas.Px[(y * PW + x) * 4 + 3] != 0) canopyPainted = true;
+            Assert.That(canopyPainted, Is.True, "树冠溢出区应有树像素（bails 真实现展开面）");
+            // 翻转 GRASS（蓝本 setTerrain→propsDirty 位点）→ 增量 flush → 冠区清零（clearRect alpha 0 语义——草饰不触达冠区）
+            st.terrain[tile] = T_GRASS;
+            WbFrameFlush.MarkPropsDirty(d, tile);
+            WbFrameFlush.FlushProps(st, canvas, d);
+            for (int y = ty * 8 - 6; y < ty * 8; y++)
+                for (int x = tx * 8; x < tx * 8 + 8; x++)
+                    Assert.That(canvas.Px[(y * PW + x) * 4 + 3], Is.EqualTo(0),
+                        $"冠区 ({x},{y}) 翻转后应清零——clearRect(x*4-2,y*4-3,9,10) 外扩语义");
+        }
+
+        // ---------------- PropsPaint↔PropsBake 等价（bail 路由展开面） ----------------
+
+        [Test]
+        public void Test28_PropsPaint_TreeOpsEqualDirectSpriteCall()
+        {
+            var st = MakeState();
+            const int tile = 30 * W + 30;
+            st.terrain[tile] = T_FOREST;
+            var canvas = MakePropsCanvas();
+            var d = new HashSet<int>();
+            WbFrameFlush.MarkPropsDirty(d, tile);
+            WbFrameFlush.FlushProps(st, canvas, d);
+            // 参照面：PropsBake bail 参数解码 → WbSprites.DrawTree 直调 fill 流（Test 黄金面同源 L3140）
+            var scratch = new WbDrawList();
+            WbRender.PropsBake(st, tile, scratch);
+            var refList = new WbDrawList();
+            foreach (var b in scratch.bails)
+                WbSprites.DrawTree(refList, HexD(b.a[0]), HexD(b.a[1]), (int)HexD(b.a[2]), (int)HexD(b.a[3]));
+            var refCanvas = MakePropsCanvas();
+            refCanvas.PlayOps(refList);
+            // 树像素域逐位一致（参照面只画树——对比域限树 Fill 覆盖面：x∈[tx8,tx8+8) 排除邻格装饰溢出，
+            //  y∈[ty8-6,ty8+8) = 树冠溢出 ∪ 本格；FlushProps 路径 clearRect 后画树 ≡ 参照面空白底画树）
+            for (int y = (ty8(tile) - 6); y < ty8(tile) + 8; y++)
+                for (int x = tx8(tile); x < tx8(tile) + 8; x++)
+                    for (int ch = 0; ch < 4; ch++)
+                        Assert.That(canvas.Px[(y * PW + x) * 4 + ch],
+                            Is.EqualTo(refCanvas.Px[(y * PW + x) * 4 + ch]),
+                            $"树像素 ({x},{y}) ch{ch} ——PropsPaint bail 展开与 DrawTree 直调逐位等价");
+        }
+
+        static int tx8(int tile) { return (tile % W) * 8; }
+        static int ty8(int tile) { return (tile / W) * 8; }
+        static double HexD(string h)
+        {
+            long bits = 0;
+            for (int i = 7; i >= 0; i--)
+                bits = (bits << 8) | (long)(System.Convert.ToInt32(h[i * 2].ToString(), 16) * 16 +
+                                            System.Convert.ToInt32(h[i * 2 + 1].ToString(), 16));
+            return System.BitConverter.Int64BitsToDouble(bits);
+        }
+
+        // ---------------- 雪人尾支（snowman fill 落地——L3046/L3070 位点着色面） ----------------
+
+        [Test]
+        public void Test28_FlushProps_SnowmanTailBranch()
+        {
+            var st = MakeState();
+            var canvas = MakePropsCanvas();
+            var d = new HashSet<int>();
+            const int tx = 70, ty = 90;
+            st.terrain[ty * W + tx] = T_SNOW;
+            st.snowman[ty * W + tx] = 1;                      // 蓝本 snowman 标记（RunPropsScenario 同构直灌）
+            WbFrameFlush.MarkPropsDirty(d, ty * W + tx);
+            WbFrameFlush.FlushProps(st, canvas, d);
+            // 雪人头 #f4f9fd（user (px+1,py,2,2)→设备 (tx8+2,ty8,4,4)；煤眼 (px+1,py,1,1) 覆盖左半、
+            //  胡萝卜鼻 (px+2,py+1,1,1) 覆盖右下——净白残域 = (tx8+4..tx8+6)×(ty8..ty8+2)）应含不透明白
+            bool headFound = false;
+            for (int y = ty * 8; y < ty * 8 + 4; y++)
+                for (int x = tx * 8 + 2; x < tx * 8 + 6; x++)
+                {
+                    int o = (y * PW + x) * 4;
+                    if (canvas.Px[o + 3] == 255 && canvas.Px[o] > 220 && canvas.Px[o + 1] > 230 && canvas.Px[o + 2] > 240) headFound = true;
+                }
+            Assert.That(headFound, Is.True, "雪人头 #f4f9fd 不透明白像素应落地（props 尾支）");
+        }
+
+        // ---------------- 迭代序决定论 + 增量≡全量（升序锚——WbFrameFlush 头注） ----------------
+
+        [Test]
+        public void Test28_FlushProps_OrderDeterminism_AndIncrementalEqualsFull()
+        {
+            var st = MakeState();
+            // 局部混合地形（FOREST 簇 + SNOW 雪人 + GRASS 底——树冠交叠区序敏感域激活）
+            for (int y = 20; y < 30; y++)
+                for (int x = 20; x < 30; x++)
+                {
+                    int i = y * W + x;
+                    st.terrain[i] = (byte)(((x + y) % 3 == 0) ? T_FOREST : T_GRASS);
+                    st.snowman[i] = (byte)(((x * 7 + y * 13) % 11 == 0 && st.terrain[i] == T_SNOW) ? 1 : 0);
+                }
+            st.terrain[24 * W + 24] = T_SNOW; st.snowman[24 * W + 24] = 1;
+            // 路径 A：全量（L15907 for 升序插入）
+            var canvasA = MakePropsCanvas();
+            var dA = new HashSet<int>();
+            WbFrameFlush.MarkAllPropsDirty(dA);
+            WbFrameFlush.FlushProps(st, canvasA, dA);
+            // 路径 B：降序插入（迭代序对抗）+ 分块 flush（多帧增量形态）
+            var canvasB = MakePropsCanvas();
+            var dB = new HashSet<int>();
+            for (int i = W * H - 1; i >= 0; i--) dB.Add(i);
+            for (int lo = 0; lo < W * H; lo += 5000)          // 分块增量（升序块界）
+            {
+                dB.Clear();                                    // 仅保留当前块（升序子集——FlushProps 内部排序决定论）
+                for (int i = System.Math.Min(lo + 5000, W * H) - 1; i >= lo; i--) dB.Add(i);
+                WbFrameFlush.FlushProps(st, canvasB, dB);
+            }
+            Assert.That(canvasB.Px, Is.EqualTo(canvasA.Px),
+                "降序插入 + 分块增量 ≡ 升序全量——升序迭代决定论（交叠区序敏感域覆盖）；EqualTo 逐位位置比较");
+        }
     }
 }

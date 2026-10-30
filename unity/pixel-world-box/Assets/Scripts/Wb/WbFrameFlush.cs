@@ -93,5 +93,119 @@ namespace PixelWorldBox.Wb
             }
             return box;
         }
+
+        // ================= M-U7y props 层增量机制（engine.ts flushProps 域宿主接位） =================
+        // 蓝本锚（tile 着色复用已译件 WbRender.PropsBake = flushProps 逐 tile 段机械翻译〔props 黄金
+        //   ops/bails 面 + WbSprites.DrawTree/DrawMountainProp Test 黄金面〕，本件只译脏簿记骨架 +
+        //   真实现路由，零新着色语义——M-U7j 地形层同构）：
+        //   - engine.ts L709  propsDirty: Set<number>（道具层脏集——单 tile 标记无四邻：
+        //                     L978 setTerrain / L1926 修路 / L3046 雪人消融 / L3070 雪人堆筑；
+        //                     对照地形 markDirty 四邻 L959-967——props 蓝本无四邻语义）
+        //   - L952/L15906-15907  全量失效（newWorld / worldgen 重烘；L15907 for 升序插入序）
+        //   - L14299-14440    flushProps()：L14300 size===0 早退门 → 逐脏 tile
+        //                     clearRect(x*4-2, y*4-3, 9, 10)（用户 4px 格——外扩 2/3 px 树山溢出安全垫）
+        //                     + 分支着色（FOREST→drawTree / MOUNTAIN→drawMountainProp / road / GRASS /
+        //                     SAND / HILL / SNOW / BURNT + snowman 尾支 L14389-14413）→
+        //                     L14415 propsDirty.clear() → L14416-14422 盒换算（设备像素安全垫
+        //                     -12/-14/+22——clearRect 外扩 + 树冠溢出覆盖）→
+        //                     L14423-14432 propsFlushBox 跨 flush 并集（render 消费前求并）
+        // 蓝本位点注记：季节为 yearF 派生 getter（nature.ts L162）无独立失效位点——树/山季节精灵随
+        //   tile 自然重触更新（Organic per-tile 刷新），宿主机械保真不补季节全量（伪影保真）。
+        // 迭代序决定论：蓝本 Set=插入序（重叠 tile 的 clear/paint 交叠区序敏感）；C# HashSet 迭代序
+        //   未指定 → 升序迭代（全量 pass L15907 for 升序插入 ≡ 升序迭代逐位同构；增量多 tile 相邻
+        //   重叠区随升序确定——宿主域决定论锚，M-U7j 无此问题因地形 tile 间零交叠）。
+
+        /// <summary>engine.ts L978/L1926/L3046/L3070 propsDirty 单 tile 标记机械翻译（无四邻——蓝本位点语义）</summary>
+        public static void MarkPropsDirty(HashSet<int> dirty, int i) { dirty.Add(i); }
+
+        /// <summary>engine.ts L952/L15906-15907 全量失效机械翻译（newWorld / worldgen 重烘）</summary>
+        public static void MarkAllPropsDirty(HashSet<int> dirty)
+        {
+            for (int i = 0; i < W * H; i++) dirty.Add(i);
+        }
+
+        /// <summary>
+        /// props tile 真实现绘制（M-U7y 宿主面）：PropsBake 对账面（黄金 ops/bails 锁定——RunPropsScenario）
+        /// → ops 落地（clearRect + 分支 Fill 含雪人尾支——蓝本分支序）+ bails 真实现展开（M-U7a bail→
+        /// WbSprites 直调先例——drawTree/drawMountainProp Fill-op 语义件，Test 黄金面锁定）。
+        /// 序等价证明：FOREST/MOUNTAIN bail 支与 snowman 尾支地形互斥（雪人仅 SNOW 地形 L3070 门），
+        /// ops 内序 + bails 后展开 ≡ 蓝本调用序。
+        /// </summary>
+        public static void PropsPaint(WbRenderState st, int i, WbHostCanvas canvas, WbDrawList scratch, WbDrawList sprites)
+        {
+            scratch.ops.Clear(); scratch.bails.Clear();
+            WbRender.PropsBake(st, i, scratch);                       // 对账面单源（零漂移）
+            canvas.PlayOps(scratch);                                  // clearRect/Fill 落地（bails 播放器契约跳过）
+            sprites.ops.Clear();
+            foreach (WbBail b in scratch.bails)
+            {
+                if (b.fn == "drawTree")                               // sprites.ts drawTree(propsCtx, x, y, variant, season)
+                    WbSprites.DrawTree(sprites, HexD(b.a[0]), HexD(b.a[1]), (int)HexD(b.a[2]), (int)HexD(b.a[3]));
+                else if (b.fn == "drawMountainProp")                  // sprites.ts drawMountainProp(propsCtx, x, y, variant, elev, cold)
+                    WbSprites.DrawMountainProp(sprites, HexD(b.a[0]), HexD(b.a[1]), (int)HexD(b.a[2]), HexD(b.a[3]), HexD(b.a[4]));
+                // 其余 fn 不存在于 props 域（PropsBail 仅两件——未知 fn 跳过同 PlayOps 不消费 bails 契约）
+            }
+            if (sprites.ops.Count > 0) canvas.PlayOps(sprites);
+        }
+
+        /// <summary>
+        /// engine.ts L14299-14440 flushProps 机械翻译：逐脏 tile PropsPaint 入持久栅格 canvas
+        /// （WbHostCanvas 2048×1280——用户 4px 格 × scale(2) 基变换 = 设备 8px 格；基变换由宿主
+        /// 分配后一次性 SetTransform(2,0,0,2,0,0)——蓝本 propsCtx 变换永不重置 L750 同构），
+        /// 包围盒累积（L14307-14320）→ clear（L14415）→ 设备像素盒换算（L14416-14422 安全垫）。
+        /// 净帧（L14300 早退门）返回 Any=false——宿主跳过上传。蓝本 L14423-14432 propsFlushBox
+        /// 跨 flush 并集在宿主单帧单 flush 形态不触发（M-U7j 地形层同构注记——并集语义由多次
+        /// MarkPropsDirty 后一次 flush 天然覆盖；跨帧并集如需由宿主侧持久盒承担）。
+        /// </summary>
+        public static FlushBox FlushProps(WbRenderState st, WbHostCanvas canvas, HashSet<int> dirty)
+        {
+            var box = default(FlushBox);
+            if (dirty.Count == 0) return box;                   // L14300 早退门
+            var order = new List<int>(dirty); order.Sort();     // 升序迭代（决定论锚——见头注）
+            int bminX = W, bminY = H, bmaxX = -1, bmaxY = -1;   // L14307-14320 tile 坐标盒累积
+            var scratch = new WbDrawList();
+            var sprites = new WbDrawList();
+            foreach (int i in order)
+            {
+                int tx = i % W;                                 // L14309-14312 同构
+                int ty = i / W;
+                if (tx < bminX) bminX = tx;
+                if (tx > bmaxX) bmaxX = tx;
+                if (ty < bminY) bminY = ty;
+                if (ty > bmaxY) bmaxY = ty;
+                PropsPaint(st, i, canvas, scratch, sprites);
+            }
+            dirty.Clear();                                      // L14415
+            if (bmaxX >= 0)                                     // L14416-14422 盒换算（设备像素安全垫机械翻译）
+            {
+                int bx = Math.Max(0, bminX * 8 - 12);
+                int by = Math.Max(0, bminY * 8 - 14);
+                int bx1 = Math.Min(PW, bmaxX * 8 + 22);
+                int by1 = Math.Min(PH, bmaxY * 8 + 22);
+                int bw = bx1 - bx, bh = by1 - by;
+                if (bw > 0 && bh > 0)
+                {
+                    box.Any = true;
+                    box.X = bx; box.Y = by; box.Width = bw; box.Height = bh;
+                }
+            }
+            return box;
+        }
+
+        // f64 bits hex 解码（F64Hex 逆——bails 参数消费面；编码 WbRender.F64Hex L208 小端 16 hex 字符）
+        static double HexD(string h)
+        {
+            long bits = 0;
+            for (int i = 7; i >= 0; i--)
+                bits = (bits << 8) | (long)(HexV4(h[i * 2]) * 16 + HexV4(h[i * 2 + 1]));
+            return BitConverter.Int64BitsToDouble(bits);
+        }
+        static int HexV4(char c)
+        {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            throw new FormatException("WbFrameFlush.HexD: bad hex char '" + c + "'");
+        }
     }
 }

@@ -60,13 +60,19 @@ namespace PixelWorldBox.Host
         [Header("Unit Layer (M-U7i)")]
         public SpriteRenderer unitRenderer;           // 空则 EnsureScene 自动建（terrain 之上）
 
+        [Header("Props Layer (M-U7y)")]
+        public SpriteRenderer propsRenderer;          // 空则 EnsureScene 自动建（terrain 与 units 之间——蓝本 propsCanvas 层序）
+
         Texture2D _tex;
         Texture2D _unitTex;
+        Texture2D _propsTex;                          // 道具层持久纹理（M-U7y——terrain 同规格 2048×1280）
+        PixelWorldBox.Wb.WbHostCanvas _propsCanvas;   // 道具层持久栅格（蓝本 propsCanvas 同构；scale(2) 基变换一次）
         float _acc;
         byte[] _frame;                                // 地形层持久缓冲（M-U7j：分配一次，flush 就地更新）
         readonly HashSet<int> _dirty = new HashSet<int>();   // 脏瓦片集（engine.ts L708 dirty 语义）
+        readonly HashSet<int> _propsDirty = new HashSet<int>();   // 道具层脏集（engine.ts L709 propsDirty 语义——单 tile 标记）
         // St 渲染面差分快照（M-U7j 宿主桥：域函数为纯对账面不带 markDirty 记账 → tick 后差分标脏）
-        byte[] _shTerrain, _shVariant, _shWaterTier, _shGlacier;
+        byte[] _shTerrain, _shVariant, _shWaterTier, _shGlacier, _shSnowman;   // _shSnowman：M-U7y props 差分源（L3046/L3070 位点）
         int[] _shRoad, _shOwner;
         double[] _shRadiate;
         int _shSeason = int.MinValue; double _shAsh = double.NaN; long _shCivSig = long.MinValue;
@@ -92,6 +98,19 @@ namespace PixelWorldBox.Host
             _frame = new byte[PixelWorldBox.Wb.WbTerrainFull.PW * PixelWorldBox.Wb.WbTerrainFull.PH * 4];   // M-U7j：持久缓冲分配一次
             MarkAllTerrainDirty();                    // engine.ts L950 generate 全量失效
             FlushTerrain();                           // 全量首烘（L951 generate→flushDirty 同构）
+            // —— M-U7y props 层首烘（蓝本 newWorld L15892 propsCtx 全清 + L15906-15908 全量 propsDirty→flushProps 同构）——
+            if (_propsCanvas == null)
+            {
+                _propsCanvas = new PixelWorldBox.Wb.WbHostCanvas(
+                    PixelWorldBox.Wb.WbTerrainFull.PW, PixelWorldBox.Wb.WbTerrainFull.PH);
+                _propsCanvas.SetTransform(2, 0, 0, 2, 0, 0);   // 用户 4px 格 → 设备 8px 格（蓝本 propsCtx ×2 变换永不重置 L750 同构）
+            }
+            else
+            {
+                System.Array.Clear(_propsCanvas.Px, 0, _propsCanvas.Px.Length);   // L15892 clearRect 全清同构（重建世界）
+            }
+            MarkAllPropsDirty();                      // L952/L15907 全量失效
+            FlushProps();                             // 全量首烘（L953/L15908 flushProps 同构）
             SnapshotRenderFace();                     // 差分桥基线
             _canvas = null;                           // 新世界 → 单位层栅格重建（clear 机状态随世界）
             WireOrch();
@@ -159,6 +178,25 @@ namespace PixelWorldBox.Host
                 unitRenderer.transform.position = new Vector3(128f, 80f, -1f);   // terrain 之上（z 负近相机）
                 unitRenderer.transform.localScale = new Vector3(1f, -1f, 1f);    // 同 y 翻转协议
             }
+            if (_propsTex == null)
+            {
+                _propsTex = new Texture2D(
+                    PixelWorldBox.Wb.WbTerrainFull.PW, PixelWorldBox.Wb.WbTerrainFull.PH,
+                    TextureFormat.RGBA32, false);
+                _propsTex.filterMode = FilterMode.Point;
+                var psprite = Sprite.Create(_propsTex, new Rect(0, 0, _propsTex.width, _propsTex.height),
+                    new Vector2(0.5f, 0.5f), 8f);       // PPU=8 同地形层
+                if (propsRenderer == null)
+                {
+                    var go = new GameObject("WbProps");
+                    propsRenderer = go.AddComponent<SpriteRenderer>();
+                }
+                propsRenderer.sprite = psprite;
+                propsRenderer.transform.position = new Vector3(128f, 80f, -0.5f);   // terrain 与 units 之间（蓝本 propsCanvas 层序）
+                propsRenderer.transform.localScale = new Vector3(1f, -1f, 1f);      // 同 y 翻转协议
+                // NewWorld 先于 EnsureScene（Awake 序）——首烘像素已在 _propsCanvas.Px，纹理后建须全量补上载
+                if (_propsCanvas != null) { _propsTex.LoadRawTextureData(_propsCanvas.Px); _propsTex.Apply(false); }
+            }
             UploadFrame();
         }
 
@@ -206,6 +244,7 @@ namespace PixelWorldBox.Host
             SyncRenderState();
             SyncTerrainDiffs();
             FlushTerrain();
+            FlushProps();                              // M-U7y：蓝本 render 帧首 flushProps 同构（L14300 早退门）
             RenderUnits();
         }
 
@@ -230,27 +269,41 @@ namespace PixelWorldBox.Host
         {
             if (_frame == null) return;
             var box = PixelWorldBox.Wb.WbFrameFlush.FlushDirty(St, _frame, _dirty);
-            if (box.Any) UploadBox(box);              // putImageData 脏矩形（L14286）↔ SetPixels32
+            if (box.Any) UploadBox(box, _tex, _frame);              // putImageData 脏矩形（L14286）↔ SetPixels32
+        }
+
+        /// <summary>flushProps 宿主消费（M-U7y；蓝本 render 帧首 flushProps 同构）：脏帧 → 逐脏瓦片
+        /// PropsPaint（op 流 + bails 真实现展开）+ 盒上传；净帧零成本</summary>
+        void FlushProps()
+        {
+            if (_propsCanvas == null) return;
+            var box = PixelWorldBox.Wb.WbFrameFlush.FlushProps(St, _propsCanvas, _propsDirty);
+            if (box.Any) UploadBox(box, _propsTex, _propsCanvas.Px);   // L14416-14422 盒换算同构
         }
 
         /// <summary>蓝本 markDirty 位点显式接线 API（engine.ts L959-967）——未来域切片的等价内联记账入口</summary>
         public void MarkTileDirty(int i) => PixelWorldBox.Wb.WbFrameFlush.MarkDirty(_dirty, i);
         public void MarkAllTerrainDirty() => PixelWorldBox.Wb.WbFrameFlush.MarkAllDirty(_dirty);
 
+        /// <summary>蓝本 propsDirty 位点显式接线 API（M-U7y；engine.ts L978/L1926/L3046/L3070）——
+        //  未来域切片（修路/雪人/地形编辑器）的等价内联记账入口</summary>
+        public void MarkPropsTileDirty(int i) => PixelWorldBox.Wb.WbFrameFlush.MarkPropsDirty(_propsDirty, i);
+        public void MarkAllPropsDirty() => PixelWorldBox.Wb.WbFrameFlush.MarkAllPropsDirty(_propsDirty);
+
         /// <summary>SetPixels32 脏盒部分上传（旧版净帧亦全拷 10MB → 仅脏帧盒区域拷贝；行序与
         /// LoadRawTextureData 同底起——row 0 = 纹理 v0，与既有 y 翻转协议一致）</summary>
-        void UploadBox(PixelWorldBox.Wb.WbFrameFlush.FlushBox b)
+        void UploadBox(PixelWorldBox.Wb.WbFrameFlush.FlushBox b, Texture2D tex, byte[] buf)
         {
-            if (_tex == null) return;
+            if (tex == null || buf == null) return;
             var c32 = new Color32[b.Width * b.Height];
             for (int r = 0; r < b.Height; r++)
             {
                 int src = ((b.Y + r) * PixelWorldBox.Wb.WbTerrainFull.PW + b.X) * 4;
                 for (int c = 0; c < b.Width; c++, src += 4)
-                    c32[r * b.Width + c] = new Color32(_frame[src], _frame[src + 1], _frame[src + 2], _frame[src + 3]);
+                    c32[r * b.Width + c] = new Color32(buf[src], buf[src + 1], buf[src + 2], buf[src + 3]);
             }
-            _tex.SetPixels32(b.X, b.Y, b.Width, b.Height, c32);
-            _tex.Apply(false);
+            tex.SetPixels32(b.X, b.Y, b.Width, b.Height, c32);
+            tex.Apply(false);
         }
 
         /// <summary>
@@ -263,38 +316,44 @@ namespace PixelWorldBox.Host
         void SyncTerrainDiffs()
         {
             if (_shTerrain == null) return;           // NewWorld 前无快照（首烘已全量）
-            DiffBytes(St.terrain, _shTerrain);        // 逐变更瓦片 MarkDirty（部分失效保脏盒最小）
-            DiffBytes(St.variant, _shVariant);
-            DiffBytes(St.waterTier, _shWaterTier);
-            DiffBytes(St.glacier, _shGlacier);
-            DiffInts(St.road, _shRoad);
-            DiffInts(St.owner, _shOwner);
+            DiffBytes(St.terrain, _shTerrain, true);  // 逐变更瓦片 MarkDirty（部分失效保脏盒最小）+ props 双标脏（L978 setTerrain 位点）
+            DiffBytes(St.variant, _shVariant, false);
+            DiffBytes(St.waterTier, _shWaterTier, false);
+            DiffBytes(St.glacier, _shGlacier, false);
+            DiffInts(St.road, _shRoad, true);         // 修路位点双标脏（蓝本 L1926-1927 dirty+propsDirty 双记账）
+            DiffInts(St.owner, _shOwner, false);
             DiffDoubles(St.radiate, _shRadiate);
-            // 全局参（季节/火山灰/疆域混色源）→ 全量失效（engine.ts L9730 全量先例）
+            DiffBytes(St.snowman, _shSnowman, false, true);   // M-U7y 雪人差分：props-only（蓝本 L3046/L3070 位点——无地形记账）
+            // 全局参（季节/火山灰/疆域混色源）→ 全量失效（engine.ts L9730 全量先例）；
+            // props 无季节失效位点（蓝本 Organic per-tile 刷新——WbFrameFlush 头注伪影保真）
             if (St.season != _shSeason || St.ash != _shAsh || CivSig() != _shCivSig)
                 PixelWorldBox.Wb.WbFrameFlush.MarkAllDirty(_dirty);
             SnapshotRenderFace();                     // 快照前滚（逐瓦片路径已在 Diff 内就地更新）
         }
 
-        bool DiffBytes(byte[] cur, byte[] sh)
+        bool DiffBytes(byte[] cur, byte[] sh, bool propsToo) { return DiffBytes(cur, sh, true, propsToo); }
+
+        bool DiffBytes(byte[] cur, byte[] sh, bool terrainToo, bool propsToo)
         {
             bool ch = false;
             for (int i = 0; i < cur.Length; i++)
             {
                 if (cur[i] == sh[i]) continue;
-                PixelWorldBox.Wb.WbFrameFlush.MarkDirty(_dirty, i);   // 四邻标脏（蓝本 markDirty 语义）
+                if (terrainToo) PixelWorldBox.Wb.WbFrameFlush.MarkDirty(_dirty, i);   // 四邻标脏（蓝本 markDirty 语义）
+                if (propsToo) PixelWorldBox.Wb.WbFrameFlush.MarkPropsDirty(_propsDirty, i);   // M-U7y 蓝本双记账位点（setTerrain L977-978）
                 sh[i] = cur[i]; ch = true;
             }
             return ch;
         }
 
-        bool DiffInts(int[] cur, int[] sh)
+        bool DiffInts(int[] cur, int[] sh, bool propsToo)
         {
             bool ch = false;
             for (int i = 0; i < cur.Length; i++)
             {
                 if (cur[i] == sh[i]) continue;
                 PixelWorldBox.Wb.WbFrameFlush.MarkDirty(_dirty, i);
+                if (propsToo) PixelWorldBox.Wb.WbFrameFlush.MarkPropsDirty(_propsDirty, i);   // M-U7y 修路位点（L1926-1927）
                 sh[i] = cur[i]; ch = true;
             }
             return ch;
@@ -344,6 +403,7 @@ namespace PixelWorldBox.Host
                 _shWaterTier = new byte[St.waterTier.Length]; _shGlacier = new byte[St.glacier.Length];
                 _shRoad = new int[St.road.Length]; _shOwner = new int[St.owner.Length];
                 _shRadiate = new double[St.radiate.Length];
+                _shSnowman = new byte[St.snowman.Length];   // M-U7y props 差分基线
             }
             System.Array.Copy(St.terrain, _shTerrain, _shTerrain.Length);
             System.Array.Copy(St.variant, _shVariant, _shVariant.Length);
@@ -352,6 +412,7 @@ namespace PixelWorldBox.Host
             System.Array.Copy(St.road, _shRoad, _shRoad.Length);
             System.Array.Copy(St.owner, _shOwner, _shOwner.Length);
             System.Array.Copy(St.radiate, _shRadiate, _shRadiate.Length);
+            System.Array.Copy(St.snowman, _shSnowman, _shSnowman.Length);   // M-U7y
             _shSeason = St.season; _shAsh = St.ash; _shCivSig = CivSig();
         }
 
