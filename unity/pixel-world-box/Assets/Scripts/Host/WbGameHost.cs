@@ -3,8 +3,11 @@
 // 装配拓扑：
 //   本壳（GameObject + WbGameHost + WbCameraRig）→ Texture2D(2048×1280 RGBA32) ← TerrainFull.Bake
 //   Sprite（PPU=8 → 256×160 世界单位，1 tile = 1 单位）→ SpriteRenderer → Camera.main（正交）。
-//   WbHostCanvas op 播放器已就位（Wb 域，NUnit Test24 六测试 + verify 段 25）——UnitScene 精灵层
-//   播放接线留 M-U7 下一切片（本壳先通地形全链）。
+//   M-U7i UnitScene 精灵层播放接线：WbRender.UnitScene（M-U7a 直调产 op 流，Test18/20 黄金面）→
+//   WbHostCanvas.PlayOps（Test24 语义面）逐帧合成 2048×1280 透明单位层 → 第二 SpriteRenderer
+//   （terrain 之上，同 y 翻转协议）；St.civs 引用同步 + St.terrainAt 相机中心 tile 直灌（黄金单 tile
+//   协议同构）+ St.frameCount 逐帧推进（sun/恐慌闪烁周期）。演示单位为宿主占位（退役条件 =
+//   spawnUnit 宿主接线落位〔updateUnit 切片随件〕）。
 // 蓝本锚：
 //   - TICK_MS = 66（constants.ts L8，~15tps）
 //   - frame() 主循环：acc 累计 + 逐 tick 让出 + 30 步硬上限（engine.ts L2708-2732 机械对齐；
@@ -45,9 +48,15 @@ namespace PixelWorldBox.Host
         public PixelWorldBox.Wb.WbWorld World { get; private set; }
         public PixelWorldBox.Wb.WbRenderState St { get; private set; }
 
+        [Header("Unit Layer (M-U7i)")]
+        public SpriteRenderer unitRenderer;           // 空则 EnsureScene 自动建（terrain 之上）
+
         Texture2D _tex;
+        Texture2D _unitTex;
         float _acc;
         byte[] _frame;                                // TerrainFull 输出复用缓冲
+        PixelWorldBox.Wb.WbHostCanvas _canvas;        // 单位层持久栅格（canvas 语义：clear 增量机同构）
+        int _demoSeq;
 
         void Awake()
         {
@@ -67,7 +76,52 @@ namespace PixelWorldBox.Host
             for (int i = 0; i < St.owner.Length; i++) St.owner[i] = -1;
             ApplyWorldGen();
             _frame = PixelWorldBox.Wb.WbTerrainFull.Bake(St);
+            _canvas = null;                           // 新世界 → 单位层栅格重建（clear 机状态随世界）
+            SpawnDemoUnits();
             WireOrch();
+        }
+
+        /// <summary>演示单位（宿主占位：静态陈列供 UnitScene 精灵层视觉验收——无 unitsTick 不更新；
+        /// 退役条件 = spawnUnit 宿主接线落位）</summary>
+        void SpawnDemoUnits()
+        {
+            int[] races = { 0, 0, 6, 7, 21, 34, 33, 10 };   // 人×2/羊/狼/巨魔/猪/鸡/鹿（静态 RDEF 41 族域）
+            int cx = PixelWorldBox.Wb.WbWorld.W / 2, cy = PixelWorldBox.Wb.WbWorld.H / 2;
+            (int gx, int gy) = FindGrassNear(cx, cy);
+            double bx = gx + 0.5, by = gy + 0.5;
+            double[] offs = { 0, 0, -2.5, 1.5, 2.5, 1.5, -2, -2, 3, -1, 1.5, 2.5, -1.5, -2.5, 2, 2 };
+            for (int k = 0; k < races.Length; k++)
+            {
+                var u = new PixelWorldBox.Wb.WbU
+                {
+                    id = ++_demoSeq, race = races[k], civ = -1,
+                    x = System.Math.Clamp(bx + offs[k * 2], 1.5, PixelWorldBox.Wb.WbWorld.W - 1.5),
+                    y = System.Math.Clamp(by + offs[k * 2 + 1], 1.5, PixelWorldBox.Wb.WbWorld.H - 1.5),
+                    hp = 10, maxHp = 10, name = "demo" + _demoSeq,
+                };
+                u.tx = u.x; u.ty = u.y;
+                World.units.Add(u);
+            }
+            World.RebuildBuckets();
+        }
+
+        /// <summary>宿主域：近邻草格搜索（演示单位落位；螺旋半径 12 兜底中心）</summary>
+        (int, int) FindGrassNear(int cx, int cy)
+        {
+            for (int r = 0; r <= 12; r++)
+            {
+                for (int dy = -r; dy <= r; dy++)
+                {
+                    for (int dx = -r; dx <= r; dx++)
+                    {
+                        if (System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dy)) != r) continue;
+                        int x = cx + dx, y = cy + dy;
+                        if (x < 1 || y < 1 || x >= PixelWorldBox.Wb.WbWorld.W - 1 || y >= PixelWorldBox.Wb.WbWorld.H - 1) continue;
+                        if (St.terrain[y * PixelWorldBox.Wb.WbWorld.W + x] == PixelWorldBox.Wb.WbConstants.T_GRASS) return (x, y);
+                    }
+                }
+            }
+            return (cx, cy);
         }
 
         /// <summary>
@@ -115,7 +169,49 @@ namespace PixelWorldBox.Host
                 // WbWorld y=0 = 北 → 纹理行 0 朝上（几何 y 翻转；SpriteRenderer Cull Off 双面安全）
                 terrainRenderer.transform.localScale = new Vector3(1f, -1f, 1f);
             }
+            if (_unitTex == null)
+            {
+                _unitTex = new Texture2D(
+                    PixelWorldBox.Wb.WbTerrainFull.PW, PixelWorldBox.Wb.WbTerrainFull.PH,
+                    TextureFormat.RGBA32, false);
+                _unitTex.filterMode = FilterMode.Point;
+                var usprite = Sprite.Create(_unitTex, new Rect(0, 0, _unitTex.width, _unitTex.height),
+                    new Vector2(0.5f, 0.5f), 8f);
+                if (unitRenderer == null)
+                {
+                    var go = new GameObject("WbUnits");
+                    unitRenderer = go.AddComponent<SpriteRenderer>();
+                }
+                unitRenderer.sprite = usprite;
+                unitRenderer.transform.position = new Vector3(128f, 80f, -1f);   // terrain 之上（z 负近相机）
+                unitRenderer.transform.localScale = new Vector3(1f, -1f, 1f);    // 同 y 翻转协议
+            }
             UploadFrame();
+        }
+
+        /// <summary>渲染态相机/纪元同步（M-U7i：rig 值 → St 黄金协议字段）</summary>
+        void SyncRenderState()
+        {
+            if (rig != null) { St.camX = rig.camX; St.camY = rig.camY; St.camZoom = rig.zoom; }
+            St.frameCount++;
+            int ccx = System.Math.Clamp((int)System.Math.Floor(St.camX), 0, PixelWorldBox.Wb.WbWorld.W - 1);
+            int ccy = System.Math.Clamp((int)System.Math.Floor(St.camY), 0, PixelWorldBox.Wb.WbWorld.H - 1);
+            St.terrainAt = St.terrain[ccy * PixelWorldBox.Wb.WbWorld.W + ccx];   // 黄金单 tile 协议同构（相机中心 tile）
+            St.civs = World.civs;                                                 // 疆域混色源引用同步
+        }
+
+        /// <summary>UnitScene 精灵层（M-U7i）：op 流产出（Test18/20 黄金面同源）→ PlayOps 合成 → 纹理上载</summary>
+        void RenderUnits()
+        {
+            if (_unitTex == null) return;
+            if (_canvas == null) _canvas = new PixelWorldBox.Wb.WbHostCanvas(
+                PixelWorldBox.Wb.WbTerrainFull.PW, PixelWorldBox.Wb.WbTerrainFull.PH);
+            _canvas.RegisterSource("terrain", _frame, PixelWorldBox.Wb.WbTerrainFull.PW, PixelWorldBox.Wb.WbTerrainFull.PH);
+            var L = new PixelWorldBox.Wb.WbDrawList();
+            PixelWorldBox.Wb.WbRender.UnitScene(St, World.units, L);
+            _canvas.PlayOps(L);
+            _unitTex.LoadRawTextureData(_canvas.Px);
+            _unitTex.Apply(false);
         }
 
         void Update()
@@ -133,8 +229,10 @@ namespace PixelWorldBox.Host
                 }
             }
             // 渲染派发（脏标记优化属性能域——M-U7 下一切片；本壳每帧重烘保演示简单）
+            SyncRenderState();
             _frame = PixelWorldBox.Wb.WbTerrainFull.Bake(St);
             UploadFrame();
+            RenderUnits();
         }
 
         void TickHost()
