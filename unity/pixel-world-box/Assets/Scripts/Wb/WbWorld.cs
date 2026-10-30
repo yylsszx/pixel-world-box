@@ -155,6 +155,16 @@ namespace PixelWorldBox.Wb
         public WbGene geneC;                 // engine u.gene（{s,d,h,r} 四维；null = TS undefined）
         public double maxAgeF;               // engine u.maxAge（f64 域：spawnUnit def.maxAge*(0.8+rng()*0.4)；上方 int maxAge 为旧占位不动）
         public int? jobC;                    // engine u.job（spawnUnit def.isCiv ? job : undefined → null 语义；上方 int job 旧占位不动）
+        // —— M-U7l updateUnit 批次一消费域（字段只加不改不重排；N 后缀 f64/undefined 镜像 = ageF/maxAgeF/famN 先例）——
+        public int fleeT;                    // engine u.fleeT（脱离冷却瞬态；?? 0 语义）
+        public int bless;                    // engine u.bless（祝福瞬态；?? 0 语义）
+        public double? hurtN;                // engine u.hurt（f64 域；undefined → null；Math.max(undefined,4)=NaN 怪癖位精确——int hurt 旧占位不动）
+        public int? chillN;                  // engine u.chill（undefined → null——snapU null 与 0 位分离；int chill 旧占位不动）
+        public int? stk;                     // engine u.stk（卡死计数 (u.stk ?? 0)+1；undefined → null）
+        public double? sxk, syk;             // engine u.sxk/syk（卡死锚点；undefined → null）
+        public double? foodN;                // engine u.food（f64 域 (u.food ?? 70)-1；int food 旧占位不动）
+        public List<int> gIdsN;              // engine u.gIds（undefined → null——空表 [] 与 undefined 位分离；List gIds 旧占位不动）
+        public List<double> gValN;             // engine u.gVal（undefined → null）
     }
 
     /// Alliance/Directive/Army 空转结构（M-U3c 域；M-U3d 起联盟/旨意为真态域）
@@ -443,6 +453,10 @@ namespace PixelWorldBox.Wb
         public byte[] riverDir = new byte[W * H];              // engine L257 riverDir: Uint8Array（0 非河 / 1-8 八向；carveRiver L12364 写）
         public HashSet<int> riverTiles = new HashSet<int>();   // engine L259 riverTiles: Set<number>（成员判定；add 重复 no-op）
         public List<int> riverTilesList = new List<int>();     // 插入序镜像（JS Set 迭代序；黄金 riverTiles dump 对账面）
+
+        // —— M-U7l updateUnit 批次一消费域（字段只加）——
+        public byte[] fire = new byte[W * H];                  // engine L783 fire: Uint8Array（火场强度；fireTick 槽未译域——本切片批次一门只读 + 白行者灭火写点）
+        public HashSet<int> fireSet = new HashSet<int>();      // engine L166 fireSet: Set<number>（火格索引集合；国民防灾 bigFire 域消费切片）
 
         // ---------------- 集合层（M-U3c 战争/联盟/图谱域） ----------------
         public Dictionary<string, WbWarData> warData = new Dictionary<string, WbWarData>();  // key 'a-b'（a<b）

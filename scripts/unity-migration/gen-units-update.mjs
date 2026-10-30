@@ -1,6 +1,7 @@
 // ============================================================================
-// gen-units-update.mjs —— M-U2a 切片 2「updateUnit 前置状态段」黄金向量
-// 蓝本：src/lib/game/engine.ts updateUnit（L3584-3704，入口 → hp≤0 死亡门），
+// gen-units-update.mjs —— M-U7l 切片「updateUnit 批次一」黄金向量（M-U2a 草稿接管：行号修正 + 双写标准化 + det 复验 df/e58480d1 链）
+// 蓝本：src/lib/game/engine.ts updateUnit（现行号 L3455 入口 → L3590 hp≤0 死亡门批次一边界；
+//       扫描域空桶穿行 → L4110 tailJS/L4112 postJS 影子调用点），
 //       rust-core/src/units.rs update_unit（L2314+，交叉核对）。
 // 直接 import 现役 engine.ts（真实现，非复制），以 Object.create(GameEngine.prototype)
 // + stub 字段面驱动真 updateUnit；扫描段以空 buckets 截断（M-U2b 域），
@@ -8,11 +9,12 @@
 // 引擎侧效应（grabbedTick/updateBoat/riseSkeleton/spreadPlague/fx）以事件流捕获。
 // 截断契约（对 rng 消耗断点敏感，场景设计须遵守）：
 //  ① 单位 panic 注入恒 ≤0.55（contagious 掷骰属扫描段——留给切片 3）；
-//  ② civ=-1（isCiv 种族亦然）→ peaceful 职业链整段跳过（L4112 门 u.civ>=0）；
-//  ③ fireSet/damagedSet 空且单位非消防相关 → L4118/L4157 && 短路零抽；
+//  ② civ=-1（isCiv 种族亦然）→ peaceful 职业链整段跳过（L4112 门 u.civ>=0→现 L3937）；
+//  ③ fireSet/damagedSet 空且单位非消防相关 → 消防域 && 短路零抽；
 //  ④ WB.setEnabled(false) → 扫描走 JS 空桶路径，零消耗。
 // 运行：bun scripts/unity-migration/gen-units-update.mjs
-// 输出：scripts/unity-migration/golden-units-update.json
+// 输出：scripts/unity-migration/golden/units_update.json
+//       unity/pixel-world-box/Assets/StreamingAssets/WbGolden/units_update.json（双写）
 // ============================================================================
 import { GameEngine } from '../../src/lib/game/engine.ts';
 import { RACES, R, TRAITS } from '../../src/lib/game/types.ts';
@@ -20,6 +22,7 @@ import { WB } from '../../src/lib/wasm/wbspatial.ts';
 import { mulberry32 } from '../../src/lib/game/noise.ts';
 import { ep } from '../../src/lib/game/engineParams.ts';
 import { writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 const W = 256, H = 160;
 const T = { DEEP: 0, WATER: 1, SAND: 2, GRASS: 3, FOREST: 4, HILL: 5, MOUNTAIN: 6, SNOW: 7, LAVA: 8, BURNT: 9, ICE: 10, SWAMP: 11 };
@@ -425,6 +428,12 @@ for (const c of CASES) {
   sanity.push(`${c.name}: steps=${outSteps.length} rngSteps=${drawSteps} draws=${draws} evt=${evtN}(rise=${riseN},plague=${plagueN},tail=${tailN},grab=${grabN},boat=${boatN},fleeEnd=${fleeEndN}) fx=${fxN} terr=${terrN} dead=${deadN}/${units.length}`);
 }
 
-writeFileSync(new URL('./golden-units-update.json', import.meta.url), JSON.stringify(out));
+const json = JSON.stringify(out);
+const GOLDEN1 = new URL('./golden/units_update.json', import.meta.url);
+const GOLDEN2 = new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/units_update.json', import.meta.url);
+writeFileSync(GOLDEN1, json);
+writeFileSync(GOLDEN2, json);
+console.log('units_update.json', (json.length / 1024).toFixed(1) + 'KB', 'md5=' + createHash('md5').update(json).digest('hex'));
+console.log('双写:', GOLDEN1, '+', GOLDEN2);
 console.log('=== gen-units-update 完成 ===');
 for (const s of sanity) console.log('  ' + s);

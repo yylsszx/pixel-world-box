@@ -1499,6 +1499,53 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   }
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0;
+// 段 30：M-U7l updateUnit 批次一三链（units-update-transcript 镜像 8 场景逐位 + gen det 复跑〔bun——.ts 直导入〕+ 双写 md5 + 台账）
+{
+  const { execFileSync } = await import('node:child_process');
+  const { createHash, } = await import('node:crypto');
+  var unitsUpdateVerifyFail = 0;
+  try {
+    execFileSync('node', [new URL('./units-update-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
+    console.log('units-update 黄金回放 (units-update-transcript 镜像 vs units_update.json): PASS (8 场景 快照逐位 + evt/fx/terr 事件流 + 逐步 draws + fireSet + final/rngTail)');
+  } catch (e) {
+    unitsUpdateVerifyFail++;
+    console.error('units-update 黄金回放: FAIL');
+    console.error(String(e.stdout ?? '').split('\n').slice(-8).join('\n'));
+  }
+  try {
+    const goldenPath = new URL('./golden/units_update.json', import.meta.url).pathname;
+    const { readFile } = await import('node:fs/promises');
+    const h0 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    execFileSync('bun', [new URL('./gen-units-update.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
+    const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
+    console.log('units-update gen det 复跑 (gen-units-update · bun): PASS (8 场景 sanity + GameEngine 真实现 + det 字节级)');
+  } catch (e) {
+    unitsUpdateVerifyFail++;
+    console.error('units-update gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+  try {
+    const { readFileSync } = await import('node:fs');
+    const g = JSON.parse(readFileSync(new URL('./golden/units_update.json', import.meta.url), 'utf8'));
+    if (!Array.isArray(g.cases) || g.cases.length !== 8) throw new Error('场景数 ≠ 8');
+    for (const c of g.cases) {
+      if (c.out.length !== c.steps) throw new Error(c.name + ' steps ≠ out');
+      if (!Array.isArray(c.final) || c.final.length !== c.units.length) throw new Error(c.name + ' final 缺失');
+      if (!Array.isArray(c.rngTail) || c.rngTail.length !== 4) throw Error(c.name + ' rngTail 缺失');
+      for (const s of c.out) if (!Array.isArray(s.fireSet)) throw new Error(c.name + ' fireSet 缺失');
+    }
+    const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/units_update.json', import.meta.url));
+    const gl = readFileSync(new URL('./golden/units_update.json', import.meta.url));
+    const md5a = createHash('md5').update(sa).digest('hex');
+    const md5b = createHash('md5').update(gl).digest('hex');
+    if (md5a !== md5b) throw new Error(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
+    console.log(`units-update 台账完备 (8 场景 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  } catch (e) {
+    unitsUpdateVerifyFail++;
+    console.error('units-update 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);

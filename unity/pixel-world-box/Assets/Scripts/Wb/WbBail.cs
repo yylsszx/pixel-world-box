@@ -2,6 +2,7 @@
 // WbBail.cs — 类名 WbBailRelay（WbRender.cs L142 已有渲染域 WbBail 结构，避让改名）
 //             （M-U3h 第一批：case4 商队结算 / case5 殖民建城；第二批：case1 船全量 updateUnit 接管；
 //              第三批：case2 涌现接力——inventEmergentTrait/spawnUnit/newFamily/wildCapOf 宿主域）
+//             （M-U7l：updateUnit 批次一 L3455-3590 全译 + 扫描壳 + 无敌壳 + 影子接缝八件——黄金 gen-units-update 8 场景）
 // 蓝本: src/lib/game/engine.ts（逐行机械翻译，纪律①）
 //   wbResume L3215-3302（case1 L3219-3229 / case4 L3286-3290 / case5 L3292-3295）+ updateUnit 前奏 L3455-3464 +
 //   grabbedTick L5343-5376 + updateBoat L5608-5660 + disembark L5663-5697 + findLandNear L5589-5606 +
@@ -12,13 +13,15 @@
 //   YEAR_TICKS L1869（constants.ts L9）+ WbMath.FdHypot/FdAtan2/FdCos/FdSin/JsRound
 // 桩域（第三批余域，触达即抛——黄金场景受控不可达）:
 //   case3 建筑摧毁级联（onBuildingDestroyed/maybeBoardForWar/enemyBuildingNear/castArrow 链）；
-//   updateUnit 主体（非船：战斗/职业/尾段）；
+//   updateUnit 战斗/远程/神经/职业/龙息域（L3641-4108——M-U2b 批次二；黄金 8 场景 enemy≡null/civ=-1 契约不可达）；
 //   tail 捕食者索敌+鱼群结队（buckets/preyGrid 宿主结构未译）、漫游逐草/蟹/水生分支；
 //   post 拾取本体 / 繁衍 boost+spawn 链；moveUnit flying/aquatic/sandswim/登船分支
 // 黄金: scripts/unity-migration/gen-units-bail.mjs（28 场景：C01-C04/S01-S04/B01-B09/G01-G04/E01-E07）
 //   + bail-transcript.mjs（28/28 双链）
 // ============================================================
 using System.Linq;
+
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Wb.Tests")]
 
 namespace PixelWorldBox.Wb
 {
@@ -253,17 +256,185 @@ namespace PixelWorldBox.Wb
             }
         }
 
-        // ================= updateUnit L3455-3464（case1 船可达前奏；主体域桩——bail kind1 契约 = 船单位） =================
+        // ================= M-U7l 影子接缝（黄金 gen-units-update 契约面：grabbedTick/updateBoat/riseSkeleton/spreadPlague/fx/tailJS/postJS/gearBonus 影子捕获） =================
+        // 默认 = 真实现（生产路径位等价直调）；Test30 黄金回放置换为事件捕获（蓝本 gen-units-update.mjs makeStubEng L149-173 同构）。
+        // fx 影子不掷 rng——蓝本 fx() 本体 seed/dir 2 掷（L9794-9795）属 fx 域，本黄金 8 场景 fx≡0 契约外。
+        internal static System.Action<WbWorld, WbU> GrabbedTickHook = (w, u) => GrabbedTick(w, u);
+        internal static System.Action<WbWorld, WbU> UpdateBoatHook = (w, u) => UpdateBoat(w, u);
+        internal static System.Action<WbWorld, double, double> RiseSkeletonHook = (w, x, y) => throw new System.NotImplementedException("riseSkeleton 未译域（亡者复生生成域批次二）");
+        internal static System.Action<WbWorld, WbU> SpreadPlagueHook = (w, u) => throw new System.NotImplementedException("spreadPlague 未译域（瘟疫传播域批次二）");
+        internal static System.Func<WbWorld, WbU, bool> TailJSHook = (w, u) => UpdateUnitTailJS(w, u);
+        internal static System.Action<WbWorld, WbU> PostJSHook = (w, u) => UpdateUnitPostJS(w, u);
+        internal static System.Func<WbWorld, WbU, double> GearRegenHook = (w, u) => throw new System.NotImplementedException("gearBonus 未译域（装备再生域）；黄金回放由 Test30 置换 env.gearRegen");
+        internal static System.Action<WbWorld, string, double, double, int> FxHook = (w, k, x, y, ttl) => w.Fx(k, x, y, ttl);
+
+        // ================= updateUnit L3455-4113（批次一 L3455-3590 全译 + 扫描壳 L3592-3639 + 无敌壳 L3927/4110-4112；
+        //                  战斗/职业/龙息域哨兵隔离——黄金 8 场景 enemy≡null/civ=-1 契约外，M-U2b 余域） =================
         public static void UpdateUnit(WbWorld w, WbU u)
         {
-            if (u.hurt > 0) u.hurt--;                                                                                    // L3457
-            if ((u.grab ?? 0) > 0) { GrabbedTick(w, u); return; }                                                         // L3459
-            if (u.boat != 0)                                                                                             // L3461-3464
+            var def = RStats[u.race];                                                                                    // L3456
+            if (u.hurtN.HasValue) { if (u.hurtN.Value > 0) { u.hurtN = u.hurtN.Value - 1; u.hurt = (int)u.hurtN.Value; } }  // L3457（hurtN 轨；undefined>0=false 同构）
+            else if (u.hurt > 0) u.hurt--;                                                                               // L3457（legacy int 轨——M-U3h 船接力 hurtN 未供水面，行为与旧桩逐位等价）
+            if ((u.grab ?? 0) > 0) { GrabbedTickHook(w, u); return; }                                                    // L3459
+            if (u.boat != 0) { UpdateBoatHook(w, u); return; }                                                           // L3461-3464
+            u.ageF += 2 / (double)WbConstants.YEAR_TICKS;                                                                // L3465
+            if (u.ageF > u.maxAgeF)                                                                                      // L3466
             {
-                UpdateBoat(w, u);
-                return;
+                // 亡者复生法则：寿终正寝的文明生物有小概率化为骷髅
+                if (w.laws.undeadRise && def.isCiv && w.Rng() < 0.08) RiseSkeletonHook(w, u.x, u.y);                     // L3467（&& 短路：laws/isCiv 假零掷）
+                u.dead = 1; return;                                                                                      // L3468
             }
-            throw new System.InvalidOperationException("updateUnit 主体（非船域：战斗/职业/尾段）未翻译（M-U3h 第二批余域；case1 契约 = 船单位）");
+            if (u.cd > 0) u.cd -= 2;                                                                                     // L3471
+            if (u.atk != 0) u.atk -= 2;                                                                                  // L3474（瞬态：攻击挥击动画）
+            if ((u.chillN ?? 0) != 0) u.chillN -= 1;                                                                     // L3475（寒冻减速；undefined/0 同为 falsy）
+            if (u.fleeT != 0)                                                                                            // L3476
+            {
+                u.fleeT -= 2;
+                // Task 38 在线采集：脱离冷却走完 → 遭遇会话结算——在线训练模块域（引擎外会话 state；黄金未捕获面，C# 在线域不移植 no-op）
+                if (u.fleeT <= 0) { /* collectFleeEnd(u.id, w.tickCount) L3478 */ }
+            }
+            // —— 神力增益计时：祝福（回血+金光）/ 诅咒（失血+紫霾）——
+            if (u.bless != 0)                                                                                            // L3482
+            {
+                u.bless -= 2;
+                if (u.hp > 0 && u.hp < u.maxHp) u.hp = System.Math.Min(u.maxHp, u.hp + 0.06);                            // L3484
+                if (w.fxAmbience && w.Rng() < 0.02) FxHook(w, "bless", u.x, u.y - 0.6, 16);                              // L3485
+            }
+            if (u.curse != 0)                                                                                            // L3489
+            {
+                u.curse -= 2;
+                u.hp -= 0.05;                                                                                            // L3491
+                u.hurtN = u.hurtN.HasValue ? WbMath.JsMax(u.hurtN.Value, 4) : WbMath.JsNaN;                                // L3492（Math.max(undefined,4)=NaN 怪癖位精确）
+                if (w.fxAmbience && w.Rng() < 0.02) FxHook(w, "curse", u.x, u.y - 0.6, 16);                              // L3493
+            }
+            if (u.fert != 0) u.fert -= 2;                                                                                // L3495（爱之甘霖）
+            if ((u.detour ?? 0) != 0) u.detour -= 2;                                                                     // L3497（卡死自愈绕行窗口）
+            // —— 涌现社会内核：恐慌平复（0.008/update）+ 血仇消磨（0.006/update）——
+            if (u.panic.HasValue)                                                                                        // L3500
+            {
+                u.panic -= 0.008;                                                                                        // L3501 ep('social.panicDecay') engineParams L39 默认 0.008
+                if (u.panic <= 0) u.panic = null;                                                                        // L3502（= undefined 语义）
+            }
+            if (u.gValN != null)                                                                                         // L3505
+            {
+                bool alive = false;
+                for (int gi = 0; gi < u.gValN.Count; gi++)                                                               // L3507
+                {
+                    u.gValN[gi] -= 0.006;                                                                                // L3508 ep('social.grudgeDecay') engineParams L41 默认 0.006
+                    if (u.gValN[gi] < 0.3)                                                                               // L3509
+                    {
+                        u.gIdsN?.RemoveAt(gi);                                                                           // L3510（?. splice 可选链同构）
+                        u.gValN.RemoveAt(gi);
+                        gi--;
+                    }
+                    else alive = true;
+                }
+                if (!alive) { u.gIdsN = null; u.gValN = null; }                                                          // L3516-3517（= undefined 语义）
+            }
+            {
+                // 平方距离替代 Math.hypot（纯阈值比较）
+                double fdx = u.tx - u.x;                                                                                 // L3521
+                double fdy = u.ty - u.y;
+                bool farT = fdx * fdx + fdy * fdy > 6.25;                                                                // L3523（2.5²）
+                if (farT)                                                                                                // L3524
+                {
+                    if (!u.sxk.HasValue || !u.syk.HasValue) { u.sxk = u.x; u.syk = u.y; }                                // L3525
+                    double sdx = u.x - u.sxk.Value;                                                                      // L3527
+                    double sdy = u.y - (u.syk ?? u.y);
+                    if (sdx * sdx + sdy * sdy > 0.64) { u.stk = 0; u.sxk = u.x; u.syk = u.y; }                           // L3529-3530（0.8² 正常行进重置锚点）
+                    else
+                    {
+                        u.stk = (u.stk ?? 0) + 1;                                                                        // L3531
+                        if (u.stk > 36)                                                                                  // L3532
+                        {
+                            u.stk = 0; u.sxk = u.x; u.syk = u.y;                                                         // L3533
+                            u.detour = 60;                                                                               // L3534（后续 30 次更新内追击/索敌不覆写目标——逃生方向真正生效）
+                            u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, u.x + (w.Rng() * 2 - 1) * 9));      // L3535（绕行新目标 2 掷）
+                            u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, u.y + (w.Rng() * 2 - 1) * 9));      // L3536
+                        }
+                    }
+                }
+                else if ((u.stk ?? 0) != 0) { u.stk = 0; u.sxk = u.x; u.syk = u.y; }                                     // L3540
+            }
+
+            int ti = WbWorld.Idx((int)System.Math.Floor(u.x), (int)System.Math.Floor(u.y));                              // L3542
+            if (w.fire[ti] > 0 && !def.lavaImmune) { u.hp -= 3; u.hurtN = 20; }                                          // L3543 ep('fire.damage') engineParams L31 默认 3
+            if (w.radiate[ti] > 0) { u.hp -= 0.5; u.hurtN = 20; }                                                        // L3544
+            if (w.terrain[ti] == WbConstants.T_LAVA && !def.lavaImmune) { u.hp -= 15; u.hurtN = 20; }                    // L3545
+            if (!def.flying && !def.aquatic && u.race != WbConstants.R_WHITEWALKER && WbWorld.IsWater(w.terrain[ti])) { u.hp -= 4; u.hurtN = 20; }   // L3546（溺水）
+            // 离水窒息（洪水/海啸退潮搁浅的生态闭环）
+            if (def.aquatic && !def.beach && !WbWorld.IsWater(w.terrain[ti]))                                            // L3549
+            {
+                u.hp -= 0.02; u.hurtN = u.hurtN.HasValue ? WbMath.JsMax(u.hurtN.Value, 2) : WbMath.JsNaN;                  // L3550（Math.max 怪癖同 L3492）
+            }
+            if (u.infected != 0)                                                                                         // L3552
+            {
+                u.hp -= 0.15;                                                                                            // L3553
+                if (w.Rng() < 0.02) SpreadPlagueHook(w, u);                                                              // L3554
+            }
+            // 再生：特质或装备的缓慢回血（战斗外的顽强生命力）；巨魔天生再生
+            if (u.hp > 0 && u.hp < u.maxHp)                                                                              // L3557
+            {
+                double gbRegen = 0;                                                                                      // L3558 gb = def.isCiv ? gearBonus(u) : null
+                if (def.isCiv) gbRegen = GearRegenHook(w, u);                                                            // L3559（gearBonus 装备域未译——接缝；黄金 shadow 面 = env.gearRegen）
+                double rg = (u.traitName != null ? (TraitsAll.TryGetValue(u.traitName, out var tr) && tr.regen.HasValue ? tr.regen.Value : 0) : 0)
+                          + gbRegen + (u.race == R_TROLL ? 0.35 : 0);                                                    // L3560
+                if (rg > 0) u.hp = System.Math.Min(u.maxHp, u.hp + rg);                                                  // L3561-3562
+            }
+            // —— 捕食者饥饿账本：食物随时间消耗；断粮持续掉血 ——
+            if (def.predator && !def.undead)                                                                             // L3564
+            {
+                u.foodN = (u.foodN ?? 70) - 1;                                                                           // L3565（旧档/新生的捕食者带 70 单位口粮缓冲）
+                if (u.foodN <= 0) { u.hp -= 1.4; u.hurtN = u.hurtN.HasValue ? WbMath.JsMax(u.hurtN.Value, 3) : WbMath.JsNaN; }   // L3566（Math.max 怪癖同上）
+            }
+            // 白行者寒霜灵气：途经之地霜冻成雪 + 熄灭周遭火焰 + 水面结冰
+            if (u.race == WbConstants.R_WHITEWALKER)                                                                     // L3570
+            {
+                if (w.Rng() < 0.08)                                                                                      // L3571
+                {
+                    int j = WbWorld.Idx((int)System.Math.Floor(u.x + w.Rng() * 3 - 1.5), (int)System.Math.Floor(u.y + w.Rng() * 3 - 1.5));   // L3572-3573（坐标 2 掷）
+                    if (j >= 0 && j < WbWorld.W * WbWorld.H)                                                             // L3574
+                    {
+                        byte t = w.terrain[j];
+                        if (t == WbConstants.T_GRASS || t == WbConstants.T_BURNT || t == WbConstants.T_SAND) w.terrain[j] = WbConstants.T_SNOW;   // L3577（setTerrain L950 簿记 no-op 域注记——M-U7k 先例；同值早退语义保真）
+                        else if (t == WbConstants.T_FOREST && w.Rng() < 0.4) w.terrain[j] = WbConstants.T_SNOW;          // L3578（&& 短路 1 掷）
+                        else if (WbWorld.IsWater(t) && w.Rng() < 0.5) w.terrain[j] = WbConstants.T_ICE;                  // L3579（冰封水面）
+                        if (w.fire[j] > 0) { w.fire[j] = 0; w.fireSet.Remove(j); }                                       // L3581（寒霜灭火）
+                    }
+                }
+                if (WbWorld.IsWater(w.terrain[ti]) && w.Rng() < 0.6) w.terrain[ti] = WbConstants.T_ICE;                  // L3588（寒冰之路；&& 短路 1 掷）
+            }
+            if (u.hp <= 0) { u.dead = 1; return; }                                                                       // L3590（hp≤0 死亡门——批次一边界）
+
+            // ================= 扫描域壳 L3592-3639（黄金契约：桶空零迭代；WB.active() 分支不译——C# WbBail=JS 接力域，rust-core UnitsBatch 结构性并行，M-U2b 注记） =================
+            int enemy = -1;                                                                                              // L3593（WB 分支不触达 → 恒 -1）
+            double bestD = 7, enemyD = 7;                                                                                // L3594-3595
+            int allies = 0, foes = 0;                                                                                    // L3596-3597
+            bool contagious = (u.panic ?? 0) > 0.55 && w.Rng() < 0.2;                                                    // L3598（&& 短路——黄金契约① panic≤0.55 恒零掷）
+            int cx = System.Math.Min(WbWorld.BKW - 1, System.Math.Max(0, (int)(u.x / 4)));                                     // L3599
+            int cy = System.Math.Min(WbWorld.BKH - 1, System.Math.Max(0, (int)(u.y / 4)));
+            double uxx = u.x, uyy = u.y;                                                                                 // L3600-3601
+            _ = (bestD, enemyD, allies, foes, uxx, uyy, contagious);                                                     // M-U2b 扫描体待译消费面（黄金契约恒初值：桶空零迭代）
+            for (int by = cy - 1; by <= cy + 1; by++)                                                                    // L3608
+                for (int bx = cx - 1; bx <= cx + 1; bx++)                                                                // L3609
+                {
+                    if (bx < 0 || by < 0 || bx >= WbWorld.BKW || by >= WbWorld.BKH) continue;                                        // L3610
+                    var bucket = w.buckets[by * WbWorld.BKW + bx];
+                    if (bucket == null) continue;                                                                        // 引擎 L761 桶恒初始化 []——C# RebuildBuckets 前为 null（≡空桶，契约同构）
+                    foreach (var o in bucket)                                                                            // L3611
+                    {
+                        if (o.dead != 0 || object.ReferenceEquals(o, u)) continue;                                       // L3612
+                        throw new System.InvalidOperationException("SCAN_SENTINEL: 敌意/同袍判定域未翻译（M-U2b；黄金契约：桶空不触达——非空桶抵达即设计错误）");   // L3614 isEnemyFast 哨兵同构
+                    }
+                }
+
+            if (enemy >= 0) throw new System.InvalidOperationException("战斗/远程/神经域批次二未翻译（L3641-3925；黄金 8 场景 enemy≡null 契约不触达）");   // L3641
+            // ================= 无敌路径 L3927 else 壳 =================
+            // collectEnemyGone(u.id, this.tickCount) L3929——Task 38 在线采集模块域（引擎外会话 state；黄金未捕获面，no-op）
+            if (u.race == R2_DRAGON) throw new System.InvalidOperationException("龙息域批次二未翻译（L3931-3936 u.race===R2；黄金无龙场景不触达）");          // L3931
+            if (def.isCiv && u.civ >= 0) throw new System.InvalidOperationException("peaceful 职业域批次二未翻译（L3937-4108；黄金 civ=-1 契约不触达）");   // L3937
+            if (TailJSHook(w, u)) return;                                                                                // L4110（尾段早退：猎物命中/密度场导航 → 跳过拾取与繁衍）
+            PostJSHook(w, u);                                                                                            // L4112
         }
 
         // ================= grabbedTick L5343-5376（神之手指：抓取/掷飞/落地的眩晕 tick） =================
@@ -1089,6 +1260,8 @@ namespace PixelWorldBox.Wb
             public double hp, dmg, speed;
             public int maxAge;
             public bool isCiv, undead, aquatic;   // aquatic = wildAliveAquatic L1098 消费切片
+            // —— M-U7l updateUnit 批次一消费字段追加（types.ts L157-204 逐行机械转写；字段只加）——
+            public bool hostile, predator, lavaImmune, flying, beach;
         }
 
         public static readonly RaceStat[] RStats = new RaceStat[41]
@@ -1097,43 +1270,43 @@ namespace PixelWorldBox.Wb
             new RaceStat{ name="精灵",   hp=55,  dmg=9,   speed=0.1,   maxAge=90,   isCiv=true  },                     // L158 ELF
             new RaceStat{ name="矮人",   hp=78,  dmg=10,  speed=0.072, maxAge=120,  isCiv=true  },                     // L159 DWARF
             new RaceStat{ name="兽人",   hp=72,  dmg=12,  speed=0.084, maxAge=48,   isCiv=true  },                     // L160 ORC
-            new RaceStat{ name="强盗",   hp=62,  dmg=11,  speed=0.093, maxAge=45 },                                    // L161 BANDIT
-            new RaceStat{ name="僵尸",   hp=46,  dmg=6,   speed=0.05,  maxAge=9999, undead=true },                     // L162 ZOMBIE
+            new RaceStat{ name="强盗",   hp=62,  dmg=11,  speed=0.093, maxAge=45,   hostile=true },                             // L161 BANDIT
+            new RaceStat{ name="僵尸",   hp=46,  dmg=6,   speed=0.05,  maxAge=9999, undead=true, hostile=true },                     // L162 ZOMBIE
             new RaceStat{ name="绵羊",   hp=16,  dmg=1,   speed=0.038, maxAge=26 },                                    // L163 SHEEP
-            new RaceStat{ name="狼",     hp=34,  dmg=10,  speed=0.093, maxAge=22 },                                    // L164 WOLF
-            new RaceStat{ name="熊",     hp=95,  dmg=19,  speed=0.06,  maxAge=40 },                                    // L165 BEAR
-            new RaceStat{ name="巨龙",   hp=900, dmg=48,  speed=0.11,  maxAge=9999 },                                  // L166 DRAGON
+            new RaceStat{ name="狼",     hp=34,  dmg=10,  speed=0.093, maxAge=22,   predator=true },                            // L164 WOLF
+            new RaceStat{ name="熊",     hp=95,  dmg=19,  speed=0.06,  maxAge=40,   predator=true },                            // L165 BEAR
+            new RaceStat{ name="巨龙",   hp=900, dmg=48,  speed=0.11,  maxAge=9999, hostile=true, predator=true, flying=true },    // L166 DRAGON
             new RaceStat{ name="鹿",     hp=24,  dmg=1,   speed=0.115, maxAge=20 },                                    // L167 DEER
             new RaceStat{ name="企鹅",   hp=22,  dmg=1,   speed=0.045, maxAge=18 },                                    // L168 PENGUIN
             new RaceStat{ name="骆驼",   hp=30,  dmg=2,   speed=0.05,  maxAge=35 },                                    // L169 CAMEL
-            new RaceStat{ name="蝎子",   hp=14,  dmg=5,   speed=0.055, maxAge=16 },                                    // L170 SCORPION
-            new RaceStat{ name="蛇",     hp=20,  dmg=6,   speed=0.08,  maxAge=20 },                                    // L171 SNAKE
-            new RaceStat{ name="雪狼",   hp=38,  dmg=11,  speed=0.088, maxAge=24 },                                    // L172 SNOWWOLF
-            new RaceStat{ name="骷髅",   hp=55,  dmg=14,  speed=0.075, maxAge=9999, undead=true },                     // L173 SKELETON
-            new RaceStat{ name="恶魔",   hp=600, dmg=30,  speed=0.085, maxAge=9999 },                                  // L174 DEMON
-            new RaceStat{ name="法师",   hp=50,  dmg=6,   speed=0.07,  maxAge=200 },                                   // L175 MAGE
+            new RaceStat{ name="蝎子",   hp=14,  dmg=5,   speed=0.055, maxAge=16,   hostile=true },                             // L170 SCORPION
+            new RaceStat{ name="蛇",     hp=20,  dmg=6,   speed=0.08,  maxAge=20,   predator=true },                            // L171 SNAKE
+            new RaceStat{ name="雪狼",   hp=38,  dmg=11,  speed=0.088, maxAge=24,   predator=true },                            // L172 SNOWWOLF
+            new RaceStat{ name="骷髅",   hp=55,  dmg=14,  speed=0.075, maxAge=9999, undead=true, hostile=true },                     // L173 SKELETON
+            new RaceStat{ name="恶魔",   hp=600, dmg=30,  speed=0.085, maxAge=9999, hostile=true, predator=true, lavaImmune=true },  // L174 DEMON
+            new RaceStat{ name="法师",   hp=50,  dmg=6,   speed=0.07,  maxAge=200,  hostile=true },                             // L175 MAGE（ranged 域属战斗批次二未转写）
             new RaceStat{ name="蜥蜴人", hp=66,  dmg=10,  speed=0.095, maxAge=70,   isCiv=true  },                     // L177 LIZARD
             new RaceStat{ name="哥布林", hp=40,  dmg=6,   speed=0.108, maxAge=34,   isCiv=true  },                     // L178 GOBLIN
-            new RaceStat{ name="巨魔",   hp=380, dmg=26,  speed=0.06,  maxAge=400 },                                   // L179 TROLL
-            new RaceStat{ name="食人魔", hp=300, dmg=34,  speed=0.052, maxAge=120 },                                   // L180 OGRE
-            new RaceStat{ name="白行者", hp=240, dmg=20,  speed=0.075, maxAge=9999, undead=true },                     // L181 WHITEWALKER
-            new RaceStat{ name="吸血鬼", hp=140, dmg=16,  speed=0.118, maxAge=9999, undead=true },                     // L182 VAMPIRE
-            new RaceStat{ name="克拉肯", hp=520, dmg=30,  speed=0.07,  maxAge=9999, aquatic=true },                                  // L184 KRAKEN
-            new RaceStat{ name="沙虫",   hp=420, dmg=40,  speed=0.14,  maxAge=9999 },                                  // L185 SANDWORM
-            new RaceStat{ name="蛇怪",   hp=90,  dmg=14,  speed=0.11,  maxAge=400 },                                   // L186 BASILISK
-            new RaceStat{ name="天使",   hp=240, dmg=22,  speed=0.105, maxAge=9999 },                                  // L188 ANGEL
-            new RaceStat{ name="凤凰",   hp=200, dmg=18,  speed=0.12,  maxAge=9999 },                                  // L189 PHOENIX
+            new RaceStat{ name="巨魔",   hp=380, dmg=26,  speed=0.06,  maxAge=400,  hostile=true, predator=true },               // L179 TROLL
+            new RaceStat{ name="食人魔", hp=300, dmg=34,  speed=0.052, maxAge=120, hostile=true, predator=true },                                   // L180 OGRE
+            new RaceStat{ name="白行者", hp=240, dmg=20,  speed=0.075, maxAge=9999, undead=true, hostile=true },                     // L181 WHITEWALKER
+            new RaceStat{ name="吸血鬼", hp=140, dmg=16,  speed=0.118, maxAge=9999, undead=true, hostile=true },                     // L182 VAMPIRE
+            new RaceStat{ name="克拉肯", hp=520, dmg=30,  speed=0.07,  maxAge=9999, aquatic=true, hostile=true, predator=true },                                  // L184 KRAKEN
+            new RaceStat{ name="沙虫",   hp=420, dmg=40,  speed=0.14,  maxAge=9999, hostile=true, predator=true },                                  // L185 SANDWORM
+            new RaceStat{ name="蛇怪",   hp=90,  dmg=14,  speed=0.11,  maxAge=400, hostile=true, predator=true },                                   // L186 BASILISK
+            new RaceStat{ name="天使",   hp=240, dmg=22,  speed=0.105, maxAge=9999, flying=true, lavaImmune=true },                                  // L188 ANGEL
+            new RaceStat{ name="凤凰",   hp=200, dmg=18,  speed=0.12,  maxAge=9999, flying=true, lavaImmune=true },                                  // L189 PHOENIX
             new RaceStat{ name="树人",   hp=320, dmg=26,  speed=0.055, maxAge=9999 },                                  // L190 ENT
-            new RaceStat{ name="巫妖",   hp=260, dmg=20,  speed=0.07,  maxAge=9999, undead=true },                     // L191 LICH
-            new RaceStat{ name="九头蛇", hp=500, dmg=30,  speed=0.05,  maxAge=9999 },                                  // L192 HYDRA
+            new RaceStat{ name="巫妖",   hp=260, dmg=20,  speed=0.07,  maxAge=9999, undead=true, hostile=true, predator=true },                     // L191 LICH
+            new RaceStat{ name="九头蛇", hp=500, dmg=30,  speed=0.05,  maxAge=9999, hostile=true, predator=true },                                  // L192 HYDRA
             new RaceStat{ name="鸡",     hp=10,  dmg=1,   speed=0.05,  maxAge=14 },                                    // L194 CHICKEN
             new RaceStat{ name="猪",     hp=30,  dmg=2,   speed=0.055, maxAge=22 },                                    // L195 PIG
             new RaceStat{ name="兔",     hp=12,  dmg=1,   speed=0.13,  maxAge=12 },                                    // L196 RABBIT
-            new RaceStat{ name="狐",     hp=28,  dmg=8,   speed=0.105, maxAge=18 },                                    // L197 FOX
+            new RaceStat{ name="狐",     hp=28,  dmg=8,   speed=0.105, maxAge=18, predator=true },                                    // L197 FOX
             new RaceStat{ name="鱼",     hp=6,   dmg=0.5, speed=0.075, maxAge=10,   aquatic=true },                                    // L198 FISH
             new RaceStat{ name="蟹",     hp=16,  dmg=3,   speed=0.03,  maxAge=16,   aquatic=true },                                    // L199 CRAB
             new RaceStat{ name="龟",     hp=40,  dmg=1,   speed=0.028, maxAge=120,  aquatic=true },                                   // L200 TURTLE
-            new RaceStat{ name="鲨鱼",   hp=85,  dmg=18,  speed=0.1,   maxAge=40,   aquatic=true },                                   // L201 SHARK
+            new RaceStat{ name="鲨鱼",   hp=85,  dmg=18,  speed=0.1,   maxAge=40,   aquatic=true, predator=true },                                   // L201 SHARK
         };
 
         private static RaceStat StatOf(int race)
