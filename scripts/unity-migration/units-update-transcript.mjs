@@ -352,6 +352,143 @@ function igniteT(ctx, i, rng) {
   ctx.fireSet.add(i);                                                                                        // L1077
 }
 
+// ================= M-U7r 批次三丙·peaceful 职业域七助手独立转写（engine.ts 蓝本行号随注；零引擎导入） =================
+const pairKeyT = (a, b) => (a < b ? `${a}-${b}` : `${b}-${a}`);                                            // L34 pairKey
+const BLD_HP_T = [0, 70, 240, 120, 40, 150, 340, 90, 110, 100, 140, 200];                                  // types.ts L325-337 BUILDING_DEFS hp 独立值表（镜像禁 import）
+const BK_T = { HOUSE: 1, CAPITAL: 2, FARM: 4, MARKET: 9 };                                                  // types.ts L339-341 BUILD_KINDS 消费子集
+const atWarT = (ctx, a, b) => {                                                                             // L2061-2063
+  const v = ctx.rel.get(pairKeyT(a, b));
+  return v !== undefined && v < -20;
+};
+const civAtWarT = (ctx, civId) => {                                                                         // L2017-2022
+  for (const o of Object.values(ctx.civs)) {
+    if (o.alive && o.id !== civId && atWarT(ctx, civId, o.id)) return true;
+  }
+  return false;
+};
+const fireNearT = (ctx, u, r2) => {                                                                          // L4562-4585
+  if (ctx.fireSet.size === 0) return -1;
+  const cx = Math.floor(u.x); const cy = Math.floor(u.y); const rr = Math.ceil(r2);
+  let best = -1; let bestD = r2 + 0.5;
+  for (let dy = -rr; dy <= rr; dy++) {
+    for (let dx = -rr; dx <= rr; dx++) {
+      const xx = cx + dx; const yy = cy + dy;
+      if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+      const i = yy * W + xx;
+      if (ctx.fire[i] <= 0) continue;
+      const d = Math.hypot(xx + 0.5 - u.x, yy + 0.5 - u.y);
+      if (d >= bestD) continue;
+      const own = u.civ >= 0 && (ctx.owner[i] === u.civ || (ctx.building[i] > 0 && ctx.buildings[ctx.bIdx.get(i) ?? -1]?.civ === u.civ));   // L4578
+      if (own || d < 2.2) { bestD = d; best = i; }                                                            // L4579
+    }
+  }
+  return best;
+};
+const extinguishFireT = (ctx, i, by) => {                                                                    // L4587-4601
+  ctx.fire[i] = 0; ctx.fireSet.delete(i); ctx.firesOut++;                                                    // L4588-4590
+  ctx.fx.push(['water', bitHex((i % W) + 0.5), bitHex(((i / W) | 0) + 0.5), 16]);                            // L4591
+  if (ctx.firesOut >= 3 && ctx.tickCount - ctx.lastFireOutEventTick > 480) {                                 // L4593 节流播报
+    ctx.lastFireOutEventTick = ctx.tickCount;                                                                // L4594
+    const civ = ctx.civs[by.civ];
+    if (civ?.alive) ctx.evt.push(['ev', 'fireOut', bitHex((i % W) + 0.5), bitHex(((i / W) | 0) + 0.5)]);     // L4596-4597（addEvent 命名域——文本面不对账）
+  }
+};
+const damagedNearT = (ctx, u, r2) => {                                                                       // L4603-4615
+  if (ctx.damagedSet.size === 0) return -1;
+  let best = -1; let bestD = r2;
+  for (const i of ctx.damagedSet) {
+    const b = ctx.buildings[ctx.bIdx.get(i) ?? -1];
+    if (!b || b.civ !== u.civ) continue;
+    const d = Math.hypot(b.x + 0.5 - u.x, b.y + 0.5 - u.y);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+};
+const repairBuildingT = (ctx, i, amount) => {                                                                // L4617-4645
+  const b = ctx.buildings[ctx.bIdx.get(i) ?? -1];
+  if (!b) return false;
+  const max = Math.round((BLD_HP_T[b.kind] ?? 70) * 1);   // × techModsOf(b.civ).bhp——黄金 env civs 无 techs → NEUTRAL_MODS.bhp=1（L4859 契约；techs 非空路径黄金外）
+  let hp = ctx.bHp.get(i) ?? max;
+  hp = Math.min(max, hp + amount);
+  ctx.bHp.set(i, hp);
+  ctx.repairsDone++;
+  ctx.fx.push(['hammer', bitHex(b.x + 0.5), bitHex(b.y + 0.2), 14]);                                         // L4627
+  const done = hp >= max;
+  if (done) {
+    ctx.damagedSet.delete(i);
+    ctx.fx.push(['spawn', bitHex(b.x + 0.5), bitHex(b.y + 0.5), 22]);
+    if (ctx.repairsDone >= 6 && ctx.tickCount - ctx.lastRepairEventTick > 720) {                             // L4637 节流播报
+      ctx.lastRepairEventTick = ctx.tickCount;
+      const civ = ctx.civs[b.civ];
+      if (civ?.alive) ctx.evt.push(['ev', 'repair', bitHex(b.x), bitHex(b.y)]);
+    }
+  }
+  return done;
+};
+const nearestBuildingOfT = (ctx, u, kind) => {                                                               // L4434-4444
+  let best = null; let bestD = Infinity;
+  for (const b of ctx.buildings) {
+    if (b.civ !== u.civ || b.kind !== kind) continue;
+    const d = Math.hypot(b.x - u.x, b.y - u.y);
+    if (d < bestD) { bestD = d; best = b; }
+  }
+  return best;
+};
+const enemyBuildingNearT = (ctx, u, r2) => {                                                                 // L4396-4417
+  const cx = Math.floor(u.x); const cy = Math.floor(u.y); const rr = Math.ceil(r2);
+  let best = -1; let bestD = r2 + 0.5;
+  for (let dy = -rr; dy <= rr; dy++) {
+    for (let dx = -rr; dx <= rr; dx++) {
+      const xx = cx + dx; const yy = cy + dy;
+      if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+      const i = yy * W + xx;
+      if (ctx.building[i] === 0) continue;
+      const b = ctx.buildings[ctx.bIdx.get(i) ?? -1];
+      if (!b || b.civ === u.civ) continue;
+      if (u.civ >= 0 && !atWarT(ctx, u.civ, b.civ)) continue;
+      const d = Math.hypot(xx - u.x, yy - u.y);                                                              // L4413（tile 角距离——非中心）
+      if (d < bestD) { bestD = d; best = i; }
+    }
+  }
+  return best;
+};
+const nearestEnemyBuildingT = (ctx, u) => {                                                                  // L4421-4431
+  let best = null; let bestD = Infinity;
+  for (const b of ctx.buildings) {
+    if (b.civ === u.civ) continue;
+    if (u.civ < 0 || !atWarT(ctx, u.civ, b.civ)) continue;
+    const d = Math.hypot(b.x - u.x, b.y - u.y);
+    if (d < bestD) { bestD = d; best = b; }
+  }
+  return best;
+};
+const attackBuildingT = (ctx, i, dmg, byCiv) => {                                                            // L4446-4463
+  const kind = ctx.building[i];
+  if (kind === 0) return;
+  let hp = ctx.bHp.get(i) ?? BLD_HP_T[kind];                                                                  // L4449（BUILDING_DEFS[kind].hp）
+  hp -= dmg;
+  const x = i % W; const y = (i / W) | 0;
+  if (hp <= 0) throw new Error('SENTINEL: onBuildingDestroyed 摧毁级联属 case3 bail 域黄金（D01-D08 契约）——update 切片 hp>0');   // L4455
+  ctx.bHp.set(i, hp);
+  ctx.damagedSet.add(i);                                                                                      // L4458 受损登记
+  ctx.fx.push(['hit', bitHex(x + 0.5), bitHex(y + 0.5), 6]);                                                  // L4459
+};
+const maybeBoardForWarT = (ctx, u) => {                                                                      // L5740-5753 前置早退面
+  if (u.boat || !raceF(u.race).isCiv) return false;
+  const job = u.job ?? 0;
+  if (job !== 2 && job !== 3) return false;
+  if (u.civ < 0 || !civAtWarT(ctx, u.civ)) return false;
+  const d = Math.hypot(u.tx - u.x, u.ty - u.y);
+  if (d < 8) return false;                                                                                    // L5749 近距正常行军
+  throw new Error('SENTINEL: 跨海登船域属 bail 黄金 D09-D12 契约——update 切片 d<8 早退外不可达');
+};
+const warTargetT = (ctx, civId, rng) => {                                                                    // L5728-5734
+  const enemies = [];
+  for (const b of ctx.buildings) if (b.civ !== civId && atWarT(ctx, civId, b.civ)) enemies.push(b);
+  if (enemies.length === 0) return null;
+  return enemies[Math.floor(rng() * enemies.length)];
+};
+
 /** updateUnit 镜像（L3455-3590 批次一 + 扫描域 L3592-3669 批次二 + L3671+ 战斗哨兵 + 无敌壳；行号随注） */
 function updateUnitT(u, ctx) {
   const r = raceF(u.race);                                                                       // L3456
@@ -734,7 +871,104 @@ function updateUnitT(u, ctx) {
         dragonBreathT(u, ctx, rng);                                                                    // L3976
       }
     }
-    if (r.isCiv && u.civ >= 0) throw new Error('SENTINEL: peaceful 职业域（黄金 civ=-1 契约） case=' + (ctx.caseName ?? '?') + ' u' + u.id + ' civ=' + u.civ);      // L3981
+    if (r.isCiv && u.civ >= 0) {                                                                     // L3981 peaceful 职业域（M-U7r 批次三丙全译——updateUnit 最后一域）
+      const job = u.job ?? 0;                                                                          // L3982
+      const warring = civAtWarT(ctx, u.civ);                                                           // L3983
+      // —— 国民防灾（最高优先级：火不等人；军团成员除外——军令如山）——
+      const bigFire = ctx.fireSet.size > 8;                                                            // L3986（灾情动员）
+      if (u.army == null && ctx.fireSet.size > 0 && rng() < (bigFire ? 0.5 : 0.3)) {                   // L3987
+        const radius = job === 4 ? (bigFire ? 7 : 4.5) : bigFire ? 5 : 3;                              // L3988
+        const fi = fireNearT(ctx, u, radius);                                                          // L3989
+        if (fi >= 0) {
+          const fxp = (fi % W) + 0.5;                                                                    // L3991
+          const fyp = ((fi / W) | 0) + 0.5;                                                              // L3992
+          const cdx = fxp - u.x; const cdy = fyp - u.y;                                                  // L3993-3994
+          if (cdx * cdx + cdy * cdy < 2.89) {                                                            // L3995（1.7² 平方距离）
+            extinguishFireT(ctx, fi, u);                                                                 // L3996
+            u.cd = Math.max(u.cd, 10);                                                                   // L3997 泼水动作
+          } else {
+            u.tx = fxp; u.ty = fyp;                                                                      // L3999-4000
+            ctx.evt.push(['mv', u.id, 1.2]);                                                             // L4001（moveUnit 接缝——赶赴火场）
+            return;                                                                                       // L4002（本 tick 优先救灾）
+          }
+        }
+      }
+      // —— 建筑师：主动奔赴受损建筑修缮（战争不纵火，但拆毁与天灾依旧留下疮痍）——
+      if (u.army == null && job === 4 && u.cd <= 0 && rng() < 0.2) {                                     // L4007
+        const di = damagedNearT(ctx, u, 14);                                                             // L4008
+        const b = di >= 0 ? ctx.buildings[ctx.bIdx.get(di) ?? -1] : null;                                // L4009
+        if (b) {
+          const bdx = b.x + 0.5 - u.x; const bdy = b.y + 0.5 - u.y;                                      // L4011-4012
+          if (bdx * bdx + bdy * bdy < 3.24) {                                                            // L4013（1.8²）
+            u.cd = 16; u.atk = 10;                                                                       // L4014-4015 敲击动画
+            repairBuildingT(ctx, di, 12 * 1, u);                                                         // L4016（× techModsOf.repair——NEUTRAL 1 契约）
+          } else {
+            u.tx = b.x + 0.5; u.ty = b.y + 0.5;                                                          // L4018-4019
+            ctx.evt.push(['mv', u.id, 1.15]);                                                            // L4020（赶赴工地）
+            return;                                                                                       // L4021
+          }
+        }
+      }
+      // —— 路过国民顺手修缮身边受损建筑（平民皆可搭把手）——
+      if (u.army == null && job !== 2 && job !== 3 && u.cd <= 0 && ctx.damagedSet.size > 0 && rng() < 0.12) {   // L4026
+        const di = damagedNearT(ctx, u, 1.9);                                                            // L4027
+        if (di >= 0) { u.cd = 22; repairBuildingT(ctx, di, 3, u); }                                      // L4028-4030
+      }
+      // —— 战争 AI：战士/弓手围攻敌国建筑（战争毁灭房屋的核心链路）——
+      if (warring && (job === 2 || job === 3)) {                                                         // L4034
+        const inArmy = u.army != null;                                                                   // L4035
+        if (u.cd <= 0) {                                                                                   // L4037
+          const bi = enemyBuildingNearT(ctx, u, 1.6);                                                      // L4038
+          if (bi >= 0) { u.cd = 14; u.atk = 12; attackBuildingT(ctx, bi, u.dmg * 1.6, u.civ); }            // L4040-4042（拆城挥击）
+        }
+        if (job === 3 && u.cd <= 0 && rng() < 0.1) {                                                       // L4048
+          const bi = enemyBuildingNearT(ctx, u, 5);                                                        // L4049（JOBS[3].ranged ?? 5——types.ts L300）
+          if (bi >= 0) { u.cd = 18; ctx.evt.push(['ar', u.id, bitHex((bi % W) + 0.5), bitHex(((bi / W) | 0) + 0.5), bitHex(u.dmg)]); }   // L4050-4053（castArrow 接缝）
+        }
+        if (!inArmy) {                                                                                     // L4056
+          if (rng() < 0.05 && maybeBoardForWarT(ctx, u)) return;                                           // L4057（跨海远征——d<8 早退）
+          {                                                                                                  // L4059
+            const tdx = u.tx - u.x; const tdy = u.ty - u.y;                                                  // L4060-4061
+            if (tdx * tdx + tdy * tdy < 1.44 || rng() < 0.03) {                                              // L4062（1.2²）
+              const tgt = nearestEnemyBuildingT(ctx, u);                                                     // L4063
+              if (tgt) { u.tx = tgt.x + rng() * 2 - 1; u.ty = tgt.y + rng() * 2 - 1; }                       // L4064
+            }
+          }
+        }
+      } else if (job === 1 && rng() < 0.06) {                                                            // L4069
+        const f = nearestBuildingOfT(ctx, u, BK_T.FARM);                                                 // L4070
+        if (f) {
+          u.tx = Math.max(1, Math.min(W - 2, f.x + rng() * 5 - 2.5));                                    // L4072
+          u.ty = Math.max(1, Math.min(H - 2, f.y + rng() * 5 - 2.5));                                    // L4073
+        }
+      } else if (job === 5) {                                                                            // L4076
+        const civ = ctx.civs[u.civ];                                                                     // L4077
+        {
+          const tdx = u.tx - u.x; const tdy = u.ty - u.y;                                                  // L4080-4081
+          if (civ && (tdx * tdx + tdy * tdy < 1.44 || rng() < 0.03)) {                                     // L4082（1.2²）
+            const m = nearestBuildingOfT(ctx, u, rng() < 0.6 ? BK_T.MARKET : BK_T.CAPITAL);                // L4083
+            if (m) {
+              u.tx = m.x + rng() * 2 - 1; u.ty = m.y + rng() * 2 - 1;                                        // L4084-4085
+              const mdx = u.x - m.x; const mdy = u.y - m.y;                                                  // L4086-4087
+              if (mdx * mdx + mdy * mdy < 2.25) {                                                            // L4088（1.5²）
+                civ.gold = (civ.gold ?? 0) + 2;                                                              // L4089 国库入账
+                ctx.fx.push(['coin', bitHex(u.x), bitHex(u.y - 1), 24]);                                     // L4090
+              }
+            }
+          }
+        }
+      } else if (job === 6 && rng() < 0.06) {                                                            // L4093
+        const civ = ctx.civs[u.civ];                                                                     // L4094
+        if (civ && civ.capital >= 0) {                                                                     // L4095
+          const cx2 = civ.capital % W; const cy2 = (civ.capital / W) | 0;                                  // L4096-4097（tileX/tileY L1548-1549）
+          u.tx = Math.max(1, Math.min(W - 2, cx2 + rng() * 6 - 3));                                        // L4098
+          u.ty = Math.max(1, Math.min(H - 2, cy2 + rng() * 6 - 3));                                        // L4099
+        }
+      } else if (rng() < 0.02) {                                                                         // L4101（march to war）
+        const target = warTargetT(ctx, u.civ, rng);                                                        // L4102
+        if (target) { u.tx = target.x + rng() * 4 - 2; u.ty = target.y + rng() * 4 - 2; }                  // L4103
+      }
+    }
     ctx.evt.push(['tail', u.id]);                                                                  // L4110（tailJS 仅 else 路径——gen stub 恒 false 不早退）
   }
   ctx.evt.push(['post', u.id]);                                                                    // L4112（if/else 之外恒调——S15 僵尸追击 post-only 实证）
@@ -770,7 +1004,12 @@ for (const c of g.cases) {
     caseName: c.name,
     raw, lawsRise: c.env.lawsRise, zombieInfect: c.env.zombInf ?? true, ambience: c.env.ambience, gearRegen: c.env.gearRegen ?? 0,
     dmgNumbers: false, blood: false, dayPhase: c.env.dayPhase ?? 0, tickCount: 0,   // M-U7p 近战域（gen 桩面 fxPrefs undefined-falsy + tickCount=0 同构）
-    fire, radiate, terrain, fireSet, building: new Uint8Array(W * H),               // M-U7q ignite 建筑门（fixtures 无建筑恒 0）
+    fire, radiate, terrain, fireSet, building: new Uint8Array(W * H),               // M-U7q ignite 建筑门（M-U7r bldInit 注入面）
+    // —— M-U7r peaceful 职业域依赖面（gen applyPeaceFixtures 同构；独立转写）——
+    owner: (() => { const a = new Int16Array(W * H).fill(-1); for (const [k, v] of Object.entries(c.env.ownerInit ?? {})) a[Number(k)] = v; return a; })(),
+    buildings: [], bIdx: new Map(), bHp: new Map(), damagedSet: new Set(),
+    firesOut: c.env.firesOutInit ?? 0, repairsDone: c.env.repairsInit ?? 0,
+    lastFireOutEventTick: -2400, lastRepairEventTick: -2400,                        // engine ctor L641/L643 初值
     evt: [], fx: [], scan: [],
     buckets, enemyLut: new Map(), dynRaces: new Map(), rel: new Map(),   // isEnemyFast/isEnemy 依赖面（黄金无动态种）
     tension: new Map(), warShame: new Map(), warData: new Map(Object.entries(c.env.warData ?? {})),   // M-U7q 弑君之仇三账本 + 战争档案
@@ -781,6 +1020,14 @@ for (const c of g.cases) {
     setT: (i, t) => { if (terrain[i] === t) return; const old = terrain[i]; terrain[i] = t; terrLog.push([i, old, t]); },   // setTerrain 影子（同值早退 L950 语义）
   };
   for (const [k, v] of Object.entries(c.env.relInit ?? {})) ctx.rel.set(k, v);   // M-U7q rel 初值（S33 弑君宣战种子）
+  // —— M-U7r peaceful 域 bld/dmg 夹具施用（gen applyPeaceFixtures 同构——bldInit 建 buildings/bIdx/building/bHp；dmgInit 登记受损）——
+  for (const [tile, kind, civB] of c.env.bldInit ?? []) {
+    ctx.building[tile] = kind;
+    ctx.bIdx.set(tile, ctx.buildings.length);
+    ctx.buildings.push({ i: tile, x: tile % W, y: (tile / W) | 0, kind, civ: civB });
+    ctx.bHp.set(tile, Math.round((BLD_HP_T[kind] ?? 70) * 1));
+  }
+  for (const [tile, hp] of Object.entries(c.env.dmgInit ?? {})) { ctx.damagedSet.add(Number(tile)); ctx.bHp.set(Number(tile), hp); }
 
   const track = !!c.env.terrainTrack;
   let stepIdx = -1;

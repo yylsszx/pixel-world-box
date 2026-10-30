@@ -30,7 +30,7 @@
 //       unity/pixel-world-box/Assets/StreamingAssets/WbGolden/units_update.json（双写）
 // ============================================================================
 import { GameEngine } from '../../src/lib/game/engine.ts';
-import { RACES, R, TRAITS } from '../../src/lib/game/types.ts';
+import { RACES, R, TRAITS, JOBS, BUILDING_DEFS } from '../../src/lib/game/types.ts';
 import { WB } from '../../src/lib/wasm/wbspatial.ts';
 import { mulberry32 } from '../../src/lib/game/noise.ts';
 import { ep } from '../../src/lib/game/engineParams.ts';
@@ -197,7 +197,9 @@ function makeStubEng(env, cap) {
   eng.radiate = new Uint8Array(W * H);
   eng.fireSet = new Set(env.fireSet ?? []);
   eng.damagedSet = new Set();
-  eng.buildings = []; eng.bIdx = new Map(); eng.civs = env.civs ?? {};   // M-U7q：civs env 注入（弑君之仇 kc 面/zombify pop--）
+  eng.buildings = []; eng.bIdx = new Map();   // M-U7r：buildings/bIdx 桩面真实现化（fireNear/nearestBuildingOf/warTarget 消费）
+  // M-U7r：civs 数组化（civAtWar L2017 for..of 迭代——对象键升序映射数组位，indexed 访问 civs[id] 同构；S33 弑君域 indexed 面不受影响）
+  eng.civs = env.civs ? Object.keys(env.civs).sort((a, b) => Number(a) - Number(b)).map((k) => env.civs[k]) : [];
   eng.bw = W / 4; eng.bh = H / 4;
   eng.buckets = Array.from({ length: eng.bw * eng.bh }, () => []);
   eng.laws = { undeadRise: env.lawsRise, zombieInfect: env.zombInf ?? true };   // M-U7q：zombieInfect L3905 门（默认 true——types.ts DEFAULT_LAWS）
@@ -248,8 +250,35 @@ function makeStubEng(env, cap) {
   eng.armies = env.armies ?? []; eng.directives = env.directives ?? [];      // L7254/L7258 军团/旨意
   eng.families = new Map(Object.entries(env.families ?? {}).map(([k, v]) => [Number(k), { ...v }]));   // L3926 家族战功（rf.kills/heroes 写点——post dump 对账面）
   eng.techModCache = new Map(); eng.emTechs = new Map();   // L4861/L4866 techModsOf 缓存面（S33 首触 L3707 bowRange——civ>=0 isCiv 场景；c.techs 空→NEUTRAL_MODS 零掷）
+  // —— M-U7r peaceful 职业域真实现依赖面（fireNear/extinguishFire/damagedNear/repairBuilding/nearestBuildingOf/warTarget/civAtWar/attackBuilding 走原型真实现）——
+  eng.owner = new Int16Array(W * H).fill(-1);                    // L161 owner（Int16Array fill(-1)——fireNear own 领土判定消费面）
+  eng.bHp = new Map();                                           // bHp Map（attackBuilding/repairBuilding 耐久账——bld/dmg 夹具写入）
+  eng.firesOut = 0;                                              // L637 灭火统计（extinguishFire ++ 写点）
+  eng.repairsDone = 0;                                           // L639 修缮统计（repairBuilding ++ 写点）
+  eng.lastFireOutEventTick = -2400;                              // L641 灭火播报节流（engine ctor 初值）
+  eng.lastRepairEventTick = -2400;                               // L643 修缮播报节流
   return eng;
 }
+
+// ---- M-U7r peaceful 职业域夹具施加（probe 与主循环共用——bld/dmg/owner/统计节流阀属黄金基线） ----
+const applyPeaceFixtures = (eng, env) => {
+  for (const [k, v] of Object.entries(env.fireInit ?? {})) {   // 火场夹具（主循环 L895 原样语义——幂等双施；probe 侧首施）
+    const [x, y] = k.split(',').map(Number); eng.fire[y * W + x] = v; eng.fireSet.add(y * W + x);
+  }
+  for (const [k, v] of Object.entries(env.radiateInit ?? {})) {
+    const [x, y] = k.split(',').map(Number); eng.radiate[y * W + x] = v;
+  }
+  for (const [tile, kind, civ] of env.bldInit ?? []) {
+    eng.building[tile] = kind;                                    // L782 building: Uint8Array（tile → kind）
+    eng.bIdx.set(tile, eng.buildings.length);                     // bIdx tile→buildings 序（mkBuilding0 L130 同构）
+    eng.buildings.push({ i: tile, x: tile % W, y: (tile / W) | 0, kind, civ });   // engine Building L1573 push 面同构
+    eng.bHp.set(tile, Math.round((BUILDING_DEFS[kind]?.hp ?? 70) * 1));           // buildBuilding bHp 初值同构
+  }
+  for (const [tile, hp] of Object.entries(env.dmgInit ?? {})) { eng.damagedSet.add(Number(tile)); eng.bHp.set(Number(tile), hp); }   // damagedSet 登记 + 耐久损态
+  for (const [tile, civ] of Object.entries(env.ownerInit ?? {})) eng.owner[Number(tile)] = civ;   // 领土（fireNear own 判定——远火响应门）
+  if (env.firesOutInit != null) eng.firesOut = env.firesOutInit;   // 灭火播报节流阀（fireOut 事件门 ≥3）
+  if (env.repairsInit != null) eng.repairsDone = env.repairsInit;  // 修缮播报节流阀（repair 事件门 ≥6）
+};
 
 // ---- 地形重建（def + 矩形补丁；CASES 求值前定义——S5 种子寻优依赖） ----
 const buildGrid = (spec) => {
@@ -302,9 +331,12 @@ const meleeProbe = (spec) => {
   let lastCap = null, lastUnits = null;
   for (let s = spec.lo ?? 1; s < (spec.hi ?? 5000); s++) {
     const cap = { fx: [], evt: [], terr: [], scan: [] };
-    const env = { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true, ...(spec.env ?? {}) };
+    // M-U7r：env 每种子深拷贝（pristine 协议对齐主循环 envEcho——S47 实证：probe env 与场景 env 是两个字面量，
+    //  引擎原地改写 civs.gold 等累积态跨种子污染 probe 环境 → 假绿种子与 main 落盘分歧）
+    const env = { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true, ...(spec.env ? JSON.parse(JSON.stringify(spec.env)) : {}) };
     const eng = makeStubEng(env, cap);
     eng.terrain.set(buildGrid(TERRAIN_SPECS[spec.terrain ?? 'plains']));
+    applyPeaceFixtures(eng, env);   // M-U7r peaceful 域夹具（probe 与主循环同源）
     const units = spec.units.map((o, i) => mkTsUnit({ ...o, id: o.id ?? i + 1, race: raceIds[o.race] ?? o.race }));
     eng.units = units;   // M-U7q：witnessDeath 弑君分支遍历 this.units（eng.units 桩面必挂——主循环 L719 同构）
     for (const u of units) eng.buckets[((u.y / 4) | 0) * eng.bw + ((u.x / 4) | 0)].push(u);
@@ -831,6 +863,214 @@ const CASES = [
     ],
     steps: 2,
   },
+
+  // ================= M-U7r 批次三丙·peaceful 职业域（S37-S50；L3981-4109 全译收官——updateUnit 最后一域） =================
+  // 契约：单位无敌（桶内无敌 or 同族 ally）→ else 分支 → 龙息门（非龙/undefined breath 天然跳过）→ isCiv && civ>=0 职业链。
+  //  真实现面：fireNear/extinguishFire/damagedNear/repairBuilding/nearestBuildingOf/warTarget/civAtWar/attackBuilding 走原型；
+  //  castArrow/moveUnit/addEvent/fx 事件捕获桩；buildings/bIdx/bHp/owner/firesOut/repairsDone 夹具注入（applyPeaceFixtures）。
+  // S37 fire-rush：火 2.0 格（<2.2 贴身自保门——零领土依赖）+ 0.3 门开 + dist²=4>2.89 → tx/ty=火心 + 'mv' 1.2 + 提前 return
+  //  （tail/post 全跳——救灾优先契约）；fireSet 不动（rush 不灭火）。
+  {
+    name: 'fire-rush', terrain: 'plains', seed: meleeProbe({
+      label: 'fire-rush', steps: 1, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } }, fireInit: { '42,40': 5 } },
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
+      want: (cap, us) => cap.evt.some((e) => e[0] === 'mv' && e[2] === 1.2) && !cap.evt.some((e) => e[0] === 'tail' || e[0] === 'post'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } }, fireInit: { '42,40': 5 } },
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
+    steps: 1,
+  },
+  // S38 fire-out：贴身火 1.0 格（<1.7²）→ extinguishFire（fire 清/fireSet 删/firesOut 1/water fx/cd=max(0,10)）→ 节流门关（firesOut<3）
+  //  → 落穿全链（建筑师 job≠4 短路/路人 cd>0 短路/war 假/job 链假/0.02 门败）→ tail+post 照常。
+  {
+    name: 'fire-out', terrain: 'plains', seed: meleeProbe({
+      label: 'fire-out', steps: 2, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } }, fireInit: { '41,40': 5 } },
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
+      want: (cap, us, eng) => eng.fireSet.size === 0 && eng.firesOut === 1 && cap.fx.some((f) => f.k === 'water')
+        && cap.evt.some((e) => e[0] === 'tail') && cap.evt.some((e) => e[0] === 'post') && us[0].cd === 8,
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } }, fireInit: { '41,40': 5 } },
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
+    steps: 2,
+  },
+  // S39 fire-out-announce：firesOutInit=3 → 灭火后 4≥3 且 0-(-2400)=2400>480 → fireOut 命名纪事（civ alive 门开）+ lastFireOutEventTick=0
+  {
+    name: 'fire-out-announce', terrain: 'plains', seed: meleeProbe({
+      label: 'fire-out-announce', env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } }, fireInit: { '41,40': 5 }, firesOutInit: 3 },
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
+      want: (cap, us, eng) => cap.evt.some((e) => e[0] === 'ev' && e[1] === 'fireOut') && eng.firesOut === 4 && eng.lastFireOutEventTick === 0,
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } }, fireInit: { '41,40': 5 }, firesOutInit: 3 },
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
+    steps: 1,
+  },
+  // S40 bigfire-muster：9 火格 → bigFire（>8）→ 门 0.5 + 半径 5（job0 灾情动员）→ 远火 4.0 格（≥2.2 → own 领土门——ownerInit 全 9 格）
+  //  → rush（mv 1.2 + 提前 return）
+  {
+    name: 'bigfire-muster', terrain: 'plains', seed: meleeProbe({
+      label: 'bigfire-muster', steps: 1, env: {
+        civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } },
+        fireInit: { '44,40': 5, '45,40': 5, '46,40': 5, '44,41': 5, '45,41': 5, '46,41': 5, '44,42': 5, '45,42': 5, '46,42': 5 },
+        ownerInit: { '10284': 0, '10285': 0, '10286': 0, '10540': 0, '10541': 0, '10542': 0, '10796': 0, '10797': 0, '10798': 0 } },
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
+      want: (cap, us, eng) => cap.evt.some((e) => e[0] === 'mv' && e[2] === 1.2) && eng.fireSet.size === 9,
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } },
+      fireInit: { '44,40': 5, '45,40': 5, '46,40': 5, '44,41': 5, '45,41': 5, '46,41': 5, '44,42': 5, '45,42': 5, '46,42': 5 },
+      ownerInit: { '10284': 0, '10285': 0, '10286': 0, '10540': 0, '10541': 0, '10542': 0, '10796': 0, '10797': 0, '10798': 0 } },
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
+    steps: 1,
+  },
+  // S41 idle-fallthrough：无火无损害 → 防火门 fireSet 空短路零掷 → 建筑师/路人 job 短路 → war 假 → job 链假 → 0.02 门败
+  //  → tail+post（零掷穿链契约——和平无事一拍只有 1 抽）
+  {
+    name: 'idle-fallthrough', terrain: 'plains', seed: meleeProbe({
+      label: 'idle-fallthrough', steps: 1, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } } },
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
+      want: (cap, us) => cap.evt.some((e) => e[0] === 'tail') && cap.evt.some((e) => e[0] === 'post') && !cap.evt.some((e) => e[0] === 'mv'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } } },
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
+    steps: 1,
+  },
+  // S42 architect-commute：建筑师 job4 + 0.2 门开 + damagedNear(14) 命中 6.0 格远本国受损宅 → dist²=36>3.24 → 赴工地（mv 1.15 + return）
+  {
+    name: 'architect-commute', terrain: 'plains', seed: meleeProbe({
+      label: 'architect-commute', steps: 1, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } },
+        bldInit: [[10286, 1, 0]], dmgInit: { '10286': 40 } },
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 4, cd: 0 })],
+      want: (cap, us, eng) => cap.evt.some((e) => e[0] === 'mv' && e[2] === 1.15) && !cap.evt.some((e) => e[0] === 'tail' || e[0] === 'post')
+        && us[0].tx === 46.5 && eng.damagedSet.size === 1,
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } }, bldInit: [[10286, 1, 0]], dmgInit: { '10286': 40 } },
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 4, cd: 0 })],
+    steps: 1,
+  },
+  // S43 architect-repair：受损宅 1.0 格（<1.8²）→ cd=16 + atk=10 + repairBuilding(12×repair=12)（40→52<70 done=false → hammer fx 无纪事）
+  //  → 拍 2 cd 衰减后 0.02 门败（tail+post 照常）
+  {
+    name: 'architect-repair', terrain: 'plains', seed: meleeProbe({
+      label: 'architect-repair', steps: 2, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } },
+        bldInit: [[10281, 1, 0]], dmgInit: { '10281': 40 } },
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 4, cd: 0 })],
+      want: (cap, us, eng) => eng.bHp.get(10281) === 52 && eng.repairsDone === 1 && cap.fx.some((f) => f.k === 'hammer')
+        && us[0].cd === 14 && us[0].atk === 8 && cap.evt.some((e) => e[0] === 'tail'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } }, bldInit: [[10281, 1, 0]], dmgInit: { '10281': 40 } },
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 4, cd: 0 })],
+    steps: 2,
+  },
+  // S44 passerby-fix：平民 job0 + 0.12 门开 + damagedNear(1.9) 命中贴身受损宅 → cd=22 + repairBuilding(3)（66→69 done=false）
+  {
+    name: 'passerby-fix', terrain: 'plains', seed: meleeProbe({
+      label: 'passerby-fix', steps: 2, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } },
+        bldInit: [[10281, 1, 0]], dmgInit: { '10281': 66 } },
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
+      want: (cap, us, eng) => eng.bHp.get(10281) === 69 && eng.repairsDone === 1 && cap.fx.some((f) => f.k === 'hammer') && us[0].cd === 20,
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } }, bldInit: [[10281, 1, 0]], dmgInit: { '10281': 66 } },
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 0, cd: 0 })],
+    steps: 2,
+  },
+  // S45 siege-melee：战士 job2 交战国（rel -50）敌宅 1.0 格 → cd=14 + atk=12 + attackBuilding(8)（70→62 + damagedSet 登记 + hit fx）
+  //  → 摧毁门不触（62>0——onBuildingDestroyed 级联属 case3 bail 域 D01-D08 契约）→ 军团外 0.05/0.03 门双败
+  {
+    name: 'siege-melee', terrain: 'plains', seed: meleeProbe({
+      label: 'siege-melee', steps: 2, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' },
+                '1': { id: 1, name: '炎国', alive: true, pop: 3, stability: 70, colorHex: '#e63946' } }, relInit: { '0-1': -50 },
+        bldInit: [[10281, 1, 1]] },
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 2, dmg: 5, cd: 0, tx: 44.5, ty: 40.5 })],
+      want: (cap, us, eng) => eng.bHp.get(10281) === 62 && eng.damagedSet.has(10281) && cap.fx.some((f) => f.k === 'hit')
+        && us[0].cd === 12 && us[0].atk === 10 && !cap.evt.some((e) => e[0] === 'corpse'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' },
+              '1': { id: 1, name: '炎国', alive: true, pop: 3, stability: 70, colorHex: '#e63946' } }, relInit: { '0-1': -50 },
+      bldInit: [[10281, 1, 1]] },
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 2, dmg: 5, cd: 0, tx: 44.5, ty: 40.5 })],
+    steps: 2,
+  },
+  // S46 siege-archer：弓手 job3 + 近战门 1.6 miss（4.0 格）→ 0.1 门开 → enemyBuildingNear(5) 命中 → cd=18 + 'ar' 事件
+  //  → 军团外 0.05/0.03 双败
+  {
+    name: 'siege-archer', terrain: 'plains', seed: meleeProbe({
+      label: 'siege-archer', steps: 2, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' },
+                '1': { id: 1, name: '炎国', alive: true, pop: 3, stability: 70, colorHex: '#e63946' } }, relInit: { '0-1': -50 },
+        bldInit: [[10284, 1, 1]] },
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 3, dmg: 5, cd: 0, tx: 42.5, ty: 40.5 })],
+      want: (cap, us) => cap.evt.some((e) => e[0] === 'ar' && e[2] === bitHex(44.5)) && us[0].cd === 16
+        && !cap.fx.some((f) => f.k === 'hit'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' },
+              '1': { id: 1, name: '炎国', alive: true, pop: 3, stability: 70, colorHex: '#e63946' } }, relInit: { '0-1': -50 },
+      bldInit: [[10284, 1, 1]] },
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 3, dmg: 5, cd: 0, tx: 42.5, ty: 40.5 })],
+    steps: 2,
+  },
+  // S47 merchant-trade：商人 job5 + tx=自身（dist²=0<1.44 短路零掷）→ 0.6 门开选 MARKET → 抵达判定 0.5²<2.25 → gold+2 + coin fx
+  {
+    name: 'merchant-trade', terrain: 'plains', seed: meleeProbe({
+      label: 'merchant-trade', steps: 2, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } },
+        bldInit: [[10281, 9, 0]] },
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 5, cd: 0 })],
+      want: (cap, us, eng) => eng.civs[0].gold === 4 && cap.fx.some((f) => f.k === 'coin'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } }, bldInit: [[10281, 9, 0]] },
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 5, cd: 0 })],
+    steps: 2,
+  },
+  // S48 farmer-tend：农民 job1 + 0.06 门开 → nearestBuildingOf(FARM) → tx/ty=农田周边 ±2.5（clamp 面内）
+  {
+    name: 'farmer-tend', terrain: 'plains', seed: meleeProbe({
+      label: 'farmer-tend', steps: 1, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } },
+        bldInit: [[10281, 4, 0]] },
+      units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 1, cd: 0 })],
+      want: (cap, us) => us[0].tx !== 40.5 && Math.abs(us[0].tx - 41) <= 2.5 && Math.abs(us[0].ty - 40) <= 2.5
+        && cap.evt.some((e) => e[0] === 'tail'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } }, bldInit: [[10281, 4, 0]] },
+    units: [U({ race: 'human', x: 40.5, y: 40.5, civ: 0, job: 1, cd: 0 })],
+    steps: 1,
+  },
+  // S49 noble-dwell：贵族 job6 + 0.06 门开 → 王都 tileX/tileY ±3（civ.capital 夹具——C# 注入面 capital）
+  {
+    name: 'noble-dwell', terrain: 'plains', seed: meleeProbe({
+      label: 'noble-dwell', steps: 1, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136', capital: 10281 } } },
+      units: [U({ race: 'human', x: 50.5, y: 50.5, civ: 0, job: 6, cd: 0 })],
+      want: (cap, us) => Math.abs(us[0].tx - 41) <= 3 && Math.abs(us[0].ty - 40) <= 3 && cap.evt.some((e) => e[0] === 'tail'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136', capital: 10281 } } },
+    units: [U({ race: 'human', x: 50.5, y: 50.5, civ: 0, job: 6, cd: 0 })],
+    steps: 1,
+  },
+  // S50 war-march：0.02 门开（无职业分支命中）→ warTarget(0) 敌国建筑随机选靶（1 敌 1 抽）→ tx/ty=靶 ±2
+  {
+    name: 'war-march', terrain: 'plains', seed: meleeProbe({
+      label: 'war-march', steps: 1, env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' },
+                '1': { id: 1, name: '炎国', alive: true, pop: 3, stability: 70, colorHex: '#e63946' } }, relInit: { '0-1': -50 },
+        bldInit: [[10281, 1, 1]] },
+      units: [U({ race: 'human', x: 50.5, y: 50.5, civ: 0, job: 0, cd: 0 })],
+      want: (cap, us) => Math.abs(us[0].tx - 40) <= 2 && Math.abs(us[0].ty - 40) <= 2 && cap.evt.some((e) => e[0] === 'tail'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' },
+              '1': { id: 1, name: '炎国', alive: true, pop: 3, stability: 70, colorHex: '#e63946' } }, relInit: { '0-1': -50 },
+      bldInit: [[10281, 1, 1]] },
+    units: [U({ race: 'human', x: 50.5, y: 50.5, civ: 0, job: 0, cd: 0 })],
+    steps: 1,
+  },
 ];
 
 // ---- mut 处理（数值字段 null → undefined，与 mkTsUnit 语义一致） ----
@@ -869,6 +1109,7 @@ for (const c of CASES) {
   for (const [k, v] of Object.entries(env.radiateInit ?? {})) {
     const [x, y] = k.split(',').map(Number); eng.radiate[y * W + x] = v;
   }
+  applyPeaceFixtures(eng, env);   // M-U7r peaceful 职业域夹具（bld/dmg/owner/统计节流阀——probe 同源）
   const specs = c.units;
   const units = specs.map((s) => mkTsUnit({ ...s, race: raceIds[s.race] ?? s.race }));
   eng.units = units;
@@ -928,13 +1169,18 @@ for (const c of CASES) {
   // —— M-U7q 击杀链 post 态 dump（屠龙/文明/家族/外交三账本/战争档案/旨意——NUnit Test30 post 对账面；镜简侧 transcript 不复刻——其契约=单位/事件面） ——
   const post = {
     statDragons: eng.statDragonsSlain ?? 0,                                             // L3940 屠龙计数
-    civs: Object.values(eng.civs).map((cv) => ({ id: cv.id, alive: !!cv.alive, pop: cv.pop, stability: cv.stability, kingId: cv.kingId === undefined ? null : cv.kingId })),   // 弑君/尸变 Civ 改写（L1673-1674/L4321）
+    civs: Object.values(eng.civs).map((cv) => ({ id: cv.id, alive: !!cv.alive, pop: cv.pop, stability: cv.stability, kingId: cv.kingId === undefined ? null : cv.kingId, gold: cv.gold === undefined ? null : cv.gold })),   // 弑君/尸变 Civ 改写（L1673-1674/L4321）+ gold（M-U7r 商贾入库——字段只加）
     families: [...eng.families.values()].map((f) => ({ id: f.id, kills: f.kills, heroes: f.heroes })).sort((a, b) => a.id - b.id),   // L3928/L3930 家族战功
     rel: [...eng.rel.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)),                 // L1186 弑君之仇（pairKey 序）
     tension: [...eng.tension.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)),         // L1187
     warShame: [...eng.warShame.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)),       // L1188 耻辱簿
     warData: [...eng.warData.values()].map((wd) => ({ key: wd.key, scoreA: wd.scoreA, scoreB: wd.scoreB, casA: wd.casA, casB: wd.casB, exA: wd.exA, exB: wd.exB, razedA: wd.razedA, razedB: wd.razedB })).sort((a, b) => (a.key < b.key ? -1 : 1)),   // L7250 战争分数
     directives: eng.directives.map((d) => ({ id: d.id, killCount: d.killCount ?? 0 })), // L7260 总动员战果
+    // —— M-U7r peaceful 职业域 post 对账面（防灾/修缮统计 + 耐久账 + 受损登记——字段只加）——
+    firesOut: eng.firesOut ?? 0,                                                        // L637 灭火统计
+    repairsDone: eng.repairsDone ?? 0,                                                  // L639 修缮统计
+    bhp: eng.bHp ? [...eng.bHp.entries()].sort((a, b) => a[0] - b[0]) : [],             // 耐久账（attack/repair 写点——tile 序）
+    damaged: [...eng.damagedSet].sort((a, b) => a - b),                                 // 受损登记（attackBuilding 加/repairBuilding 删）
   };
   out.cases.push({
     name: c.name, terrain: c.terrain, seed: c.seed,

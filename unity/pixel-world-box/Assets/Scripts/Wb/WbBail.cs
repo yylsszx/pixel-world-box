@@ -840,7 +840,167 @@ namespace PixelWorldBox.Wb
                         DragonBreathE(w, u);                                                                                 // L3976
                     }
                 }
-                if (def.isCiv && u.civ >= 0) throw new System.InvalidOperationException("peaceful 职业域批次三乙未翻译（L3981-4109；黄金 civ=-1 契约不触达）");   // L3981
+                if (def.isCiv && u.civ >= 0)                                                                                     // L3981 peaceful 职业域（M-U7r 批次三丙全译收官——updateUnit 最后一域）
+                {
+                    int job = u.jobC ?? 0;                                                                                       // L3982（u.job ?? 0）
+                    bool warring = WbCivSim.CivAtWar(w, u.civ);                                                                  // L3983
+                    // —— 国民防灾（最高优先级：火不等人；军团成员除外——军令如山）——
+                    // 大面积火情 → 全民动员模式：响应半径与出勤率提升（灾情动员）
+                    bool bigFire = w.fireSet.Count > 8;                                                                          // L3986
+                    if (u.army == null && w.fireSet.Count > 0 && w.Rng() < (bigFire ? 0.5 : 0.3))                                // L3987
+                    {
+                        double radius = job == 4 ? (bigFire ? 7 : 4.5) : bigFire ? 5 : 3;                                        // L3988
+                        int fi = FireNear(w, u, radius);                                                                          // L3989
+                        if (fi >= 0)
+                        {
+                            double fxp = (fi % WbWorld.W) + 0.5;                                                                  // L3991
+                            double fyp = ((fi / WbWorld.W) | 0) + 0.5;                                                            // L3992
+                            double cdx = fxp - u.x;                                                                                // L3993
+                            double cdy = fyp - u.y;                                                                                // L3994
+                            if (cdx * cdx + cdy * cdy < 2.89)                                                                      // L3995（1.7²：平方距离判定——纯阈值比较）
+                            {
+                                ExtinguishFire(w, fi, u);                                                                          // L3996
+                                u.cd = System.Math.Max(u.cd, 10);                                                                  // L3997 泼水动作
+                            }
+                            else
+                            {
+                                u.tx = fxp;                                                                                        // L3999
+                                u.ty = fyp;                                                                                        // L4000
+                                MoveUnitHook(w, u, 1.2);                                                                            // L4001（赶赴火场——本 tick 优先救灾）
+                                return;                                                                                            // L4002
+                            }
+                        }
+                    }
+                    // —— 建筑师：主动奔赴受损建筑修缮（战争不纵火，但拆毁与天灾依旧留下疮痍）——
+                    if (u.army == null && job == 4 && u.cd <= 0 && w.Rng() < 0.2)                                                 // L4007
+                    {
+                        int di = DamagedNear(w, u, 14);                                                                            // L4008
+                        WbBuilding b = di >= 0 && w.bIdx.TryGetValue(di, out int bi3) ? w.buildings[bi3] : null;                  // L4009（bIdx.get ?? -1 → buildings[-1] undefined 语义）
+                        if (b != null)
+                        {
+                            double bdx = b.x + 0.5 - u.x;                                                                          // L4011
+                            double bdy = b.y + 0.5 - u.y;                                                                          // L4012
+                            if (bdx * bdx + bdy * bdy < 3.24)                                                                      // L4013（1.8²）
+                            {
+                                u.cd = 16;                                                                                          // L4014
+                                u.atk = 10;                                                                                         // L4015 敲击动画
+                                RepairBuilding(w, di, 12 * WbCivSim.TechModsOf(w, u.civ).repair, u);                                // L4016
+                            }
+                            else
+                            {
+                                u.tx = b.x + 0.5;                                                                                   // L4018
+                                u.ty = b.y + 0.5;                                                                                   // L4019
+                                MoveUnitHook(w, u, 1.15);                                                                            // L4020（赶赴工地）
+                                return;                                                                                            // L4021
+                            }
+                        }
+                    }
+                    // —— 路过国民顺手修缮身边受损建筑（平民皆可搭把手）——
+                    if (u.army == null && job != 2 && job != 3 && u.cd <= 0 && w.damagedSet.Count > 0 && w.Rng() < 0.12)          // L4026
+                    {
+                        int di = DamagedNear(w, u, 1.9);                                                                           // L4027
+                        if (di >= 0)                                                                                              // L4029
+                        {
+                            u.cd = 22;                                                                                            // L4029
+                            RepairBuilding(w, di, 3, u);                                                                          // L4030
+                        }
+                    }
+                    // —— 战争 AI：战士/弓手围攻敌国建筑（战争毁灭房屋的核心链路）——
+                    if (warring && (job == 2 || job == 3))                                                                        // L4034
+                    {
+                        bool inArmy = u.army != null;                                                                              // L4035
+                        if (u.cd <= 0)                                                                                            // L4037
+                        {
+                            int bi = EnemyBuildingNear(w, u, 1.6);                                                                  // L4038
+                            if (bi >= 0)                                                                                          // L4040
+                            {
+                                u.cd = 14;                                                                                        // L4041
+                                u.atk = 12;                                                                                       // L4042 拆城挥击动画
+                                AttackBuilding(w, bi, u.dmg * 1.6, u.civ);                                                          // L4042
+                            }
+                        }
+                        // 弓手：射程内敌建筑 → 箭矢轰击（概率节流）
+                        if (job == 3 && u.cd <= 0 && w.Rng() < 0.1)                                                               // L4048
+                        {
+                            int bi = EnemyBuildingNear(w, u, JobDefs[3].ranged != 0 ? JobDefs[3].ranged : 5);                       // L4049（JOBS[3].ranged ?? 5——types.ts L300 archer=5）
+                            if (bi >= 0)                                                                                          // L4051
+                            {
+                                u.cd = 18;                                                                                        // L4052
+                                CastArrowHook(w, u, (bi % WbWorld.W) + 0.5, ((bi / WbWorld.W) | 0) + 0.5, u.dmg);                   // L4053（弹道实体生成属 projectiles 未译域——'ar' 事件流契约，L3765 战斗链同构）
+                            }
+                        }
+                        // 军团成员：阵位/冲锋目标由 armyTick 统一驱动（不再自行寻的/登船）
+                        if (!inArmy)                                                                                              // L4056
+                        {
+                            // 跨海远征：隔海目标周期性尝试登船（沿岸滑行的单位不会触发 moveUnit 阻断分支，
+                            // 必须主动检查 — maybeBoardForWar 内部有距离/跨水率/锚地完整校验）
+                            if (w.Rng() < 0.05 && MaybeBoardForWar(w, u)) return;                                                  // L4057
+                            // 推进至最近的敌建筑（抵达或偶发重定目标；1.2² 平方距离判定）
+                            {
+                                double tdx = u.tx - u.x;                                                                            // L4060
+                                double tdy = u.ty - u.y;                                                                            // L4061
+                                if (tdx * tdx + tdy * tdy < 1.44 || w.Rng() < 0.03)                                                 // L4062
+                                {
+                                    WbBuilding tgt = NearestEnemyBuilding(w, u);                                                      // L4063
+                                    if (tgt != null) { u.tx = tgt.x + w.Rng() * 2 - 1; u.ty = tgt.y + w.Rng() * 2 - 1; }              // L4064
+                                }
+                            }
+                        }
+                    }
+                    else if (job == 1 && w.Rng() < 0.06)                                                                          // L4069
+                    {
+                        // 农民：在王国农田周边劳作
+                        WbBuilding f = NearestBuildingOf(w, u, WbCivSim.BUILD_KINDS.FARM);                                          // L4070
+                        if (f != null)                                                                                            // L4071
+                        {
+                            u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, f.x + w.Rng() * 5 - 2.5));                     // L4072
+                            u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, f.y + w.Rng() * 5 - 2.5));                     // L4073
+                        }
+                    }
+                    else if (job == 5)                                                                                            // L4076
+                    {
+                        // 商人：往来集市/王都贸易，抵达时为国库入账
+                        WbCiv civ = w.civs[u.civ];                                                                                  // L4077
+                        {
+                            double tdx = u.tx - u.x;                                                                                // L4080
+                            double tdy = u.ty - u.y;                                                                                // L4081
+                            if (civ != null && (tdx * tdx + tdy * tdy < 1.44 || w.Rng() < 0.03))                                    // L4082（1.2² 平方距离判定）
+                            {
+                                WbBuilding m = NearestBuildingOf(w, u, w.Rng() < 0.6 ? WbCivSim.BUILD_KINDS.MARKET : WbCivSim.BUILD_KINDS.CAPITAL);   // L4083
+                                if (m != null)                                                                                      // L4084
+                                {
+                                    u.tx = m.x + w.Rng() * 2 - 1;                                                                    // L4085
+                                    u.ty = m.y + w.Rng() * 2 - 1;                                                                    // L4086
+                                    double mdx = u.x - m.x;                                                                            // L4087
+                                    double mdy = u.y - m.y;                                                                            // L4088
+                                    if (mdx * mdx + mdy * mdy < 2.25)                                                                // L4089（1.5² 平方距离判定）
+                                    {
+                                        civ.gold = (civ.gold ?? 0) + 2;                                                                // L4090 国库入账
+                                        FxHook(w, "coin", u.x, u.y - 1, 24);                                                            // L4091
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else if (job == 6 && w.Rng() < 0.06)                                                                          // L4093
+                    {
+                        // 贵族：居于王都
+                        WbCiv civ = w.civs[u.civ];                                                                                  // L4095
+                        if (civ != null && civ.capital >= 0)                                                                        // L4096
+                        {
+                            int cx2 = WbWorld.TileX(civ.capital);                                                                    // L4097
+                            int cy2 = WbWorld.TileY(civ.capital);                                                                    // L4098
+                            u.tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, cx2 + w.Rng() * 6 - 3));                         // L4099
+                            u.ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, cy2 + w.Rng() * 6 - 3));                         // L4100
+                        }
+                    }
+                    else if (w.Rng() < 0.02)                                                                                     // L4102
+                    {
+                        // march to war
+                        WbBuilding target = WarTarget(w, u.civ);                                                                    // L4103
+                        if (target != null) { u.tx = target.x + w.Rng() * 4 - 2; u.ty = target.y + w.Rng() * 4 - 2; }                // L4104
+                    }
+                }
                 if (TailJSHook(w, u)) return;                                                                            // L4110（尾段早退：猎物命中/密度场导航——仅 else 路径，S15 僵尸追击 post-only 实证）
             }
             PostJSHook(w, u);                                                                                            // L4112（if/else 之外恒调——敌对追击路径亦达）
@@ -2604,6 +2764,150 @@ namespace PixelWorldBox.Wb
                 if (d < bestD) { bestD = d; best = b; }                                         // L4428
             }
             return best;
+        }
+
+        // ================= M-U7r 批次三丙·peaceful 职业域七助手（engine.ts 蓝本机械翻译；与 gen 桩面真实现/镜像 T 转写三源同构） =================
+
+        /// engine fireNear L4562-4585 —— 防火检索（r+0.5 响应半径；火烧本国领土/烧本国建筑/贴身自保 <2.2 三响应门）
+        private static int FireNear(WbWorld w, WbU u, double r)
+        {
+            if (w.fireSet.Count == 0) return -1;                                                // L4563
+            int cx = (int)System.Math.Floor(u.x);                                                // L4564
+            int cy = (int)System.Math.Floor(u.y);                                                // L4565
+            int rr = (int)System.Math.Ceiling(r);                                                // L4566
+            int best = -1;                                                                       // L4567
+            double bestD = r + 0.5;                                                              // L4568
+            for (int dy = -rr; dy <= rr; dy++)                                                  // L4569
+            {
+                for (int dx = -rr; dx <= rr; dx++)                                              // L4570
+                {
+                    int xx = cx + dx;                                                            // L4571
+                    int yy = cy + dy;                                                            // L4572
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;       // L4573
+                    int i = yy * WbWorld.W + xx;                                                 // L4574（idx）
+                    if (w.fire[i] <= 0) continue;                                                // L4575
+                    double d = WbMath.FdHypot(xx + 0.5 - u.x, yy + 0.5 - u.y);                  // L4576
+                    if (d >= bestD) continue;                                                    // L4577
+                    // 响应条件：火烧本国领土 / 烧本国建筑 / 贴身自保（<2.2 格）
+                    bool own = u.civ >= 0 && (w.owner[i] == u.civ
+                        || (w.building[i] > 0 && w.bIdx.TryGetValue(i, out int bi4) && w.buildings[bi4].civ == u.civ));   // L4578（buildings[-1] undefined 语义——TryGetValue 门）
+                    if (own || d < 2.2) { bestD = d; best = i; }                                 // L4579
+                }
+            }
+            return best;                                                                         // L4584
+        }
+
+        /// engine extinguishFire L4587-4601 —— 扑灭火焰（国民消防：水花特效 + 统计 + 节流播报）
+        private static void ExtinguishFire(WbWorld w, int i, WbU by)
+        {
+            w.fire[i] = 0;                                                                       // L4588
+            w.fireSet.Remove(i);                                                                 // L4589
+            w.firesOut++;                                                                        // L4590
+            FxHook(w, "water", (i % WbWorld.W) + 0.5, ((i / WbWorld.W) | 0) + 0.5, 16);          // L4591
+            // 节流播报：累积 3 次以上才上纪事，间隔 ≥ 480 tick
+            if (w.firesOut >= 3 && w.tickCount - w.lastFireOutEventTick > 480)                   // L4593
+            {
+                w.lastFireOutEventTick = w.tickCount;                                            // L4594
+                WbCiv civ = w.civs[by.civ];
+                if (civ != null && civ.alive)                                                    // L4596（civ?.alive 门）
+                {
+                    AddEventHook(w, "fireOut", $"「{civ.name}」的国民提桶救火，扑灭了蔓延的火势", civ.colorHex, (i % WbWorld.W) + 0.5, ((i / WbWorld.W) | 0) + 0.5);   // L4597
+                }
+            }
+        }
+
+        /// engine damagedNear L4603-4615 —— 建筑师寻找最近的本国受损建筑（damagedSet 全表小集合扫描）
+        private static int DamagedNear(WbWorld w, WbU u, double r)
+        {
+            if (w.damagedSet.Count == 0) return -1;                                              // L4604
+            int best = -1;                                                                       // L4605
+            double bestD = r;                                                                    // L4606
+            foreach (int i in w.damagedSet)                                                      // L4607（Set 迭代序——黄金单元素面序无关）
+            {
+                WbBuilding b = w.bIdx.TryGetValue(i, out int bi5) ? w.buildings[bi5] : null;    // L4608
+                if (b == null || b.civ != u.civ) continue;                                       // L4608-4609
+                double d = WbMath.FdHypot(b.x + 0.5 - u.x, b.y + 0.5 - u.y);                    // L4610
+                if (d < bestD) { bestD = d; best = i; }                                          // L4611
+            }
+            return best;                                                                         // L4614
+        }
+
+        /// engine repairBuilding L4617-4645 —— 修复建筑一点耐久（建筑师主力 / 路过国民顺手；返回 true = 修满）
+        private static bool RepairBuilding(WbWorld w, int i, double amount, WbU by)
+        {
+            WbBuilding b = w.bIdx.TryGetValue(i, out int bi6) ? w.buildings[bi6] : null;        // L4618
+            if (b == null) return false;                                                         // L4619-4620（BUILDING_DEFS 查表）
+            double max = WbMath.JsRound(WbCivSim.BUILDING_DEFS[b.kind].hp * WbCivSim.TechModsOf(w, b.civ).bhp);   // L4621（def?.hp ?? 70——defs 全量已译恒有值）
+            double hp = w.bHp.TryGetValue(i, out double h0) ? h0 : max;                          // L4622（bHp.get ?? max）
+            hp = System.Math.Min(max, hp + amount);                                              // L4623
+            w.BhpSet(i, hp);                                                                     // L4624（bHp.set——Map 插入序台账同构）
+            w.repairsDone++;                                                                     // L4625
+            FxHook(w, "hammer", b.x + 0.5, b.y + 0.2, 14);                                       // L4626
+            bool done = hp >= max;                                                               // L4628
+            if (done)                                                                            // L4629
+            {
+                w.damagedSet.Remove(i);                                                          // L4630
+                FxHook(w, "spawn", b.x + 0.5, b.y + 0.5, 22);                                    // L4631
+                // 节流播报：战争疮痍被修复
+                if (w.repairsDone >= 6 && w.tickCount - w.lastRepairEventTick > 720)             // L4633
+                {
+                    w.lastRepairEventTick = w.tickCount;                                         // L4634
+                    WbCiv civ = w.civs[b.civ];
+                    if (civ != null && civ.alive)                                                // L4636（civ?.alive 门）
+                    {
+                        AddEventHook(w, "repair", $"「{civ.name}」的工匠修复了受损的{WbCivSim.BUILDING_DEFS[b.kind].name}，家园重焕生机", civ.colorHex, b.x, b.y);   // L4638（def?.name ?? '建筑'）
+                    }
+                }
+            }
+            return done;                                                                         // L4644
+        }
+
+        /// engine nearestBuildingOf L4434-4444 —— 同族同 kind 最近建筑（农民农田/商人集市/贵族王都检索）
+        private static WbBuilding NearestBuildingOf(WbWorld w, WbU u, int kind)
+        {
+            WbBuilding best = null;                                                              // L4435
+            double bestD = double.PositiveInfinity;                                              // L4436
+            foreach (WbBuilding b in w.buildings)                                                // L4437
+            {
+                if (b.civ != u.civ || b.kind != kind) continue;                                  // L4438
+                double d = WbMath.FdHypot(b.x - u.x, b.y - u.y);                                // L4439
+                if (d < bestD) { bestD = d; best = b; }                                          // L4440
+            }
+            return best;                                                                         // L4443
+        }
+
+        /// engine warTarget L5728-5734 —— march to war 随机敌国建筑选靶（atWar 全表过滤 + rng 均匀抽样）
+        private static WbBuilding WarTarget(WbWorld w, int civId)
+        {
+            System.Collections.Generic.List<WbBuilding> enemies = new System.Collections.Generic.List<WbBuilding>();   // L5729
+            foreach (WbBuilding b in w.buildings)                                                // L5730
+            {
+                if (b.civ != civId && WbCivSim.AtWar(w, civId, b.civ)) enemies.Add(b);           // L5731
+            }
+            if (enemies.Count == 0) return null;                                                 // L5733
+            return enemies[(int)System.Math.Floor(w.Rng() * enemies.Count)];                     // L5734
+        }
+
+        /// engine attackBuilding L4446-4463 —— 攻击建筑：扣耐久 → 摧毁/易帜/王都陷落（hp>0 路径：受损登记 + hit fx；
+        ///  hp≤0 摧毁级联走 OnBuildingDestroyed——case3 bail 域 D01-D08 黄金契约）
+        private static void AttackBuilding(WbWorld w, int i, double dmg, int byCiv)
+        {
+            int kind = w.building[i];                                                            // L4447
+            if (kind == 0) return;                                                               // L4448
+            double hp = w.bHp.TryGetValue(i, out double h1) ? h1 : WbCivSim.BUILDING_DEFS[kind].hp;   // L4449（bHp.get ?? def.hp）
+            hp -= dmg;                                                                           // L4450
+            int x = i % WbWorld.W;                                                               // L4451
+            int y = (i / WbWorld.W) | 0;                                                         // L4452
+            if (hp <= 0)                                                                         // L4454
+            {
+                OnBuildingDestroyed(w, i, byCiv);                                                // L4455（摧毁级联——已译 L2521）
+            }
+            else
+            {
+                w.BhpSet(i, hp);                                                                 // L4457
+                w.damagedSet.Add(i);                                                             // L4458 受损登记：国民修复体系的目标
+                FxHook(w, "hit", x + 0.5, y + 0.5, 6);                                           // L4459
+            }
         }
     }
 }

@@ -141,7 +141,7 @@ namespace PixelWorldBox.Wb.Tests
             AssertEq("ep", "panicRout", 0.72, (double)root["ep"]["panicRout"]);   // M-U7m 溃逃阈
             var specs = (JArray)root["terrainSpecs"];
             var cases = (JArray)root["cases"];
-            Assert.That(cases.Count, Is.EqualTo(36), "场景数");
+            Assert.That(cases.Count, Is.EqualTo(50), "场景数");
             foreach (var c in cases) ReplayCase(c, specs);
         }
 
@@ -173,6 +173,24 @@ namespace PixelWorldBox.Wb.Tests
             {
                 var xy = kv.Key.Split(','); w.radiate[int.Parse(xy[1]) * W + int.Parse(xy[0])] = (byte)(int)kv.Value;
             }
+            // —— M-U7r peaceful 职业域 env 注入（bld/dmg/owner/统计节流阀——gen applyPeaceFixtures 同构）——
+            foreach (var jb in (JArray)env["bldInit"] ?? new JArray())
+            {
+                int tile = (int)jb[0]; int kind = (int)jb[1]; int bc = (int)jb[2];
+                w.building[tile] = (byte)kind;                                                                 // L782 building[tile]
+                w.bIdx[tile] = w.buildings.Count;                                                              // bIdx tile→buildings 序
+                w.buildings.Add(new WbBuilding { i = tile, x = tile % W, y = tile / W, kind = kind, civ = bc });
+                w.BhpSet(tile, System.Math.Round(WbCivSim.BUILDING_DEFS[kind].hp * 1.0));                       // buildBuilding bHp 初值同构
+            }
+            foreach (var kv in (JObject)env["dmgInit"] ?? new JObject())
+            {
+                int tile = int.Parse(kv.Key);
+                w.damagedSet.Add(tile);
+                w.BhpSet(tile, D(kv.Value));                                                                    // 受损登记 + 耐久损态
+            }
+            foreach (var kv in (JObject)env["ownerInit"] ?? new JObject()) w.owner[int.Parse(kv.Key)] = (short)(int)kv.Value;   // 领土（fireNear own 门）
+            w.firesOut = Nul(env["firesOutInit"]) ? 0 : (int)env["firesOutInit"];                              // 灭火播报节流阀（fireOut ≥3 门）
+            w.repairsDone = Nul(env["repairsInit"]) ? 0 : (int)env["repairsInit"];                              // 修缮播报节流阀（repair ≥6 门）
             // —— M-U7q 击杀链域 env 注入（civs/家族/外交三账本/战争档案/旨意——gen makeStubEng 同构）——
             w.laws.zombieInfect = Nul(env["zombInf"]) ? true : (bool)env["zombInf"];   // L3905 门（默认 true——DEFAULT_LAWS）
             foreach (var kv in (JObject)env["relInit"] ?? new JObject()) w.rel[kv.Key] = (double)kv.Value;
@@ -193,7 +211,9 @@ namespace PixelWorldBox.Wb.Tests
                     var jv = kv.Value;
                     w.civs[int.Parse(kv.Key)] = new WbCiv { id = (int)jv["id"], name = (string)jv["name"], alive = (bool)jv["alive"],
                         pop = (int)jv["pop"], stability = D(jv["stability"]),
-                        kingId = Nul(jv["kingId"]) ? (int?)null : (int)jv["kingId"], kingName = (string)jv["kingName"], colorHex = (string)jv["colorHex"] };
+                        kingId = Nul(jv["kingId"]) ? (int?)null : (int)jv["kingId"], kingName = (string)jv["kingName"], colorHex = (string)jv["colorHex"],
+                        capital = Nul(jv["capital"]) ? -1 : (int)jv["capital"],                                                    // M-U7r 贵族域（civ.capital ≥ 0 门——缺省 -1 对齐 TS undefined）
+                        gold = Nul(jv["gold"]) ? (double?)null : D(jv["gold"]) };                                                   // M-U7r 商贾域（civ.gold ?? 0 语义）
                 }
             }
             foreach (var kv in (JObject)env["families"] ?? new JObject())
@@ -327,6 +347,7 @@ namespace PixelWorldBox.Wb.Tests
                 AssertEq(name + " post.civs[" + i + "]", "pop", (int)gc["pop"], ac.pop);
                 AssertEq(name + " post.civs[" + i + "]", "stability", D(gc["stability"]), ac.stability);
                 AssertEq(name + " post.civs[" + i + "]", "kingId", Nul(gc["kingId"]) ? -999 : (int)gc["kingId"], ac.kingId.HasValue ? ac.kingId.Value : -999);
+                AssertEq(name + " post.civs[" + i + "]", "gold", Nul(gc["gold"]) ? -999.0 : D(gc["gold"]), ac.gold.HasValue ? ac.gold.Value : -999.0);   // M-U7r 商贾入库对账（null→-999 哨兵）
             }
             var gFam = (JArray)post["families"];
             var aFam = new System.Collections.Generic.List<WbFamily>(w.families.Values);
@@ -362,6 +383,21 @@ namespace PixelWorldBox.Wb.Tests
             Assert.That(w.directives.Count, Is.EqualTo(gDir.Count), name + " post.directives 计数");
             for (int i = 0; i < gDir.Count; i++)
                 AssertEq(name + " post.directives[" + i + "]", "killCount", (int)gDir[i]["killCount"], w.directives[i].killCount ?? 0);
+            // —— M-U7r peaceful 职业域 post 对账（防灾/修缮统计 + 耐久账 + 受损登记——gen post dump 字段只加）——
+            AssertEq(name, "post.firesOut", (int)post["firesOut"], w.firesOut);
+            AssertEq(name, "post.repairsDone", (int)post["repairsDone"], w.repairsDone);
+            var gBhp = (JArray)post["bhp"];
+            var aBhpKeys = new System.Collections.Generic.List<int>(w.bHp.Keys); aBhpKeys.Sort();
+            Assert.That(aBhpKeys.Count, Is.EqualTo(gBhp.Count), name + " post.bhp 计数");
+            for (int i = 0; i < aBhpKeys.Count; i++)
+            {
+                AssertEq(name + " post.bhp[" + i + "]", "tile", (int)gBhp[i][0], aBhpKeys[i]);
+                AssertEq(name + " post.bhp[" + i + "]", "hp", D(gBhp[i][1]), w.bHp[aBhpKeys[i]]);
+            }
+            var aDam = new System.Collections.Generic.List<int>(w.damagedSet); aDam.Sort();
+            var gDam = (JArray)post["damaged"];
+            Assert.That(aDam.Count, Is.EqualTo(gDam.Count), name + " post.damaged 计数");
+            for (int i = 0; i < aDam.Count; i++) AssertEq(name + " post.damaged[" + i + "]", "tile", (int)gDam[i], aDam[i]);
         }
 
         private static void CompareStrValMap(string ctx, JArray g, System.Collections.Generic.Dictionary<string, double> m)

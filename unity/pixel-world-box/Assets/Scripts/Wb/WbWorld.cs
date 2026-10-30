@@ -399,6 +399,10 @@ namespace PixelWorldBox.Wb
         public bool fxAmbience = true;      // engine fxPrefs.ambience（engine L271 默认 true —— sandswim 扬尘门消费；M-U3h 第五批）
         public bool fxBlood = true;         // engine fxPrefs.blood（L271 默认 true —— 近战血溅门 L3859 消费；M-U7p 字段只加）
         public int statDragonsSlain;         // engine L229 statDragonsSlain（L3940 屠龙计数写点——M-U7q 字段只加）
+        public int firesOut;                       // engine L637 firesOut（国民灭火统计；fireOut 播报节流 ≥3 门——M-U7r 字段只加）
+        public int repairsDone;                    // engine L639 repairsDone（国民修缮统计；repair 播报节流 ≥6 门）
+        public int lastFireOutEventTick = -2400;   // engine L641 灭火播报节流阀（ctor 初值）
+        public int lastRepairEventTick = -2400;    // engine L643 修复播报节流阀
 
         public const int T_DEEP = 0, T_WATER = 1, T_SAND = 2, T_GRASS = 3, T_FOREST = 4, T_HILL = 5,
                          T_MOUNTAIN = 6, T_SNOW = 7, T_LAVA = 8, T_BURNT = 9, T_ICE = 10, T_SWAMP = 11;
