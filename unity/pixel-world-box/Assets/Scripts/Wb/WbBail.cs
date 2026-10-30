@@ -442,13 +442,13 @@ namespace PixelWorldBox.Wb
                     if (j >= 0 && j < WbWorld.W * WbWorld.H)                                                             // L3574
                     {
                         byte t = w.terrain[j];
-                        if (t == WbConstants.T_GRASS || t == WbConstants.T_BURNT || t == WbConstants.T_SAND) w.terrain[j] = WbConstants.T_SNOW;   // L3577（setTerrain L950 簿记 no-op 域注记——M-U7k 先例；同值早退语义保真）
-                        else if (t == WbConstants.T_FOREST && w.Rng() < 0.4) w.terrain[j] = WbConstants.T_SNOW;          // L3578（&& 短路 1 掷）
-                        else if (WbWorld.IsWater(t) && w.Rng() < 0.5) w.terrain[j] = WbConstants.T_ICE;                  // L3579（冰封水面）
+                        if (t == WbConstants.T_GRASS || t == WbConstants.T_BURNT || t == WbConstants.T_SAND) SetTerrain(w, j, WbConstants.T_SNOW);   // L3577（M-U8a 重接 setTerrain L969 全级联——M-U7k no-op 注记消亡；四写点 prev≠t 恒真，同值早退 L971 零触达零漂移）
+                        else if (t == WbConstants.T_FOREST && w.Rng() < 0.4) SetTerrain(w, j, WbConstants.T_SNOW);       // L3578（&& 短路 1 掷）
+                        else if (WbWorld.IsWater(t) && w.Rng() < 0.5) SetTerrain(w, j, WbConstants.T_ICE);               // L3579（冰封水面）
                         if (w.fire[j] > 0) { w.fire[j] = 0; w.fireSet.Remove(j); }                                       // L3581（寒霜灭火）
                     }
                 }
-                if (WbWorld.IsWater(w.terrain[ti]) && w.Rng() < 0.6) w.terrain[ti] = WbConstants.T_ICE;                  // L3588（寒冰之路；&& 短路 1 掷）
+                if (WbWorld.IsWater(w.terrain[ti]) && w.Rng() < 0.6) SetTerrain(w, ti, WbConstants.T_ICE);               // L3588（寒冰之路；&& 短路 1 掷——M-U8a 重接全级联：ICE 非-water 语义闸门，riverDir 清/fire 熄支路可达，owner/建筑/道路三联不可达）
             }
             if (u.hp <= 0) { u.dead = 1; return; }                                                                       // L3590（hp≤0 死亡门——批次一边界）
 
@@ -1933,6 +1933,49 @@ namespace PixelWorldBox.Wb
                 }
             }
             return 1;                                                                                                    // L1825
+        }
+
+        // ================= setTerrain L969-1007（M-U8a 地形簿记全级联——sim 域切片） =================
+        // 机械翻译蓝本：engine.ts L969-1007。地形写入门面：同值早退（L971）→ 写入（L972）→ 级联簿记。
+        // 未译域 no-op 注记（M-U7k「L950 簿记 no-op 域」注记自本轮起消亡——级联本体真实现）：
+        //   L974 ambTouch（氛围候选表——ambience 域未译，harness env.ambience:false 桩域）；
+        //   L976 worldsim.onTerrainChanged（glacier worldsim 未译——M-U7z 桥不覆盖面同注记）；
+        //   L977-978 markDirty+propsDirty（渲染簿记——sim 侧 no-op，渲染面由宿主 SyncWorldFace 桥 +
+        //     SyncTerrainDiffs 差分记账承接，M-U7z）；L979 regrow.delete（regrowTick 未译域）；
+        //   L981-984 frozen/flood/wet 贴花集（冬季贴花域未译——WbWorld 无容器，后续域切片入链时补）；
+        //   L1006 refreshWaterTierAround（waterTier worldgen 渲染专属未译）。
+        // 级联零掷：全支路查表/集合记账，无 rng 消费——S1-S56 黄金掷值链零漂移（黄金 md5 fd09587b 不变的充要前提）。
+        // 语义闸门（constants.ts L67-69 实证）：isWater(t)=DEEP||WATER——ICE 非水：寒冰之路冻 ICE 走
+        //   riverDir 清/fire 熄支路，不走 owner/建筑/道路三联（WATER/LAVA 覆写才触发）。
+        internal static void SetTerrain(WbWorld w, int i, byte t)
+        {
+            byte prev = w.terrain[i];                                                                                    // L970
+            if (prev == t) return;                                                                                       // L971 同值早退
+            w.terrain[i] = t;                                                                                            // L972
+            if (!WbWorld.IsWater(t) && w.riverDir[i] > 0)                                                                // L986 河道被覆写为非水地形 → 清流向场（水工具画的普通水不算河，不补录）
+            {
+                w.riverDir[i] = 0;                                                                                       // L987
+                w.riverTiles.Remove(i);                                                                                  // L988
+                w.riverTilesList.Remove(i);                                                                              // 插入序镜像同步（engine L259 Set 迭代序对账面——Worldgen L536 增补纪律的删除侧同构）
+            }
+            if (w.fire[i] > 0)                                                                                           // L990 地形变更 → 火焰奄灭
+            {
+                w.fire[i] = 0;                                                                                           // L991
+                w.fireSet.Remove(i);                                                                                     // L992
+            }
+            if ((WbWorld.IsWater(t) || t == WbConstants.T_LAVA) && w.owner[i] >= 0)                                      // L994 水/岩浆吞没 → 领土熄灭
+            {
+                w.owner[i] = -1;                                                                                         // L995（L996 markDirty 渲染簿记 no-op 注记）
+            }
+            if ((WbWorld.IsWater(t) || t == WbConstants.T_LAVA) && w.building[i] > 0)                                    // L998 水/岩浆吞没 → 建筑摧毁
+            {
+                WbCivSim.DestroyBuilding(w, i);                                                                          // L999（已全译件复用 WbCivSim L750——smoke fx/swap-pop/bIdx/Bhp/damagedSet 五账全清）
+            }
+            if ((WbWorld.IsWater(t) || t == WbConstants.T_LAVA) && w.road[i] > 0)                                        // L1002 道路不入水（被淹没/岩浆吞没的路断绝）
+            {
+                w.road[i] = 0;                                                                                           // L1003
+            }
+            // L1006 refreshWaterTierAround（waterTier worldgen 渲染专属未译——no-op 注记）
         }
 
         // isHerbivoreRace L2120-2128（猎物链底层判定：静态八种 + dynRaces 递归母族）
