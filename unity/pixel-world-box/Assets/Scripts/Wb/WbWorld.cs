@@ -535,6 +535,7 @@ namespace PixelWorldBox.Wb
         public WbLaws laws = new WbLaws();
         public uint rngA;
         public int tickCount;
+        public long frameCount;          // engine this.frameCount（L2669 DAY_FRAMES=2400 / L2672-2674 dayPhase 消费 / L2706 frame(dtMs) 帧推进——update 域不推进恒夹具值；M-U7x 字段只加）
         public double yearF;             // 黄金驱动不跑 tick() → 恒 0（夹具确认）
         public int statCivsFallen;
         public int panicNoteCd;          // engine panicNoteCd（tick L2525 递减；panicTick 域写入 —— M-U7c' 编排面；字段只加）

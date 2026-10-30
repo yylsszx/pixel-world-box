@@ -75,6 +75,7 @@ const RACE_PICKS = {
   bear: pickRace((d) => Number(d.key === 'bear'), 'bear'),                                                           // M-U7n S14/S17：强敌锚（dmg 19 hp 95——RStats 一致）
   dragon: pickRace((d) => Number(d.key === 'dragon'), 'dragon'),                                                     // M-U7q S34/S36：屠龙计数 + 龙息域（L2095 对称敌意 ra!==rb）
   skeleton: pickRace((d) => Number(d.key === 'skeleton'), 'skeleton'),                                               // M-U7t S2/S35：riseSkeleton spawn 消费域（races 位字节表随 JSON——undead 位 4 / speed 0.075）
+  orc: pickRace((d) => Number(d.key === 'orc'), 'orc'),                                                             // M-U7x S56：nightsight 豁免消费域（packRace tbf1 位 16 已在——L3848 昼战减益豁免防守者面）
 };
 const packRace = (id) => {
   const d = RACES[id];
@@ -259,7 +260,9 @@ function makeStubEng(env, cap) {
   eng.addCorpse = (x, y, bone, petrified) => cap.evt.push(['corpse', bitHex(x), bitHex(y), bone ? 1 : 0, petrified ? 1 : 0]);
   // M-U7v：wallDefenseOf 遮蔽删除（原型真实现自动可达——L1813-1826 纯查表零掷：civ<0 早退 + 3×3 邻域 building[i]==WALL && b.civ===u.civ → 0.72；
   //  bldInit 夹具真填充 eng.building/bIdx/buildings（applyPeaceFixtures L288）——存量场景无墙 → 真实现恒 1 与桩位等价零漂移）
-  eng.dayPhase = () => env.dayPhase ?? 0;                        // 昼相时钟域——场景注入（dusk 窗口 0.5..0.9）
+  // M-U7x：dayPhase 遮蔽删除（原型 GameEngine.prototype.dayPhase 自动可达——engine.ts L2672-2674 (frameCount%2400)/2400 纯查表零掷；
+  //  依赖面 eng.frameCount 夹具（L2706 frameCount++ 属 frame(dtMs) 渲染帧推进——update 域不推进；场景 dayPhase 注入 → frameCount 等值换算 0.7×2400=1680 整）
+  eng.frameCount = Math.round((env.dayPhase ?? 0) * 2400);       // L2669 DAY_FRAMES=2400——dusk 窗 (0.5,0.9) 夹具面
   eng.tickCount = 0;                                             // activeBattles 值 = tickCount+30（恒 30）
   eng.activeBattles = { set: (k, v) => cap.evt.push(['ab', k, v]), size: 0, delete: () => {}, *[Symbol.iterator]() {} };   // 桩面捕获 set；size<64 剩余修剪循环不触
   eng.updateUnitTailJS = (u) => { cap.evt.push(['tail', u.id]); return false; };
@@ -1212,6 +1215,28 @@ const CASES = [
     units: [
       U({ race: 'troll', x: 41.3, y: 40.5, hp: 380, maxHp: 380, dmg: 26, civ: -1 }),
       U({ race: 'human', x: 40.5, y: 40.5, hp: 90, maxHp: 100, dmg: 1, civ: 1, job: 0, cd: 0 }),
+    ],
+    steps: 2,
+  },
+  // S56 dusk-nightsight（M-U7x）：dusk 窗（frameCount=1680 → dayPhase=0.7）orc 近战巨魔——L3848 `!def.nightsight` 消费的是攻击者
+  //   种族 def（L3840 def.isCiv 配 gearBonus(u) 同源实证；S28 狼攻击者无夜视 ×0.92 同证）→ orc nightsight=true 攻击者 → 0.92 减益豁免；
+  //   dmg=30 显式（S21 夹具先例）→ 豁免域 dmg∈[24,36) vs 减益域 [22.08,33.12) 分离带 (33.12,36)——want 钉 d∈(33.2,35.9) 严格豁免面；
+  //   无墙（零 bldInit）→ wallDefenseOf=1 纯隔离 0.92 因子（S55 墙域对照面）；orc civ1 job0 攻击者 / troll civ-1 dmg1 防守者（hostile×isCiv L2103 敌对）；
+  //   与 S28（dusk ×0.92 nightsight 假）构成豁免/减益双面跨场景对照——dayPhase 真实现 (frameCount%2400)/2400 消费链首场景。
+  {
+    name: 'dusk-nightsight', terrain: 'plains', seed: meleeProbe({
+      label: 'dusk-nightsight', steps: 2,
+      env: { dayPhase: 0.7 },
+      units: [
+        U({ race: 'orc', x: 41.3, y: 40.5, hp: 380, maxHp: 380, dmg: 30, civ: 1, job: 0, cd: 0 }),
+        U({ race: 'troll', x: 40.5, y: 40.5, hp: 50, maxHp: 50, dmg: 1, civ: -1 }),
+      ],
+      want: (cap, us) => { const d = 50 - us[1].hp; return cap.fx.some((f) => f.k === 'hit') && d > 33.2 && d < 35.9; },
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true, dayPhase: 0.7 },
+    units: [
+      U({ race: 'orc', x: 41.3, y: 40.5, hp: 380, maxHp: 380, dmg: 30, civ: 1, job: 0, cd: 0 }),
+      U({ race: 'troll', x: 40.5, y: 40.5, hp: 50, maxHp: 50, dmg: 1, civ: -1 }),
     ],
     steps: 2,
   },

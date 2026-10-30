@@ -291,7 +291,11 @@ namespace PixelWorldBox.Wb
         // —— M-U7v：wallDefenseOf 桩面真实现清偿（WallDefenseHook 接缝删除——调用面 L3845 直调 WallDefenseOf；
         //    L1813-1826 机械翻译：civ<0 早退 1 + 3×3 邻域 building[i]==WALL && b.civ===u.civ → 0.72 借墙而战；
         //    纯查表零掷——存量无墙场景恒 1 与桩位等价零漂移；S55 troll-vs-wall 守军 0.72 减伤入链）——
-        internal static System.Func<WbWorld, double> DayPhaseHook = (w) => 0.0;                              // dayPhase 昼相时钟域未译——白天中性 0.0；时钟切片随集成域接入（0.5..0.9 黄昏窗消费 L3847-3848）
+        // —— M-U7x：dayPhase 桩面真实现清偿（DayPhaseHook 接缝删除——调用面 L3847 直调 DayPhase；
+        //    engine.ts L2672-2674 机械翻译：(frameCount % DAY_FRAMES) / DAY_FRAMES——L2669 DAY_FRAMES=2400；
+        //    纯查表零掷——frameCount=0 时恒 0 与桩位等价零漂移；S28 dusk 窗 0.92 减伤 + S56 nightsight 豁免入链；
+        //    frameCount 推进属 frame(dtMs) L2706 渲染帧域——update 域不推进，夹具值注入面 WbUnitsUpdateTests）——
+        internal static double DayPhase(WbWorld w) => (w.frameCount % 2400) / 2400.0;                        // L2672-2674 昼夜相位 0..1
         internal static System.Action<WbWorld, string, string, string, double, double> AddEventHook = (w, kind, text, colorHex, x, y) => w.AddEvent(kind, text, colorHex, x, y);   // L3789/L3813/L3921/L3931/L3945/L1675——addEvent 真实现（命名域文本 + colorHex 渲染面）
         internal static System.Action<WbWorld, double, double, bool, bool> AddCorpseHook = (w, x, y, stone, undead) => WbCivSim.AddCorpse(w, x, y, stone, undead);                  // L3812——addCorpse 真实现（尸骸贴花 push+cap 240）
         internal static System.Action<WbWorld, double, double, bool> AddBloodHook = (w, x, y, big) => AddBloodE(w, x, y, big);                                                        // L3859——addBlood 真实现（血迹贴花 push+cap 420 + seed 掷）
@@ -711,7 +715,7 @@ namespace PixelWorldBox.Wb
                         WbGearBonus? gD = RStats[enemy.race].isCiv ? GearBonusHook(w, enemy) : (WbGearBonus?)null;       // L3841
                         double dmg = u.dmg * (0.8 + w.Rng() * 0.4) * (u.bless != 0 ? 1.3 : 1) * (u.curse != 0 ? 0.75 : 1);   // L3843 神力 ×1.3 / 诅咒 ×0.75
                         dmg *= WallDefenseOf(w, enemy);                                                                  // L3845 城墙防御加成（M-U7v 直调——Hook 接缝删除）
-                        double dPhase = DayPhaseHook(w);                                                                 // L3847 昼夜互连
+                        double dPhase = DayPhase(w);                                                                     // L3847 昼夜互连（M-U7x 直调——Hook 接缝删除）
                         if (dPhase > 0.5 && dPhase < 0.9 && !def.nightsight) dmg *= 0.92;                                // L3848 夜战混乱减益（黑暗视觉种族豁免）
                         bool crit = false;
                         if (gA.HasValue && gA.Value.crit > 0 && w.Rng() * 100 < gA.Value.crit)                           // L3850 暴击掷

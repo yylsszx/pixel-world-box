@@ -202,6 +202,9 @@ const spreadPlagueT = (ctx, u, rng) => {                                        
 // ================= M-U7v：wallDefenseOf 城墙防御域独立转写（零引擎导入） =================
 // 蓝本：engine.ts L1813-1826。civ<0 早退 1 → 单位脚下 tile 3×3 邻域 building[i]==WALL(11) && b.civ===u.civ → 0.72；
 //   纯查表零掷（存量无墙场景恒 1 与旧桩位等价）；BUILDING_DEFS.WALL=11（types.ts L325-337）。
+// M-U7x：dayPhaseT 昼夜相位（零引擎导入独立转写——engine.ts L2672-2674 (frameCount % DAY_FRAMES)/DAY_FRAMES，
+//       L2669 DAY_FRAMES=2400；纯查表零掷——frameCount 夹具面 ctx.frameCount，update 域不推进）
+const dayPhaseT = (fc) => (fc % 2400) / 2400;                                           // L2672-2674
 const wallDefenseOfT = (ctx, u) => {
   if (u.civ < 0) return 1;                                                            // L1814
   const x = Math.floor(u.x), y = Math.floor(u.y);                                      // L1815
@@ -1016,7 +1019,7 @@ function updateUnitT(u, ctx) {
         const gD = raceF(enemy.race).isCiv ? { crit: 0, armor: 0, lifesteal: 0, thorns: 0, regen: ctx.gearRegen, speed: 1, ranged: 0 } : null;   // L3841
         let dmg = u.dmg * (0.8 + rng() * 0.4) * (u.bless ? 1.3 : 1) * (u.curse ? 0.75 : 1);        // L3843 神力 ×1.3 / 诅咒 ×0.75
         dmg *= wallDefenseOfT(ctx, enemy);                                                         // L3845 M-U7v 清偿（借墙而战 0.72——纯查表零掷）
-        const dPhase = ctx.dayPhase;                                                               // L3847
+        const dPhase = dayPhaseT(ctx.frameCount);                                                  // L3847 M-U7x 清偿（ctx.dayPhase 注入面→真实现换算——零引擎导入独立转写）
         if (dPhase > 0.5 && dPhase < 0.9 && !r.nightsight) dmg *= 0.92;                            // L3848 夜战混乱减益（黑暗视觉豁免）
         let crit = false;
         if (gA && gA.crit > 0 && rng() * 100 < gA.crit) { dmg *= 2.2; crit = true; }               // L3850-3852
@@ -1234,7 +1237,7 @@ for (const c of g.cases) {
   const ctx = {
     caseName: c.name,
     raw, lawsRise: c.env.lawsRise, zombieInfect: c.env.zombInf ?? true, ambience: c.env.ambience, gearRegen: c.env.gearRegen ?? 0,
-    dmgNumbers: false, blood: false, dayPhase: c.env.dayPhase ?? 0, tickCount: 0,   // M-U7p 近战域（gen 桩面 fxPrefs undefined-falsy + tickCount=0 同构）
+    dmgNumbers: false, blood: false, frameCount: Math.round((c.env.dayPhase ?? 0) * 2400), tickCount: 0,   // M-U7p 近战域（gen 桩面 fxPrefs undefined-falsy + tickCount=0 同构）+ M-U7x dayPhase→frameCount 等值夹具（0.7×2400=1680 整；L2669 DAY_FRAMES=2400）
     fire, radiate, terrain, fireSet, building: new Uint8Array(W * H),               // M-U7q ignite 建筑门（M-U7r bldInit 注入面）
     road: new Uint8Array(W * H),                                                    // M-U7w moveUnit L5826 道路 1.45 判定消费面（零初始化 = 无路恒门败零掷）
     nature: { season: c.env.season ?? 0 },                                          // M-U7w moveUnit L5824 coldBlood×season===3 消费面（0 = 春门恒败零掷）

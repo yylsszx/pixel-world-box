@@ -23,7 +23,6 @@ namespace PixelWorldBox.Wb.Tests
         private System.Func<WbWorld, WbU, WbGearBonus> _gear0;   // M-U7n：double→WbGearBonus 结构化同源
         private System.Action<WbWorld, string, double, double, int> _fx0;
         private System.Action<WbWorld, string, double, double, double, double?, double?, int?, double?, double?> _fxo0;   // M-U7s fx opts 面接缝
-        private System.Func<WbWorld, double> _day0;
         private System.Action<WbWorld, string, string, string, double, double> _aev0;   // M-U7q：+text/colorHex（addEvent 默认真实现清偿——签名扩面）
         private System.Action<WbWorld, double, double, bool, bool> _acp0;
         private System.Action<WbWorld, double, double, bool> _abl0;                     // M-U7q：+big（addBlood 默认真实现清偿）
@@ -43,7 +42,6 @@ namespace PixelWorldBox.Wb.Tests
             _tail0 = WbBailRelay.TailJSHook; _post0 = WbBailRelay.PostJSHook;
             _gear0 = WbBailRelay.GearBonusHook; _fx0 = WbBailRelay.FxHook;
             _fxo0 = WbBailRelay.FxOptHook;
-            _day0 = WbBailRelay.DayPhaseHook;
             _aev0 = WbBailRelay.AddEventHook; _acp0 = WbBailRelay.AddCorpseHook;
             _abl0 = WbBailRelay.AddBloodHook; _abt0 = WbBailRelay.MarkBattleHook;
             _mv0 = WbBailRelay.MoveUnitHook; _isef0 = WbBailRelay.IsEnemyFastHook;
@@ -59,7 +57,6 @@ namespace PixelWorldBox.Wb.Tests
             WbBailRelay.TailJSHook = _tail0; WbBailRelay.PostJSHook = _post0;
             WbBailRelay.GearBonusHook = _gear0; WbBailRelay.FxHook = _fx0;
             WbBailRelay.FxOptHook = _fxo0;
-            WbBailRelay.DayPhaseHook = _day0;
             WbBailRelay.AddEventHook = _aev0; WbBailRelay.AddCorpseHook = _acp0;
             WbBailRelay.AddBloodHook = _abl0; WbBailRelay.MarkBattleHook = _abt0;
             WbBailRelay.MoveUnitHook = _mv0; WbBailRelay.IsEnemyFastHook = _isef0;
@@ -135,7 +132,7 @@ namespace PixelWorldBox.Wb.Tests
             AssertEq("ep", "panicRout", 0.72, (double)root["ep"]["panicRout"]);   // M-U7m 溃逃阈
             var specs = (JArray)root["terrainSpecs"];
             var cases = (JArray)root["cases"];
-            Assert.That(cases.Count, Is.EqualTo(55), "场景数");   // M-U7v：54→55（S55 wall-defense 城墙防御域入链）
+            Assert.That(cases.Count, Is.EqualTo(56), "场景数");   // M-U7x：55→56（S56 dusk-nightsight 昼夜时钟域入链——dayPhase 真实现清偿）
             foreach (var c in cases) { WbCivSim.ClearTechModCache(); ReplayCase(c, specs); }   // M-U7u：静态科技缓存跨场景污染防护（WbGoldenTests L1861 先例——engine techModCache per-scenario 新 Map 同构）
         }
 
@@ -260,7 +257,9 @@ namespace PixelWorldBox.Wb.Tests
                         r.HasValue ? BitHex(r.Value) : null, dmg.HasValue ? BitHex(dmg.Value) : null } });
             // M-U7v：WallDefenseHook 置换删除——wallDefenseOf 真实现对账（gen 原型真实现同构；S55 troll-vs-wall 守军 0.72
             // 减伤签名 + 存量无墙场景恒 1 零漂移——纯查表零掷）
-            WbBailRelay.DayPhaseHook = (ww) => Nul(env["dayPhase"]) ? 0.0 : (double)env["dayPhase"];   // gen stub env.dayPhase ?? 0 同构
+            // M-U7x：DayPhaseHook 置换删除——DayPhase 真实现对账（gen makeStubEng L262 遮蔽删除同构；原型 (frameCount%2400)/2400
+            //  零掷——dayPhase 场景注入面 → frameCount 等值夹具换算（0.7×2400=1680 整；update 域 frameCount 不推进恒夹具值）
+            w.frameCount = Nul(env["dayPhase"]) ? 0 : (long)System.Math.Round((double)env["dayPhase"] * 2400.0);
             WbBailRelay.AddEventHook = (ww, kind, text, colorHex, x2, y2) => _evt.Add(new object[] { "ev", kind, BitHex(x2), BitHex(y2) });   // 文本含命名域——gen 只对账 kind/pos（M-U7q 默认真实现清偿——回放仍桩面捕获）
             WbBailRelay.AddCorpseHook = (ww, x2, y2, stone, undead) => _evt.Add(new object[] { "corpse", BitHex(x2), BitHex(y2), stone ? 1.0 : 0.0, undead ? 1.0 : 0.0 });
             WbBailRelay.AddBloodHook = (ww, x2, y2, big) => _evt.Add(new object[] { "blood", BitHex(x2), BitHex(y2) });   // big 渲染面不 dump（gen 桩面同构——fxBlood=false 契约不触达）
