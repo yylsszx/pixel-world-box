@@ -282,12 +282,13 @@ namespace PixelWorldBox.Wb
         private static readonly double[] FStance = new double[12];
         private static readonly System.Collections.Generic.HashSet<int> MonsterLoot = new System.Collections.Generic.HashSet<int> { R2_DRAGON, R_KRAKEN, R_SANDWORM, R_BASILISK, R_TROLL, R_OGRE, R_WHITEWALKER, R_VAMPIRE, WbConstants.R_DEMON };   // engine L6918
         private static readonly double[] FAcc = new double[10];                                              // neuro.ts L124-126 模块级 scratch（近战命中头十特征）
-        // —— M-U7p 近战域接缝（默认语义注记随件；黄金 'ev'/'corpse'/'ab' 事件对账；Test30 置换事件捕获）——
+        // —— M-U7p 近战域接缝（M-U7q 起默认真实现清偿：addEvent 命名域文本面随击杀链落定 / addCorpse 贴花 push+cap / addBlood seed 掷；
+        //      黄金回放仍由 Test30 置换事件捕获——gen makeStubEng 桩面同构）——
         internal static System.Func<WbWorld, WbU, double> WallDefenseHook = (w, e) => 1.0;                   // wallDefenseOf 城墙域未译——无建筑中性 1.0；建筑结算随装备域切片
         internal static System.Func<WbWorld, double> DayPhaseHook = (w) => 0.0;                              // dayPhase 昼相时钟域未译——白天中性 0.0；时钟切片随集成域接入（0.5..0.9 黄昏窗消费 L3847-3848）
-        internal static System.Action<WbWorld, string, double, double> AddEventHook = (w, kind, x, y) => throw new System.NotImplementedException("addEvent 未译域（文本含命名域——批次三乙三随件）；黄金回放由 Test30 置换 'ev' 事件捕获");   // L3789/L3813
-        internal static System.Action<WbWorld, double, double, bool, bool> AddCorpseHook = (w, x, y, stone, undead) => throw new System.NotImplementedException("addCorpse 未译域（尸骸贴花系统批次三乙三随件）；黄金回放由 Test30 置换 'corpse' 事件捕获");   // L3812
-        internal static System.Action<WbWorld, double, double> AddBloodHook = (w, x, y) => throw new System.NotImplementedException("addBlood 未译域（血迹贴花渲染域切片随件）；黄金 fxBlood=false 契约不触达");   // L3859
+        internal static System.Action<WbWorld, string, string, string, double, double> AddEventHook = (w, kind, text, colorHex, x, y) => w.AddEvent(kind, text, colorHex, x, y);   // L3789/L3813/L3921/L3931/L3945/L1675——addEvent 真实现（命名域文本 + colorHex 渲染面）
+        internal static System.Action<WbWorld, double, double, bool, bool> AddCorpseHook = (w, x, y, stone, undead) => WbCivSim.AddCorpse(w, x, y, stone, undead);                  // L3812——addCorpse 真实现（尸骸贴花 push+cap 240）
+        internal static System.Action<WbWorld, double, double, bool> AddBloodHook = (w, x, y, big) => AddBloodE(w, x, y, big);                                                        // L3859——addBlood 真实现（血迹贴花 push+cap 420 + seed 掷）
         internal static System.Action<WbWorld, int> MarkBattleHook = (w, bi) =>                             // L3895-3900 战争前线登记（默认真实现内联）
         {
             w.activeBattles[bi] = w.tickCount + 30;
@@ -305,7 +306,7 @@ namespace PixelWorldBox.Wb
         internal static System.Action<WbWorld, WbU, double, double, double> CastBulletHook = (w, u, tx, ty, dmg) => throw new System.NotImplementedException("castBullet 未译域（弹道生成域批次三乙二）；黄金回放由 Test30 置换 'bl' 事件捕获");   // L3764 调用面
 
         // ================= updateUnit L3455-4113（批次一 L3455-3590 全译 + 扫描域 L3592-3669 批次二全译（M-U7m）+
-        //                  无敌壳 L3927/4110-4112；战斗/远程/神经/职业/龙息域 L3671-4108 哨兵隔离——批次三余域） =================
+        //                  无敌壳 L3927/4110-4112；战斗/远程/近战/神经/击杀/龙息域 L3671-3978 M-U7n~M-U7q 全译；peaceful 职业域 L3981-4109 哨兵保留——批次三余域） =================
         public static void UpdateUnit(WbWorld w, WbU u)
         {
             var def = RStats[u.race];                                                                                    // L3456
@@ -541,7 +542,7 @@ namespace PixelWorldBox.Wb
                 FFlight[5] = IsHerbivoreRace(w, enemy.race) ? 1 : 0;                                                     // L3687
                 FFlight[6] = System.Math.Min(3, System.Math.Max(0, foes - 1)) / 3;                                       // L3688
                 FFlight[7] = MonsterLoot.Contains(u.race) ? 1 : 0;                                                       // L3689
-                FFlight[8] = System.Math.Min(20, u.kills) / 20;                                                          // L3690
+                FFlight[8] = System.Math.Min(20, u.kills) / 20.0;                                                          // L3690（f64 除法——M-U7q S29/S32 kills>0 首消费暴露 int 整除陷阱）
                 int flAct = WbNeuro.NeuroFlight(FFlight);                                                                // L3691（collectDecision L3693——Task 38 在线采集域 no-op）
                 if (flAct == 1)                                                                                          // L3694
                 {
@@ -581,7 +582,7 @@ namespace PixelWorldBox.Wb
                 FStance[8] = System.Math.Min(4, allies) / 4;                                                             // L3725
                 FStance[9] = u.army != null ? 1 : 0;                                                                     // L3726
                 FStance[10] = def.isCiv ? 1 : 0;                                                                         // L3727
-                FStance[11] = System.Math.Min(20, u.kills) / 20;                                                         // L3728
+                FStance[11] = System.Math.Min(20, u.kills) / 20.0;                                                         // L3728（f64 除法——同 L3690 陷阱修复）
                 int stance = WbNeuro.NeuroStance(FStance);                                                               // L3729
                 if (stance == 3)                                                                                         // L3730 伤重脱离：劣势散兵撤出战斗保全性命
                 {
@@ -592,7 +593,7 @@ namespace PixelWorldBox.Wb
                     MoveUnitHook(w, u, 1.15);                                                                            // L3736
                     return;                                                                                              // L3737
                 }
-                // —— L3739-3966 攻击链体 if/else 链（M-U7o 批次三乙一：远程域全译；近战域 L3774-3957 哨兵保留）——
+                // —— L3739-3966 攻击链体 if/else 链（M-U7o 批次三乙一：远程域全译；近战域 L3774-3957 M-U7p/M-U7q 全译）——
                 if (rd != null && enemyD > 1.6 && enemyD <= rd.range)                                                    // L3739 法师远程火球：拉开距离释放（风筝走位）
                 {
                     if (u.cd <= 0)                                                                                       // L3741
@@ -632,7 +633,7 @@ namespace PixelWorldBox.Wb
                         MoveUnitHook(w, u, 0.7);                                                                         // L3772
                     }
                 }
-                else if (enemyD < (RStats[u.race].reach ?? 0.9))                                                         // L3774 近战执行主链（M-U7p 批次三乙二-a；击杀链 L3901-3957 哨兵保留）
+                else if (enemyD < (RStats[u.race].reach ?? 0.9))                                                         // L3774 近战执行主链（M-U7p 批次三乙二-a + M-U7q 批次三乙三击杀链全译）
                 {
                     if (u.cd <= 0)                                                                                       // L3775
                     {
@@ -649,7 +650,7 @@ namespace PixelWorldBox.Wb
                                 enemy.dead = 1;                                                                          // L3785
                                 enemy.boat = 0;                                                                          // L3787（WB.syncDead L3786 WASM 镜像 no-op 注记）
                                 FxHook(w, "explosion", enemy.x, enemy.y, 16);                                            // L3788（opts r:1.6 渲染面——fx 事件流不可见）
-                                AddEventHook(w, "shipwreck", enemy.x, enemy.y);                                          // L3789
+                                AddEventHook(w, "shipwreck", $"「{enemy.name ?? ""}」的航船被克拉肯拖入了深渊", null, enemy.x, enemy.y);   // L3789（M-U7q：addEvent 命名域文本面清偿）
                             }
                             else
                             {
@@ -674,8 +675,8 @@ namespace PixelWorldBox.Wb
                             enemy.hp = 0;                                                                                // L3808
                             enemy.dead = 1;                                                                              // L3809（syncDead L3810 no-op）
                             u.kills++;                                                                                   // L3811
-                            AddCorpseHook(w, enemy.x, enemy.y, true, false);                                             // L3812（stone=true——尸骸系统接缝）
-                            AddEventHook(w, "petrify", enemy.x, enemy.y);                                                // L3813
+                            AddCorpseHook(w, enemy.x, enemy.y, true, false);                                             // L3812（stone=true——尸骸贴花真实现 push+cap）
+                            AddEventHook(w, "petrify", $"「{enemy.name ?? ""}」与蛇怪对视，化作了石像", null, enemy.x, enemy.y);          // L3813（M-U7q：addEvent 命名域文本面清偿）
                             if (w.fxDmgNumbers) FxHook(w, "dmg", enemy.x, enemy.y, 30);                                  // L3814（text 石化）
                             return;                                                                                      // L3815
                         }
@@ -684,7 +685,7 @@ namespace PixelWorldBox.Wb
                             var rd2 = RStats[enemy.race];                                                                // L3821
                             int eix = (int)System.Math.Floor(System.Math.Max(0, System.Math.Min(WbWorld.W - 1, enemy.x)))      // L3822（钳位取整——idx(y,x)=y*W+x）
                                     + (int)System.Math.Floor(System.Math.Max(0, System.Math.Min(WbWorld.H - 1, enemy.y))) * WbWorld.W;
-                            FAcc[0] = System.Math.Min(20, u.kills) / 20;                                                 // L3823 百战老兵更准
+                            FAcc[0] = System.Math.Min(20, u.kills) / 20.0;                                                 // L3823 百战老兵更准（f64 除法——同 L3690 陷阱修复）
                             FAcc[1] = System.Math.Min(0.5, System.Math.Max(0, (rd2.speed - def.speed) * 7)) * 2;         // L3824 目标敏捷差
                             FAcc[2] = enemy.traitName == "tiny" ? 1 : 0;                                                 // L3825 侏儒难打
                             FAcc[3] = enemy.traitName == "swift" ? 1 : 0;                                                // L3826 迅捷难打
@@ -717,7 +718,7 @@ namespace PixelWorldBox.Wb
                         enemy.hp -= dmg;                                                                                 // L3855
                         enemy.hurtN = 20;                                                                                // L3856
                         FxHook(w, "hit", (u.x + enemy.x) / 2, (u.y + enemy.y) / 2, 6);                                   // L3857 命中特效（中点）
-                        if (w.fxBlood && dmg >= 5 && w.Rng() < 0.5) AddBloodHook(w, enemy.x, enemy.y);                   // L3859 血溅（贴花域接缝）
+                        if (w.fxBlood && dmg >= 5 && w.Rng() < 0.5) AddBloodHook(w, enemy.x, enemy.y, false);             // L3859 血溅（贴花真实现 push+cap——big=false 近战；黄金 fxBlood=false 契约不触达）
                         if (u.race == R_BASILISK && w.Rng() < 0.45 && enemy.infected == 0                                // L3861 蛇怪毒牙（可被治疗神力清除；免疫特质者不受）
                             && !(enemy.traitName != null && WbBailRelay.TraitsAll.TryGetValue(enemy.traitName, out var tb) && tb.immune))
                         {
@@ -756,7 +757,60 @@ namespace PixelWorldBox.Wb
                             if (w.fxDmgNumbers) FxHook(w, "dmg", enemy.x, enemy.y - 0.8, 26);                            // L3892
                         }
                         MarkBattleHook(w, (int)enemy.y * WbWorld.W + (int)enemy.x);                                      // L3895-3900 战争前线登记（30 tick 衰减 + 64 上限过期淘汰）
-                        if (enemy.hp <= 0) throw new System.InvalidOperationException("击杀链域批次三乙三未翻译（L3901-3957：zombify/witnessDeath/复仇splice/家族战功/collectKill/捕食进食/屠龙计数/onWarKill/legend/白行者起尸/undeadRise）");   // L3901
+                        if (enemy.hp <= 0)                                                                                   // L3903 击杀链（M-U7q 批次三乙三全译）
+                        {
+                            bool zomb = u.race == WbConstants.R_ZOMBIE && RStats[enemy.race].isCiv && w.laws.zombieInfect;     // L3905（&& 短路——laws.zombieInfect 默认 true）
+                            if (zomb)
+                            {
+                                ZombifyE(w, enemy);                                                                              // L3907 尸变原地转种——kills/witnessDeath else 链不触达
+                            }
+                            else
+                            {
+                                enemy.dead = 1;                                                                                  // L3909（syncDead L3910 WASM 镜像 no-op）
+                                u.kills++;                                                                                       // L3911
+                                WitnessDeathE(w, u, enemy);                                                                      // L3913 目睹死亡广播（恐慌上涌 + 血仇记账一次遍历双产出）
+                                if (u.gIdsN != null)                                                                             // L3915 复仇结算：手刃仇敌 → 恩怨两清
+                                {
+                                    int rgi = u.gIdsN.IndexOf(enemy.id);                                                         // L3916
+                                    if (rgi >= 0)
+                                    {
+                                        u.gIdsN.RemoveAt(rgi);                                                                   // L3918
+                                        u.gValN?.RemoveAt(rgi);                                                                   // L3919（?. splice 可选链同构）
+                                        if (u.gIdsN.Count == 0) { u.gIdsN = null; u.gValN = null; }                              // L3920（= undefined 语义）
+                                        if (w.Rng() < 0.12)                                                                      // L3921（12% 采样播报防刷屏——掷恒抽）
+                                            AddEventHook(w, "revenge", $"「{u.name ?? ""}」手刃仇敌「{enemy.name ?? ""}」，血仇得报", null, u.x, u.y);
+                                    }
+                                }
+                                if (u.famC != null)                                                                              // L3925 家族战功：族人每一击杀都记在家族名下
+                                {
+                                    if (w.families.TryGetValue(u.famC.Value, out var rf))                                        // L3926
+                                    {
+                                        rf.kills++;                                                                              // L3928
+                                        if (u.kills == 10)                                                                       // L3929 十杀英雄光耀门楣
+                                        {
+                                            rf.heroes++;                                                                         // L3930
+                                            AddEventHook(w, "lineage", $"「{rf.name}」家族的 {u.name ?? ""} 阵斩十敌，成为家族英雄（先祖 {rf.founder}）", null, u.x, u.y);   // L3931
+                                        }
+                                    }
+                                }
+                                /* collectKill(u.id, enemy.maxHp) L3936 —— Task 38 在线采集模块域（引擎外会话 state；黄金未捕获面，C# 在线域不移植 no-op） */
+                                if (def.predator && !def.undead)                                                                  // L3938 捕食者进食：猎物越大越饱
+                                    u.foodN = System.Math.Min(160, (u.foodN ?? 0) + 55 + System.Math.Floor(enemy.maxHp * 0.5 + 0.5));   // L3938（JS Math.round 半上同构——M-U7p L3801 先例）
+                                if (enemy.race == R2_DRAGON) w.statDragonsSlain++;                                               // L3940 屠龙计数（成就：凡人斩落巨龙）
+                                OnWarKillE(w, u, enemy);                                                                         // L3942 战争体系：击杀结算（分数/军团战功/总动员计数）
+                                if (u.kills == 10)                                                                               // L3943 传奇武士
+                                {
+                                    w.Toast($"{u.name ?? ""} 已斩获 10 次击杀", "info");                                          // L3944（宿主 toast 域——事件流收集，黄金不 dump）
+                                    string owner = u.civ >= 0 ? "流浪" : RStats[u.race].name;                                     // L3945（civs[u.civ]?.name ?? '流浪'——越界/缺位同流浪）
+                                    if (u.civ >= 0 && u.civ < w.civs.Count && w.civs[u.civ] != null) owner = w.civs[u.civ].name;
+                                    AddEventHook(w, "legend", $"传奇武士 {u.name ?? ""}（{owner}）达成了 10 次击杀", null, u.x, u.y);   // L3945
+                                }
+                                if (u.race == R_WHITEWALKER && RStats[enemy.race].isCiv)                                         // L3948 白行者击杀：寒冰将其复活为骷髅
+                                    RiseSkeletonHook(w, enemy.x, enemy.y);                                                       // L3949（起尸 spawn 域接缝——0.12 播报掷在未译 riseSkeleton 体内）
+                                if (w.laws.undeadRise && RStats[enemy.race].isCiv && w.Rng() < 0.06)                             // L3952 亡者复生法则（&& 短路：laws/isCiv 假零掷）
+                                    RiseSkeletonHook(w, enemy.x, enemy.y);                                                       // L3953
+                            }
+                        }
                     }
                 }
                 else if (stance == 2 && (rd != null || bowRange > 0))                                                    // L3958 射程死区（近到无法开火、远于触及）：网络判定拉开距离恢复射程（旧版会一头撞进近战）
@@ -777,11 +831,182 @@ namespace PixelWorldBox.Wb
             {
                 // ================= 无敌路径 else 壳（现行号 L3968 起；旧注 L3927 系引擎行号漂移——行为同构） =================
                 // collectEnemyGone(u.id, this.tickCount) L3970——Task 38 在线采集模块域（引擎外会话 state；黄金未捕获面，no-op）
-                if (u.race == R2_DRAGON) throw new System.InvalidOperationException("龙息域批次三乙未翻译（L3972-3978 u.race===R2；黄金无龙场景不触达）");          // L3972
+                if (u.race == R2_DRAGON && u.breathN.HasValue)                                                               // L3972-3973 龙息（M-U7q 批次三乙三；undefined→NaN 门永不触达——非龙/未注 breath 天然）
+                {
+                    u.breathN -= 2;
+                    if (u.breathN <= 0)                                                                                      // L3974
+                    {
+                        u.breathN = (int)(150 + System.Math.Floor(w.Rng() * 150));                                           // L3975（下一口龙息冷却）
+                        DragonBreathE(w, u);                                                                                 // L3976
+                    }
+                }
                 if (def.isCiv && u.civ >= 0) throw new System.InvalidOperationException("peaceful 职业域批次三乙未翻译（L3981-4109；黄金 civ=-1 契约不触达）");   // L3981
                 if (TailJSHook(w, u)) return;                                                                            // L4110（尾段早退：猎物命中/密度场导航——仅 else 路径，S15 僵尸追击 post-only 实证）
             }
             PostJSHook(w, u);                                                                                            // L4112（if/else 之外恒调——敌对追击路径亦达）
+        }
+
+        // ================= M-U7q 批次三乙三·击杀链七助手（engine.ts 蓝本机械翻译；与 gen 桩面真实现/transcript 镜像三源同构） =================
+
+        /// engine addBlood L2865-2869 —— 血迹落场（fxPrefs.blood 门 + seed 掷 1 抽 + cap 420）
+        private static void AddBloodE(WbWorld w, double x, double y, bool big)
+        {
+            if (!w.fxBlood) return;                                                                                             // L2866（黄金 fxBlood=false 契约不触达）
+            w.blood.Add(new WbBlood { x = x, y = y, age = 0, seed = (int)System.Math.Floor(w.Rng() * 65536), big = big });       // L2867
+            if (w.blood.Count > 420) w.blood.RemoveRange(0, w.blood.Count - 420);                                                // L2868（GameEngine.BLOOD_MAX L2855）
+        }
+
+        /// engine addGrudge L1150-1169 —— 血仇记账（旧仇加深 min 3 / 上限 4 条逐弱驱逐）
+        private static void AddGrudgeE(WbWorld w, WbU wu, WbU killer, WbU victim, double mul = 1)
+        {
+            double v = 1.0;                                                                                              // L1151
+            if (victim.civ >= 0 && wu.civ == victim.civ) v = 1.6;                                                        // L1152 同族之仇
+            if (wu.famC != null && wu.famC == victim.famC) v = 2.6;                                                       // L1153 血亲之仇（Nullable == 同 === 语义）
+            v *= mul;                                                                                                     // L1154
+            if (wu.gIdsN == null) wu.gIdsN = new System.Collections.Generic.List<int>();                                   // L1155（w.gIds ?? (w.gIds = [])）
+            if (wu.gValN == null) wu.gValN = new System.Collections.Generic.List<double>();                                // L1156
+            int i = wu.gIdsN.IndexOf(killer.id);                                                                          // L1157
+            if (i >= 0) wu.gValN[i] = System.Math.Min(3, wu.gValN[i] + v * 0.6);                                           // L1158 旧仇加深（仇人见面分外眼红）
+            else
+            {
+                if (wu.gIdsN.Count >= 4)                                                                                  // L1160 上限 4 条
+                {
+                    int mi = 0;                                                                                           // L1161
+                    for (int k = 1; k < wu.gValN.Count; k++) if (wu.gValN[k] < wu.gValN[mi]) mi = k;                       // L1162 逐最弱
+                    wu.gIdsN.RemoveAt(mi); wu.gValN.RemoveAt(mi);                                                          // L1163-1164
+                }
+                wu.gIdsN.Add(killer.id); wu.gValN.Add(v);                                                                  // L1166-1167
+            }
+        }
+
+        /// engine witnessDeath L1174-1216 —— 目睹死亡广播（弑君之仇国账 + 半径 6 同族恐慌/血仇一次遍历双产出）
+        private static void WitnessDeathE(WbWorld w, WbU killer, WbU victim)
+        {
+            // L1175 if (!RACES[victim.race]) return; —— RACES 41 族全表恒真（StatOf 越界门同构），C# 不译
+            if (victim.king != 0 && victim.civ >= 0)                                                                     // L1177 弑君之仇：国仇加权
+            {
+                foreach (var ww in w.units)                                                                              // L1178 疆内闻讯（全域同悲）
+                {
+                    if (ww.dead != 0 || ww.civ != victim.civ) continue;                                                   // L1179
+                    if (WbMath.FdHypot(ww.x - victim.x, ww.y - victim.y) > 14) continue;                                  // L1180
+                    ww.panic = System.Math.Min(1, (ww.panic ?? 0) + 0.5);                                                  // L1181
+                }
+                WbCiv kc = killer.civ >= 0 && killer.civ < w.civs.Count ? w.civs[killer.civ] : null;                       // L1183
+                if (kc != null && kc.alive && killer.civ != victim.civ)                                                    // L1184
+                {
+                    string key = WbWorld.PairKey(victim.civ, killer.civ);                                                  // L1185
+                    w.rel[key] = System.Math.Max(-100, (w.rel.TryGetValue(key, out var rv) ? rv : 0) - 24);                // L1186 两国关系重挫
+                    w.tension[key] = System.Math.Min(100, (w.tension.TryGetValue(key, out var tv) ? tv : 0) + 30);          // L1187
+                    w.warShame[key] = victim.civ;                                                                          // L1188 耻辱簿（复仇宣战的种子）
+                }
+            }
+            int cx = (int)(victim.x / 4); if (cx > WbWorld.BKW - 1) cx = WbWorld.BKW - 1; if (cx < 0) cx = 0;             // L1191（(x/4)|0 截断钳位）
+            int cy = (int)(victim.y / 4); if (cy > WbWorld.BKH - 1) cy = WbWorld.BKH - 1; if (cy < 0) cy = 0;             // L1192
+            double fierce = System.Math.Min(3, killer.kills / 6.0);                                                       // L1193 凶手连杀威慑（f64 除法）
+            for (int by = cy - 2; by <= cy + 2; by++)                                                                     // L1194 5×5 桶环
+            {
+                for (int bx = cx - 2; bx <= cx + 2; bx++)                                                                  // L1195
+                {
+                    if (bx < 0 || by < 0 || bx >= WbWorld.BKW || by >= WbWorld.BKH) continue;                              // L1196
+                    foreach (var ww in w.buckets[by * WbWorld.BKW + bx])                                                    // L1197
+                    {
+                        if (ww.dead != 0 || ReferenceEquals(ww, killer) || ReferenceEquals(ww, victim)) continue;            // L1198
+                        bool kin = victim.civ >= 0 ? ww.civ == victim.civ : ww.race == victim.race;                          // L1199 同族判定
+                        if (!kin) continue;                                                                                  // L1200
+                        if (WbMath.FdHypot(ww.x - victim.x, ww.y - victim.y) > 6) continue;                                  // L1201
+                        var wd2 = RStats[ww.race];                                                                           // L1202
+                        if (wd2.undead) continue;                                                                            // L1203 亡灵不知恐惧，不记恩仇
+                        double inc = 0.32 + 0.08 * fierce + (killer.kills >= 10 ? 0.12 : 0);                                 // L1205 恐慌记账
+                        if (ww.famC != null && ww.famC == victim.famC) inc += 0.15;                                           // L1206 血亲之殇
+                        if (ww.traitName == "berserk" || MonsterLoot.Contains(ww.race)) inc *= 0.35;                          // L1207 狂暴特质/巨怪减震
+                        if (ww.army != null) inc *= 0.4;                                                                      // L1208 军纪
+                        ww.panic = System.Math.Min(1, (ww.panic ?? 0) + inc);                                                 // L1209（syncPanic L1210 WASM 镜像 no-op）
+                        AddGrudgeE(w, ww, killer, victim, victim.king != 0 ? 1.8 : 1);                                        // L1212 血仇记账（弑君 ×1.8）
+                    }
+                }
+            }
+        }
+
+        /// engine onKingDeath L1669-1677 —— 国王驾崩（王位悬置 + 稳定度 -18 + 纪事/toast）
+        private static void OnKingDeathE(WbWorld w, WbU u)
+        {
+            bool has = u.civ >= 0 && u.civ < w.civs.Count;                                                                // L1670
+            WbCiv civ = has ? w.civs[u.civ] : null;
+            u.king = 0;                                                                                                   // L1671
+            if (civ == null || !civ.alive) return;                                                                         // L1672
+            if (civ.kingId == u.id) civ.kingId = -1;                                                                       // L1673（王位悬而未决）
+            civ.stability = System.Math.Max(0, civ.stability - 18);                                                        // L1674（stability ?? 70 —— C# 默认 70 同构）
+            AddEventHook(w, "king", $"「{civ.name}」的国王 {civ.kingName} 驾崩了——举国缟素，王位悬而未决", civ.colorHex, u.x, u.y);   // L1675
+            w.Toast($"「{civ.name}」国王驾崩，朝野震动", "danger");                                                          // L1676（宿主 toast 域——事件流收集，黄金不 dump）
+        }
+
+        /// engine zombify L4317-4340 —— 僵尸病毒尸变（原地转种：种族/文明/五维重置 + bumpWild 账本）
+        private static void ZombifyE(WbWorld w, WbU u)
+        {
+            // WBB.touchMeta L4318 —— WASM meta 镜像（WB.setEnabled(false) no-op 同构，C# 单源不译）
+            if (u.king != 0 && u.civ >= 0) OnKingDeathE(w, u);                                                             // L4320 国王尸变：王位等同驾崩
+            if (u.civ >= 0 && u.civ < w.civs.Count && w.civs[u.civ] != null) w.civs[u.civ].pop--;                           // L4321
+            if (!RStats[u.race].isCiv) BumpWild(w, u.race, -1);                                                             // L4322 种族变化：旧种计数摘除
+            u.race = WbConstants.R_ZOMBIE;                                                                                   // L4323
+            u.civ = -1;                                                                                                       // L4324
+            u.hp = 40; u.maxHp = 46; u.dmg = 6; u.speedN = 0.05;                                                              // L4325-4328（speed 镜像写点——speed 旧占位不动）
+            u.ageF = 0;                                                                                                       // L4329（engine u.age f64 域镜像——age 旧占位不动）
+            u.maxAgeF = 9999;                                                                                                 // L4330
+            u.infected = 0;                                                                                                   // L4331
+            u.dead = 0;                                                                                                       // L4332（syncFull L4337 WASM 镜像 no-op——原地变种族后续扫描按僵尸判定）
+            u.boat = 0; u.boatTTL = 0;                                                                                         // L4333-4334
+            u.king = 0;                                                                                                        // L4335
+            u.grab = 0; u.thrT = 0;                                                                                            // L4336 神之手指账目清零
+            BumpWild(w, WbConstants.R_ZOMBIE, 1);                                                                               // L4338
+            FxHook(w, "spawn", u.x, u.y, 30);                                                                                   // L4339
+        }
+
+        /// engine onWarKill L7247-7263 —— 战争体系击杀结算（分数/军团战功/总动员计数）
+        private static void OnWarKillE(WbWorld w, WbU killer, WbU victim)
+        {
+            if (killer.civ < 0 || victim.civ < 0 || killer.civ == victim.civ) return;                                       // L7248
+            if (!WbCivSim.AtWar(w, killer.civ, victim.civ)) return;                                                          // L7249
+            AddWarScore(w, killer.civ, victim.civ, 2, "kill");                                                               // L7250
+            WbCivSim.WwCountKill(w, victim);                                                                                 // L7251 大战阵亡计数
+            if (killer.army != null)                                                                                         // L7253 军团战功
+            {
+                if (killer.army is int aid)
+                {
+                    var ka = w.armies.Find((x) => x.id == aid);                                                               // L7254
+                    if (ka != null) { ka.kills++; ka.morale = System.Math.Min(100, ka.morale + 1.5); }                         // L7255
+                }
+            }
+            foreach (var d in w.directives)                                                                                  // L7258 总动员旨意战果计数
+            {
+                if (d.status == "active" && d.kind == "mobilize" && d.civ == killer.civ)                                     // L7259
+                    d.killCount = (d.killCount ?? 0) + 1;                                                                     // L7260
+            }
+        }
+
+        /// engine dragonBreath L12537-12547 —— 龙息喷吐（落点 ±8 抖动 2 掷 + 4× 落点 xy 各 1 掷 + ignite 可燃 1 掷/枚 + explosion fx）
+        private static void DragonBreathE(WbWorld w, WbU u)
+        {
+            double tx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, u.x + (w.Rng() * 2 - 1) * 8));                     // L12538
+            double ty = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, u.y + (w.Rng() * 2 - 1) * 8));                     // L12539
+            for (int k = 0; k < 4; k++)                                                                                       // L12540
+            {
+                int xx = (int)System.Math.Floor(tx + w.Rng() * 3 - 1.5);                                                      // L12541
+                int yy = (int)System.Math.Floor(ty + w.Rng() * 3 - 1.5);                                                      // L12542
+                if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                                          // L12543
+                IgniteE(w, yy * WbWorld.W + xx);                                                                               // L12544（idx(xx,yy)=yy*W+xx 列主序）
+            }
+            FxHook(w, "explosion", tx, ty, 16);                                                                                // L12546（opts r:1.6 渲染面——fx 事件流不可见）
+        }
+
+        /// engine ignite L1072-1078 —— 点燃（FLAMMABLE=[GRASS,FOREST] constants.ts L65 / 建筑格；fire=150+floor(rng×90)）
+        private static void IgniteE(WbWorld w, int i)
+        {
+            byte t = w.terrain[i];                                                                                             // L1073
+            if (w.fire[i] > 0) return;                                                                                          // L1074
+            bool flammable = t == WbConstants.T_GRASS || t == WbConstants.T_FOREST;                                              // L1075
+            if (!flammable && w.building[i] == 0) return;                                                                        // L1075
+            w.fire[i] = (byte)(150 + System.Math.Floor(w.Rng() * 90));                                                          // L1076
+            w.fireSet.Add(i);                                                                                                    // L1077
         }
 
         // ================= leadAim L4351-4357（弹道预测：目标提前量 + 落点抖动 2 掷——M-U7o 远程域消费） =================

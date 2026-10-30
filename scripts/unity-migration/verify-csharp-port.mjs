@@ -1506,7 +1506,7 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   var unitsUpdateVerifyFail = 0;
   try {
     execFileSync('node', [new URL('./units-update-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
-    console.log('units-update 黄金回放 (units-update-transcript 镜像 vs units_update.json): PASS (28 场景 快照逐位 + evt/fx/terr/scan 事件流 + 逐步 draws + fireSet + final/rngTail)');
+    console.log('units-update 黄金回放 (units-update-transcript 镜像 vs units_update.json): PASS (36 场景 快照逐位 + evt/fx/terr/scan 事件流 + 逐步 draws + fireSet + final/rngTail)');
   } catch (e) {
     unitsUpdateVerifyFail++;
     console.error('units-update 黄金回放: FAIL');
@@ -1519,7 +1519,7 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
     execFileSync('bun', [new URL('./gen-units-update.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
     const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
     if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
-    console.log('units-update gen det 复跑 (gen-units-update · bun): PASS (28 场景 sanity + GameEngine 真实现 + det 字节级)');
+    console.log('units-update gen det 复跑 (gen-units-update · bun): PASS (36 场景 sanity + GameEngine 真实现 + det 字节级)');
   } catch (e) {
     unitsUpdateVerifyFail++;
     console.error('units-update gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -1527,16 +1527,16 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   try {
     const { readFileSync } = await import('node:fs');
     const g = JSON.parse(readFileSync(new URL('./golden/units_update.json', import.meta.url), 'utf8'));
-    if (!Array.isArray(g.cases) || g.cases.length !== 28) throw new Error('场景数 ≠ 28');
+    if (!Array.isArray(g.cases) || g.cases.length !== 36) throw new Error('场景数 ≠ 36');
     for (const c of g.cases) {
       if (c.out.length !== c.steps) throw new Error(c.name + ' steps ≠ out');
       if (!Array.isArray(c.final) || c.final.length !== c.units.length) throw new Error(c.name + ' final 缺失');
       if (!Array.isArray(c.rngTail) || c.rngTail.length !== 4) throw Error(c.name + ' rngTail 缺失');
       for (const s of c.out) if (!Array.isArray(s.fireSet)) throw new Error(c.name + ' fireSet 缺失');
     }
-    // M-U7m 扫描域结构检查：scanReal 场景必有非空 scan 调用日志 + ep.panicRout 分发（M-U7n 起 S14-S17、M-U7o 起 S18-S20、M-U7p 起 S21-S28 亦标 scanReal——20 场景）
+    // M-U7m 扫描域结构检查：scanReal 场景必有非空 scan 调用日志 + ep.panicRout 分发（M-U7n 起 S14-S17、M-U7o 起 S18-S20、M-U7p 起 S21-S28、M-U7q 起 S29-S36 亦标 scanReal——28 场景）
     const scanCases = g.cases.filter((c) => c.env.scanReal);
-    if (scanCases.length !== 20) throw new Error('scanReal 场景数 ≠ 20');
+    if (scanCases.length !== 28) throw new Error('scanReal 场景数 ≠ 28');
     for (const c of scanCases) {
       const scanN = c.out.reduce((a, s) => a + s.units.reduce((b, u) => b + ((u.scan ?? []).length), 0), 0);
       if (scanN === 0) throw new Error(c.name + ' scanReal 场景 scan 日志空');
@@ -1572,12 +1572,30 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
     if (!drain || !drain.out.some((s) => s.units.some((u) => (u.fx ?? []).some((f) => f[0] === 'hit')))) throw new Error('vampire-drain 命中 fx 缺失');   // heart 受 dmgNumbers=false 契约不触达——吮血回血由 hp 快照对账
     const meleeHit = g.cases.find((x) => x.name === 'melee-hit');
     if (!meleeHit || !meleeHit.out.some((s) => s.units.some((u) => (u.fx ?? []).some((f) => f[0] === 'hit')))) throw new Error('melee-hit 命中 fx 缺失');
+    // M-U7q 击杀链结构检查：zombify 尸变签名（race 5 + hp 40 bitHex + alive）+ 复仇/家族/弑君/屠龙/起尸/龙息/post 态签名
+    const zombC = g.cases.find((x) => x.name === 'zombify');
+    if (!zombC || !zombC.final.some((u) => u.race === 5 && !u.dead && u.hp === '0000000000004440' && u.speed === '9a9999999999a93f')) throw new Error('zombify 尸变签名缺失（race5+hp40+speed0.05）');
+    const revC = g.cases.find((x) => x.name === 'revenge');
+    if (!revC || !revC.out.some((s) => s.units.some((u) => (u.evt ?? []).some((e) => e[0] === 'ev' && e[1] === 'revenge')))) throw new Error('revenge 复仇播报缺失');
+    const heroC = g.cases.find((x) => x.name === 'family-hero');
+    if (!heroC || heroC.post.families.length !== 1 || heroC.post.families[0].heroes !== 1 || !heroC.out.some((s) => s.units.some((u) => (u.evt ?? []).some((e) => e[0] === 'ev' && e[1] === 'legend')))) throw new Error('family-hero 家族英雄签名缺失');
+    const kingC = g.cases.find((x) => x.name === 'king-slain-war');
+    if (!kingC || !kingC.post.rel.some(([k, v]) => k === '0-1' && v === -74) || !kingC.post.tension.some(([k, v]) => k === '0-1' && v === 30) || !kingC.post.warShame.some(([k, v]) => k === '0-1' && v === 1)) throw new Error('king-slain-war 弑君三账本签名缺失');
+    if (!kingC.post.warData.some((w) => w.key === '0-1' && w.scoreA === 2 && w.casB === 1 && w.exB === 1) || kingC.post.directives[0]?.killCount !== 1) throw new Error('king-slain-war 战争结算签名缺失');
+    const dslayC = g.cases.find((x) => x.name === 'dragon-slain');
+    if (!dslayC || dslayC.post.statDragons !== 1) throw new Error('dragon-slain 屠龙计数缺失');
+    const uriseC = g.cases.find((x) => x.name === 'undead-rise');
+    if (!uriseC || !uriseC.out.some((s) => s.units.some((u) => (u.evt ?? []).some((e) => e[0] === 'rise')))) throw new Error('undead-rise 起尸缺失');
+    const breathC = g.cases.find((x) => x.name === 'dragon-breath');
+    if (!breathC || !breathC.out.some((s) => s.fireSet.length > 0 && s.fireDiff.length > 0)) throw new Error('dragon-breath 火种缺失');
+    const witC = g.cases.find((x) => x.name === 'melee-kill-witness');
+    if (!witC || !witC.final.some((u) => u.panic !== null && u.gids !== null && u.gval !== null) || !witC.final[1]?.dead) throw new Error('melee-kill-witness 目睹死亡广播签名缺失');
     const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/units_update.json', import.meta.url));
     const gl = readFileSync(new URL('./golden/units_update.json', import.meta.url));
     const md5a = createHash('md5').update(sa).digest('hex');
     const md5b = createHash('md5').update(gl).digest('hex');
     if (md5a !== md5b) throw new Error(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
-    console.log(`units-update 台账完备 (28 场景 + scanReal 20 + neuro/远程/近战签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+    console.log(`units-update 台账完备 (36 场景 + scanReal 28 + neuro/远程/近战/击杀链签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
   } catch (e) {
     unitsUpdateVerifyFail++;
     console.error('units-update 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));

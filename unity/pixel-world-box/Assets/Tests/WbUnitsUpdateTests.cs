@@ -1,5 +1,6 @@
 // ============================================================================
-// WbUnitsUpdateTests.cs —— Test30：M-U7l 批次一 + M-U7m 批次二·扫描域 + M-U7n 批次三甲·神经域 + M-U7o 批次三乙一·远程域 + M-U7p 批次三乙二-a·近战主链黄金回放（gen-units-update.mjs 28 场景）
+// WbUnitsUpdateTests.cs —— Test30：M-U7l 批次一 + M-U7m 批次二·扫描域 + M-U7n 批次三甲·神经域 + M-U7o 批次三乙一·远程域 + M-U7p 批次三乙二-a·近战主链 +
+//       M-U7q 批次三乙三·击杀链+龙息域黄金回放（gen-units-update.mjs 36 场景）
 // 蓝本：engine.ts updateUnit L3455-3590 批次一 + 扫描域 L3592-3669 批次二（isEnemyFast/isEnemy + 3×3 桶环 +
 //       血仇加权 + 恐慌传染 + 三逃离门）+ 无敌壳（C# WbBailRelay.UpdateUnit）
 // 协议：bitHex f64 位精确（禁 epsilon）/ 掷值链 pre→post rngA 态游走重建 / evt·fx·terr·scan 事件流捕获 /
@@ -25,9 +26,9 @@ namespace PixelWorldBox.Wb.Tests
         private System.Action<WbWorld, WbU, double, double, double> _fb0, _ar0, _bm0, _bl0;   // M-U7o cast 弹道接缝四件
         private System.Func<WbWorld, WbU, double> _wall0;                                    // M-U7p 近战域接缝
         private System.Func<WbWorld, double> _day0;
-        private System.Action<WbWorld, string, double, double> _aev0;
+        private System.Action<WbWorld, string, string, string, double, double> _aev0;   // M-U7q：+text/colorHex（addEvent 默认真实现清偿——签名扩面）
         private System.Action<WbWorld, double, double, bool, bool> _acp0;
-        private System.Action<WbWorld, double, double> _abl0;
+        private System.Action<WbWorld, double, double, bool> _abl0;                     // M-U7q：+big（addBlood 默认真实现清偿）
         private System.Action<WbWorld, int> _abt0;
         private System.Action<WbWorld, WbU, double> _mv0;                                // M-U7m 三逃离门 moveUnit 接缝
         private System.Func<WbWorld, WbU, WbU, bool> _isef0;                             // M-U7m isEnemyFast 接缝
@@ -140,7 +141,7 @@ namespace PixelWorldBox.Wb.Tests
             AssertEq("ep", "panicRout", 0.72, (double)root["ep"]["panicRout"]);   // M-U7m 溃逃阈
             var specs = (JArray)root["terrainSpecs"];
             var cases = (JArray)root["cases"];
-            Assert.That(cases.Count, Is.EqualTo(28), "场景数");
+            Assert.That(cases.Count, Is.EqualTo(36), "场景数");
             foreach (var c in cases) ReplayCase(c, specs);
         }
 
@@ -172,6 +173,38 @@ namespace PixelWorldBox.Wb.Tests
             {
                 var xy = kv.Key.Split(','); w.radiate[int.Parse(xy[1]) * W + int.Parse(xy[0])] = (byte)(int)kv.Value;
             }
+            // —— M-U7q 击杀链域 env 注入（civs/家族/外交三账本/战争档案/旨意——gen makeStubEng 同构）——
+            w.laws.zombieInfect = Nul(env["zombInf"]) ? true : (bool)env["zombInf"];   // L3905 门（默认 true——DEFAULT_LAWS）
+            foreach (var kv in (JObject)env["relInit"] ?? new JObject()) w.rel[kv.Key] = (double)kv.Value;
+            foreach (var kv in (JObject)env["warData"] ?? new JObject())
+            {
+                var jw = kv.Value;
+                w.warData[kv.Key] = new WbWarData { key = (string)jw["key"], a = (int)jw["a"], b = (int)jw["b"],
+                    scoreA = D(jw["scoreA"]), scoreB = D(jw["scoreB"]), casA = D(jw["casA"]), casB = D(jw["casB"]),
+                    exA = D(jw["exA"]), exB = D(jw["exB"]), razedA = D(jw["razedA"]), razedB = D(jw["razedB"]) };
+            }
+            if (env["civs"] != null)
+            {
+                int maxId = -1;
+                foreach (var kv in (JObject)env["civs"]) maxId = System.Math.Max(maxId, int.Parse(kv.Key));
+                for (int i = 0; i <= maxId; i++) w.civs.Add(null);
+                foreach (var kv in (JObject)env["civs"])
+                {
+                    var jv = kv.Value;
+                    w.civs[int.Parse(kv.Key)] = new WbCiv { id = (int)jv["id"], name = (string)jv["name"], alive = (bool)jv["alive"],
+                        pop = (int)jv["pop"], stability = D(jv["stability"]),
+                        kingId = Nul(jv["kingId"]) ? (int?)null : (int)jv["kingId"], kingName = (string)jv["kingName"], colorHex = (string)jv["colorHex"] };
+                }
+            }
+            foreach (var kv in (JObject)env["families"] ?? new JObject())
+            {
+                var jv = kv.Value;
+                w.families[(int)jv["id"]] = new WbFamily { id = (int)jv["id"], race = (int)jv["race"], name = (string)jv["name"],
+                    founder = (string)jv["founder"], members = (int)jv["members"], kills = (int)jv["kills"], heroes = (int)jv["heroes"] };
+            }
+            foreach (var jd in (JArray)env["directives"] ?? new JArray())
+                w.directives.Add(new WbDirective { id = (int)jd["id"], civ = (int)jd["civ"], kind = (string)jd["kind"], status = (string)jd["status"],
+                    killCount = Nul(jd["killCount"]) ? (int?)null : (int)jd["killCount"] });
 
             var units = new System.Collections.Generic.List<WbU>();
             foreach (var s in (JArray)c["units"]) units.Add(MkU(name, s));
@@ -206,9 +239,9 @@ namespace PixelWorldBox.Wb.Tests
             WbBailRelay.CastBulletHook = (ww, u2, tx, ty, dmg) => _evt.Add(new object[] { "bl", (double)u2.id, BitHex(tx), BitHex(ty), BitHex(dmg) });
             WbBailRelay.WallDefenseHook = (ww, e2) => 1.0;   // gen stub 同构（fixtures 无建筑）
             WbBailRelay.DayPhaseHook = (ww) => Nul(env["dayPhase"]) ? 0.0 : (double)env["dayPhase"];   // gen stub env.dayPhase ?? 0 同构
-            WbBailRelay.AddEventHook = (ww, kind, x2, y2) => _evt.Add(new object[] { "ev", kind, BitHex(x2), BitHex(y2) });   // 文本含命名域——gen 只对账 kind/pos
+            WbBailRelay.AddEventHook = (ww, kind, text, colorHex, x2, y2) => _evt.Add(new object[] { "ev", kind, BitHex(x2), BitHex(y2) });   // 文本含命名域——gen 只对账 kind/pos（M-U7q 默认真实现清偿——回放仍桩面捕获）
             WbBailRelay.AddCorpseHook = (ww, x2, y2, stone, undead) => _evt.Add(new object[] { "corpse", BitHex(x2), BitHex(y2), stone ? 1.0 : 0.0, undead ? 1.0 : 0.0 });
-            WbBailRelay.AddBloodHook = (ww, x2, y2) => _evt.Add(new object[] { "blood", BitHex(x2), BitHex(y2) });
+            WbBailRelay.AddBloodHook = (ww, x2, y2, big) => _evt.Add(new object[] { "blood", BitHex(x2), BitHex(y2) });   // big 渲染面不 dump（gen 桩面同构——fxBlood=false 契约不触达）
             WbBailRelay.MarkBattleHook = (ww, bi2) => _evt.Add(new object[] { "ab", (double)bi2, (double)(ww.tickCount + 30) });   // gen 桩面 tickCount=0 → 30
             WbBailRelay.FxHook = (ww, k, x, y, ttl) => _fx.Add(new object[] { k, BitHex(x), BitHex(y), ttl });
 
@@ -267,12 +300,89 @@ namespace PixelWorldBox.Wb.Tests
             var final = (JArray)c["final"];
             for (int i = 0; i < units.Count; i++) CompareSnap(name + " final u" + i, final[i], units[i]);
 
+            // —— M-U7q 击杀链 post 态对账（屠龙/文明/家族/外交三账本/战争档案/旨意——gen post dump 同构）——
+            ComparePost(name, (JToken)c["post"], w);
+
             // rngTail：4 掷链续跑（黄金 raw() 直接续——C# w.rngA 终态续）
             uint rs = w.rngA;
             for (int k = 0; k < 4; k++)
             {
                 double v; rs = MulberryStep(rs, out v);
                 AssertEq(name, "rngTail[" + k + "]", (string)c["rngTail"][k], BitHex(v));
+            }
+        }
+
+        // ---------------- M-U7q 击杀链 post 态对账（gen post dump 同构） ----------------
+        private static void ComparePost(string name, JToken post, WbWorld w)
+        {
+            AssertEq(name, "post.statDragons", (int)post["statDragons"], w.statDragonsSlain);
+            var gCivs = (JArray)post["civs"];
+            var aCivs = new System.Collections.Generic.List<WbCiv>(w.civs).FindAll((x) => x != null);
+            Assert.That(aCivs.Count, Is.EqualTo(gCivs.Count), name + " post.civs 计数");
+            for (int i = 0; i < gCivs.Count; i++)
+            {
+                var gc = gCivs[i]; var ac = aCivs[i];
+                AssertEq(name + " post.civs[" + i + "]", "id", (int)gc["id"], ac.id);
+                AssertEq(name + " post.civs[" + i + "]", "alive", (bool)gc["alive"], ac.alive);
+                AssertEq(name + " post.civs[" + i + "]", "pop", (int)gc["pop"], ac.pop);
+                AssertEq(name + " post.civs[" + i + "]", "stability", D(gc["stability"]), ac.stability);
+                AssertEq(name + " post.civs[" + i + "]", "kingId", Nul(gc["kingId"]) ? -999 : (int)gc["kingId"], ac.kingId.HasValue ? ac.kingId.Value : -999);
+            }
+            var gFam = (JArray)post["families"];
+            var aFam = new System.Collections.Generic.List<WbFamily>(w.families.Values);
+            aFam.Sort((x, y) => x.id.CompareTo(y.id));
+            Assert.That(aFam.Count, Is.EqualTo(gFam.Count), name + " post.families 计数");
+            for (int i = 0; i < gFam.Count; i++)
+            {
+                AssertEq(name + " post.families[" + i + "]", "id", (int)gFam[i]["id"], aFam[i].id);
+                AssertEq(name + " post.families[" + i + "]", "kills", (int)gFam[i]["kills"], aFam[i].kills);
+                AssertEq(name + " post.families[" + i + "]", "heroes", (int)gFam[i]["heroes"], aFam[i].heroes);
+            }
+            CompareStrValMap(name + " post.rel", (JArray)post["rel"], w.rel);
+            CompareStrValMap(name + " post.tension", (JArray)post["tension"], w.tension);
+            CompareStrValMap(name + " post.warShame", (JArray)post["warShame"], w.warShame);
+            var gWd = (JArray)post["warData"];
+            var aWd = new System.Collections.Generic.List<WbWarData>(w.warData.Values);
+            aWd.Sort((x, y) => string.CompareOrdinal(x.key, y.key));
+            Assert.That(aWd.Count, Is.EqualTo(gWd.Count), name + " post.warData 计数");
+            for (int i = 0; i < gWd.Count; i++)
+            {
+                var gw = gWd[i]; var aw = aWd[i];
+                AssertEq(name + " post.warData[" + i + "]", "key", (string)gw["key"], aw.key);
+                AssertEq(name + " post.warData[" + i + "]", "scoreA", D(gw["scoreA"]), aw.scoreA);
+                AssertEq(name + " post.warData[" + i + "]", "scoreB", D(gw["scoreB"]), aw.scoreB);
+                AssertEq(name + " post.warData[" + i + "]", "casA", D(gw["casA"]), aw.casA);
+                AssertEq(name + " post.warData[" + i + "]", "casB", D(gw["casB"]), aw.casB);
+                AssertEq(name + " post.warData[" + i + "]", "exA", D(gw["exA"]), aw.exA);
+                AssertEq(name + " post.warData[" + i + "]", "exB", D(gw["exB"]), aw.exB);
+                AssertEq(name + " post.warData[" + i + "]", "razedA", D(gw["razedA"]), aw.razedA);
+                AssertEq(name + " post.warData[" + i + "]", "razedB", D(gw["razedB"]), aw.razedB);
+            }
+            var gDir = (JArray)post["directives"];
+            Assert.That(w.directives.Count, Is.EqualTo(gDir.Count), name + " post.directives 计数");
+            for (int i = 0; i < gDir.Count; i++)
+                AssertEq(name + " post.directives[" + i + "]", "killCount", (int)gDir[i]["killCount"], w.directives[i].killCount ?? 0);
+        }
+
+        private static void CompareStrValMap(string ctx, JArray g, System.Collections.Generic.Dictionary<string, double> m)
+        {
+            var keys = new System.Collections.Generic.List<string>(m.Keys); keys.Sort(System.StringComparer.Ordinal);
+            Assert.That(keys.Count, Is.EqualTo(g.Count), ctx + " 计数");
+            for (int i = 0; i < g.Count; i++)
+            {
+                AssertEq(ctx + "[" + i + "]", "key", (string)g[i][0], keys[i]);
+                AssertEq(ctx + "[" + i + "]", "val", (double)g[i][1], m[keys[i]]);
+            }
+        }
+
+        private static void CompareStrValMap(string ctx, JArray g, System.Collections.Generic.Dictionary<string, int> m)
+        {
+            var keys = new System.Collections.Generic.List<string>(m.Keys); keys.Sort(System.StringComparer.Ordinal);
+            Assert.That(keys.Count, Is.EqualTo(g.Count), ctx + " 计数");
+            for (int i = 0; i < g.Count; i++)
+            {
+                AssertEq(ctx + "[" + i + "]", "key", (string)g[i][0], keys[i]);
+                AssertEq(ctx + "[" + i + "]", "val", (double)g[i][1], (double)m[keys[i]]);
             }
         }
 
@@ -313,6 +423,9 @@ namespace PixelWorldBox.Wb.Tests
             u.caravan = I(s["caravan"]);                                           // M-U7m L3641 商队门
             u.civ = I(s["civ"]); u.jobC = I(s["job"]); u.flip = (bool)s["flip"] ? 1 : 0;
             u.traitName = NS(s["trait"]);
+            if (s["king"] != null && (int)s["king"] != 0) u.king = (int)s["king"];   // M-U7q 弑君域（witnessDeath king 分支）
+            if (!Nul(s["breath"])) u.breathN = (int)s["breath"];                      // M-U7q 龙息域（undefined → null）
+            if (!Nul(s["fam"])) u.famC = (int)s["fam"];                                // M-U7q 家族战功（case2 谱系域镜像）
             // traitRegen 交叉锁定：C# TraitsAll 表 ≡ 黄金 fixture 数值（gen L104 traitRegen 已解析）
             if (u.traitName != null)
             {
@@ -390,6 +503,11 @@ namespace PixelWorldBox.Wb.Tests
             AssertEq(ctx, "grab", I(g["grab"]), u.grab ?? 0);
             AssertEq(ctx, "boat", I(g["boat"]), u.boat);
             AssertEq(ctx, "caravan", I(g["caravan"]), u.caravan);                     // M-U7m 商队镜像（字段只加）
+            AssertEq(ctx, "race", (int)g["race"], u.race);                            // M-U7q 击杀链（zombify 种族改写——字段只加）
+            AssertEq(ctx, "civ", (int)g["civ"], u.civ);
+            AssertEq(ctx, "speed", NS(g["speed"]), u.speedN.HasValue ? BitHex(u.speedN.Value) : null);   // M-U7q zombify 0.05（undefined→null 镜像）
+            AssertEq(ctx, "breath", NS(g["breath"]), u.breathN.HasValue ? BitHex((double)u.breathN.Value) : null);   // M-U7q 龙息域
+            AssertEq(ctx, "king", (bool)g["king"], u.king != 0);                       // M-U7q 弑君域
             AssertEq(ctx, "x", (string)g["x"], BitHex(u.x));
             AssertEq(ctx, "y", (string)g["y"], BitHex(u.y));
             AssertEq(ctx, "tx", (string)g["tx"], BitHex(u.tx));

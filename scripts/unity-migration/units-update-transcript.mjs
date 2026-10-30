@@ -1,8 +1,8 @@
 // ============================================================================
-// units-update-transcript.mjs —— M-U7m 切片「updateUnit 批次二·扫描域」parity 镜像（零引擎导入，纪律④第二链）
-// 蓝本：src/lib/game/engine.ts updateUnit L3455-3590（批次一，M-U7l）+ 扫描域 L3592-3669（批次二·本切片：
-//       isEnemyFast/isEnemy + 3×3 桶环 + 血仇加权 + 恐慌传染 + 三逃离门）+ L3671+ 战斗哨兵 +
-//       无敌壳 L3927-4112（civ=-1 / 无龙契约 → tail/post 影子调用点）。
+// units-update-transcript.mjs —— M-U7q 切片「updateUnit 批次三乙三·击杀链+龙息域」parity 镜像（零引擎导入，纪律④第二链）
+// 蓝本：src/lib/game/engine.ts updateUnit L3455-3590（批次一，M-U7l）+ 扫描域 L3592-3669（批次二·M-U7m）+ 神经域 L3671-3738（M-U7n）+
+//       远程域 L3739-3773（M-U7o）+ 近战域 L3774-3899（M-U7p）+ 击杀链 L3903-3957 + 龙息 L3972-3978（本切片：zombify/witnessDeath/addGrudge/
+//       onKingDeath/onWarKill/dragonBreath/ignite 七助手独立转写）+ 无敌壳 L3968-4112。
 // 消费：golden/units_update.json（gen-units-update.mjs 产物——env/units/muts 依黄金回放，
 //       races 位字节即蓝本旗标源、ep 随 JSON 分发、traitRegen 随 fixture 回显——零独立打包）。
 // 对账：perU 快照 bitHex 逐位 + evt/fx/terr/scan 事件流（'mv'/'scan' M-U7m 新增）+ 逐步 draws + fireSet + final + rngTail。
@@ -85,6 +85,9 @@ const mkU = (s) => {
   u.kills = s.kills;                          // M-U7n（spawn 初值 0 镜像）
   u.civ = s.civ; u.job = s.job; u.flip = s.flip;
   if (s.trait !== null && s.trait !== undefined) u.trait = s.trait;
+  if (s.king) u.king = s.king;                                       // M-U7q 弑君域
+  if (s.breath !== null && s.breath !== undefined) u.breath = s.breath;   // M-U7q 龙息域
+  if (s.fam !== null && s.fam !== undefined) u.fam = s.fam;          // M-U7q 家族战功
   u._regen = s.traitRegen ?? 0;                                    // fixture 回显再生值（TRAITS 表镜像）
   return u;
 };
@@ -106,6 +109,10 @@ const snapU = (u) => ({
   caravan: u.caravan ?? 0,   // M-U7m 商队镜像（字段只加）
   dmg: u.dmg === undefined ? null : bitHex(u.dmg),   // M-U7n（undefined→null 条件对账）
   kills: u.kills ?? 0,       // M-U7n
+  race: u.race, civ: u.civ,                              // M-U7q 击杀链（zombify 原地转种——与 gen snapU 同位同序）
+  speed: u.speed === undefined ? null : bitHex(u.speed),   // M-U7q zombify speed=0.05
+  breath: u.breath === undefined ? null : bitHex(u.breath),   // M-U7q 龙息域
+  king: !!u.king,                                         // M-U7q 弑君域
   x: bitHex(u.x), y: bitHex(u.y), tx: bitHex(u.tx), ty: bitHex(u.ty),
 });
 
@@ -156,7 +163,7 @@ function isEnemyT(w, a, b) {
     }
   }
   if (a.civ >= 0 && b.civ >= 0 && a.civ !== b.civ) {                                            // L2114
-    const k = a.civ < b.civ ? a.civ * 100000 + b.civ : b.civ * 100000 + a.civ;                   // pairKey 序规格（rel 空恒 false——黄金无交战）
+    const k = a.civ < b.civ ? `${a.civ}-${b.civ}` : `${b.civ}-${a.civ}`;                   // pairKey 序规格（engine L34 sorted 'a-b' 字符串键——M-U7q 起与 witnessDeath/onWarKill/relInit 同键制；S33 交战 fixture 首消费）
     const v = w.rel.get(k);
     return v !== undefined && v < -20;
   }
@@ -219,6 +226,131 @@ const MONSTER_LOOT_T = new Set([9, 25, 26, 27, 21, 22, 23, 24, 17]);   // engine
 const F_FLIGHT = new Array(9);    // neuro.ts L126（模块级 scratch）
 const F_STANCE = new Array(12);   // neuro.ts L125
 const F_ACC = new Array(10);      // neuro.ts L124（M-U7p 近战命中头 scratch）
+
+// ================= M-U7q 击杀链·龙息域七助手镜像（engine.ts 机械翻译——与 C# WbBail.cs 同源同构） =================
+/** addGrudge L1150-1169 —— 血仇记账（旧仇加深 min 3 / 上限 4 条逐弱驱逐） */
+function addGrudgeT(w2, killer, victim, mul = 1) {
+  let v = 1.0;                                                                                     // L1151
+  if (victim.civ >= 0 && w2.civ === victim.civ) v = 1.6;                                            // L1152 同族之仇
+  if (w2.fam != null && w2.fam === victim.fam) v = 2.6;                                             // L1153 血亲之仇
+  v *= mul;                                                                                          // L1154
+  const ids = (w2.gIds ?? (w2.gIds = []));                                                           // L1155
+  const vals = (w2.gVal ?? (w2.gVal = []));                                                           // L1156
+  const i = ids.indexOf(killer.id);                                                                   // L1157
+  if (i >= 0) vals[i] = Math.min(3, vals[i] + v * 0.6);                                               // L1158 旧仇加深
+  else {
+    if (ids.length >= 4) {                                                                            // L1160
+      let mi = 0;                                                                                     // L1161
+      for (let k = 1; k < vals.length; k++) if (vals[k] < vals[mi]) mi = k;                            // L1162 逐最弱
+      ids.splice(mi, 1); vals.splice(mi, 1);                                                           // L1163-1164
+    }
+    ids.push(killer.id); vals.push(v);                                                                 // L1166-1167
+  }
+}
+/** witnessDeath L1174-1216 —— 目睹死亡广播（弑君之仇国账 + 半径 6 同族恐慌/血仇一次遍历双产出） */
+function witnessDeathT(killer, victim, ctx) {
+  if (victim.king && victim.civ >= 0) {                                                                // L1177 弑君之仇
+    for (const w2 of ctx.units) {                                                                       // L1178
+      if (w2.dead || w2.civ !== victim.civ) continue;                                                    // L1179
+      if (Math.hypot(w2.x - victim.x, w2.y - victim.y) > 14) continue;                                   // L1180 疆内闻讯
+      w2.panic = Math.min(1, (w2.panic ?? 0) + 0.5);                                                     // L1181
+    }
+    const kc = killer.civ >= 0 ? ctx.civs[killer.civ] : null;                                            // L1183
+    if (kc && kc.alive && killer.civ !== victim.civ) {                                                   // L1184
+      const key = victim.civ < killer.civ ? `${victim.civ}-${killer.civ}` : `${killer.civ}-${victim.civ}`;   // L1185 pairKey
+      ctx.rel.set(key, Math.max(-100, (ctx.rel.get(key) ?? 0) - 24));                                    // L1186
+      ctx.tension.set(key, Math.min(100, (ctx.tension.get(key) ?? 0) + 30));                              // L1187
+      ctx.warShame.set(key, victim.civ);                                                                 // L1188 耻辱簿
+    }
+  }
+  const cx = Math.min(ctx.bw - 1, Math.max(0, (victim.x / 4) | 0));                                     // L1191
+  const cy = Math.min(ctx.bh - 1, Math.max(0, (victim.y / 4) | 0));                                     // L1192
+  const fierce = Math.min(3, killer.kills / 6);                                                         // L1193 凶手连杀威慑
+  for (let by = cy - 2; by <= cy + 2; by++) {
+    for (let bx = cx - 2; bx <= cx + 2; bx++) {
+      if (bx < 0 || by < 0 || bx >= ctx.bw || by >= ctx.bh) continue;                                   // L1196
+      for (const w2 of ctx.buckets[by * ctx.bw + bx] ?? []) {                                            // L1197
+        if (w2.dead || w2 === killer || w2 === victim) continue;                                          // L1198
+        const kin = victim.civ >= 0 ? w2.civ === victim.civ : w2.race === victim.race;                    // L1199 同族
+        if (!kin) continue;                                                                                // L1200
+        if (Math.hypot(w2.x - victim.x, w2.y - victim.y) > 6) continue;                                   // L1201
+        const wd2 = raceF(w2.race);                                                                        // L1202
+        if (wd2.undead) continue;                                                                          // L1203 亡灵不知恐惧
+        let inc = 0.32 + 0.08 * fierce + (killer.kills >= 10 ? 0.12 : 0);                                  // L1205
+        if (w2.fam != null && w2.fam === victim.fam) inc += 0.15;                                          // L1206 血亲之殇
+        if (w2.trait === 'berserk' || MONSTER_LOOT_T.has(w2.race)) inc *= 0.35;                            // L1207 狂暴/巨怪减震
+        if (w2.army != null) inc *= 0.4;                                                                   // L1208 军纪
+        w2.panic = Math.min(1, (w2.panic ?? 0) + inc);                                                     // L1209
+        addGrudgeT(w2, killer, victim, victim.king ? 1.8 : 1);                                             // L1212 弑君 ×1.8
+      }
+    }
+  }
+}
+/** onKingDeath L1669-1677 —— 国王驾崩（stability -18 + 纪事；toast 宿主域静默零掷） */
+function onKingDeathT(u2, ctx) {
+  const civ = ctx.civs[u2.civ];                                                                           // L1670
+  u2.king = false;                                                                                        // L1671
+  if (!civ || !civ.alive) return;                                                                          // L1672
+  if (civ.kingId === u2.id) civ.kingId = -1;                                                               // L1673
+  civ.stability = Math.max(0, (civ.stability ?? 70) - 18);                                                 // L1674
+  ctx.evt.push(['ev', 'king', bitHex(u2.x), bitHex(u2.y)]);                                                // L1675（pos {x,y}——colorHex 渲染面不 dump）
+}
+/** bumpWild L1082-1086 —— 野生动物分种族计数（zombify 随件；无 dump 面——镜像保真） */
+function bumpWildT(ctx, race, d) {
+  const n = (ctx.wildCount.get(race) ?? 0) + d;
+  if (n > 0) ctx.wildCount.set(race, n); else ctx.wildCount.delete(race);
+}
+/** zombify L4317-4340 —— 僵尸病毒尸变（原地转种五维重置 + spawn fx） */
+function zombifyT(u2, ctx) {
+  if (u2.king && u2.civ >= 0) onKingDeathT(u2, ctx);                                                      // L4320
+  if (u2.civ >= 0 && ctx.civs[u2.civ]) ctx.civs[u2.civ].pop--;                                             // L4321
+  if (!raceF(u2.race).isCiv) bumpWildT(ctx, u2.race, -1);                                                  // L4322
+  u2.race = 5; u2.civ = -1; u2.hp = 40; u2.maxHp = 46; u2.dmg = 6; u2.speed = 0.05;                        // L4323-4328
+  u2.age = 0; u2.maxAge = 9999; u2.infected = false; u2.dead = false; u2.boat = 0; u2.boatTTL = 0;          // L4329-4334
+  u2.king = false; u2.grab = 0; u2.thrT = 0;                                                                // L4335-4336
+  bumpWildT(ctx, 5, 1);                                                                                     // L4338
+  ctx.fx.push(['spawn', bitHex(u2.x), bitHex(u2.y), 30]);                                                   // L4339
+}
+/** onWarKill L7247-7263 —— 战争体系击杀结算（addWarScore kill +2 / 军团战功 / 总动员；wwCountKill idle 直退） */
+function onWarKillT(killer, victim, ctx) {
+  if (killer.civ < 0 || victim.civ < 0 || killer.civ === victim.civ) return;                               // L7248
+  const key = killer.civ < victim.civ ? `${killer.civ}-${victim.civ}` : `${victim.civ}-${killer.civ}`;
+  const rv = ctx.rel.get(key);
+  if (!(rv !== undefined && rv < -20)) return;                                                             // L7249 atWar
+  const wd = ctx.warData.get(key);                                                                          // L7250 addWarScore
+  if (wd) {
+    const isA = wd.a === killer.civ;
+    if (isA) wd.scoreA += 2; else wd.scoreB += 2;
+    if (isA) { wd.casB += 1; wd.exB += 1; } else { wd.casA += 1; wd.exA += 1; }
+  }
+  if (killer.army != null) {                                                                                // L7253
+    const ka = ctx.armies.find((x) => x.id === killer.army);
+    if (ka) { ka.kills++; ka.morale = Math.min(100, ka.morale + 1.5); }                                     // L7255
+  }
+  for (const d of ctx.directives) {                                                                         // L7258
+    if (d.status === 'active' && d.kind === 'mobilize' && d.civ === killer.civ) d.killCount = (d.killCount ?? 0) + 1;   // L7260
+  }
+}
+/** dragonBreath L12537-12547 —— 龙息（落点 ±8 抖动 2 掷 + 4× 落点 xy 各 1 掷 + ignite 可燃 1 掷/枚 + explosion fx） */
+function dragonBreathT(u2, ctx, rng) {
+  const tx = Math.max(1, Math.min(W - 2, u2.x + (rng() * 2 - 1) * 8));                                     // L12538
+  const ty = Math.max(1, Math.min(H - 2, u2.y + (rng() * 2 - 1) * 8));                                     // L12539
+  for (let k = 0; k < 4; k++) {
+    const xx = Math.floor(tx + rng() * 3 - 1.5);                                                            // L12541
+    const yy = Math.floor(ty + rng() * 3 - 1.5);                                                            // L12542
+    if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;                                                   // L12543
+    igniteT(ctx, yy * W + xx, rng);                                                                          // L12544
+  }
+  ctx.fx.push(['explosion', bitHex(tx), bitHex(ty), 16]);                                                   // L12546
+}
+/** ignite L1072-1078 —— 点燃（FLAMMABLE=[GRASS,FOREST] constants.ts L65 / 建筑格；fire=150+floor(rng×90)） */
+function igniteT(ctx, i, rng) {
+  const t = ctx.terrain[i];                                                                                 // L1073
+  if (ctx.fire[i] > 0) return;                                                                              // L1074
+  if (!(t === T.GRASS || t === T.FOREST) && ctx.building[i] === 0) return;                                   // L1075
+  ctx.fire[i] = 150 + Math.floor(rng() * 90);                                                               // L1076
+  ctx.fireSet.add(i);                                                                                        // L1077
+}
 
 /** updateUnit 镜像（L3455-3590 批次一 + 扫描域 L3592-3669 批次二 + L3671+ 战斗哨兵 + 无敌壳；行号随注） */
 function updateUnitT(u, ctx) {
@@ -543,7 +675,45 @@ function updateUnitT(u, ctx) {
         if (u.race === 14 && rng() < 0.3 && !enemy.infected && !traitImmune) { enemy.infected = true; if (ctx.dmgNumbers) ctx.fx.push(['dmg', bitHex(enemy.x), bitHex(enemy.y - 0.8), 26]); }   // L3890-3892 蛇毒牙
         const bi = Math.floor(enemy.y) * W + Math.floor(enemy.x);                                  // L3895 idx(y,x)=y*W+x
         ctx.evt.push(['ab', bi, ctx.tickCount + 30]);                                              // L3896（activeBattles 桩面捕获；修剪循环 size<64 不触）
-        if (enemy.hp <= 0) throw new Error('SENTINEL: 击杀链域（L3901-3957）');                      // L3901
+        if (enemy.hp <= 0) {                                                                        // L3903 击杀链（M-U7q 批次三乙三镜像）
+          const zomb = u.race === 5 && raceF(enemy.race).isCiv && ctx.zombieInfect;                  // L3905
+          if (zomb) {
+            zombifyT(enemy, ctx);                                                                     // L3907（尸变——kills/witnessDeath else 链不触达）
+          } else {
+            enemy.dead = true;                                                                        // L3909（syncDead no-op）
+            u.kills++;                                                                                // L3911
+            witnessDeathT(u, enemy, ctx);                                                              // L3913 目睹死亡广播
+            if (u.gIds) {                                                                              // L3915 复仇结算
+              const rgi = u.gIds.indexOf(enemy.id);                                                    // L3916
+              if (rgi >= 0) {
+                u.gIds.splice(rgi, 1);                                                                  // L3918
+                u.gVal?.splice(rgi, 1);                                                                 // L3919
+                if (!u.gIds.length) { u.gIds = undefined; u.gVal = undefined; }                          // L3920
+                if (rng() < 0.12) ctx.evt.push(['ev', 'revenge', bitHex(u.x), bitHex(u.y)]);             // L3921（文本命名域不 dump）
+              }
+            }
+            if (u.fam != null) {                                                                       // L3925 家族战功
+              const rf = ctx.families.get(u.fam);                                                      // L3926
+              if (rf) {
+                rf.kills++;                                                                             // L3928
+                if (u.kills === 10) {                                                                   // L3929
+                  rf.heroes++;                                                                          // L3930
+                  ctx.evt.push(['ev', 'lineage', bitHex(u.x), bitHex(u.y)]);                             // L3931
+                }
+              }
+            }
+            /* collectKill L3936 在线采集模块域——引擎外会话 state，黄金未捕获面 */
+            if (r.predator && !r.undead) u.food = Math.min(160, (u.food ?? 0) + 55 + Math.round(enemy.maxHp * 0.5));   // L3938 捕食进食
+            if (enemy.race === 9) ctx.statDragonsSlain++;                                              // L3940 屠龙计数
+            onWarKillT(u, enemy, ctx);                                                                  // L3942 战争结算
+            if (u.kills === 10) {                                                                       // L3943 传奇武士
+              /* toast L3944 宿主域——gen 桩面 onToast 未挂静默 no-op 零掷 */
+              ctx.evt.push(['ev', 'legend', bitHex(u.x), bitHex(u.y)]);                                 // L3945
+            }
+            if (u.race === 23 && raceF(enemy.race).isCiv) ctx.evt.push(['rise', bitHex(enemy.x), bitHex(enemy.y)]);   // L3948-3949 白行者起尸（0.12 播报掷在 riseSkeleton 体内未译）
+            if (ctx.lawsRise && raceF(enemy.race).isCiv && rng() < 0.06) ctx.evt.push(['rise', bitHex(enemy.x), bitHex(enemy.y)]);   // L3952-3953 亡者复生
+          }
+        }
       }
     } else if (stance === 2 && (rd || bowRange > 0)) {                                               // L3958 射程死区（近到无法开火、远于触及）
       const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);                                        // L3960
@@ -556,8 +726,15 @@ function updateUnitT(u, ctx) {
     }
   } else {
     // —— 无敌路径 else 壳（现行号 L3968 起；C# 侧旧注 L3927 系引擎行号漂移——行为同构） ——
-    if (u.race === 9) throw new Error('SENTINEL: 龙息域（黄金无龙场景）');                            // L3972（现号；C# 旧注 L3931）
-    if (r.isCiv && u.civ >= 0) throw new Error('SENTINEL: peaceful 职业域（黄金 civ=-1 契约）');      // L3974+（现号；C# 旧注 L3937）
+    // collectEnemyGone L3970 在线采集模块域——引擎外会话 state，黄金未捕获面
+    if (u.race === 9 && u.breath !== undefined) {                                                    // L3972-3973 龙息（M-U7q；undefined→NaN 门永不触达——非龙/未注 breath 天然）
+      u.breath -= 2;
+      if (u.breath <= 0) {                                                                            // L3974
+        u.breath = 150 + Math.floor(rng() * 150);                                                     // L3975
+        dragonBreathT(u, ctx, rng);                                                                    // L3976
+      }
+    }
+    if (r.isCiv && u.civ >= 0) throw new Error('SENTINEL: peaceful 职业域（黄金 civ=-1 契约） case=' + (ctx.caseName ?? '?') + ' u' + u.id + ' civ=' + u.civ);      // L3981
     ctx.evt.push(['tail', u.id]);                                                                  // L4110（tailJS 仅 else 路径——gen stub 恒 false 不早退）
   }
   ctx.evt.push(['post', u.id]);                                                                    // L4112（if/else 之外恒调——S15 僵尸追击 post-only 实证）
@@ -590,13 +767,20 @@ for (const c of g.cases) {
     }
   }
   const ctx = {
-    raw, lawsRise: c.env.lawsRise, ambience: c.env.ambience, gearRegen: c.env.gearRegen ?? 0,
+    caseName: c.name,
+    raw, lawsRise: c.env.lawsRise, zombieInfect: c.env.zombInf ?? true, ambience: c.env.ambience, gearRegen: c.env.gearRegen ?? 0,
     dmgNumbers: false, blood: false, dayPhase: c.env.dayPhase ?? 0, tickCount: 0,   // M-U7p 近战域（gen 桩面 fxPrefs undefined-falsy + tickCount=0 同构）
-    fire, radiate, terrain, fireSet,
+    fire, radiate, terrain, fireSet, building: new Uint8Array(W * H),               // M-U7q ignite 建筑门（fixtures 无建筑恒 0）
     evt: [], fx: [], scan: [],
-    buckets, enemyLut: new Map(), dynRaces: new Map(), rel: new Map(),   // isEnemyFast/isEnemy 依赖面（黄金无动态种/无交战国）
+    buckets, enemyLut: new Map(), dynRaces: new Map(), rel: new Map(),   // isEnemyFast/isEnemy 依赖面（黄金无动态种）
+    tension: new Map(), warShame: new Map(), warData: new Map(Object.entries(c.env.warData ?? {})),   // M-U7q 弑君之仇三账本 + 战争档案
+    civs: c.env.civs ?? {}, families: new Map(Object.entries(c.env.families ?? {}).map(([k, v]) => [Number(k), { ...v }])),   // M-U7q 文明/家族谱系
+    armies: c.env.armies ?? [], directives: c.env.directives ?? [], wildCount: new Map(), statDragonsSlain: 0,   // M-U7q onWarKill/bumpWild/屠龙
+    units,   // M-U7q witnessDeath 弑君分支遍历（eng.units 桩面同构）
+    bw: BW, bh: BH,   // witnessDeath 桶环网格
     setT: (i, t) => { if (terrain[i] === t) return; const old = terrain[i]; terrain[i] = t; terrLog.push([i, old, t]); },   // setTerrain 影子（同值早退 L950 语义）
   };
+  for (const [k, v] of Object.entries(c.env.relInit ?? {})) ctx.rel.set(k, v);   // M-U7q rel 初值（S33 弑君宣战种子）
 
   const track = !!c.env.terrainTrack;
   let stepIdx = -1;

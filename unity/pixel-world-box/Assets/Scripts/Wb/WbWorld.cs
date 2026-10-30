@@ -165,6 +165,9 @@ namespace PixelWorldBox.Wb
         public double? foodN;                // engine u.food（f64 域 (u.food ?? 70)-1；int food 旧占位不动）
         public List<int> gIdsN;              // engine u.gIds（undefined → null——空表 [] 与 undefined 位分离；List gIds 旧占位不动）
         public List<double> gValN;             // engine u.gVal（undefined → null）
+        // —— M-U7q 击杀链·龙息域消费域（字段只加不改不重排；N 后缀镜像 = ageF/maxAgeF/famN 先例）——
+        public double? speedN;               // engine u.speed（zombify L4328 写点 0.05；undefined → null——double speed 旧占位不动）
+        public int? breathN;                 // engine u.breath（龙息域 L3973 -=2 写点；undefined → null——int breath 旧占位不动）
     }
 
     /// Alliance/Directive/Army 空转结构（M-U3c 域；M-U3d 起联盟/旨意为真态域）
@@ -257,6 +260,15 @@ namespace PixelWorldBox.Wb
         public double x, y;
         public double age;
         public bool stone, undead;
+    }
+
+    /// 血迹贴花 —— engine addBlood L2867（decalsTick 老化宿主侧，M-U7q 只落 push+cap）
+    public class WbBlood
+    {
+        public double x, y;
+        public double age;
+        public int seed;                 // engine seed = floor(rng*65536)（addBlood 体内 1 掷——黄金 fxBlood=false 契约不触达）
+        public bool big;
     }
 
     /// 终极世界大战最小态（M-U3c eliminateCiv/mergeCivs 读端；phase 恒 idle —— 大战域 M-U 后续切片）
@@ -386,6 +398,7 @@ namespace PixelWorldBox.Wb
         public bool fxDmgNumbers = true;
         public bool fxAmbience = true;      // engine fxPrefs.ambience（engine L271 默认 true —— sandswim 扬尘门消费；M-U3h 第五批）
         public bool fxBlood = true;         // engine fxPrefs.blood（L271 默认 true —— 近战血溅门 L3859 消费；M-U7p 字段只加）
+        public int statDragonsSlain;         // engine L229 statDragonsSlain（L3940 屠龙计数写点——M-U7q 字段只加）
 
         public const int T_DEEP = 0, T_WATER = 1, T_SAND = 2, T_GRASS = 3, T_FOREST = 4, T_HILL = 5,
                          T_MOUNTAIN = 6, T_SNOW = 7, T_LAVA = 8, T_BURNT = 9, T_ICE = 10, T_SWAMP = 11;
@@ -480,6 +493,7 @@ namespace PixelWorldBox.Wb
         public int? killCredit = null;                             // engine killCredit（L615；涌现武器战绩归属——军团域恒 null）
         public double shake = 0;                                   // engine shake（L931；declareClash/rout 震屏）
         public List<WbCorpse> corpses = new List<WbCorpse>();      // engine corpses（L2871 addCorpse）
+        public List<WbBlood> blood = new List<WbBlood>();          // engine blood（L2865 addBlood——M-U7q 字段只加）
         public WbWorldWar worldWar = new WbWorldWar();
         public Dictionary<int, int> allianceOf = new Dictionary<int, int>();                // civId → allianceId
         public Dictionary<int, long> allianceWarCd = new Dictionary<int, long>();

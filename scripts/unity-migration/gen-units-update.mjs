@@ -1,9 +1,16 @@
 // ============================================================================
-// gen-units-update.mjs —— M-U7n 切片「updateUnit 批次三甲·神经决策域」黄金向量（M-U7m 13 场景继承 + 神经域 S14-S17 四场景）
+// gen-units-update.mjs —— M-U7q 切片「updateUnit 批次三乙三·击杀链+龙息域」黄金向量（28 场景继承 + 击杀链 S29-S36 八场景）
 // 蓝本：src/lib/game/engine.ts updateUnit（现行号 L3455 入口 → L3590 hp≤0 死亡门批次一边界；
 //       扫描域 L3592-3669 批次二 → 神经决策域 L3671-3738 本切片（neuroFlight 战或逃 + neuroStance 姿态 +
 //       两 flee 出口 fleeT=40/50）→ L3739+ 远程/近战执行域批次三乙哨兵 → L4110 tailJS/L4112 postJS 影子调用点），
 //       rust-core/src/units.rs update_unit（L2314+，交叉核对）+ neuro.ts/neuro-weights.ts/neuro-flight-rl.ts（权重面 gen-neurodefs.mjs 机械转写）。
+// M-U7q：击杀链 L3903-3957（zombify/witnessDeath/addGrudge 血仇记账/复仇 splice/家族战功/捕食进食/屠龙计数/onWarKill/legend/白行者起尸/
+//       undeadRise 6%）+ 龙息 L3972-3978（R2 门 + breath 重置 + dragonBreath/ignite 真实现）——桩面补真实现依赖（building/wildCount/
+//       rel·tension·warShame·warData/worldWar/armies/directives/families/civs env 注入），zombify/witnessDeath/addGrudge/onKingDeath/
+//       onWarKill/dragonBreath/ignite 走 GameEngine.prototype 真实现；riseSkeleton/fx/addEvent/addCorpse 仍桩面事件捕获；toast 真实现
+//       （onToast 未挂 → 静默 no-op 零掷）；collectKill/collectEnemyGone 在线采集模块域真调用（引擎外会话 state，黄金未捕获面）。
+//       snapU 字段只加：race/civ/speed/breath/king（zombify 原地转种 + 龙息域 breath 镜像）；post 态 dump（statDragons/civs/families/
+//       rel/tension/warShame/warData/directives —— NUnit Test30 post 对账面）。
 // 直接 import 现役 engine.ts（真实现，非复制），以 Object.create(GameEngine.prototype)
 // + stub 字段面驱动真 updateUnit；批次一场景空 buckets 截断，扫描场景 env.scanReal：
 //  布桶（units 序 push 重建同构）+ isEnemyFast 原型真实现包装（'scan' 调用日志 [aId,bId,0|1] 事件流）。
@@ -65,6 +72,7 @@ const RACE_PICKS = {
   vampire: pickRace((d) => d.key === 'vampire', 'vampire'),                                                          // M-U7p S27：吮血 0.6
   zombie: pickRace((d) => d.undead && !d.flying && !d.aquatic, 'zombie'),                                            // M-U7m S11：L2095 ZOMBIE 对称敌意分支（序首命中 id5）
   bear: pickRace((d) => Number(d.key === 'bear'), 'bear'),                                                           // M-U7n S14/S17：强敌锚（dmg 19 hp 95——RStats 一致）
+  dragon: pickRace((d) => Number(d.key === 'dragon'), 'dragon'),                                                     // M-U7q S34/S36：屠龙计数 + 龙息域（L2095 对称敌意 ra!==rb）
 };
 const packRace = (id) => {
   const d = RACES[id];
@@ -122,6 +130,7 @@ const U = (o) => ({
   dmg: o.dmg === undefined ? null : o.dmg,   // M-U7n 战斗域 myPow/foePow（TS undefined→null；snapU 条件对账）
   kills: o.kills ?? 0,       // M-U7n F_FLIGHT[8]/F_STANCE[11]（TS Unit.kills spawn 初值 0）
   civ: o.civ ?? -1, job: o.job ?? 0, flip: !!o.flip,
+  king: o.king ?? 0, breath: o.breath === undefined ? null : o.breath, fam: o.fam === undefined ? null : o.fam,   // M-U7q 击杀链（弑君/龙息/家族谱系——undefined 恒 null 非触发单位）
   trait: o.trait === undefined ? null : o.trait,   // trait 字符串（TS 侧 TRAITS 表查 regen 用；C# 用 traitRegen 数值）
   traitRegen: o.trait === undefined ? 0 : (TRAIT_REGEN[o.trait] ?? 0),
 });
@@ -151,6 +160,9 @@ const mkTsUnit = (spec) => {
   u.kills = spec.kills;                          // M-U7n（spawn 初值 0 镜像）
   u.civ = spec.civ; u.job = spec.job; u.flip = spec.flip;
   if (spec.trait !== null && spec.trait !== undefined) u.trait = spec.trait; // 真 TRAITS 表键——TS 再生路径查表依赖
+  if (spec.king) u.king = spec.king;                                                     // M-U7q 弑君域 L1177（witnessDeath king 分支）
+  if (spec.breath !== null && spec.breath !== undefined) u.breath = spec.breath;         // M-U7q 龙息域 L3973（undefined→NaN 门永不触达——非龙单位天然）
+  if (spec.fam !== null && spec.fam !== undefined) u.fam = spec.fam;                     // M-U7q 家族战功 L3925（case2 谱系域镜像）
   return u;
 };
 const snapU = (u) => ({
@@ -171,6 +183,10 @@ const snapU = (u) => ({
   caravan: u.caravan ?? 0,   // M-U7m 商队镜像（snapU 字段只加）
   dmg: u.dmg === undefined ? null : bitHex(u.dmg),   // M-U7n 战斗域（undefined→null 条件对账）
   kills: u.kills ?? 0,       // M-U7n（spawn 初值 0）
+  race: u.race, civ: u.civ,                            // M-U7q 击杀链（zombify 原地转种——snapU 字段只加；镜像侧/transcript 同位同序）
+  speed: u.speed === undefined ? null : bitHex(u.speed),   // M-U7q zombify speed=0.05 L4328（undefined→null——C# speedN 镜像）
+  breath: u.breath === undefined ? null : bitHex(u.breath),   // M-U7q 龙息域 L3973（undefined→null——C# breathN 镜像）
+  king: !!u.king,                                       // M-U7q 弑君域（zombify king=false 写点）
   x: bitHex(u.x), y: bitHex(u.y), tx: bitHex(u.tx), ty: bitHex(u.ty),
 });
 // ---- stub 引擎：updateUnit 前置段 + 哨兵面 ----
@@ -181,10 +197,10 @@ function makeStubEng(env, cap) {
   eng.radiate = new Uint8Array(W * H);
   eng.fireSet = new Set(env.fireSet ?? []);
   eng.damagedSet = new Set();
-  eng.buildings = []; eng.bIdx = new Map(); eng.civs = {};
+  eng.buildings = []; eng.bIdx = new Map(); eng.civs = env.civs ?? {};   // M-U7q：civs env 注入（弑君之仇 kc 面/zombify pop--）
   eng.bw = W / 4; eng.bh = H / 4;
   eng.buckets = Array.from({ length: eng.bw * eng.bh }, () => []);
-  eng.laws = { undeadRise: env.lawsRise };
+  eng.laws = { undeadRise: env.lawsRise, zombieInfect: env.zombInf ?? true };   // M-U7q：zombieInfect L3905 门（默认 true——types.ts DEFAULT_LAWS）
   eng.fxPrefs = { get ambience() { return env.ambience; } };
   eng.fx = (kind, x, y, ttl) => cap.fx.push({ k: kind, x: bitHex(x), y: bitHex(y), ttl });
   eng.grabbedTick = (u) => cap.evt.push(['grab', u.id]);
@@ -221,6 +237,17 @@ function makeStubEng(env, cap) {
   eng.activeBattles = { set: (k, v) => cap.evt.push(['ab', k, v]), size: 0, delete: () => {}, *[Symbol.iterator]() {} };   // 桩面捕获 set；size<64 剩余修剪循环不触
   eng.updateUnitTailJS = (u) => { cap.evt.push(['tail', u.id]); return false; };
   eng.updateUnitPostJS = (u) => { cap.evt.push(['post', u.id]); };
+  // —— M-U7q 击杀链·龙息域真实现依赖面（zombify/witnessDeath/addGrudge/onKingDeath/onWarKill/dragonBreath/ignite 走原型真实现；置尾——scanReal rel 建图后 relInit 再注入）——
+  eng.building = new Uint8Array(W * H);                          // L782 building: Uint8Array（ignite L1075 建筑门——fixtures 无建筑恒 0）
+  eng.wildCount = new Map();                                     // L1083 bumpWild 账本（zombify +1 真实现；无 dump 面——C# BumpWild 同构不译对账）
+  eng.statDragonsSlain = 0;                                      // L229 屠龙计数（L3940 ++ 写点——post dump 对账面）
+  eng.rel = new Map(); eng.tension = new Map(); eng.warShame = new Map();   // L1186-1188 弑君之仇三账本（relInit env 注入）
+  for (const [k, v] of Object.entries(env.relInit ?? {})) eng.rel.set(k, v);
+  eng.warData = new Map(Object.entries(env.warData ?? {}));      // L7235 战争档案（addWarScore 消费——无 entry 恒和）
+  eng.worldWar = { phase: 'idle', belligerents: [], kills: 0 };  // L8711 wwCountKill 大战域（idle 直退——C# WbCivSim.WwCountKill 同构）
+  eng.armies = env.armies ?? []; eng.directives = env.directives ?? [];      // L7254/L7258 军团/旨意
+  eng.families = new Map(Object.entries(env.families ?? {}).map(([k, v]) => [Number(k), { ...v }]));   // L3926 家族战功（rf.kills/heroes 写点——post dump 对账面）
+  eng.techModCache = new Map(); eng.emTechs = new Map();   // L4861/L4866 techModsOf 缓存面（S33 首触 L3707 bowRange——civ>=0 isCiv 场景；c.techs 空→NEUTRAL_MODS 零掷）
   return eng;
 }
 
@@ -279,12 +306,13 @@ const meleeProbe = (spec) => {
     const eng = makeStubEng(env, cap);
     eng.terrain.set(buildGrid(TERRAIN_SPECS[spec.terrain ?? 'plains']));
     const units = spec.units.map((o, i) => mkTsUnit({ ...o, id: o.id ?? i + 1, race: raceIds[o.race] ?? o.race }));
+    eng.units = units;   // M-U7q：witnessDeath 弑君分支遍历 this.units（eng.units 桩面必挂——主循环 L719 同构）
     for (const u of units) eng.buckets[((u.y / 4) | 0) * eng.bw + ((u.x / 4) | 0)].push(u);
     const raw = mulberry32(s); eng.rng = () => raw();
     for (let st = 0; st < (spec.steps ?? 1); st++) for (const u of units) if (!u.dead) eng.updateUnit(u);
     lastCap = cap; lastUnits = units;
     if (spec.dbg) console.error('dbg s=' + s, 'evt:', JSON.stringify(cap.evt), 'scan:', JSON.stringify(cap.scan), 'fx:', cap.fx.map((f) => f.k), 'units:', units.map((u) => ({ race: u.race, dead: !!u.dead, inf: !!u.infected, hp: u.hp, fleeT: u.fleeT })));
-    if (spec.want(cap, units)) return s;
+    if (spec.want(cap, units, eng)) return s;
   }
   console.error('probe-diag evt:', JSON.stringify(lastCap?.evt), 'fx:', lastCap?.fx.map((f) => f.k), 'units:', lastUnits?.map((u) => ({ dead: u.dead, inf: !!u.infected, hp: u.hp, fleeT: u.fleeT })));
   throw new Error('no melee seed found: ' + (spec.label ?? '?'));
@@ -639,6 +667,154 @@ const CASES = [
     ],
     steps: 2,
   },
+  // ================= M-U7q 批次三乙三·击杀链（S29-S36；L3903-3957 击杀链 + L3972-3978 龙息；zombify/witnessDeath 等七助手走原型真实现） =================
+  // S29 melee-kill-witness：狼杀羊（致命命中）→ kills++ + witnessDeath 目睹死亡广播（近者 panic 0.3333 + 血仇 gids/gval 记账；远者 d>6 桶环外零触达）+ 捕食者进食 food+55+round(maxHp/2)
+  {
+    name: 'melee-kill-witness', terrain: 'plains', seed: meleeProbe({
+      label: 'melee-kill-witness', units: [
+        U({ race: 'wolf', x: 20.5, y: 30.5, hp: 100, dmg: 30, civ: -1 }),
+        U({ race: 'sheep', x: 21.3, y: 30.5, hp: 16, maxHp: 16, civ: -1 }),
+        U({ race: 'sheep', x: 24.5, y: 30.5, civ: -1 }),   // u2：血亲目击者（d≈3.2 ≤6 且桶环内）——panic+grudge
+        U({ race: 'sheep', x: 29.5, y: 30.5, civ: -1 }),   // u3：远亲对照（d≈8.2>6 且桶环外）——零恐慌零血仇
+      ],
+      want: (cap, us) => us[1].dead && us[2].panic > 0 && us[3].panic === undefined && (us[2].gIds?.length ?? 0) === 1,
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'wolf', x: 20.5, y: 30.5, hp: 100, dmg: 30, civ: -1 }),
+      U({ race: 'sheep', x: 21.3, y: 30.5, hp: 16, maxHp: 16, civ: -1 }),
+      U({ race: 'sheep', x: 24.5, y: 30.5, civ: -1 }),
+      U({ race: 'sheep', x: 29.5, y: 30.5, civ: -1 }),
+    ],
+    steps: 2,
+  },
+  // S30 zombify：僵尸杀野人（isCiv + laws.zombieInfect 默认 true）→ zombify 原地尸变（race→ZOMBIE civ=-1 hp40/maxHp46/dmg6/speed0.05/age0/maxAge9999 + bumpWild+1 + spawn fx）——kills/witnessDeath else 链不触达
+  {
+    name: 'zombify', terrain: 'plains', seed: meleeProbe({
+      label: 'zombify', units: [
+        U({ race: 'zombie', x: 40.5, y: 30.5, hp: 46, maxHp: 46, dmg: 6, civ: -1 }),
+        U({ race: 'human', x: 41.3, y: 30.5, hp: 5, maxHp: 60, civ: -1 }),
+      ],
+      want: (cap, us) => us[1].race === 5 && !us[1].dead && us[1].hp === 40 && us[0].kills === 0,
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'zombie', x: 40.5, y: 30.5, hp: 46, maxHp: 46, dmg: 6, civ: -1 }),
+      U({ race: 'human', x: 41.3, y: 30.5, hp: 5, maxHp: 60, civ: -1 }),
+    ],
+    steps: 2,
+  },
+  // S31 revenge：血仇狼手刃仇敌（gids 钉羊 id）→ gIds/gVal splice 清账 → undefined + 12% 采样播报掷（种子钉 <0.12 → revenge ev）
+  {
+    name: 'revenge', terrain: 'plains', seed: meleeProbe({
+      label: 'revenge', units: [
+        U({ id: 1, race: 'wolf', x: 60.5, y: 30.5, hp: 100, dmg: 30, gids: [2], gval: [1.0], civ: -1 }),
+        U({ id: 2, race: 'sheep', x: 61.3, y: 30.5, hp: 16, maxHp: 16, civ: -1 }),
+      ],
+      want: (cap, us) => cap.evt.some((e) => e[0] === 'ev' && e[1] === 'revenge') && us[0].gIds === undefined,
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ id: 1, race: 'wolf', x: 60.5, y: 30.5, hp: 100, dmg: 30, gids: [2], gval: [1.0], civ: -1 }),
+      U({ id: 2, race: 'sheep', x: 61.3, y: 30.5, hp: 16, maxHp: 16, civ: -1 }),
+    ],
+    steps: 2,
+  },
+  // S32 family-hero：家族武士十杀（kills=9 → 阵斩第十敌）→ rf.kills/heroes ++ + lineage ev + legend toast（宿主域静默）+ legend ev（civ=-1 → RACES 名）
+  {
+    name: 'family-hero', terrain: 'plains', seed: meleeProbe({
+      label: 'family-hero', env: { families: { '5': { id: 5, race: 7, name: '乌木家', founder: '先祖甲', members: 3, kills: 0, heroes: 0 } } },
+      units: [
+        U({ race: 'wolf', x: 80.5, y: 30.5, hp: 100, dmg: 30, kills: 9, fam: 5, civ: -1 }),
+        U({ race: 'sheep', x: 81.3, y: 30.5, hp: 16, maxHp: 16, civ: -1 }),
+      ],
+      want: (cap, us) => cap.evt.some((e) => e[0] === 'ev' && e[1] === 'lineage') && cap.evt.some((e) => e[0] === 'ev' && e[1] === 'legend') && us[0].kills === 10,
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true, families: { '5': { id: 5, race: 7, name: '乌木家', founder: '先祖甲', members: 3, kills: 0, heroes: 0 } } },
+    units: [
+      U({ race: 'wolf', x: 80.5, y: 30.5, hp: 100, dmg: 30, kills: 9, fam: 5, civ: -1 }),
+      U({ race: 'sheep', x: 81.3, y: 30.5, hp: 16, maxHp: 16, civ: -1 }),
+    ],
+    steps: 2,
+  },
+  // S33 king-slain-war：弑君之战（killer civ0 vs king victim civ1 交战中 rel -50）→ witnessDeath 弑君加权（同悲 panic+0.5 ×1.8 血仇 2.88 + rel -24/tension+30/warShame）+ onWarKill 战争结算（addWarScore kill +2 + wwCountKill idle 直退 + 总动员 killCount++）
+  {
+    name: 'king-slain-war', terrain: 'plains', seed: meleeProbe({
+      label: 'king-slain-war', env: {
+        civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, kingId: null, kingName: '', colorHex: '#ff4136' },
+                '1': { id: 1, name: '炎国', alive: true, pop: 3, stability: 70, kingId: 2, kingName: '炎王', colorHex: '#e63946' } },
+        relInit: { '0-1': -50 },
+        warData: { '0-1': { key: '0-1', a: 0, b: 1, scoreA: 0, scoreB: 0, casA: 0, casB: 0, exA: 0, exB: 0, razedA: 0, razedB: 0 } },
+        directives: [{ id: 1, civ: 0, kind: 'mobilize', status: 'active', killCount: 0 }],
+      },
+      units: [
+        U({ id: 1, race: 'human', x: 100.5, y: 30.5, hp: 100, dmg: 30, civ: 0 }),
+        U({ id: 2, race: 'human', x: 101.3, y: 30.5, hp: 10, maxHp: 60, king: true, civ: 1 }),
+        U({ id: 3, race: 'human', x: 103.5, y: 30.5, hp: 60, maxHp: 60, civ: 1 }),   // u2：同悲目击者（d≈3.2 ≤14 疆内闻讯 + ≤6 血亲之殇）
+      ],
+      want: (cap, us) => us[1].dead && us[2].panic > 0.4 && (us[2].gIds?.length ?? 0) === 1,
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, kingId: null, kingName: '', colorHex: '#ff4136' },
+              '1': { id: 1, name: '炎国', alive: true, pop: 3, stability: 70, kingId: 2, kingName: '炎王', colorHex: '#e63946' } },
+      relInit: { '0-1': -50 },
+      warData: { '0-1': { key: '0-1', a: 0, b: 1, scoreA: 0, scoreB: 0, casA: 0, casB: 0, exA: 0, exB: 0, razedA: 0, razedB: 0 } },
+      directives: [{ id: 1, civ: 0, kind: 'mobilize', status: 'active', killCount: 0 }] },
+    units: [
+      U({ id: 1, race: 'human', x: 100.5, y: 30.5, hp: 100, dmg: 30, civ: 0 }),
+      U({ id: 2, race: 'human', x: 101.3, y: 30.5, hp: 10, maxHp: 60, king: true, civ: 1 }),
+      U({ id: 3, race: 'human', x: 103.5, y: 30.5, hp: 60, maxHp: 60, civ: 1 }),
+    ],
+    steps: 2,
+  },
+  // S34 dragon-slain：屠龙（野人 vs 巨龙 L2095 对称敌意 ra!==rb）→ enemy.race===DRAGON → statDragonsSlain++（post dump 对账）
+  {
+    name: 'dragon-slain', terrain: 'plains', seed: meleeProbe({
+      label: 'dragon-slain', units: [
+        U({ race: 'human', x: 120.5, y: 30.5, hp: 100, dmg: 60, civ: -1 }),
+        U({ race: 'dragon', x: 121.3, y: 30.5, hp: 5, maxHp: 900, civ: -1 }),
+      ],
+      want: (cap, us, eng) => us[1].dead && eng.statDragonsSlain === 1,
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'human', x: 120.5, y: 30.5, hp: 100, dmg: 60, civ: -1 }),
+      U({ race: 'dragon', x: 121.3, y: 30.5, hp: 5, maxHp: 900, civ: -1 }),
+    ],
+    steps: 2,
+  },
+  // S35 undead-rise：亡者复生法则（laws.undeadRise + isCiv + 6% 掷中）→ riseSkeleton 桩面 'rise' 事件（起尸 spawn 域接缝——0.12 播报掷在未译 riseSkeleton 体内）
+  {
+    name: 'undead-rise', terrain: 'plains', seed: meleeProbe({
+      label: 'undead-rise', env: { lawsRise: true }, units: [
+        U({ race: 'vampire', x: 140.5, y: 30.5, hp: 20, maxHp: 140, dmg: 16, civ: -1 }),
+        U({ race: 'human', x: 141.3, y: 30.5, hp: 5, maxHp: 60, civ: -1 }),
+      ],
+      want: (cap) => cap.evt.some((e) => e[0] === 'rise'),
+    }),
+    env: { lawsRise: true, ambience: false, gearRegen: 0, scanReal: true },
+    units: [
+      U({ race: 'vampire', x: 140.5, y: 30.5, hp: 20, maxHp: 140, dmg: 16, civ: -1 }),
+      U({ race: 'human', x: 141.3, y: 30.5, hp: 5, maxHp: 60, civ: -1 }),
+    ],
+    steps: 2,
+  },
+  // S36 dragon-breath：无敌路径龙息（L3972 race===R2 门 + breath -=2 ≤0 → 150+floor(rng×150) 重置 + dragonBreath 落点 2 掷 + 4× ignite GRASS 可燃 1 掷/枚 → fire 写点 + explosion fx；terrainTrack fireDiff 值对账）
+  {
+    name: 'dragon-breath', terrain: 'plains', seed: meleeProbe({
+      label: 'dragon-breath', units: [
+        U({ race: 'dragon', x: 160.5, y: 30.5, hp: 900, maxHp: 900, dmg: 48, breath: 2, civ: -1 }),
+        U({ race: 'dragon', x: 162.5, y: 30.5, hp: 900, maxHp: 900, dmg: 48, breath: 150, civ: -1 }),   // u1：breath 充裕对照（148 不触雷）——同族 ally 保证 scan 日志非空
+      ],
+      want: (cap) => cap.fx.some((f) => f.k === 'explosion'),
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true, terrainTrack: true },
+    units: [
+      U({ race: 'dragon', x: 160.5, y: 30.5, hp: 900, maxHp: 900, dmg: 48, breath: 2, civ: -1 }),
+      U({ race: 'dragon', x: 162.5, y: 30.5, hp: 900, maxHp: 900, dmg: 48, breath: 150, civ: -1 }),
+    ],
+    steps: 2,
+  },
   // S28 bless-curse-dusk：狼 bless=1 curse=1 + env.dayPhase=0.7（dusk 窗口 0.5..0.9）→ dmg ×1.3×0.75×0.92（nightsight 假）——F_ACC[6]/[7] 双 1（神力/诅咒准头）
   {
     name: 'bless-curse-dusk', terrain: 'plains', seed: meleeProbe({
@@ -681,6 +857,9 @@ const out = { w: W, h: H, ep: EP, raceIds, races: raceTable, terrainSpecs: Objec
 const sanity = [];
 for (const c of CASES) {
   const env = { ...c.env };
+  // —— M-U7q env 回显快照（必须在引擎运行前取：eng.warData/civs/families/directives 与 c.env 共享对象引用，
+  //    引擎真实现结算会原地改写它们——事后快照即污染态。协议：env = 装载前态 pristine，post = 期望后态）——
+  const envEcho = JSON.parse(JSON.stringify(c.env));
   const cap = { fx: [], evt: [], terr: [], scan: [] };
   const eng = makeStubEng(env, cap);
   eng.terrain.set(buildGrid(TERRAIN_SPECS[c.terrain]));
@@ -746,10 +925,24 @@ for (const c of CASES) {
     });
   }
   const rngTail = [raw(), raw(), raw(), raw()].map(bitHex);
+  // —— M-U7q 击杀链 post 态 dump（屠龙/文明/家族/外交三账本/战争档案/旨意——NUnit Test30 post 对账面；镜简侧 transcript 不复刻——其契约=单位/事件面） ——
+  const post = {
+    statDragons: eng.statDragonsSlain ?? 0,                                             // L3940 屠龙计数
+    civs: Object.values(eng.civs).map((cv) => ({ id: cv.id, alive: !!cv.alive, pop: cv.pop, stability: cv.stability, kingId: cv.kingId === undefined ? null : cv.kingId })),   // 弑君/尸变 Civ 改写（L1673-1674/L4321）
+    families: [...eng.families.values()].map((f) => ({ id: f.id, kills: f.kills, heroes: f.heroes })).sort((a, b) => a.id - b.id),   // L3928/L3930 家族战功
+    rel: [...eng.rel.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)),                 // L1186 弑君之仇（pairKey 序）
+    tension: [...eng.tension.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)),         // L1187
+    warShame: [...eng.warShame.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)),       // L1188 耻辱簿
+    warData: [...eng.warData.values()].map((wd) => ({ key: wd.key, scoreA: wd.scoreA, scoreB: wd.scoreB, casA: wd.casA, casB: wd.casB, exA: wd.exA, exB: wd.exB, razedA: wd.razedA, razedB: wd.razedB })).sort((a, b) => (a.key < b.key ? -1 : 1)),   // L7250 战争分数
+    directives: eng.directives.map((d) => ({ id: d.id, killCount: d.killCount ?? 0 })), // L7260 总动员战果
+  };
   out.cases.push({
     name: c.name, terrain: c.terrain, seed: c.seed,
-    env: c.env, units: specs.map((s) => ({ ...s, race: raceIds[s.race] ?? s.race })), steps: c.steps, out: outSteps,
+    // env 回显深拷贝——M-U7q S33 实证：引擎真实现原地改写 warData/civs/families/directives（{...c.env} 浅拷贝共享引用污染回显，
+    //  C# 注入 pre 态后重复结算 scoreA 2→4）。协议：env = 装载前态（pristine），post = 期望后态。
+    env: envEcho, units: specs.map((s) => ({ ...s, race: raceIds[s.race] ?? s.race })), steps: c.steps, out: outSteps,
     final: units.map(snapU),
+    post,
     rngTail,
   });
   const evtN = cap.evt.length; const fxN = cap.fx.length;
