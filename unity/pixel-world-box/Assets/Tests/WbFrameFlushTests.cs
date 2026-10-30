@@ -401,5 +401,59 @@ namespace PixelWorldBox.Tests
             Assert.That(canvasB.Px, Is.EqualTo(canvasA.Px),
                 "降序插入 + 分块增量 ≡ 升序全量——升序迭代决定论（交叠区序敏感域覆盖）；EqualTo 逐位位置比较");
         }
+
+        // ---------------- M-U7z sim→render 同步桥（端到端：sim 变更 → 同步 → 差分标脏 → 双层 flush） ----------------
+
+        [Test]
+        public void Test28_SyncWorldFace_FourFaces_WidthPromotion()
+        {
+            var w = new WbWorld();
+            for (int i = 0; i < W * H; i++) w.terrain[i] = T_GRASS;   // sim 底图 GRASS（对照渲染面 MakeState 同源）
+            const int a = 10 * W + 10, b = 20 * W + 20, c = 30 * W + 30, dd = 40 * W + 40;
+            w.terrain[a] = (byte)T_SNOW;    // 寒潮 setTerrain 语义面（WbBail L445 直写同型）
+            w.road[b] = 1;                  // 修路（蓝本 L1926 位点）
+            w.owner[c] = 2;                 // 疆域扩张
+            w.radiate[dd] = 128;            // 辐射注入
+            var st = MakeState();
+            WbFrameFlush.SyncWorldFace(w, st);
+            Assert.That(st.terrain[a], Is.EqualTo(T_SNOW));
+            Assert.That(st.road[b], Is.EqualTo(1));          // byte→int 升宽
+            Assert.That(st.owner[c], Is.EqualTo(2));         // short→int 升宽
+            Assert.That(st.radiate[dd], Is.EqualTo(128d));   // byte→double 升宽
+            Assert.That(st.terrain[5 * W + 5], Is.EqualTo(T_GRASS));   // 未变更面保真
+        }
+
+        [Test]
+        public void Test28_SyncWorldFace_EndToEnd_DirtyBridgeDoubleMark()
+        {
+            var w = new WbWorld();
+            var st = MakeState();
+            for (int i = 0; i < W * H; i++) w.terrain[i] = T_GRASS;
+            WbFrameFlush.SyncWorldFace(w, st);
+            var shT = (byte[])st.terrain.Clone();             // 宿主 SnapshotRenderFace 语义（测试侧手工快照）
+            var propsDirty = new HashSet<int>();
+            // sim 变更：寒潮雪化 2 瓦片（不相邻——计数面清晰）
+            const int m1 = 15 * W + 15, m2 = 20 * W + 20;
+            w.terrain[m1] = (byte)T_SNOW; w.terrain[m2] = (byte)T_SNOW;
+            WbFrameFlush.SyncWorldFace(w, st);
+            // 差分桥（宿主 SyncTerrainDiffs 语义复刻：变更集 → MarkDirty 四邻 + MarkPropsDirty 单 tile）
+            var terrainDirty = new HashSet<int>();
+            for (int i = 0; i < W * H; i++)
+                if (st.terrain[i] != shT[i])
+                {
+                    WbFrameFlush.MarkDirty(terrainDirty, i);
+                    WbFrameFlush.MarkPropsDirty(propsDirty, i);
+                    shT[i] = st.terrain[i];
+                }
+            Assert.That(terrainDirty.Count, Is.EqualTo(10), "2 变更瓦片 × markDirty 五点（本体+四邻）不相邻 = 10");
+            Assert.That(propsDirty, Is.EquivalentTo(new[] { m1, m2 }), "props 单 tile 双记账（蓝本 L978 位点——无四邻）");
+            // 双层 flush 点亮：地形层重烘消费同步后 St（雪瓦片不透明落地）
+            var pxT = new byte[PW * PH * 4];
+            var canvasP = MakePropsCanvas();
+            WbFrameFlush.FlushDirty(st, pxT, terrainDirty);
+            WbFrameFlush.FlushProps(st, canvasP, propsDirty);
+            int oi = ((15 * 8 + 5) * PW + (15 * 8 + 5)) * 4;   // 变更瓦片 (15,15) 中心设备像素
+            Assert.That(pxT[oi + 3], Is.EqualTo(255), "地形层雪瓦片重烘不透明（flushDirty 消费同步后 St 面）");
+        }
     }
 }

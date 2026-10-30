@@ -316,6 +316,7 @@ namespace PixelWorldBox.Host
         void SyncTerrainDiffs()
         {
             if (_shTerrain == null) return;           // NewWorld 前无快照（首烘已全量）
+            PixelWorldBox.Wb.WbFrameFlush.SyncWorldFace(World, St);   // M-U7z sim→render 桥：tick 面变更入渲染面 → 下方差分自动标脏
             DiffBytes(St.terrain, _shTerrain, true);  // 逐变更瓦片 MarkDirty（部分失效保脏盒最小）+ props 双标脏（L978 setTerrain 位点）
             DiffBytes(St.variant, _shVariant, false);
             DiffBytes(St.waterTier, _shWaterTier, false);
@@ -432,6 +433,11 @@ namespace PixelWorldBox.Host
             World.RebuildBuckets();                                          // 桶层一次性重建（蓝本懒重建；静态世界一次等价）
             PixelWorldBox.Wb.WbWorldgen.SeedRivers(World, St.terrain, gen.Moist, unchecked((int)seed));   // L941 nature.seedRivers（M-U7k 译件）
             PixelWorldBox.Wb.WbWorldgen.RebuildWaterTiers(St.terrain, St.waterTier);   // L949 rebuildWaterTiers（post-river 全量）
+            // —— M-U7z sim 面地形灌注收口（蓝本 L776 单数组 sim/render 同体；C# 分体双面）——
+            //  CarveRiver 直写 terrain 数组（L12362 水/L12377 绿洲/L12378 森——M-U7k 刻河面=St.terrain），
+            //  World.terrain（sim 面——WbBail L409 lava/溺水/L445 寒潮判定消费）若无此步恒零值 T_DEEP
+            //  （宿主真机 tick 全员溺水判定——M-U7z 缺口修复；黄金链 gen-worldgen 不经宿主零影响）
+            System.Array.Copy(St.terrain, World.terrain, World.terrain.Length);
         }
     }
 }

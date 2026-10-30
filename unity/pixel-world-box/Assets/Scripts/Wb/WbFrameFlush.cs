@@ -192,6 +192,28 @@ namespace PixelWorldBox.Wb
             return box;
         }
 
+        // ================= M-U7z sim→render 渲染面同步桥（蓝本单数组分体桥） =================
+        // 蓝本语义：engine 单数组 sim/render 同体（this.terrain 直写即渲染可见——setTerrain L967
+        //   内联 markDirty + propsDirty 记账；域内直写位点 L3567-3570 寒潮走 setTerrain 全记账链）。
+        // C# 分体：sim 面 WbWorld.terrain/road/owner/radiate（域函数直写——setTerrain 簿记 no-op 域
+        //   M-U7k 先例注记）vs 渲染面 WbRenderState 同名数组——宿主 tick 后逐值同步，SyncTerrainDiffs
+        //   差分桥自动 MarkDirty + MarkPropsDirty 双记账（M-U7j/M-U7y 机制复用）→ 地形/props 双层点亮。
+        // 升宽拷贝：w.road byte→st.road int / w.owner short→st.owner int / w.radiate byte→st.radiate double
+        //   （St 面类型为渲染铁律冻结域——黄金面直灌同型；类型齐后可改引用共享 St.civs 先例 M-U7b）。
+        // 桥不覆盖面（无 sim 写点）：snowman（雪人域未译）/ glacier（worldsim 未译）/ variant、
+        //   waterTier（worldgen 渲染专属）——St 面维持灌注现状。
+        /// <summary>逐值同步 sim 变更面 → 渲染面（净帧成本 4×40,960 拷贝 ≈ 0.1ms 级；与差分桥同频）</summary>
+        public static void SyncWorldFace(WbWorld w, WbRenderState st)
+        {
+            for (int i = 0; i < W * H; i++)
+            {
+                st.terrain[i] = w.terrain[i];
+                st.road[i] = w.road[i];               // byte→int 升宽
+                st.owner[i] = w.owner[i];             // short→int 升宽
+                st.radiate[i] = w.radiate[i];         // byte→double 升宽
+            }
+        }
+
         // f64 bits hex 解码（F64Hex 逆——bails 参数消费面；编码 WbRender.F64Hex L208 小端 16 hex 字符）
         static double HexD(string h)
         {
