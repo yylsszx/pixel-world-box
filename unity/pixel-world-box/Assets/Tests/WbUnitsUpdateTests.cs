@@ -18,8 +18,7 @@ namespace PixelWorldBox.Wb.Tests
         private const int W = 256, H = 160;
 
         // —— 影子接缝原状备份（TearDown 恢复——hook 泄漏防护）——
-        private System.Action<WbWorld, WbU> _grab0, _boat0, _plague0, _post0;
-        private System.Action<WbWorld, double, double> _rise0;
+        private System.Action<WbWorld, WbU> _grab0, _boat0, _post0;
         private System.Func<WbWorld, WbU, bool> _tail0;
         private System.Func<WbWorld, WbU, WbGearBonus> _gear0;   // M-U7n：double→WbGearBonus 结构化同源
         private System.Action<WbWorld, string, double, double, int> _fx0;
@@ -42,7 +41,6 @@ namespace PixelWorldBox.Wb.Tests
         public void SaveHooks()
         {
             _grab0 = WbBailRelay.GrabbedTickHook; _boat0 = WbBailRelay.UpdateBoatHook;
-            _rise0 = WbBailRelay.RiseSkeletonHook; _plague0 = WbBailRelay.SpreadPlagueHook;
             _tail0 = WbBailRelay.TailJSHook; _post0 = WbBailRelay.PostJSHook;
             _gear0 = WbBailRelay.GearBonusHook; _fx0 = WbBailRelay.FxHook;
             _fxo0 = WbBailRelay.FxOptHook;
@@ -59,7 +57,6 @@ namespace PixelWorldBox.Wb.Tests
         public void RestoreHooks()
         {
             WbBailRelay.GrabbedTickHook = _grab0; WbBailRelay.UpdateBoatHook = _boat0;
-            WbBailRelay.RiseSkeletonHook = _rise0; WbBailRelay.SpreadPlagueHook = _plague0;
             WbBailRelay.TailJSHook = _tail0; WbBailRelay.PostJSHook = _post0;
             WbBailRelay.GearBonusHook = _gear0; WbBailRelay.FxHook = _fx0;
             WbBailRelay.FxOptHook = _fxo0;
@@ -139,8 +136,8 @@ namespace PixelWorldBox.Wb.Tests
             AssertEq("ep", "panicRout", 0.72, (double)root["ep"]["panicRout"]);   // M-U7m 溃逃阈
             var specs = (JArray)root["terrainSpecs"];
             var cases = (JArray)root["cases"];
-            Assert.That(cases.Count, Is.EqualTo(52), "场景数");
-            foreach (var c in cases) ReplayCase(c, specs);
+            Assert.That(cases.Count, Is.EqualTo(54), "场景数");   // M-U7u：52→54（S53 plague-spread/S54 plague-medicine 瘟疫传播域入链）
+            foreach (var c in cases) { WbCivSim.ClearTechModCache(); ReplayCase(c, specs); }   // M-U7u：静态科技缓存跨场景污染防护（WbGoldenTests L1861 先例——engine techModCache per-scenario 新 Map 同构）
         }
 
         private void ReplayCase(JToken c, JArray specs)
@@ -207,11 +204,14 @@ namespace PixelWorldBox.Wb.Tests
                 foreach (var kv in (JObject)env["civs"])
                 {
                     var jv = kv.Value;
-                    w.civs[int.Parse(kv.Key)] = new WbCiv { id = (int)jv["id"], name = (string)jv["name"], alive = (bool)jv["alive"],
+                    var civ = new WbCiv { id = (int)jv["id"], name = (string)jv["name"], alive = (bool)jv["alive"],
                         pop = (int)jv["pop"], stability = D(jv["stability"]),
                         kingId = Nul(jv["kingId"]) ? (int?)null : (int)jv["kingId"], kingName = (string)jv["kingName"], colorHex = (string)jv["colorHex"],
                         capital = Nul(jv["capital"]) ? -1 : (int)jv["capital"],                                                    // M-U7r 贵族域（civ.capital ≥ 0 门——缺省 -1 对齐 TS undefined）
                         gold = Nul(jv["gold"]) ? (double?)null : D(jv["gold"]) };                                                   // M-U7r 商贾域（civ.gold ?? 0 语义）
+                    if (jv["techs"] != null && jv["techs"].Type != JTokenType.Null)                                                 // M-U7u：civ.techs 装载（S54 medicine——TechModsOf.plague=0.55 消费面；WbGoldenTests L1916 先例同构）
+                        foreach (var t in (JArray)jv["techs"]) civ.techs.Add(t.ToString());
+                    w.civs[int.Parse(kv.Key)] = civ;
                 }
             }
             foreach (var kv in (JObject)env["families"] ?? new JObject())
@@ -248,7 +248,8 @@ namespace PixelWorldBox.Wb.Tests
             WbBailRelay.UpdateBoatHook = (ww, u) => _evt.Add(new object[] { "boat", (double)u.id });
             // M-U7t：RiseSkeletonHook 置换删除——riseSkeleton 真实现对账（gen 原型真实现同构；spawn 骷髅路径全链真掷 +
             // fx 走 FxHook 四元捕获 + 0.12 播报走 AddEventHook 'ev' 捕获——黄金 gen 数组形 fx/evt 逐位对账）
-            WbBailRelay.SpreadPlagueHook = (ww, u) => _evt.Add(new object[] { "plague", (double)u.id });
+            // M-U7u：SpreadPlagueHook 置换删除——spreadPlague 真实现对账（gen 原型真实现同构；S53 NEUTRAL plague=1.0 必染 /
+            // S54 medicine plague=0.55 真掷 + 免疫/亡灵/距离三跳过支路——染疫效应以 un.infected 真值进快照逐位对账）
             WbBailRelay.TailJSHook = (ww, u) => { _evt.Add(new object[] { "tail", (double)u.id }); return false; };
             WbBailRelay.PostJSHook = (ww, u) => _evt.Add(new object[] { "post", (double)u.id });
             WbBailRelay.GearBonusHook = (ww, u) => new WbGearBonus { regen = _gearRegen, speed = 1 };   // gen stub 同构全对象（regen=env.gearRegen，speed=1 L3777——余零；M-U7p wspeed 首消费暴露缺省差异）

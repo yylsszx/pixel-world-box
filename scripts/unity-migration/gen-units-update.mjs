@@ -223,7 +223,9 @@ function makeStubEng(env, cap) {
   //  fx('spawn') 捕获（fx 桩零掷同构）+ 0.12 播报掷全真入流；主循环 for..of 快照数组动态长度语义（spawn push 当拍被迭代——
   //  JS 数组迭代器每步重查 length ≡ C# 索引 for 每步重查 Count 同构）——
   // eng.riseSkeleton 原遮蔽行删除
-  eng.spreadPlague = (u) => cap.evt.push(['plague', u.id]);
+  // M-U7u：spreadPlague 遮蔽删除（原型真实现自动可达——spreadPlague 依赖面 RACES/TRAITS/Math.hypot/rng/techModsOf 全走原型；
+  //  techModsOf 消费 civs/techModCache/emTechs——三者已注入 L212-223；S53 NEUTRAL plague=1.0 / S54 medicine plague=0.55 真掷入流；
+  //  'plague' 桩事件消亡——染疫效应以 o.infected 真值进 snapU 黄金对账）
   eng.unitSeq = 0;                                               // L1344 id: this.unitSeq++（spawnUnit 骷髅路径首消费——0 起）
   eng.unitById = new Map();                                      // L1361 unitById.set（spawnUnit push 面）
   eng.speciesBase = new Map();                                   // L11030 baseGene 空表分支（speciesBase.get → undefined → {s:1,d:1,h:1,r:1} 零掷——不补则 undefined.get TypeError）
@@ -1125,6 +1127,60 @@ const CASES = [
       U({ race: 'zombie', x: 213, y: 80.5, hp: 10, maxHp: 10, dmg: 1, civ: -1 }),
     ],
     steps: 2,
+  },
+  // ================= M-U7u 瘟疫传播域（S53-S54；spreadPlague 真实现清偿——'plague' 桩事件消亡，染疫效应 o.infected 真值进快照） =================
+  // S53 plague-spread：NEUTRAL plague=1.0（无科技文明——首门中必染）+ 三跳过支路共证：
+  //   u1 近距国民 d=0.5<1.8 → L12556 civ≥0 掷 rng<1.0 恒真 → 染疫；u2 免疫特质国民（trait immune）→ L12553 距离检查前跳过（零掷）；
+  //   u3 亡灵僵尸远距 → L12552 undead 跳过（距离检查前）；u4 远距国民 d≈22.4 → L12554 距离门败（零掷）。
+  //   u3/u4 布 3×3 桶邻域外（>12 格）——扫描域零 foe 零战斗噪声；u1/u2/u4 job0 国民 S41 idle-fallthrough 形（无建筑无战争零 mv）。
+  //   u1 染疫后自身 L3552 门开启（hp -0.15/拍 + 0.02 传播门）——其 spreadPlague 调用全对象 skip/u4 距离败 → 零掷（rng 流闭合）。
+  //   24 拍（R3 体积预算——S53 五单位 × 步数体积线性；门命中概率 1-0.98^24≈0.39，meleeProbe 寻种覆盖）
+  {
+    name: 'plague-spread', terrain: 'plains', seed: meleeProbe({
+      label: 'plague-spread', steps: 24,
+      env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } } },
+      units: [
+        U({ race: 'human', x: 180.5, y: 120.5, hp: 80, maxHp: 100, infected: true, civ: -1 }),
+        U({ race: 'human', x: 181.0, y: 120.5, hp: 90, maxHp: 100, civ: 0, job: 0, cd: 0 }),
+        U({ race: 'human', x: 180.5, y: 121.0, hp: 90, maxHp: 100, civ: 0, job: 0, cd: 0, trait: 'immune' }),
+        U({ race: 'zombie', x: 210.5, y: 150.5, civ: -1 }),
+        U({ race: 'human', x: 200.5, y: 130.5, hp: 90, maxHp: 100, civ: 0, job: 0, cd: 0 }),
+      ],
+      want: (cap, us) => !!us[1].infected && !us[2].infected && !us[4].infected,
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136' } } },
+    units: [
+      U({ race: 'human', x: 180.5, y: 120.5, hp: 80, maxHp: 100, infected: true, civ: -1 }),
+      U({ race: 'human', x: 181.0, y: 120.5, hp: 90, maxHp: 100, civ: 0, job: 0, cd: 0 }),
+      U({ race: 'human', x: 180.5, y: 121.0, hp: 90, maxHp: 100, civ: 0, job: 0, cd: 0, trait: 'immune' }),
+      U({ race: 'zombie', x: 210.5, y: 150.5, civ: -1 }),
+      U({ race: 'human', x: 200.5, y: 130.5, hp: 90, maxHp: 100, civ: 0, job: 0, cd: 0 }),
+    ],
+    steps: 24,
+  },
+  // S54 plague-medicine：医学科技 plague=0.55（tech.ts L204 medicine -0.45）——未中路径（rng≥0.55 该调用零染）+ 多门累积 +
+  //   break 语义（L12558 单调用单传播上限：u1 未染时 u2 仍可在同调用被染）。u1/u2 互为次级疫源（染疫者自身 0.02 门开——
+  //   spreadPlague(u1) 对未染 u2 追加掷骰面）。undead 跳过支路 S53 已证不复录（R3 体积预算——60 拍 × 3 单位）。
+  {
+    name: 'plague-medicine', terrain: 'plains', seed: meleeProbe({
+      label: 'plague-medicine', steps: 60,
+      env: { civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136', techs: ['medicine'] } } },
+      units: [
+        U({ race: 'human', x: 180.5, y: 135.5, hp: 80, maxHp: 100, infected: true, civ: -1 }),
+        U({ race: 'human', x: 181.0, y: 135.5, hp: 90, maxHp: 100, civ: 0, job: 0, cd: 0 }),
+        U({ race: 'human', x: 181.0, y: 136.0, hp: 90, maxHp: 100, civ: 0, job: 0, cd: 0 }),
+      ],
+      want: (cap, us) => !!us[1].infected && !!us[2].infected,
+    }),
+    env: { lawsRise: false, ambience: false, gearRegen: 0, scanReal: true,
+      civs: { '0': { id: 0, name: '赤国', alive: true, pop: 4, stability: 70, colorHex: '#ff4136', techs: ['medicine'] } } },
+    units: [
+      U({ race: 'human', x: 180.5, y: 135.5, hp: 80, maxHp: 100, infected: true, civ: -1 }),
+      U({ race: 'human', x: 181.0, y: 135.5, hp: 90, maxHp: 100, civ: 0, job: 0, cd: 0 }),
+      U({ race: 'human', x: 181.0, y: 136.0, hp: 90, maxHp: 100, civ: 0, job: 0, cd: 0 }),
+    ],
+    steps: 60,
   },
 ];
 

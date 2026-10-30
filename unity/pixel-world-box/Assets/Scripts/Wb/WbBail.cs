@@ -263,7 +263,7 @@ namespace PixelWorldBox.Wb
             }
         }
 
-        // ================= M-U7l 影子接缝（黄金 gen-units-update 契约面：grabbedTick/updateBoat/riseSkeleton/spreadPlague/fx/tailJS/postJS/gearBonus 影子捕获） =================
+        // ================= M-U7l 影子接缝（黄金 gen-units-update 契约面：grabbedTick/updateBoat/fx/tailJS/postJS/gearBonus 影子捕获） =================
         // 默认 = 真实现（生产路径位等价直调）；Test30 黄金回放置换为事件捕获（蓝本 gen-units-update.mjs makeStubEng L149-173 同构）。
         // fx 影子不掷 rng——蓝本 fx() 本体 seed/dir 2 掷（L9794-9795）属 fx 域，本黄金 8 场景 fx≡0 契约外。
         internal static System.Action<WbWorld, WbU> GrabbedTickHook = (w, u) => GrabbedTick(w, u);
@@ -271,7 +271,9 @@ namespace PixelWorldBox.Wb
         // —— M-U7t：riseSkeleton 桩面真实现清偿（RiseSkeletonHook 接缝删除——调用面 L3467/L3949/L3953 直调 RiseSkeleton；
         //    spawn 骷髅路径全链真掷：trait 0.15/maxAge/flip/breath/uniqueName + 0.12 播报；fx 走 FxHook 四元捕获通道——
         //    gen 侧 fx 桩零掷同构，w.Fx 真存储路径 seed/dir 2 掷属渲染域切片）——
-        internal static System.Action<WbWorld, WbU> SpreadPlagueHook = (w, u) => throw new System.NotImplementedException("spreadPlague 未译域（瘟疫传播域批次二）");
+        // —— M-U7u：spreadPlague 桩面真实现清偿（SpreadPlagueHook 接缝删除——调用面 L3554 直调 SpreadPlague；
+        //    瘟疫传播真掷链：techModsOf(civ).plague 掷 + infected 真值写 + break 上限；语义交叉印证 rust-core units.rs L986-1015
+        //    spread_plague 已译件 WbUnits.cs——槽模型/对象模型两链分立，各自机械翻译同源蓝本）——
         internal static System.Func<WbWorld, WbU, bool> TailJSHook = (w, u) => UpdateUnitTailJS(w, u);
         internal static System.Action<WbWorld, WbU> PostJSHook = (w, u) => UpdateUnitPostJS(w, u);
         internal static System.Func<WbWorld, WbU, WbGearBonus> GearBonusHook = (w, u) => throw new System.NotImplementedException("gearBonus 未译域（装备域）；黄金回放由 Test30 置换 gen stub 同构全对象（regen=env.gearRegen，余零）");   // M-U7n：double→WbGearBonus 结构化（L3707 ranged 消费入；regen 域 L3559 同源）
@@ -408,7 +410,7 @@ namespace PixelWorldBox.Wb
             if (u.infected != 0)                                                                                         // L3552
             {
                 u.hp -= 0.15;                                                                                            // L3553
-                if (w.Rng() < 0.02) SpreadPlagueHook(w, u);                                                              // L3554
+                if (w.Rng() < 0.02) SpreadPlague(w, u);                                                                  // L3554（M-U7u 直调——Hook 接缝删除）
             }
             // 再生：特质或装备的缓慢回血（战斗外的顽强生命力）；巨魔天生再生
             if (u.hp > 0 && u.hp < u.maxHp)                                                                              // L3557
@@ -1877,6 +1879,32 @@ namespace PixelWorldBox.Wb
             }
         }
 
+        // ================= spreadPlague L12549-12561（M-U7u 真实现清偿——瘟疫传播域） =================
+        // 机械翻译蓝本：engine.ts L12549-12561。感染单位每拍 0.02 门（L3554）触达：遍历全体单位——
+        //   自身/已染/死亡跳过（L12551）→ 亡灵跳过（L12552，距离检查前）→ 免疫特质跳过（L12553，TRAITS[..].immune）→
+        //   距离 <1.8（L12554，V8 hypot 逆向）→ 在籍国民（civ≥0 短路——rng 仅对国民消耗）掷 rng < techModsOf(civ).plague
+        //   （L12556，tech.ts medicine -0.45/sanitation -0.3）→ infected=1 + break（L12557-12558，单调用单传播上限）。
+        // 语义交叉印证：rust-core units.rs L986-1015 spread_plague（WbUnits.cs 槽模型已译件）同构——TRFL bit4 免疫旗/
+        //   fd_hypot/CVTECH[oc*24+TC_PLAGUE]。techModCache 命中面与 engine L4861 同构（WbCivSim.TechModsOf 内建）。
+        private static void SpreadPlague(WbWorld w, WbU u)
+        {
+            for (int i = 0; i < w.units.Count; i++)                                                                      // L12550 for..of this.units（活数组每步重查 Count——无 spawn 不涉当拍迭代协议）
+            {
+                WbU o = w.units[i];
+                if (object.ReferenceEquals(o, u) || o.infected != 0 || o.dead != 0) continue;                            // L12551
+                if (DefOf(o.race).undead) continue;                                                                      // L12552
+                if (o.traitName != null && TraitsAll.TryGetValue(o.traitName, out var to) && to.immune) continue;        // L12553（M-U7p 毒牙域同款判定式）
+                if (WbMath.FdHypot(o.x - u.x, o.y - u.y) < 1.8)                                                          // L12554
+                {
+                    if (o.civ >= 0 && w.Rng() < WbCivSim.TechModsOf(w, o.civ).plague)                                    // L12556（civ≥0 短路——野生单位零掷）
+                    {
+                        o.infected = 1;                                                                                  // L12557
+                        break;                                                                                           // L12558 单调用单传播上限
+                    }
+                }
+            }
+        }
+
         // isHerbivoreRace L2120-2128（猎物链底层判定：静态八种 + dynRaces 递归母族）
         private static bool IsHerbivoreRace(WbWorld w, int race)
         {
@@ -2363,6 +2391,7 @@ namespace PixelWorldBox.Wb
             un.parity = w.unitSeq % 2;                                                          // L1366（id 自增后的 unitSeq——对象字面量求值序）
             un.speedN = un.speed;                                                               // M-U7t：speedN 镜像写点（CompareSnap 消费——spawnUnit 真值 0.075×乘子；zombify L4328 先例同构）
             un.breathN = un.breath;                                                             // M-U7t：breathN 镜像写点（120+floor(rng*160)——CompareSnap 消费；龙息 -=2 域随件）
+            un.hurtN = 0;                                                                       // M-U7u：hurtN 镜像写点清偿（L1356 hurt: 0 定义值——CompareSnap 消费面；M-U7t 遗漏致 S2/S35 骷髅快照 null≠0 红修复）
             un.dead = 0;                                                                        // L1367
             w.units.Add(un);
             w.unitById[un.id] = un;                                                             // L1370（WBB.touchRow 新行 meta 行级灌入——wasm 镜像写点，C# 侧 no-op 同先例）

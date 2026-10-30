@@ -118,7 +118,7 @@ const TRAITS_T = {                                                              
   strong: { dmgMul: 1.4 }, tough: { hpMul: 1.35 }, swift: { speedMul: 1.3 }, weak: { dmgMul: 0.8 },
   sickly: { hpMul: 0.75 }, genius: {}, berserk: { dmgMul: 1.7, hpMul: 0.85 }, lucky: {},
   regeneration: { regen: 0.3 }, giant: { hpMul: 1.8, dmgMul: 1.5, speedMul: 0.75 },
-  tiny: { hpMul: 0.55, dmgMul: 0.8, speedMul: 1.25 }, immune: {},
+  tiny: { hpMul: 0.55, dmgMul: 0.8, speedMul: 1.25 }, immune: { immune: true },   // M-U7u：immune 旗补录（types.ts L276 immune:true——spreadPlague L12553 消费面；字段只加）
 };
 const TRAIT_KEYS_T = Object.keys(TRAITS_T);
 const uniqueNameT = (ctx, race, rand) => {                                            // engine L1522-1533
@@ -162,6 +162,37 @@ const riseSkeletonT = (ctx, rng, x, y) => {                                     
   if (u) {
     ctx.fx.push(['spawn', bitHex(x), bitHex(y), 30]);                                  // L5174 fx 桩捕获（零掷同构——transcript fx 通道数组形直 push ≡ gen 桩对象→组装数组形）
     if (rng() < 0.12) ctx.evt.push(['ev', 'skeleton', bitHex(x), bitHex(y)]);          // L5176-5178 偶发播报 1/8（addEvent 桩 'ev' kind+pos 同构）
+  }
+};
+
+// ================= M-U7u：spreadPlague 瘟疫传播域独立转写（零引擎导入） =================
+// 蓝本：engine.ts L12549-12561 spreadPlague + L4859-4874 techModsOf（plague 单面）+ tech.ts L163/L204/L213。
+// techPlagueOfT：plague 单面转写（NEUTRAL_MODS.plague=1 tech.ts L165；medicine -0.45 L204 / sanitation -0.3 L213——
+//   其余键不影响 plague 面全 no-op；emTechs 涌现叠加 L4866-4870 黄金场景空契约不触达；techModCache 缓存面行为等价——
+//   场景内 techs 静态不变异，重算 ≡ 缓存命中）。
+const techPlagueOfT = (ctx, civId) => {
+  if (civId < 0) return 1;                                                             // L4860 NEUTRAL_MODS.plague
+  const c = ctx.civs[civId];
+  let m = 1;                                                                           // tech.ts L165 plague: 1
+  if (c) for (const k of (c.techs ?? [])) {                                            // L4864 modsOfTechs(c.techs ?? [])
+    if (k === 'medicine') m -= 0.45;                                                   // tech.ts L204
+    else if (k === 'sanitation') m -= 0.3;                                             // tech.ts L213
+  }
+  return m;
+};
+// spreadPlagueT：L12549-12561 逐行镜像（遍历全体单位——自身/已染/死亡跳过 → 亡灵跳过（距离检查前）→ 免疫特质跳过 →
+//   hypot<1.8 → civ≥0 短路掷 rng < techModsOf(civ).plague → infected=true + break 单调用单传播上限）。
+const spreadPlagueT = (ctx, u, rng) => {                                              // L12549
+  for (const o of ctx.units) {                                                        // L12550（活数组——无 spawn 不涉当拍迭代协议）
+    if (o === u || o.infected || o.dead) continue;                                    // L12551
+    if (raceF(o.race).undead) continue;                                               // L12552
+    if (o.trait && TRAITS_T[o.trait]?.immune) continue;                                // L12553（TRAITS_T.immune 旗 M-U7u 补录）
+    if (Math.hypot(o.x - u.x, o.y - u.y) < 1.8) {                                     // L12554（Math.hypot 原生——JS 两侧同源）
+      if (o.civ >= 0 && rng() < techPlagueOfT(ctx, o.civ)) {                          // L12556（civ≥0 短路——野生单位零掷）
+        o.infected = true;                                                            // L12557
+        break;                                                                        // L12558
+      }
+    }
   }
 };
 
@@ -654,7 +685,7 @@ function updateUnitT(u, ctx) {
   if (r.aquatic && !r.beach && !isWater(ctx.terrain[ti])) { u.hp -= 0.02; u.hurt = jsMax(u.hurt, 2); } // L3549-3550
   if (u.infected) {                                                                              // L3552
     u.hp -= 0.15;                                                                                // L3553
-    if (rng() < 0.02) ctx.evt.push(['plague', u.id]);                                             // L3554
+    if (rng() < 0.02) spreadPlagueT(ctx, u, rng);                                                 // L3554 M-U7u 清偿（真实现体内 techMods 掷 + infected 写 + break——'plague' 桩事件消亡）
   }
   if (u.hp > 0 && u.hp < u.maxHp) {                                                              // L3557
     const gb = r.isCiv ? { regen: ctx.gearRegen } : null;                                         // L3558-3559（gearBonus 影子面）
