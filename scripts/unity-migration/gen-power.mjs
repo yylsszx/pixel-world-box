@@ -1,7 +1,9 @@
 // ============================================================================
-// gen-power.mjs —— M-U10a 切片「effectsTick 游荡云族八种」黄金向量
+// gen-power.mjs —— M-U10a「effectsTick 游荡云族八种」+ M-U10b「波前族+静态族五 kind」黄金向量
 // （tornado L9805-9824 / acid L9826-9850 / blizzard L9915-9948 / locust L9949-9971 /
 //   drought L9972-9996 / rainstorm L9997-10022 / sandstorm L10068-10090 / famine L10170-10190
+//   + M-U10b: tsunami L9877-9914 / sinkhole L10120-10147 / iceage L10148-10169 /
+//   blackhole L10191-10223 / quake L10224-10236
 //   + 到期 splice L10439-10441 + activeBattles %5 清理 L10443-10447）
 // 直接 import 现役 src/lib/game/engine.ts（真实现，非复制）。夹具 = 手术式字段直写：
 //   构造 GameEngine(baseSeed)（构造器 generate 全链）后 terrain/fire/fireSet/building/
@@ -111,6 +113,7 @@ function buildScenario(spec) {
   eng.units.length = 0;
   eng.unitById.clear();
   eng.effects.length = 0;
+  eng.shake = 0;                        // M-U10b 震屏面基线（effectsTick 四 kind 写面——L185 字段）
   eng.worldEvents.length = 0;
   eng.eventSeq = 1;
   eng.buildings.length = 0;
@@ -167,6 +170,7 @@ function buildScenario(spec) {
 
   // 手术二·快照：直写后/effectsTick 前的镜像输入面（黄金 fixture 通道）
   const fixture = {
+    flood0: [...eng.flood.entries()],   // M-U10b 洪水挂账初始（手术清零后恒空——tsunami L9898 写面）
     terrain0: gzB64(eng.terrain),
     fire0: gzB64(eng.fire),
     fireSet0: [...eng.fireSet],
@@ -199,6 +203,8 @@ function buildScenario(spec) {
       bHp: [...eng.bHp.entries()].map(([k2, v]) => [k2, f64hex(v)]),
       buildingsCount: eng.buildings.length,
       battles: [...eng.activeBattles.entries()],
+      flood: [...eng.flood.entries()],               // M-U10b tsunami L9898 洪水挂账（JS Map 插入序——C# Dictionary 序对账面）
+      shake: eng.shake,                              // M-U10b 震屏（tsunami age1=6/sinkhole %2=4/quake=7 直写/blackhole=9）
       dirty: [...eng.dirty].sort((a, b) => a - b),   // markDirty 脏集（渲染面顺序无关语义——排序对账：C# HashSet 无序）
       fxCount: eng.effects.length,
       eventsCount: eng.worldEvents.length,
@@ -206,7 +212,9 @@ function buildScenario(spec) {
   }
 
   // sanity（生成即验证）
-  const totalDraws = chainDraws(spec.seed >>> 0, eng.rngA >>> 0);
+  let totalDraws;
+  try { totalDraws = chainDraws(spec.seed >>> 0, eng.rngA >>> 0); }
+  catch { throw new Error(`S${spec.key}: chainDraws 失败（final rngA=${(eng.rngA >>> 0).toString(16)} seed=${(spec.seed >>> 0).toString(16)}）`); }
   if (spec.minDraws && totalDraws < spec.minDraws) throw new Error(`S${spec.key}: 掷数 ${totalDraws} < 下限 ${spec.minDraws}`);
   if (spec.sanity && !spec.sanity(eng)) throw new Error(`S${spec.key}: sanity 未过`);
 
@@ -229,6 +237,8 @@ function buildScenario(spec) {
     radiate: gzB64(eng.radiate),
     bHp: [...eng.bHp.entries()].map(([k2, v]) => [k2, f64hex(v)]),
     battles: [...eng.activeBattles.entries()],
+    flood: [...eng.flood.entries()],                 // M-U10b tsunami 洪水挂账终态
+    shake: eng.shake,
     buildingsCount: eng.buildings.length,
     fx: eng.effects.map((e) => ({ kind: e.kind, x: f64hex(e.x), y: f64hex(e.y), ttl: f64hex(e.ttl), seed: e.seed, dir: f64hex(e.dir), r: e.r ?? null, age: e.age })),
     units: eng.units.map((u) => ({ id: u.id, race: u.race, x: f64hex(u.x), y: f64hex(u.y), hp: f64hex(u.hp), maxHp: f64hex(u.maxHp), hurt: u.hurt, chill: u.chill, dead: u.dead })),
@@ -340,6 +350,67 @@ const specs = [
     ],
     sanity: (eng) => eng.effects.length === 1 && eng.effects[0].kind === 'blizzard',
   },
+  {
+    // S10 tsunami（M-U10b）：波前环形扩张 [prevR,waveR)——低地没顶 setTerrain(WATER)+flood 挂账（240+floor(rng*120) 逐瓦片掷）+
+    //   幸存面六亲（MOUNTAIN/HILL/WATER/DEEP/LAVA/ICE）+ 溺水 60（非飞行 band [prevR,waveR+1)）+ age1 shake 6
+    key: 'power-tsunami', baseSeed: BASE + 30, seed: 0x0A0E0A, seasons: false, yearF: 2.5, tickCount: 9000, steps: 6, minDraws: 10,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 76; y < 85; y++) for (let x = 124; x < 133; x++) a.push([x, y, T.GRASS]); return a; })().concat([[124, 76, T.MOUNTAIN], [125, 76, T.HILL], [132, 76, T.WATER], [133, 76, T.DEEP], [124, 84, T.LAVA], [125, 84, T.ICE], [132, 84, T.FOREST]])],
+        building: [[130, 80, 1]],   // d=2.0——波前环带内（age2 band [2,3) 淹+毁；中心眼区 d<1 永不淹——蓝本环形语义钉）
+        units: [{ race: 'SHEEP', x: 131.5, y: 80.5 }, { race: 'ANGEL', x: 132.5, y: 80.5 }],
+        fx: [{ kind: 'tsunami', x: 128.5, y: 80.5, ttl: 8, r: 8 }] },
+    ],
+    sanity: (eng) => eng.flood.size > 0 && eng.terrain[idx(125, 76)] === T.HILL && eng.terrain[idx(131, 80)] === T.WATER,
+  },
+  {
+    // S11 sinkhole（M-U10b）：环状塌陷 0.5+t*r（hypot 域）——幸存面四亲（MOUNTAIN/WATER/DEEP/LAVA——HILL 不豁免！）
+    //   无 flood 挂账（L10132-10135 无 flood.set——sinkhole 永久性水面语义钉）+ 溺坠 55 + age%2 shake 4
+    key: 'power-sinkhole', baseSeed: BASE + 31, seed: 0x0A0E0B, seasons: false, yearF: 2.5, tickCount: 10000, steps: 8, minDraws: 2,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 76; y < 85; y++) for (let x = 124; x < 133; x++) a.push([x, y, T.GRASS]); return a; })().concat([[124, 76, T.MOUNTAIN], [125, 76, T.HILL], [132, 76, T.WATER], [133, 76, T.DEEP], [124, 84, T.LAVA]])],
+        building: [[129, 80, 1]],   // d=1.0——band age1 [0.5,1.167) 内（age1 淹+毁→smoke 2 掷；蓝本 L10129 门 d>=prevR 含下界）
+        units: [{ race: 'SHEEP', x: 131.5, y: 80.5 }, { race: 'ANGEL', x: 132.5, y: 80.5 }],
+        fx: [{ kind: 'sinkhole', x: 128.5, y: 80.5, ttl: 12, r: 8 }] },
+    ],
+    sanity: (eng) => eng.flood.size === 0 && eng.terrain[idx(125, 76)] === T.WATER && eng.terrain[idx(124, 76)] === T.MOUNTAIN,
+  },
+  {
+    // S12 iceage（M-U10b）：静态极寒穹顶——恒真门 <1.6（掷位保持 3 掷/tick）+ 四支（GRASS·BURNT·SAND 无掷→SNOW/
+    //   FOREST 0.5/WATER 0.55→ICE/DEEP 0.08→ICE）+ 寒霜灭火 + coldBorn 豁免 chill16
+    key: 'power-iceage', baseSeed: BASE + 32, seed: 0x0A0E0C, seasons: false, yearF: 2.5, tickCount: 11000, steps: 5, minDraws: 15,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 76; y < 85; y++) for (let x = 124; x < 133; x++) a.push([x, y, T.GRASS]); return a; })().concat([[130, 78, T.BURNT], [131, 78, T.SAND], [132, 78, T.FOREST], [131, 82, T.WATER], [132, 82, T.DEEP]])],
+        fire: [[128, 80, 100], [129, 80, 60]],
+        units: [{ race: 'PENGUIN', x: 128.5, y: 80.5 }, { race: 'SHEEP', x: 130.5, y: 80.5 }],
+        fx: [{ kind: 'iceage', x: 128.5, y: 80.5, ttl: 20, r: 6 }] },
+    ],
+    sanity: (eng) => eng.units.some((u) => u.race === R.PENGUIN && !u.chill) && eng.units.some((u) => u.race !== R.PENGUIN && u.chill === 16),
+  },
+  {
+    // S13 blackhole（M-U10b）：零掷引力域——pullR = r*min(1, age/50+0.25) 增幅、d<0.3 免疫、d<1.2 重创 1.5、
+    //   无飞行门（ANGEL 同拉——tsunami/sinkhole 对照面）+ 末期奇点（age>=ttl-1：<3.5 湮灭/<3 环 BURNT+建筑毁/
+    //   WATER·DEEP 豁免 + fx explosion {r:3} 2 掷 + shake 9）
+    key: 'power-blackhole', baseSeed: BASE + 33, seed: 0x0A0E0D, seasons: false, yearF: 2.5, tickCount: 12000, steps: 8, minDraws: 2,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 56; y < 65; y++) for (let x = 96; x < 105; x++) a.push([x, y, T.GRASS]); return a; })().concat([[101, 60, T.WATER], [102, 61, T.DEEP]])],
+        building: [[100, 60, 1], [104, 60, 1]],
+        units: [{ race: 'SHEEP', x: 100.7, y: 60.5, hp: 30 }, { race: 'SHEEP', x: 101.5, y: 60.5, hp: 30 }, { race: 'SHEEP', x: 103.5, y: 60.5, hp: 30 }, { race: 'SHEEP', x: 108.5, y: 60.5, hp: 30 }, { race: 'ANGEL', x: 102.5, y: 60.5 }],
+        fx: [{ kind: 'blackhole', x: 100.5, y: 60.5, ttl: 6, r: 6 }] },
+    ],
+    sanity: (eng) => eng.effects.some((e) => e.kind === 'explosion') && eng.terrain[idx(100, 60)] === T.BURNT && eng.terrain[idx(101, 60)] === T.WATER && eng.terrain[idx(102, 61)] === T.DEEP,
+  },
+  {
+    // S14 quake（M-U10b）：shake=7 直写（非 max——覆写语义钉）+ 0.35 门（1 掷）→ ang/rr 2 掷 → 建筑毁
+    //   / (GRASS||FOREST) 0.3→BURNT
+    key: 'power-quake', baseSeed: BASE + 34, seed: 0x0A0E0E, seasons: false, yearF: 2.5, tickCount: 13000, steps: 6, minDraws: 6,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 56; y < 65; y++) for (let x = 136; x < 145; x++) a.push([x, y, T.GRASS]); return a; })().concat([[142, 60, T.FOREST]])],
+        building: [[140, 60, 1]],
+        units: [{ race: 'SHEEP', x: 140.5, y: 60.5 }],
+        fx: [{ kind: 'quake', x: 140.5, y: 60.5, ttl: 10, r: 6 }] },
+    ],
+    sanity: (eng) => true,
+  },
 ];
 
 const scenarios = specs.map(buildScenario);
@@ -363,7 +434,7 @@ const out = {
     protocol: 'GameEngine 构造 + 手术式夹具两相直写 + effects/spawnUnit 真调用注入（fx seed/dir 双掷注入相）+ rngA 尾置清零起流 + tickCount++/effectsTick 直调步进快照（主循环 L2508/L2528 序同构）',
     rng: 'eng.rngA 单流（类字段箭头 rng L728-733）；mulberry 纯数学反解 total（noise.ts L3-13）',
     math: 'tornado/sandstorm/famine Math.hypot——C# FdHypot/V8Hypot 位精确件对账（fdlibm 域）；acid/blizzard/locust/drought/rainstorm 纯平方距离',
-    domains: ['effectsTick L9801-10447', 'tornado L9805-9824', 'acid L9826-9850', 'blizzard L9915-9948', 'locust L9949-9971', 'drought L9972-9996', 'rainstorm L9997-10022', 'sandstorm L10068-10090', 'famine L10170-10190', '到期 splice L10439-10441', 'activeBattles %5 清理 L10443-10447', 'fx L9781-9799', 'attackBuilding L4446-4462', 'meltIce L2892（drought 消费）', 'setTerrain L969-1007（regrow L979 出账联动）'],
+    domains: ['effectsTick L9801-10447', 'tornado L9805-9824', 'acid L9826-9850', 'blizzard L9915-9948', 'locust L9949-9971', 'drought L9972-9996', 'rainstorm L9997-10022', 'sandstorm L10068-10090', 'famine L10170-10190', 'M-U10b: tsunami L9877-9914', 'M-U10b: sinkhole L10120-10147', 'M-U10b: iceage L10148-10169', 'M-U10b: blackhole L10191-10223', 'M-U10b: quake L10224-10236', '到期 splice L10439-10441', 'activeBattles %5 清理 L10443-10447', 'fx L9781-9799', 'attackBuilding L4446-4462', 'meltIce L2892（drought 消费）', 'setTerrain L969-1007（regrow L979 出账联动 + flood L983 贴花级联）'],
     scenarioCount: scenarios.length,
   },
   scenarios,

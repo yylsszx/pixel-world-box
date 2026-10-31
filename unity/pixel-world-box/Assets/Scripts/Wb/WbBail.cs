@@ -2140,6 +2140,50 @@ namespace PixelWorldBox.Wb
                         }
                     }
                 }
+                else if (e.kind == "tsunami")                                                                            // L9877-9914（M-U10b 波前族：环形扩张没顶 + 溺水 + 震屏）
+                {
+                    double t = e.age / e.ttl;                                                                            // L9879（WbFx age/ttl 双 double——无整除陷阱）
+                    double waveR = 1 + t * e.r;                                                                          // L9880
+                    double prevR = 1 + ((e.age - 1) / e.ttl) * e.r;                                                      // L9881
+                    double prevR2 = prevR * prevR;                                                                       // L9883 波前判定平方半径（两处循环共用；纯阈值比较走平方距离免三角函数）
+                    double waveR2 = waveR * waveR;                                                                       // L9884
+                    double waveRu2 = (waveR + 1) * (waveR + 1);                                                          // L9885
+                    for (int yy = (int)System.Math.Floor(e.y - waveR); yy <= e.y + waveR; yy++)                          // L9886（int<=double 隐转同 JS 数值比较）
+                    {
+                        for (int xx = (int)System.Math.Floor(e.x - waveR); xx <= e.x + waveR; xx++)                      // L9887
+                        {
+                            if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                        // L9888
+                            double ddx = xx + 0.5 - e.x;                                                                 // L9889
+                            double ddy = yy + 0.5 - e.y;                                                                 // L9890
+                            double d2 = ddx * ddx + ddy * ddy;                                                           // L9891
+                            if (d2 >= prevR2 && d2 < waveR2)                                                             // L9892（波前环带 [prevR,waveR) 含下界）
+                            {
+                                int j = yy * WbWorld.W + xx;                                                             // L9893 idx
+                                byte tt = w.terrain[j];                                                                  // L9894
+                                // 山脉/丘陵/岩浆/冰面幸存；低地化为汪洋（洪水会退潮 — 湿沙→沙滩）
+                                if (tt != WbConstants.T_MOUNTAIN && tt != WbConstants.T_HILL && tt != WbConstants.T_WATER && tt != WbConstants.T_DEEP && tt != WbConstants.T_LAVA && tt != WbConstants.T_ICE)   // L9896 幸存面六亲
+                                {
+                                    SetTerrain(w, j, WbConstants.T_WATER);                                               // L9897（级联含水吞三联 L994-1004——建筑先毁 smoke 2 掷先于下行 flood 掷！黄金实证掷序）
+                                    w.flood[j] = w.tickCount + 240 + (long)System.Math.Floor(w.Rng() * 120);             // L9898 逐瓦片掷 6~9 年后退潮
+                                    if (w.building[j] > 0) WbCivSim.DestroyBuilding(w, j);                               // L9899（级联后死支——建筑已被水吞三联清零；机械保持不化简）
+                                }
+                            }
+                        }
+                    }
+                    // 波前生物：溺水（非飞行/航海者）
+                    foreach (WbU u in w.units)                                                                           // L9905
+                    {
+                        if (u.dead != 0 || u.boat != 0) continue;                                                        // L9906
+                        double udx = u.x - e.x;                                                                          // L9907
+                        double udy = u.y - e.y;                                                                          // L9908
+                        double ud2 = udx * udx + udy * udy;                                                              // L9909
+                        if (ud2 >= prevR2 && ud2 < waveRu2 && !DefOf(u.race).flying)                                     // L9910（单位带宽 [prevR,waveR+1)）
+                        {
+                            u.hp -= 60; u.hurt = 24; if (u.hp <= 0) u.dead = 1;                                          // L9911
+                        }
+                    }
+                    if (e.age == 1) w.shake = System.Math.Max(w.shake, 6);                                               // L9914
+                }
                 else if (e.kind == "blizzard")                                                                           // L9915
                 {
                     e.dir += (w.Rng() - 0.5) * 0.3;                                                                      // L9916
@@ -2292,6 +2336,68 @@ namespace PixelWorldBox.Wb
                         }
                     }
                 }
+                else if (e.kind == "sinkhole")                                                                           // L10120-10147（M-U10b 波前族：环状渐进塌陷——hypot 域）
+                {
+                    double t = e.age / e.ttl;                                                                            // L10122
+                    double waveR = 0.5 + t * e.r;                                                                        // L10123
+                    double prevR = 0.5 + ((e.age - 1) / e.ttl) * e.r;                                                    // L10124
+                    for (int yy = (int)System.Math.Floor(e.y - waveR); yy <= e.y + waveR; yy++)                          // L10125
+                    {
+                        for (int xx = (int)System.Math.Floor(e.x - waveR); xx <= e.x + waveR; xx++)                      // L10126
+                        {
+                            if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                        // L10127
+                            double d = WbMath.FdHypot(xx + 0.5 - e.x, yy + 0.5 - e.y);                                   // L10128（Math.hypot fdlibm 位精确域）
+                            if (d >= prevR && d < waveR)                                                                 // L10129
+                            {
+                                int j = yy * WbWorld.W + xx;                                                             // L10130
+                                byte tt = w.terrain[j];                                                                  // L10131
+                                if (tt != WbConstants.T_MOUNTAIN && tt != WbConstants.T_WATER && tt != WbConstants.T_DEEP && tt != WbConstants.T_LAVA)   // L10132 幸存面四亲（HILL 不豁免——tsunami 对照面）
+                                {
+                                    SetTerrain(w, j, WbConstants.T_WATER);                                               // L10133（级联水吞毁建筑——smoke 掷序同 tsunami）
+                                    if (w.building[j] > 0) WbCivSim.DestroyBuilding(w, j);                               // L10134（级联后死支——机械保持；蓝本无 flood.set——sinkhole 永久性水面语义钉）
+                                }
+                            }
+                        }
+                    }
+                    if (e.age % 2 == 0) w.shake = System.Math.Max(w.shake, 4);                                           // L10139
+                    // 塌陷波前生物：坠落重伤
+                    foreach (WbU u in w.units)                                                                           // L10141
+                    {
+                        if (u.dead != 0 || u.boat != 0) continue;                                                        // L10142
+                        double d = WbMath.FdHypot(u.x - e.x, u.y - e.y);                                                 // L10143（Math.hypot fdlibm 位精确域）
+                        if (d >= prevR && d < waveR + 0.5 && !DefOf(u.race).flying)                                      // L10144
+                        {
+                            u.hp -= 55; u.hurt = 24; if (u.hp <= 0) u.dead = 1;                                          // L10145
+                        }
+                    }
+                }
+                else if (e.kind == "iceage")                                                                             // L10148-10169（M-U10b 静态族：恒真门掷位保持 + 四支冻结 + 寒霜灭火）
+                {
+                    if (w.Rng() < 1.6)                                                                                   // L10150（恒真门——掷位保持）
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                       // L10151
+                        double rr = w.Rng() * e.r;                                                                       // L10152
+                        int j = (int)System.Math.Floor(e.y + System.Math.Sin(ang) * rr) * WbWorld.W + (int)System.Math.Floor(e.x + System.Math.Cos(ang) * rr);   // L10153
+                        if (j >= 0 && j < WbWorld.W * WbWorld.H)                                                         // L10154
+                        {
+                            byte t2 = w.terrain[j];                                                                      // L10155
+                            if (t2 == WbConstants.T_GRASS || t2 == WbConstants.T_BURNT || t2 == WbConstants.T_SAND) SetTerrain(w, j, WbConstants.T_SNOW);   // L10156（三亲无掷）
+                            else if (t2 == WbConstants.T_FOREST && w.Rng() < 0.5) SetTerrain(w, j, WbConstants.T_SNOW);  // L10157
+                            else if (t2 == WbConstants.T_WATER && w.Rng() < 0.55) SetTerrain(w, j, WbConstants.T_ICE);   // L10158
+                            else if (t2 == WbConstants.T_DEEP && w.Rng() < 0.08) SetTerrain(w, j, WbConstants.T_ICE);    // L10159
+                            if (w.fire[j] > 0) { w.fire[j] = 0; w.fireSet.Remove(j); w.fireSetList.Remove(j); }          // L10160（fireSetList 插入序镜像同步——M-U9b）
+                        }
+                    }
+                    foreach (WbU u in w.units)                                                                           // L10163
+                    {
+                        if (u.dead != 0) continue;                                                                       // L10164
+                        if (WbMath.FdHypot(u.x - e.x, u.y - e.y) < e.r)                                                  // L10165（Math.hypot fdlibm 位精确域）
+                        {
+                            bool coldBorn = u.race == WbConstants.R_PENGUIN || u.race == WbConstants.R_SNOWWOLF || u.race == WbConstants.R_WHITEWALKER;   // L10166
+                            if (!coldBorn) { u.hp -= 0.26; u.hurt = 8; u.chill = 16; if (u.hp <= 0) u.dead = 1; }        // L10167
+                        }
+                    }
+                }
                 else if (e.kind == "famine")                                                                             // L10170
                 {
                     e.dir += (w.Rng() - 0.5) * 0.22;                                                                     // L10171
@@ -2318,8 +2424,66 @@ namespace PixelWorldBox.Wb
                         }
                     }
                 }
-                // 未译 kind 落空（volcano/tsunami/wrath/holystorm/typhoon/sinkhole/iceage/blackhole/quake/
-                // meteor/fireball/arrow·bullet/…war 面 L9851-10438——后续切片插入；夹具仅八 kind）
+                else if (e.kind == "blackhole")                                                                          // L10191-10223（M-U10b 静态族：零掷引力域 + 末期奇点爆发）
+                {
+                    double pullR = e.r * System.Math.Min(1, e.age / 50 + 0.25);                                          // L10193（WbFx age double——除法浮点）
+                    foreach (WbU u in w.units)                                                                           // L10194
+                    {
+                        if (u.dead != 0) continue;                                                                       // L10195
+                        double d = WbMath.FdHypot(u.x - e.x, u.y - e.y);                                                 // L10196（Math.hypot fdlibm 位精确域）
+                        if (d < pullR && d > 0.3)                                                                        // L10197（d<0.3 免疫——奇点仍湮灭的对照面）
+                        {
+                            double pull = System.Math.Min(1.1, 0.35 + (pullR - d) * 0.12);                               // L10198
+                            u.x += ((e.x - u.x) / d) * pull;                                                             // L10199（无飞行门无边界夹——蓝本机械）
+                            u.y += ((e.y - u.y) / d) * pull;                                                             // L10200
+                            u.hurt = 10;                                                                                 // L10201
+                            if (d < 1.2) { u.hp -= 1.5; if (u.hp <= 0) u.dead = 1; }                                     // L10202
+                        }
+                    }
+                    if (e.age >= e.ttl - 1)                                                                              // L10205 末期奇点
+                    {
+                        // 奇点爆发：内圈湮灭 + 焦土坑
+                        foreach (WbU u in w.units)                                                                       // L10207
+                        {
+                            if (u.dead == 0 && WbMath.FdHypot(u.x - e.x, u.y - e.y) < 3.5) u.dead = 1;                   // L10208（Math.hypot fdlibm 位精确域）
+                        }
+                        for (int yy = (int)System.Math.Floor(e.y - 3); yy <= e.y + 3; yy++)                              // L10210
+                        {
+                            for (int xx = (int)System.Math.Floor(e.x - 3); xx <= e.x + 3; xx++)                          // L10211
+                            {
+                                if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                    // L10212
+                                int j = yy * WbWorld.W + xx;                                                             // L10213
+                                if (WbMath.FdHypot(xx + 0.5 - e.x, yy + 0.5 - e.y) < 3)                                  // L10214（Math.hypot fdlibm 位精确域）
+                                {
+                                    if (w.building[j] > 0) WbCivSim.DestroyBuilding(w, j);                               // L10215
+                                    if (w.terrain[j] != WbConstants.T_WATER && w.terrain[j] != WbConstants.T_DEEP) SetTerrain(w, j, WbConstants.T_BURNT);   // L10216（WATER·DEEP 豁免）
+                                }
+                            }
+                        }
+                        FxOptHook(w, "explosion", e.x, e.y, 26, null, null, null, 3, null);                              // L10220（opts {r:3}——M-U7s o 面清偿；2 掷注入相流）
+                        w.shake = System.Math.Max(w.shake, 9);                                                           // L10221
+                        // onSound?.('boom') —— 宿主回调（黄金受控 undefined → no-op 同 gen 端）
+                    }
+                }
+                else if (e.kind == "quake")                                                                              // L10224-10236（M-U10b 静态族：shake=7 直写非 max——覆写语义）
+                {
+                    w.shake = 7;                                                                                         // L10225（直写覆写——非 Max 蓝本机械）
+                    if (w.Rng() < 0.35)                                                                                  // L10226
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                       // L10227
+                        double rr = w.Rng() * e.r;                                                                       // L10228
+                        int xx = (int)System.Math.Floor(e.x + System.Math.Cos(ang) * rr);                                // L10229
+                        int yy = (int)System.Math.Floor(e.y + System.Math.Sin(ang) * rr);                                // L10230
+                        if (xx >= 0 && yy >= 0 && xx < WbWorld.W && yy < WbWorld.H)                                      // L10231（先界检后 idx——iceage 异形注记）
+                        {
+                            int j = yy * WbWorld.W + xx;                                                                 // L10232
+                            if (w.building[j] > 0) WbCivSim.DestroyBuilding(w, j);                                       // L10233
+                            else if ((w.terrain[j] == WbConstants.T_GRASS || w.terrain[j] == WbConstants.T_FOREST) && w.Rng() < 0.3) SetTerrain(w, j, WbConstants.T_BURNT);   // L10234
+                        }
+                    }
+                }
+                // 未译 kind 落空（volcano/wrath/holystorm/typhoon/
+                // meteor/fireball/arrow·bullet/…war 面 L9851-10438——后续切片插入；夹具仅十三 kind）
                 if (e.age >= e.ttl)                                                                                      // L10439
                 {
                     w.effects.RemoveAt(i);                                                                               // L10440（倒序 splice 同构）

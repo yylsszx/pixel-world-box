@@ -1749,7 +1749,7 @@ var fireVerifyFail = 0;
 }
 
 
-// 段 33：M-U10a effectsTick 游荡云族八种（power-transcript 镜像 9 场景逐位 + gen det 复跑〔bun〕+ 双写 md5 + 台账）
+// 段 33：M-U10a 云族八种 + M-U10b 波前/静态五 kind（power-transcript 镜像 14 场景逐位 + gen det 复跑〔bun〕+ 双写 md5 + 台账）
 var powerVerifyFail = 0;
 {
   const { execFileSync } = await import('node:child_process');
@@ -1758,7 +1758,7 @@ var powerVerifyFail = 0;
   try {
     // M-U7w 口径：黄金链一律 bun（tornado/sandstorm/famine Math.hypot fdlibm——C# FdHypot/V8Hypot 位精确件对账面在 NUnit 侧）
     execFileSync('bun', [new URL('./power-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
-    console.log('power 黄金回放 (power-transcript 镜像 vs power.json): PASS (9 场景 快照逐位 + fx/units/bHp/battles/dirty 序 + regrow L979 出账联动 + 逐步 rngA)');
+    console.log('power 黄金回放 (power-transcript 镜像 vs power.json): PASS (14 场景 快照逐位 + fx/units/bHp/battles/flood/shake 序 + regrow L979 出账联动 + 逐步 rngA)');
   } catch (e) {
     powerVerifyFail++;
     console.error('power 黄金回放: FAIL');
@@ -1771,7 +1771,7 @@ var powerVerifyFail = 0;
     execFileSync('bun', [new URL('./gen-power.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
     const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
     if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
-    console.log('power gen det 复跑 (gen-power · bun): PASS (9 场景 sanity + GameEngine 真实现 + det 字节级)');
+    console.log('power gen det 复跑 (gen-power · bun): PASS (14 场景 sanity + GameEngine 真实现 + det 字节级)');
   } catch (e) {
     powerVerifyFail++;
     console.error('power gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -1780,9 +1780,9 @@ var powerVerifyFail = 0;
     const g = JSON.parse(readFileSync(new URL('./golden/power.json', import.meta.url), 'utf8'));
     const fails = [];
     const fail = (m) => fails.push(m);
-    if (!Array.isArray(g.scenarios) || g.scenarios.length !== 9) fail('场景数 ≠ 9');
+    if (!Array.isArray(g.scenarios) || g.scenarios.length !== 14) fail('场景数 ≠ 14');
     const keys = g.scenarios.map((s) => s.key);
-    for (const want of ['power-tornado', 'power-acid', 'power-blizzard', 'power-locust', 'power-drought', 'power-rainstorm', 'power-sandstorm', 'power-famine', 'power-expiry'])
+    for (const want of ['power-tornado', 'power-acid', 'power-blizzard', 'power-locust', 'power-drought', 'power-rainstorm', 'power-sandstorm', 'power-famine', 'power-expiry', 'power-tsunami', 'power-sinkhole', 'power-iceage', 'power-blackhole', 'power-quake'])
       if (!keys.includes(want)) fail(`场景 ${want} 缺失`);
     for (const s of g.scenarios) {
       if (!s.fixture || !Array.isArray(s.fixture.fx0) || !s.fixture.waterTier0) fail(s.key + ' fixture 缺失');
@@ -1796,13 +1796,27 @@ var powerVerifyFail = 0;
     const ex = g.scenarios.find((s) => s.key === 'power-expiry');
     if (!ex || ex.fx.length !== 1 || ex.fx[0].kind !== 'blizzard') fail('power-expiry 到期 splice 签名缺失（终态仅 blizzard ttl12）');
     if (!ex || ex.battles.length !== 1 || !ex.battles.some(([t, exp]) => t === 12851 && exp === 200)) fail('power-expiry activeBattles 过期清理签名缺失（exp103 删/exp200 留）');
+    // M-U10b 五 kind 签名面
+    const ts = g.scenarios.find((s) => s.key === 'power-tsunami');
+    if (!ts || ts.flood.length < 10) fail('power-tsunami flood 挂账签名缺失（L9898 逐瓦片掷）');
+    if (!ts || !ts.fixture || ts.fixture.flood0.length !== 0) fail('power-tsunami flood0 初始空签名缺失');
+    if (!ts || !ts.fx.some((e) => e.kind === 'smoke')) fail('power-tsunami 级联水吞 smoke 签名缺失（掷序黄金实证）');
+    const sh = g.scenarios.find((s) => s.key === 'power-sinkhole');
+    if (!sh || sh.flood.length !== 0) fail('power-sinkhole 无 flood 挂账签名缺失（永久性水面钉）');
+    const ia = g.scenarios.find((s) => s.key === 'power-iceage');
+    if (!ia || !ia.units.some((u) => u.chill === 16)) fail('power-iceage chill16 签名缺失');
+    const bh = g.scenarios.find((s) => s.key === 'power-blackhole');
+    if (!bh || !bh.fx.some((e) => e.kind === 'explosion')) fail('power-blackhole 奇点 explosion fx 签名缺失（L10220 {r:3}）');
+    if (!bh || bh.shake !== 9) fail('power-blackhole shake=9 签名缺失');
+    const qk = g.scenarios.find((s) => s.key === 'power-quake');
+    if (!qk || !qk.stepsSnap.some((st) => st.shake === 7)) fail('power-quake shake=7 直写签名缺失（L10225）');
     const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/power.json', import.meta.url));
     const gl = readFileSync(new URL('./golden/power.json', import.meta.url));
     const md5a = createHash('md5').update(sa).digest('hex');
     const md5b = createHash('md5').update(gl).digest('hex');
     if (md5a !== md5b) fail(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
     if (fails.length > 0) throw new Error(fails.join(' | '));
-    console.log(`power 台账完备 (9 场景 + smoke/water fx/到期 splice/battles 清理签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+    console.log(`power 台账完备 (14 场景 + smoke/water fx/到期 splice/battles 清理 + M-U10b flood/sinkhole 无账/chill16/explosion/shake 签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
   } catch (e) {
     powerVerifyFail++;
     console.error('power 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));

@@ -1,17 +1,18 @@
 // ============================================================
 // WbPowerTests.cs — M-U10a effectsTick 游荡云族八种黄金对账 + 语义面（NUnit）
-// 黄金数据: Assets/StreamingAssets/WbGolden/power.json（9 场景）
+// 黄金数据: Assets/StreamingAssets/WbGolden/power.json（14 场景——M-U10b 增波前族/静态族五 kind）
 //   由 scripts/unity-migration/gen-power.mjs 生成（真引擎 GameEngine 构造 + 手术式夹具
 //   两相直写 + effects/spawnUnit 真调用注入〔fx seed/dir 双掷注入相〕+ rngA 尾置清零起流
 //   + tickCount++/effectsTick 直调步进快照〔主循环 L2508/L2528 序同构〕；det 双跑字节级）。
-// 镜像: power-transcript.mjs 零引擎导入 9/9 ALL PASS（bun 口径——hypot fdlibm 原生）。
-// 验证链（纪律④）: 黄金向量(真引擎) → 零引擎镜像 9/9 → 本文件 NUnit C# 全链重放
+// 镜像: power-transcript.mjs 零引擎导入 14/14 ALL PASS（bun 口径——hypot fdlibm 原生）。
+// 验证链（纪律④）: 黄金向量(真引擎) → 零引擎镜像 14/14 → 本文件 NUnit C# 全链重放
 //   （FdHypot 位精确件 + effects List 倒序 RemoveAt 同构 + activeBattles 快照二段式）逐位对账。
 // 对账面: 逐步 rngA + terrain md5 + fx 全列（kind/age/x/y/dir 位级）+ units 全列（hp/hurt/
 //   chill/dead/x/y 位级）+ fireSet 序 + regrow 序（L979 出账联动）+ radSet 序 + radiate md5 +
 //   bHp 全列 + battles 序（%5 清理）+ dirty 序（markDirty 五格面 + refreshWaterTierAround
 //   L1066 水深标脏——M-U8a 渲染簿记 no-op 注记消亡面）+ fxCount/eventsCount/buildingsCount。
-// 蓝本行号: effectsTick L9801-10447 八支 + 到期 splice L10439-10441 + activeBattles L10443-10447。
+// 蓝本行号: effectsTick L9801-10447 八支 + M-U10b 五支（tsunami L9877/sinkhole L10120/iceage L10148/blackhole L10191/quake L10224）
+//   + 到期 splice L10439-10441 + activeBattles L10443-10447。
 // Unity 侧执行: Window > General > Test Runner（EditMode）。
 // ============================================================
 using System;
@@ -88,6 +89,7 @@ namespace PixelWorldBox.Tests
                 w.bIdx[bo.Value<int>("i")] = w.buildings.Count - 1;
             }
             foreach (var t in (JArray)fx["battles0"]) w.activeBattles[t[0].Value<int>()] = t[1].Value<int>();
+            foreach (var t in (JArray)fx["flood0"]) w.flood[t[0].Value<int>()] = t[1].Value<long>();   // M-U10b 洪水挂账初始（手术清零后恒空——tsunami L9898 写面）
             // effects 注入重建（fx0 = gen 真调用 eng.fx() 后快照——seed/dir 掷已消耗在注入相）
             foreach (var e in (JArray)fx["fx0"])
             {
@@ -149,7 +151,7 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindPower()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(9));
+            Assert.That(scens.Count, Is.EqualTo(14));
             foreach (var scTok in scens)
             {
                 var sc = (JObject)scTok;
@@ -204,6 +206,11 @@ namespace PixelWorldBox.Tests
                     var gotB = new List<string>();
                     foreach (var kv in w.activeBattles) gotB.Add($"{kv.Key}:{kv.Value}");
                     Assert.That(gotB, Is.EqualTo(gB.Select(p => $"{p[0]}:{p[1]}").ToList()), $"battles 序 {key} S{k}");
+                    var gFlood = g["flood"].ToObject<List<List<object>>>();
+                    var gotFlood = new List<string>();
+                    foreach (var kv in w.flood) gotFlood.Add($"{kv.Key}:{kv.Value}");
+                    Assert.That(gotFlood, Is.EqualTo(gFlood.Select(p => $"{Convert.ToInt32(p[0])}:{Convert.ToInt64(p[1])}").ToList()), $"flood 序 {key} S{k}");
+                    Assert.That(w.shake, Is.EqualTo(g.Value<double>("shake")), $"shake {key} S{k}");
                     Assert.That(w.dirty.OrderBy(x => x).ToList(), Is.EqualTo(g["dirty"].ToObject<List<int>>()), $"dirty 序 {key} S{k}");
                     Assert.That(w.effects.Count, Is.EqualTo(g.Value<int>("fxCount")), $"fxCount2 {key} S{k}");
                     Assert.That(w.worldEvents.Count, Is.EqualTo(g.Value<int>("eventsCount")), $"eventsCount {key} S{k}");

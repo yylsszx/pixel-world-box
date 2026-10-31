@@ -1,18 +1,22 @@
 // ============================================================================
-// power-transcript.mjs —— M-U10a effectsTick 游荡云族八种零引擎导入镜像（power.json 对账面）
+// power-transcript.mjs —— M-U10a 游荡云族八种 + M-U10b 波前族/静态族五 kind 零引擎导入镜像（power.json 对账面）
 // 零 engine import：effectsTick L9801-10447 八支（tornado L9805-9824 / acid L9826-9850 /
 //   blizzard L9915-9948 / locust L9949-9971 / drought L9972-9996 / rainstorm L9997-10022 /
-//   sandstorm L10068-10090 / famine L10170-10190）+ 到期 splice L10439-10441 +
-//   activeBattles %5 清理 L10443-10447 + fx L9781-9799 + attackBuilding L4446-4462
+//   sandstorm L10068-10090 / famine L10170-10190）
+//   + M-U10b 五支（tsunami L9877-9914 / sinkhole L10120-10147 / iceage L10148-10169 /
+//   blackhole L10191-10223 / quake L10224-10236）
+//   + 到期 splice L10439-10441 + activeBattles %5 清理 L10443-10447 + fx L9781-9799 +
+//   attackBuilding L4446-4462
 //   （onBuildingDestroyed 天灾早退子集 L4464-4473）+ meltIce L2892-2895 + setTerrain
-//   贴花级联子集（L971/972/979/981-984/990-993 + onTerrainChanged L157/159-163——
+//   贴花级联子集（L971/972/976/979/981-984/983 flood/990-993 + onTerrainChanged L157/159-163——
 //   riverDir/owner/road/refreshWaterTier 夹具零值域结构性不触达，注记省略）+
 //   markDirty L959-967 + BUILDING_DEFS hp 表（types.ts L325-337 逐值硬编码）。
-// 数学面：Math.hypot 原生（bun fdlibm——与 gen 同 runtime 同位；C# 侧 FdHypot/V8Hypot
-//   位精确件对账——WbPowerTests 闭合）。
-// 未译 kind 注记：volcano/tsunami/wrath/holystorm/typhoon/sinkhole/iceage/blackhole/
-//   quake/meteor/fireball/arrow/bullet/…（L9851-10438）——夹具 effects 仅八 kind 注入，
-//   else-if 链落空语义=蓝本无匹配（C# 侧同构落空）；到期 splice 对全 kind 生效逐位。
+// 数学面：Math.hypot 原生（bun fdlibm——与 gen 同 runtime 同位；sinkhole/iceage/blackhole
+//   同消费面；C# 侧 FdHypot/V8Hypot 位精确件对账——WbPowerTests 闭合）。
+// 未译 kind 注记：volcano/wrath/holystorm/typhoon/meteor/fireball/arrow/bullet/…
+//   （L9851-10438）——else-if 链落空语义=蓝本无匹配（C# 侧同构落空）；到期 splice 对全 kind 生效逐位。
+// 震屏面：shake 字段镜像（tsunami age1=6/sinkhole %2=4/quake=7 直写/blackhole=9——
+//   onSound 宿主回调黄金受控 undefined no-op）。
 // 运行：bun scripts/unity-migration/power-transcript.mjs（M-U7w 口径：黄金链一律 bun）
 // ============================================================================
 import path from 'node:path';
@@ -69,6 +73,7 @@ class MirrorWorld {
     this.effects = fx.fx0.map((e) => ({ kind: e.kind, x: unhex(e.x), y: unhex(e.y), r: e.r, age: e.age, ttl: e.ttl, seed: e.seed, dir: unhex(e.dir) }));
     this.units = fx.units0.map((u) => ({ id: u.id, race: u.race, x: unhex(u.x), y: unhex(u.y), hp: unhex(u.hp), maxHp: unhex(u.maxHp), hurt: u.hurt, chill: u.chill, dead: u.dead, boat: 0 }));   // boat 夹具恒 0（无船域注记）
     this.worldEvents = [];
+    this.shake = 0;                         // 震屏（effectsTick 四 kind 写面——S 基线 0）
     this.yearF = sc.yearF;
     this.tickCount = sc.tickCount;
     this.seasons = sc.seasons;
@@ -82,6 +87,7 @@ class MirrorWorld {
   fx(kind, x, y, ttl, opts) {             // engine fx L9781-9799（2 掷：seed+dir；x0/y0/age/r 默认 + opts 覆盖——L9793-9797 spread 语义；cap 夹具不触达）
     const seed = Math.floor(this.rng() * 65536);
     const dir = this.rng() * Math.PI * 2;
+
     const e = { kind, x, y, x0: x, y0: y, r: 1, age: 0, ttl, seed, dir };
     if (opts) for (const k of Object.keys(opts)) e[k] = opts[k];
     this.effects.push(e);
@@ -109,7 +115,10 @@ class MirrorWorld {
     if (t !== T.SAND) this.wet.delete(i);            // L984
     if (this.fire[i] > 0) { this.fire[i] = 0; this.fireSet.delete(i); }   // L990-993
     if (t === T.BURNT && this.soilFv(i) > 8) this.soilFw(i, this.soilFv(i) - 8);   // L157 火烧地力（soilF 夹具零值域——零值门不触达）
-    // L159-163 水覆写清冰川（glacier 夹具零值域——门恒假注记省略）；L997-1001 owner/建筑面（owner 恒 -1）注记省略
+    // L159-163 水覆写清冰川（glacier 夹具零值域——门恒假注记省略）
+    // L994-997 owner 熄灭（owner 夹具域——数组非对账面 + markDirty 同值幂等；M-U10b 水吞面注记升级）
+    if ((t === T.WATER || t === T.DEEP || t === T.LAVA) && this.building[i] > 0) this.destroyBuilding(i);   // L998-1000 水吞建筑（smoke 2 掷——先于调用方 flood.set 掷序！tsunami 黄金实证）
+    // L1002-1004 road 溺断（road 夹具恒 0 域——结构性不触达注记）
     this.refreshWaterTierAround(i);       // L1007 水深场局部重算（tier 变化格 dirty.add L1066——M-U10a no-op 注记消亡）
   }
   landForDepth(t) {                       // engine L1011-1013 机械
@@ -254,6 +263,42 @@ class MirrorWorld {
             if (this.building[j] > 0 && this.rng() < 0.1) this.attackBuilding(j, 3, -1);
           }
         }
+      } else if (e.kind === 'tsunami') {   // L9877-9914（M-U10b 波前族）
+        const t = e.age / e.ttl;
+        const waveR = 1 + t * e.r;
+        const prevR = 1 + ((e.age - 1) / e.ttl) * e.r;
+        const prevR2 = prevR * prevR;      // 波前判定平方半径（两处循环共用——免三角函数）
+        const waveR2 = waveR * waveR;
+        const waveRu2 = (waveR + 1) * (waveR + 1);
+        for (let yy = Math.floor(e.y - waveR); yy <= e.y + waveR; yy++) {
+          for (let xx = Math.floor(e.x - waveR); xx <= e.x + waveR; xx++) {
+            if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+            const ddx = xx + 0.5 - e.x;
+            const ddy = yy + 0.5 - e.y;
+            const d2 = ddx * ddx + ddy * ddy;
+            if (d2 >= prevR2 && d2 < waveR2) {
+              const j = idx(xx, yy);
+              const tt = this.terrain[j];
+              // 山脉/丘陵/岩浆/冰面幸存；低地化为汪洋（洪水退潮——湿沙→沙滩）
+              if (tt !== T.MOUNTAIN && tt !== T.HILL && tt !== T.WATER && tt !== T.DEEP && tt !== T.LAVA && tt !== T.ICE) {
+                this.setTerrain(j, T.WATER);
+                this.flood.set(j, this.tickCount + 240 + Math.floor(this.rng() * 120)); // 逐瓦片掷 6~9 年后退潮（setTerrain 级联水吞毁建筑之后——L998 先于 L9898 的掷序黄金实证）
+                if (this.building[j] > 0) this.destroyBuilding(j);
+              }
+            }
+          }
+        }
+        // 波前生物：溺水（非飞行/航海者）
+        for (const u of this.units) {
+          if (u.dead || u.boat) continue;
+          const udx = u.x - e.x;
+          const udy = u.y - e.y;
+          const ud2 = udx * udx + udy * udy;
+          if (ud2 >= prevR2 && ud2 < waveRu2 && u.race !== R.ANGEL) {   // RACES[u.race].flying——夹具飞行种 = ANGEL
+            u.hp -= 60; u.hurt = 24; if (u.hp <= 0) u.dead = true;
+          }
+        }
+        if (e.age === 1) this.shake = Math.max(this.shake, 6);
       } else if (e.kind === 'blizzard') {  // L9915-9948
         e.dir += (this.rng() - 0.5) * 0.3;
         e.x = Math.max(2, Math.min(W - 3, e.x + Math.cos(e.dir) * 0.12));
@@ -376,6 +421,55 @@ class MirrorWorld {
             if (u.hp <= 0) u.dead = true;
           }
         }
+      } else if (e.kind === 'sinkhole') {  // L10120-10147（M-U10b 波前族——环状渐进塌陷）
+        const t = e.age / e.ttl;
+        const waveR = 0.5 + t * e.r;
+        const prevR = 0.5 + ((e.age - 1) / e.ttl) * e.r;
+        for (let yy = Math.floor(e.y - waveR); yy <= e.y + waveR; yy++) {
+          for (let xx = Math.floor(e.x - waveR); xx <= e.x + waveR; xx++) {
+            if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+            const d = Math.hypot(xx + 0.5 - e.x, yy + 0.5 - e.y);
+            if (d >= prevR && d < waveR) {
+              const j = idx(xx, yy);
+              const tt = this.terrain[j];
+              if (tt !== T.MOUNTAIN && tt !== T.WATER && tt !== T.DEEP && tt !== T.LAVA) {   // HILL 不豁免——tsunami 对照面
+                this.setTerrain(j, T.WATER);
+                if (this.building[j] > 0) this.destroyBuilding(j);
+                // 蓝本无 flood.set——sinkhole 永久性水面（语义钉）
+              }
+            }
+          }
+        }
+        if (e.age % 2 === 0) this.shake = Math.max(this.shake, 4);
+        // 塌陷波前生物：坠落重伤
+        for (const u of this.units) {
+          if (u.dead || u.boat) continue;
+          const d = Math.hypot(u.x - e.x, u.y - e.y);
+          if (d >= prevR && d < waveR + 0.5 && u.race !== R.ANGEL) {
+            u.hp -= 55; u.hurt = 24; if (u.hp <= 0) u.dead = true;
+          }
+        }
+      } else if (e.kind === 'iceage') {    // L10148-10169（M-U10b 静态族——恒真门掷位保持）
+        if (this.rng() < 1.6) {
+          const ang = this.rng() * Math.PI * 2;
+          const rr = this.rng() * e.r;
+          const j = idx(Math.floor(e.x + Math.cos(ang) * rr), Math.floor(e.y + Math.sin(ang) * rr));
+          if (j >= 0 && j < W * H) {
+            const t = this.terrain[j];
+            if (t === T.GRASS || t === T.BURNT || t === T.SAND) this.setTerrain(j, T.SNOW);
+            else if (t === T.FOREST && this.rng() < 0.5) this.setTerrain(j, T.SNOW);
+            else if (t === T.WATER && this.rng() < 0.55) this.setTerrain(j, T.ICE);
+            else if (t === T.DEEP && this.rng() < 0.08) this.setTerrain(j, T.ICE);
+            if (this.fire[j] > 0) { this.fire[j] = 0; this.fireSet.delete(j); }
+          }
+        }
+        for (const u of this.units) {
+          if (u.dead) continue;
+          if (Math.hypot(u.x - e.x, u.y - e.y) < e.r) {
+            const coldBorn = u.race === R.PENGUIN || u.race === R.SNOWWOLF || u.race === R.WHITEWALKER;
+            if (!coldBorn) { u.hp -= 0.26; u.hurt = 8; u.chill = 16; if (u.hp <= 0) u.dead = true; }
+          }
+        }
       } else if (e.kind === 'famine') {    // L10170-10190
         e.dir += (this.rng() - 0.5) * 0.22;
         e.x = Math.max(2, Math.min(W - 3, e.x + Math.cos(e.dir) * 0.12));
@@ -394,6 +488,51 @@ class MirrorWorld {
           if (j >= 0 && j < W * H) {
             if (this.building[j] === BUILD_FARM) this.attackBuilding(j, 4, -1);
             else if (this.terrain[j] === T.GRASS && this.rng() < 0.12) this.setTerrain(j, T.BURNT);
+          }
+        }
+      } else if (e.kind === 'blackhole') { // L10191-10223（M-U10b 静态族——零掷引力域）
+        const pullR = e.r * Math.min(1, e.age / 50 + 0.25);
+        for (const u of this.units) {
+          if (u.dead) continue;
+          const d = Math.hypot(u.x - e.x, u.y - e.y);
+          if (d < pullR && d > 0.3) {
+            const pull = Math.min(1.1, 0.35 + (pullR - d) * 0.12);
+            u.x += ((e.x - u.x) / d) * pull;
+            u.y += ((e.y - u.y) / d) * pull;
+            u.hurt = 10;
+            if (d < 1.2) { u.hp -= 1.5; if (u.hp <= 0) u.dead = true; }
+          }
+        }
+        if (e.age >= e.ttl - 1) {
+          // 奇点爆发：内圈湮灭 + 焦土坑
+          for (const u of this.units) {
+            if (!u.dead && Math.hypot(u.x - e.x, u.y - e.y) < 3.5) u.dead = true;
+          }
+          for (let yy = Math.floor(e.y - 3); yy <= e.y + 3; yy++) {
+            for (let xx = Math.floor(e.x - 3); xx <= e.x + 3; xx++) {
+              if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+              const j = idx(xx, yy);
+              if (Math.hypot(xx + 0.5 - e.x, yy + 0.5 - e.y) < 3) {
+                if (this.building[j] > 0) this.destroyBuilding(j);
+                if (this.terrain[j] !== T.WATER && this.terrain[j] !== T.DEEP) this.setTerrain(j, T.BURNT);
+              }
+            }
+          }
+          this.fx('explosion', e.x, e.y, 26, { r: 3 });
+          this.shake = Math.max(this.shake, 9);
+          // onSound?.('boom') —— 宿主回调（黄金受控 undefined no-op 同 gen 端）
+        }
+      } else if (e.kind === 'quake') {     // L10224-10236（M-U10b 静态族——shake=7 直写非 max）
+        this.shake = 7;
+        if (this.rng() < 0.35) {
+          const ang = this.rng() * Math.PI * 2;
+          const rr = this.rng() * e.r;
+          const xx = Math.floor(e.x + Math.cos(ang) * rr);
+          const yy = Math.floor(e.y + Math.sin(ang) * rr);
+          if (xx >= 0 && yy >= 0 && xx < W && yy < H) {
+            const j = idx(xx, yy);
+            if (this.building[j] > 0) this.destroyBuilding(j);
+            else if ((this.terrain[j] === T.GRASS || this.terrain[j] === T.FOREST) && this.rng() < 0.3) this.setTerrain(j, T.BURNT);
           }
         }
       }
@@ -437,6 +576,8 @@ for (const sc of gold.scenarios) {
     eq([...m.bHp.entries()].map(([k2, v]) => [k2, f64hex(v)]), g.bHp, `${sc.key} S${k} bHp 全列`);
     eq(m.buildings.length, g.buildingsCount, `${sc.key} S${k} buildingsCount`);
     eq([...m.activeBattles.entries()], g.battles, `${sc.key} S${k} battles 序`);
+    eq([...m.flood.entries()], g.flood, `${sc.key} S${k} flood 序`);
+    eq(m.shake, g.shake, `${sc.key} S${k} shake`);
     eq([...m.dirty].sort((a, b) => a - b), g.dirty, `${sc.key} S${k} dirty 序`);
     eq(m.effects.length, g.fxCount, `${sc.key} S${k} fxCount`);
     eq(m.worldEvents.length, g.eventsCount, `${sc.key} S${k} eventsCount`);
@@ -445,9 +586,11 @@ for (const sc of gold.scenarios) {
   eq(m.units.map((u) => ({ id: u.id, race: u.race, x: f64hex(u.x), y: f64hex(u.y), hp: f64hex(u.hp), maxHp: f64hex(u.maxHp), hurt: u.hurt, chill: u.chill, dead: u.dead })), sc.units, `${sc.key} units 终态全列`);
   eq([...m.regrow.entries()], sc.regrow, `${sc.key} regrow 终态`);
   eq([...m.radSet.entries()], sc.radSet, `${sc.key} radSet 终态`);
+  eq([...m.flood.entries()], sc.flood, `${sc.key} flood 终态`);
+  eq(m.shake, sc.shake, `${sc.key} shake 终态`);
   eq(md5hex(m.radiate), sc.radiateMd5 || md5hex(ungz(sc.radiate)), `${sc.key} radiate 终态`);
   eq(m.worldEvents, sc.events, `${sc.key} events 全列`);
   console.log(`${sc.key}: 逐位 PASS (steps=${sc.steps} draws=${sc.totalDraws} fx=${m.effects.length})`);
   pass++;
 }
-console.log(`power-transcript: ${pass}/${gold.scenarios.length} 场景 ALL PASS（零引擎导入镜像 · 掷值链闭合 · 八支逐位）`);
+console.log(`power-transcript: ${pass}/${gold.scenarios.length} 场景 ALL PASS（零引擎导入镜像 · 掷值链闭合 · 八支+五支逐位）`);
