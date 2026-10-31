@@ -1,7 +1,8 @@
 // ============================================================
 // WbPowerTests.cs — M-U10a effectsTick 游荡云族八种黄金对账 + 语义面（NUnit）
-// 黄金数据: Assets/StreamingAssets/WbGolden/power.json（24 场景——M-U10b 增波前族/静态族五 kind，
-//   M-U10c 增命中族三 kind + explode 消费面）
+// 黄金数据: Assets/StreamingAssets/WbGolden/power.json（26 场景——M-U10b 增波前族/静态族五 kind，
+//   M-U10c 增命中族三 kind + explode 消费面，M-U10d 增 shell/missile/核弹，M-U10e 增 war 面
+//   airstrike/drone/mech，M-U10f 增 laser 光束线杀伤两场景）
 //   由 scripts/unity-migration/gen-power.mjs 生成（真引擎 GameEngine 构造 + 手术式夹具
 //   两相直写 + effects/spawnUnit 真调用注入〔fx seed/dir 双掷注入相〕+ rebuildBuckets 注入相尾
 //   + rngA 尾置清零起流 + tickCount++/effectsTick 直调步进快照〔主循环 L2508/L2528 序同构〕；
@@ -17,7 +18,8 @@
 //   回放同值）+ building0 civ + orphanB0 孤儿建筑格 + rel0 外交挂账（atWar <-20 门）。
 // 蓝本行号: effectsTick L9801-10447 八支 + M-U10b 五支（tsunami L9877/sinkhole L10120/iceage L10148/blackhole L10191/quake L10224）
 //   + M-U10c 三支（meteor L10237/fireball L10240/arrow·bullet L10255）+ explode L10450-10499
-//   + ignite L1072-1077 + 到期 splice L10439-10441 + activeBattles L10443-10447。
+//   + M-U10d shell L10295/missile L10302 + M-U10e airstrike L10311/drone L10353/mech L10394
+//   + M-U10f laser L10323-10353 + ignite L1072-1077 + 到期 splice L10439-10441 + activeBattles L10443-10447。
 // Unity 侧执行: Window > General > Test Runner（EditMode）。
 // ============================================================
 using System;
@@ -180,7 +182,7 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindPower()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(24));
+            Assert.That(scens.Count, Is.EqualTo(26));
             var gear0 = WbBailRelay.GearBonusHook;                       // M-U10c：接缝置换 try/finally（Test30 桩先例——黄金回放 armor 采样桩）
             try
             {

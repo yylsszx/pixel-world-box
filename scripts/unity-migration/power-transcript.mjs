@@ -778,6 +778,35 @@ class MirrorWorld {
           this.shellBurst(e.x, e.y, e.r || 1.8, e.dmg ?? 30, true, e.src ?? -1);
           // onSound?.('boom') —— 宿主回调 no-op 同 gen 端
         }
+      } else if (e.kind === 'laser' && e.age >= e.ttl) {   // L10323-10353（M-U10f：激光命中光束线杀伤——点-线段距离<0.75 + 焦点末段全伤 + dmgNumbers 门 text 携带）
+        const lsx = e.x0 ?? e.x;
+        const lsy = e.y0 ?? e.y;
+        const ldx = e.x - lsx;
+        const ldy = e.y - lsy;
+        const llen = Math.hypot(ldx, ldy) || 1;            // 0 假语义回退 1（除零护栏——退化面 S26 钉）
+        const lux = ldx / llen;
+        const luy = ldy / llen;
+        const ldmg = e.dmg ?? 30;
+        this.killCredit = e.wid ?? null;
+        for (const u of this.units) {
+          if (u.dead) continue;
+          if (e.src !== undefined && u.civ === e.src) continue;
+          const px = u.x - lsx;
+          const py = u.y - lsy;
+          const t = Math.max(0, Math.min(llen, px * lux + py * luy));   // 投影钳 [0,llen]——乘加序同构
+          const d = Math.hypot(px - lux * t, py - luy * t);
+          if (d < 0.75) {
+            const final = t / llen > 0.85 ? ldmg : ldmg * 0.7;   // 焦点（弹道末段）全伤
+            u.hp -= final;
+            u.hurt = 22;
+            this.fx('hit', u.x, u.y, 6);
+            if (this.fxPrefs.dmgNumbers && this.rng() < 0.4) this.fx('dmg', u.x, u.y, 24, { text: '-' + Math.round(final) });   // dmgNumbers 门短路先掷——真引擎默认 true L271 面真吞掷
+            if (u.hp <= 0) { u.dead = true; this.wwCountKill(u); }
+          }
+        }
+        if (e.wid != null) this.emergentPayload(e);
+        this.killCredit = null;
+        this.fx('explosion', e.x, e.y, 10, { r: 0.8 });
       } else if (e.kind === 'drone') {                     // L10353-10368（M-U10e：无人机蜂群游猎扫射 + 终点集束——killCredit wid 往返 + emergentPayload 门）
         const dt = Math.min(1, e.age / e.ttl);
         const dxp = e.x0 + (e.x - e.x0) * dt;

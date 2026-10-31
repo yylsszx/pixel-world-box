@@ -1,8 +1,9 @@
 // ============================================================
 // WbPowerHitTests.cs — M-U10c effectsTick 命中族三 kind + explode 消费面直测（NUnit）
 // 范围: meteor L10237-10239 / fireball L10240-10254 / arrow·bullet L10255-10294 +
-//   explode L10450-10499（黄金回放主面在 WbPowerTests.Test35——power.json 18 场景全量逐位；
-//   本文件钉语义门与蓝本异形面）。
+//   explode L10450-10499（黄金回放主面在 WbPowerTests.Test35——power.json 26 场景全量逐位；
+//   本文件钉语义门与蓝本异形面）+ M-U10d shell/missile + M-U10e airstrike/drone/mech
+//   + M-U10f laser L10323-10353（光束线杀伤四几何支/dmgNumbers 门短路/退化 llen||1 护栏）。
 // 蓝本关键语义（黄金实证沉淀）:
 //   ① meteor age>=ttl 门 → explode(4.2,{terrain:true}) + 非quiet 入纪事（quiet 弹抑事件——
 //     衍生弹体面；explode 副产物 explosion+smoke×6 常驻至自身 ttl 到期）；
@@ -625,6 +626,148 @@ namespace PixelWorldBox.Tests
             Assert.That(friendly.hp, Is.EqualTo(50), "豁免生效：civ===src 友军零伤（L10266）");
             Assert.That(F64Hex(foe.hp), Is.EqualTo(F64Hex(42)), "敌军命中 50-8=42（dmg=8 无 armor）");
             Assert.That(foe.hurt, Is.EqualTo(20), "hurt 20（L10278）");
+        }
+
+        // ================= Test40：M-U10f laser 直测（L10323-10353——光束线杀伤四几何支 + dmgNumbers 门短路位证 + 退化 llen||1 护栏 + 豁免/dead 前置零掷位证 + 空转零掷） =================
+
+        /// mulberry32 状态推进（noise.ts L3-13——每次 rng() 消费状态 +0x6D2B79F5；uint 环绕 ≡ JS |0 位型）
+        private static uint MulAdv(uint a, int n) { while (n-- > 0) a = a + 0x6D2B79F5u; return a; }
+
+        [Test]
+        public void Test40_Laser_BeamGeometry_GoldenMirror()
+        {
+            // 黄金 S25 镜像（seed 0x0A0E1A 同流）：四几何支位级 + 豁免/dead 跳过 + dmg fx 归属 + killCredit 往返
+            var w = new WbWorld();
+            w.tickCount = 24000;
+            for (int y = 56; y < 65; y++) for (int x = 96; x < 105; x++) w.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            double L = WbMath.FdHypot(4, 4), ux = 4 / L, uy = 4 / L;   // 蓝本同式：llen=hypot(4,4)、lux=luy=4/llen（L10329-L10331）
+            var u0 = new WbU { id = 1, race = 0, x = 96.5 + ux * 2.5, y = 56.5 + uy * 2.5, hp = 50, maxHp = 50 };    // 线上中段：0.7× 支
+            var u1 = new WbU { id = 2, race = 0, x = 96.5 + ux * 5.4, y = 56.5 + uy * 5.4, hp = 50, maxHp = 50 };    // 焦点末段 t/llen≈0.955>0.85：全伤支
+            var u2 = new WbU { id = 3, race = 0, x = 100.5 + ux * 0.5, y = 60.5 + uy * 0.5, hp = 50, maxHp = 50 };   // 终点外投影钳 llen → 比值 1：全伤支
+            var u3 = new WbU { id = 4, race = 0, x = 96.5 - ux * 0.5, y = 56.5 - uy * 0.5, hp = 50, maxHp = 50 };    // 起点外投影钳 0 → 比值 0：0.7× 支
+            var u4 = new WbU { id = 5, race = 0, x = 110.5, y = 70.5, hp = 50, maxHp = 50 };                         // 远离线 d≈14.14：零掷零伤
+            var u5 = new WbU { id = 6, race = 0, x = 96.5 + ux * 3.5, y = 56.5 + uy * 3.5, hp = 50, maxHp = 50, civ = 1 };   // src=1 豁免前置
+            var u6 = new WbU { id = 7, race = 0, x = 96.5 + ux * 2.0, y = 56.5 + uy * 2.0, hp = 10, maxHp = 50, dead = 1 };  // dead 跳过（L10335）
+            w.units.Add(u0); w.units.Add(u1); w.units.Add(u2); w.units.Add(u3); w.units.Add(u4); w.units.Add(u5); w.units.Add(u6);
+            w.effects.Add(new WbFx { kind = "laser", x = 100.5, y = 60.5, ttl = 10, x0 = 96.5, y0 = 56.5, src = 1, dmg = 30, wid = 7, age = 9 });
+            w.rngA = 0x0A0E1Au;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // age 9→10 = ttl：光束命中（黄金 S25 同 16 掷流）
+            Assert.That(F64Hex(u0.hp), Is.EqualTo(F64Hex(50 - 30 * 0.7)), "线上中段 0.7×支位级（t/llen≈0.44≤0.85 → ldmg*0.7——L10342）");
+            Assert.That(F64Hex(u1.hp), Is.EqualTo(F64Hex(20)), "焦点末段全伤支位级（t/llen≈0.955>0.85 → ldmg——L10342）");
+            Assert.That(F64Hex(u2.hp), Is.EqualTo(F64Hex(20)), "终点外投影钳 llen → 比值 1 全伤支位级（L10339 Math.min 面）");
+            Assert.That(F64Hex(u3.hp), Is.EqualTo(F64Hex(50 - 30 * 0.7)), "起点外投影钳 0 → 比值 0 的 0.7×支位级（L10339 Math.max 面）");
+            Assert.That(u4.hp, Is.EqualTo(50), "远离线零伤零掷（d=hypot(10,10)≥0.75——L10341 距离门）");
+            Assert.That(u5.hp, Is.EqualTo(50), "src 豁免零伤（civ===src——L10336 距离门前短路）");
+            Assert.That(u6.hp == 10 && u6.dead != 0, Is.True, "dead=1 循环头跳过（L10335）——hp/dead 不动");
+            Assert.That(u0.hurt, Is.EqualTo(22), "hurt=22（L10344）");
+            Assert.That(w.killCredit == null, Is.True, "killCredit wid=7 往返复位（L10333 写/L10351 复位）");
+            Assert.That(w.effects.Count(f => f.kind == "hit"), Is.EqualTo(4), "hit fx ×4（每命中单位 1 枚——L10345）");
+            Assert.That(w.effects.Count(f => f.kind == "dmg"), Is.EqualTo(1), "dmg fx ×1（dmgNumbers 门真引擎默认 true L271——u3 roll 0.3951<0.4 掷中）");
+            var dmg = w.effects.Single(f => f.kind == "dmg");
+            Assert.That(F64Hex(dmg.x) == F64Hex(u3.x) && F64Hex(dmg.y) == F64Hex(u3.y), Is.True, "dmg fx 归属 u3（fx('dmg',u.x,u.y)——L10346）");
+            Assert.That(dmg.text, Is.EqualTo("-21"), "text '-'+Math.round(30*0.7)='-21'（L10346 text 携带面——M-U3h 第五批维度）");
+            var boom = w.effects.Single(f => f.kind == "explosion");
+            Assert.That(boom.r, Is.EqualTo(0.8), "终点小爆破 {r:0.8}（L10352）");
+            Assert.That(w.rngA, Is.EqualTo(0xd2c1ad6au), "final rngA ≡ 黄金 S25（16 掷流位级闭合——4×hit2+4×roll+dmg fx2+explosion2）");
+        }
+
+        [Test]
+        public void Test40_Laser_Degenerate_LlenGuard()
+        {
+            // 黄金 S26 镜像（seed 0x0A0E1B 同流）：无 x0/y0/src/dmg/wid 夹具——fx() 默认 x0=x → ldx=ldy=0 → llen=0||1=1 护栏支
+            var w = new WbWorld();
+            w.tickCount = 25000;
+            for (int y = 56; y < 65; y++) for (int x = 96; x < 105; x++) w.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            var a = new WbU { id = 1, race = 0, x = 101.0, y = 61.0, hp = 50, maxHp = 50 };   // d=hypot(0.5,0.5)≈0.707<0.75：命中
+            var b = new WbU { id = 2, race = 0, x = 101.5, y = 60.5, hp = 50, maxHp = 50 };   // d=hypot(1.0,0)=1.0≥0.75：零掷零伤
+            w.units.Add(a); w.units.Add(b);
+            w.effects.Add(new WbFx { kind = "laser", x = 100.5, y = 60.5, ttl = 8, x0 = 100.5, y0 = 60.5, age = 7 });   // x0=x/y0=y 直写 ≡ fx() 默认（fixture 稀疏缺键同构）
+            w.rngA = 0x0A0E1Bu;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // age 7→8 = ttl：退化点爆（黄金 S26 同 7 掷流）
+            Assert.That(F64Hex(a.hp), Is.EqualTo(F64Hex(50 - 30 * 0.7)), "llen=0||1=1 回退 + lux=luy=0 → t=0 → 0.7×支 + ldmg ?? 30 缺位钉（L10329/L10332）");
+            Assert.That(b.hp, Is.EqualTo(50), "d=1.0≥0.75 距离门零伤（L10341）");
+            Assert.That(w.killCredit == null, Is.True, "killCredit ?? null 双写往返（L10333/L10351——wid 缺位）");
+            Assert.That(w.effects.Count(f => f.kind == "hit"), Is.EqualTo(1), "hit fx ×1（L10345）");
+            Assert.That(w.effects.Single(f => f.kind == "dmg").text, Is.EqualTo("-21"), "dmg fx text（S26 roll 掷中——同 '-21'）");
+            Assert.That(w.effects.Single(f => f.kind == "explosion").r, Is.EqualTo(0.8), "explosion {r:0.8}（L10352）");
+            Assert.That(w.rngA, Is.EqualTo(0xfc3a63ceu), "final rngA ≡ 黄金 S26（7 掷流位级闭合）");
+        }
+
+        [Test]
+        public void Test40_Laser_DmgNumbersGate_ShortCircuitBitProof()
+        {
+            // dmgNumbers 门短路位证：门真 → 恰 1 roll 掷（+掷中 2 fx 掷）；门假 → 零掷——同种子对照世界 rngA 差恰 3/1 掷
+            double L = WbMath.FdHypot(4, 4), ux = 4 / L, uy = 4 / L;
+            WbWorld MkWorld(bool dmgNumbers, uint seed)
+            {
+                var w2 = new WbWorld();
+                w2.tickCount = 24000;
+                for (int y = 56; y < 65; y++) for (int x = 96; x < 105; x++) w2.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+                w2.units.Add(new WbU { id = 1, race = 0, x = 96.5 + ux * 2.5, y = 56.5 + uy * 2.5, hp = 50, maxHp = 50 });
+                w2.effects.Add(new WbFx { kind = "laser", x = 100.5, y = 60.5, ttl = 10, x0 = 96.5, y0 = 56.5, dmg = 30, age = 9 });
+                w2.fxDmgNumbers = dmgNumbers;                        // 真引擎 fxPrefs.dmgNumbers 默认 true L271——门面直控
+                w2.rngA = seed;
+                w2.tickCount++;
+                WbBailRelay.EffectsTick(w2);
+                return w2;
+            }
+            // 支 1：seed 0x0A0E23（首 roll 0.3951<0.4 掷中——mulberry 前置预演钉）
+            var wA = MkWorld(true, 0x0A0E23u);
+            var wB = MkWorld(false, 0x0A0E23u);
+            Assert.That(wA.effects.Count(f => f.kind == "dmg"), Is.EqualTo(1), "门真+掷中 → dmg fx 发射（L10346）");
+            Assert.That(wA.effects.Single(f => f.kind == "dmg").text, Is.EqualTo("-21"), "text '-21'（final=30*0.7 → Math.round=21）");
+            Assert.That(wB.effects.Count(f => f.kind == "dmg"), Is.EqualTo(0), "门假 → 零发射（短路——L10346 && 左支）");
+            Assert.That(F64Hex(wA.units[0].hp), Is.EqualTo(F64Hex(wB.units[0].hp)), "hp 与 fx 门无关（u.hp -= final 在掷前）");
+            Assert.That(MulAdv(wB.rngA, 3), Is.EqualTo(wA.rngA), "rngA 差恰 3 掷（roll 1 + dmg fx seed/dir 2）——门真多掷位证");
+            // 支 2：seed 0x0A0E22（首 roll ≥0.4 不掷中）
+            var wA2 = MkWorld(true, 0x0A0E22u);
+            var wB2 = MkWorld(false, 0x0A0E22u);
+            Assert.That(wA2.effects.Count(f => f.kind == "dmg"), Is.EqualTo(0), "门真+未掷中 → 零发射（40% 门反面）");
+            Assert.That(wB2.effects.Count(f => f.kind == "dmg"), Is.EqualTo(0), "门假 → 零发射");
+            Assert.That(MulAdv(wB2.rngA, 1), Is.EqualTo(wA2.rngA), "rngA 差恰 1 掷（roll 本身）——短路消耗位证（门假零掷）");
+        }
+
+        [Test]
+        public void Test40_Laser_ExemptDeadSkip_IdleZeroDraw()
+        {
+            // 豁免/dead 前置零掷对照世界位证（Test39 mech 先例同构）+ 空转步零掷
+            double L = WbMath.FdHypot(4, 4), ux = 4 / L, uy = 4 / L;
+            WbWorld MkWorld(bool withUnits, uint seed)
+            {
+                var w2 = new WbWorld();
+                w2.tickCount = 24000;
+                for (int y = 56; y < 65; y++) for (int x = 96; x < 105; x++) w2.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+                if (withUnits)
+                {
+                    w2.units.Add(new WbU { id = 1, race = 0, x = 96.5 + ux * 3.5, y = 56.5 + uy * 3.5, hp = 50, maxHp = 50, civ = 1 });   // src=1 豁免（线上）
+                    w2.units.Add(new WbU { id = 2, race = 0, x = 96.5 + ux * 2.0, y = 56.5 + uy * 2.0, hp = 10, maxHp = 50, dead = 1 });  // dead 跳过（线上）
+                }
+                w2.effects.Add(new WbFx { kind = "laser", x = 100.5, y = 60.5, ttl = 10, x0 = 96.5, y0 = 56.5, src = 1, dmg = 30, age = 9 });
+                w2.rngA = seed;
+                w2.tickCount++;
+                WbBailRelay.EffectsTick(w2);
+                return w2;
+            }
+            var wE1 = MkWorld(true, 0x0A0E1Au);
+            var wE2 = MkWorld(false, 0x0A0E1Au);                      // 同种子无单位对照——豁免/dead 若误耗掷则 rngA 必异
+            Assert.That(wE1.rngA, Is.EqualTo(wE2.rngA), "豁免+dead 世界 rngA ≡ 无单位世界——二跳过面距离门前零掷位证（L10335/L10336）");
+            Assert.That(wE1.effects.Count(f => f.kind == "explosion"), Is.EqualTo(1), "终点小爆破常在（L10352）");
+            Assert.That(wE1.units[0].hp, Is.EqualTo(50), "豁免单位零伤");
+            Assert.That(wE1.units[1].hp == 10 && wE1.units[1].dead != 0, Is.True, "dead 单位 hp/dead 不动");
+            // 空转步：age 7→8 <ttl——无周期相单调到期（laser 仅 ttl 单发——空转零掷）
+            var wI = new WbWorld();
+            wI.tickCount = 24000;
+            for (int y = 56; y < 65; y++) for (int x = 96; x < 105; x++) wI.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            wI.units.Add(new WbU { id = 1, race = 0, x = 96.5 + ux * 2.5, y = 56.5 + uy * 2.5, hp = 50, maxHp = 50 });
+            wI.effects.Add(new WbFx { kind = "laser", x = 100.5, y = 60.5, ttl = 10, x0 = 96.5, y0 = 56.5, src = 1, dmg = 30, age = 7 });
+            wI.rngA = 0x0A0E1Au;
+            wI.tickCount++;
+            WbBailRelay.EffectsTick(wI);                              // age 7→8：空转
+            Assert.That(wI.rngA, Is.EqualTo(0x0A0E1Au), "空转步零掷——rngA 不动（age<ttl 无支触达）");
+            Assert.That(wI.units[0].hp == 50 && wI.units[0].hurt == 0, Is.True, "空转单位零伤零 hurt");
+            Assert.That(wI.effects.Count, Is.EqualTo(1), "laser 未 splice 未产 fx（age<ttl——L10439 门未开）");
         }
     }
 }

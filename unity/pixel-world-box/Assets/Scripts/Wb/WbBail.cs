@@ -2598,6 +2598,40 @@ namespace PixelWorldBox.Wb
                     }
                     // 蓝本异形注记：airstrike 无 killCredit 写面（直呼 shellBurst 不挂 wid——与 drone 对位）              // L10311-10322
                 }
+                else if (e.kind == "laser" && e.age >= e.ttl)                                                          // L10323（激光命中：光束线杀伤（距弹道线 < 0.75 的敌军）+ 焦点处全伤 + 终点小爆破——M-U10f war 面）
+                {
+                    double lsx = e.x0;                                                                                 // L10325（x0 ?? e.x——fx() L9793 恒置 x0=x 默认，?? 支不可达；C# Fx 同构直读）
+                    double lsy = e.y0;                                                                                 // L10326
+                    double ldx = e.x - lsx;                                                                            // L10327
+                    double ldy = e.y - lsy;                                                                            // L10328
+                    double llenH = WbMath.FdHypot(ldx, ldy);                                                           // L10329（Math.hypot fdlibm 位精确域）
+                    double llen = llenH != 0 ? llenH : 1;                                                              // L10329（|| 1——0 假语义回退 1；hypot ≥ 0 无 NaN 面，除零护栏退化支 S26 钉）
+                    double lux = ldx / llen;                                                                           // L10330
+                    double luy = ldy / llen;                                                                           // L10331
+                    double ldmg = e.dmg ?? 30;                                                                         // L10332
+                    w.killCredit = e.wid;                                                                              // L10333（wid ?? null——int? 直传，涌现武器战绩归属）
+                    foreach (WbU u in w.units)                                                                         // L10334
+                    {
+                        if (u.dead != 0) continue;                                                                     // L10335
+                        if (e.src.HasValue && u.civ == e.src.Value) continue;                                          // L10336（src 豁免前置——距离门前短路零掷；e.src !== undefined ≡ HasValue）
+                        double px = u.x - lsx;                                                                         // L10337
+                        double py = u.y - lsy;                                                                         // L10338
+                        double t = System.Math.Max(0, System.Math.Min(llen, px * lux + py * luy));                     // L10339（投影钳 [0,llen]——(px*lux)+(py*luy) 乘加序同构）
+                        double d = WbMath.FdHypot(px - lux * t, py - luy * t);                                         // L10340（点-线段距离——fdlibm 位精确域）
+                        if (d < 0.75)                                                                                   // L10341
+                        {
+                            double final = t / llen > 0.85 ? ldmg : ldmg * 0.7;                                        // L10342（焦点（弹道末段）全伤——t/llen 比值门）
+                            u.hp -= final;                                                                             // L10343
+                            u.hurt = 22;                                                                               // L10344
+                            FxHook(w, "hit", u.x, u.y, 6);                                                             // L10345（2 掷注入 seed/dir）
+                            if (w.fxDmgNumbers && w.Rng() < 0.4) w.Fx("dmg", u.x, u.y, 24, optText: "-" + WbMath.JsRound(final));   // L10346（dmgNumbers 门短路先掷——真引擎 fxPrefs 默认 true L271 面真吞掷；text '-'+Math.round——M-U3h 第五批 w.Fx 直调先例 L2544 同构）
+                            if (u.hp <= 0) { u.dead = 1; WbCivSim.WwCountKill(w, u); }                                 // L10347（大战阵亡计数）
+                        }
+                    }
+                    if (e.wid.HasValue) EmergentPayload(w, e);                                                         // L10350（wid 面——辐射/改地形/士气打击；铸域空表桩 L9399 早退）
+                    w.killCredit = null;                                                                               // L10351
+                    FxOptHook(w, "explosion", e.x, e.y, 10, null, null, null, 0.8, null);                              // L10352（opts {r:0.8}——终点小爆破 2 掷）
+                }
                 else if (e.kind == "drone")                                                                            // L10353（无人机蜂群：沿航线游猎扫射（周期小爆破）；抵达终点集束爆破——M-U10e war 面）
                 {
                     double dt = System.Math.Min(1, e.age / e.ttl);                                                     // L10354
@@ -2644,9 +2678,9 @@ namespace PixelWorldBox.Wb
                         /* onSound?.('boom') —— 宿主回调（同上） */                                                        // L10413
                     }
                 }
-                // 未译 kind 落空（volcano/wrath/holystorm/typhoon + war 面 laser L10323-10350（fxPrefs.dmgNumbers 线杀伤）/
-                //   orbital L10370-10392 + antimatter L10437-10440（annihilate 消费面）/ plasma L10416-10436（armies morale 面）
-                //   ——后续切片插入；夹具仅二十二 kind）
+                // 未译 kind 落空（volcano/wrath/holystorm/typhoon + war 面 orbital L10370-10392 + antimatter
+                //   L10437-10440（annihilate 消费面）/ plasma L10416-10436（armies morale 面）——后续切片插入；
+                //   laser 已 M-U10f 清偿 L10323-10353）
                 if (e.age >= e.ttl)                                                                                      // L10439
                 {
                     w.effects.RemoveAt(i);                                                                               // L10440（倒序 splice 同构）

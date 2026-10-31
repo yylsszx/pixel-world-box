@@ -1,6 +1,7 @@
 // ============================================================================
 // gen-power.mjs —— M-U10a「effectsTick 游荡云族八种」+ M-U10b「波前族+静态族五 kind」
-//   + M-U10c「命中族三 kind + explode 消费面」黄金向量
+//   + M-U10c「命中族三 kind + explode 消费面」+ M-U10d「shell/missile/核弹」
+//   + M-U10e「war 面 airstrike/drone/mech」+ M-U10f「laser 光束线杀伤」黄金向量
 // （tornado L9805-9824 / acid L9826-9850 / blizzard L9915-9948 / locust L9949-9971 /
 //   drought L9972-9996 / rainstorm L9997-10022 / sandstorm L10068-10090 / famine L10170-10190
 //   + M-U10b: tsunami L9877-9914 / sinkhole L10120-10147 / iceage L10148-10169 /
@@ -173,6 +174,7 @@ function buildScenario(spec) {
       if (u.hp !== undefined) spawned.hp = u.hp;
       if (u.maxHp !== undefined) spawned.maxHp = u.maxHp;
       if (u.hurt !== undefined) spawned.hurt = u.hurt;
+      if (u.dead !== undefined) spawned.dead = u.dead;       // M-U10f 死亡直写（laser 循环头 dead 跳过面——L10335 消费）
       if (u.gear && u.gear.arm) spawned.arm = u.gear.arm;   // 装备槽直写（gearBonus 快路径破——七槽非空）
     }
   }
@@ -624,6 +626,55 @@ const specs = [
     sanity: (eng) => eng.units[0].hp === 50 - 45 * (1 - Math.hypot(0.5, 0.5) / 2.6) && eng.units[1].dead === true && eng.units[2].hp === 50
       && eng.shake === 3.2 && eng.effects.some((e) => e.kind === 'bullet') && eng.effects.some((e) => e.kind === 'explosion'),
   },
+  {
+    // S25 laser（M-U10f）：光束线杀伤全支位级（L10323-10353——ttl 到期单发，无周期相）
+    //   几何面：lsx=96.5/lsy=56.5 → ldx=ldy=4 → llen=hypot(4,4)=5.656854249492381 → lux=luy=4/llen（f64 除法）
+    //   u0 线上中段 t≈2.5（d=0<0.75，t/llen≈0.44≤0.85 → ldmg*0.7）/ u1 焦点线上 t≈5.4（比值≈0.955>0.85 → 全伤）
+    //   u2 终点外投影钳 llen（比值 1 → 全伤，d=0.5<0.75）/ u3 起点外投影钳 0（比值 0 → 0.7×，d=0.5<0.75）
+    //   u4 远离线 d=hypot(10,10)≥0.75 零掷零伤 / u5 src=1 豁免前置（线上 t≈3.5——距离门前短路零掷）
+    //   u6 dead=1 线上跳过（循环头 dead continue——L10335）+ killCredit wid=7 往返（L10333 写/L10351 复位）
+    //   + emergentPayload wid 门（铸域空表桩 L9399 早退）+ explosion {r:0.8} 终点小爆破
+    //   + dmgNumbers 门（fxPrefs 默认 true L271——每命中单位 rng<0.4 掷，text '-'+Math.round(final)——
+    //   M-U7p 桩面 false 异构：power 域真引擎面真吞掷）+ 线上坐标 lux*t 乘加序位级
+    key: 'power-laser', baseSeed: BASE + 45, seed: 0x0A0E1A, seasons: false, yearF: 2.5, tickCount: 24000, steps: 2, minDraws: 8,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 56; y < 65; y++) for (let x = 96; x < 105; x++) a.push([x, y, T.GRASS]); return a; })()],
+        units: (() => {
+          const L = Math.hypot(4, 4), ux = 4 / L, uy = 4 / L;   // 蓝本同式：llen/lux/luy 由真引擎逐位消费，此处坐标生成同式
+          return [
+            { race: 'SHEEP', x: 96.5 + ux * 2.5, y: 56.5 + uy * 2.5, hp: 50, maxHp: 50 },   // u0 线上中段 0.7×支
+            { race: 'SHEEP', x: 96.5 + ux * 5.4, y: 56.5 + uy * 5.4, hp: 50, maxHp: 50 },   // u1 焦点末段全伤支
+            { race: 'SHEEP', x: 100.5 + ux * 0.5, y: 60.5 + uy * 0.5, hp: 50, maxHp: 50 },  // u2 终点外投影钳 llen
+            { race: 'SHEEP', x: 96.5 - ux * 0.5, y: 56.5 - uy * 0.5, hp: 50, maxHp: 50 },   // u3 起点外投影钳 0
+            { race: 'SHEEP', x: 110.5, y: 70.5, hp: 50, maxHp: 50 },                        // u4 远离线零伤
+            { race: 'SHEEP', x: 96.5 + ux * 3.5, y: 56.5 + uy * 3.5, hp: 50, maxHp: 50, civ: 1 },   // u5 src 豁免
+            { race: 'SHEEP', x: 96.5 + ux * 2.0, y: 56.5 + uy * 2.0, hp: 10, maxHp: 50, dead: 1 },  // u6 dead 跳过
+          ];
+        })(),
+        fx: [{ kind: 'laser', x: 100.5, y: 60.5, ttl: 10, x0: 96.5, y0: 56.5, src: 1, dmg: 30, wid: 7, preAge: 8 }],
+      },
+    ],
+    sanity: (eng) => eng.units[0].hp === 50 - 30 * 0.7 && eng.units[1].hp === 20 && eng.units[2].hp === 20
+      && eng.units[3].hp === 50 - 30 * 0.7 && eng.units[4].hp === 50 && eng.units[5].hp === 50 && eng.units[6].hp === 10
+      && eng.units[6].dead === 1 && eng.killCredit === null && eng.effects.some((e) => e.kind === 'explosion')
+      && eng.effects.filter((e) => e.kind === 'hit').length === 4,
+  },
+  {
+    // S26 laser 退化面（M-U10f）：无 x0/y0/src/dmg/wid 夹具（fx() 默认 x0=x L9793 → ldx=ldy=0 →
+    //   llen=0||1=1 回退支——除零护栏位级 + lux=luy=0 点爆语义 t=0 → 0.7× 支 + ldmg ?? 30 缺位钉
+    //   + e.src undefined 豁免支不触达（条件短路——C# e.src.HasValue false 同构）+ killCredit null
+    //   往返（?? null 双写）+ wid null 无 emergentPayload 门 + 空转步零掷（preAge 6/ttl 8：k0 age→7
+    //   <ttl 零掷——laser 无周期相单调到期）+ fx0 稀疏通道（x0==x 不出键——旧场景字节面同构）
+    key: 'power-laser-degenerate', baseSeed: BASE + 46, seed: 0x0A0E1B, seasons: false, yearF: 2.5, tickCount: 25000, steps: 2, minDraws: 5,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 56; y < 65; y++) for (let x = 96; x < 105; x++) a.push([x, y, T.GRASS]); return a; })()],
+        units: [{ race: 'SHEEP', x: 101.0, y: 61.0, hp: 50, maxHp: 50 }, { race: 'SHEEP', x: 101.5, y: 60.5, hp: 50, maxHp: 50 }],
+        fx: [{ kind: 'laser', x: 100.5, y: 60.5, ttl: 8, preAge: 6 }],
+      },
+    ],
+    sanity: (eng) => eng.units[0].hp === 50 - 30 * 0.7 && eng.units[1].hp === 50 && eng.killCredit === null
+      && eng.effects.some((e) => e.kind === 'explosion') && eng.effects.filter((e) => e.kind === 'hit').length === 1,
+  },
 ];
 
 const scenarios = specs.map(buildScenario);
@@ -647,7 +698,7 @@ const out = {
     protocol: 'GameEngine 构造 + 手术式夹具两相直写 + effects/spawnUnit 真调用注入（fx seed/dir 双掷注入相）+ rngA 尾置清零起流 + tickCount++/effectsTick 直调步进快照（主循环 L2508/L2528 序同构）',
     rng: 'eng.rngA 单流（类字段箭头 rng L728-733）；mulberry 纯数学反解 total（noise.ts L3-13）',
     math: 'tornado/sandstorm/famine Math.hypot——C# FdHypot/V8Hypot 位精确件对账（fdlibm 域）；acid/blizzard/locust/drought/rainstorm 纯平方距离',
-    domains: ['effectsTick L9801-10447', 'tornado L9805-9824', 'acid L9826-9850', 'blizzard L9915-9948', 'locust L9949-9971', 'drought L9972-9996', 'rainstorm L9997-10022', 'sandstorm L10068-10090', 'famine L10170-10190', 'M-U10b: tsunami L9877-9914', 'M-U10b: sinkhole L10120-10147', 'M-U10b: iceage L10148-10169', 'M-U10b: blackhole L10191-10223', 'M-U10b: quake L10224-10236', 'M-U10c: meteor L10237-10239', 'M-U10c: fireball L10240-10254', 'M-U10c: arrow·bullet L10255-10294', 'M-U10c: explode L10450-10499', 'M-U10c: ignite L1072-1077', 'M-U10d: shell L10295-10301', 'M-U10d: missile L10302-10310', 'M-U10d: shellBurst L9595-9620', 'M-U10d: nuke L12255-12260', 'M-U10d: onBuildingDestroyed raze 支 L4464-4498（capture/annex 支夹具外——M-U10e 候选）', 'M-U10e: airstrike L10311-10322', 'M-U10e: drone L10353-10368', 'M-U10e: mech L10394-10414', '到期 splice L10439-10441', 'activeBattles %5 清理 L10443-10447', 'fx L9781-9799', 'attackBuilding L4446-4462', 'meltIce L2892（drought 消费）', 'setTerrain L969-1007（regrow L979 出账联动 + flood L983 贴花级联）', 'rebuildBuckets L3081-3104（注入相尾——arrow/bullet 桶扫描面）', 'gearBonus L1498-1520（armor 采样入 units0.gbArmor）', 'atWar L2061-2064（rel0 挂账）'],
+    domains: ['effectsTick L9801-10447', 'tornado L9805-9824', 'acid L9826-9850', 'blizzard L9915-9948', 'locust L9949-9971', 'drought L9972-9996', 'rainstorm L9997-10022', 'sandstorm L10068-10090', 'famine L10170-10190', 'M-U10b: tsunami L9877-9914', 'M-U10b: sinkhole L10120-10147', 'M-U10b: iceage L10148-10169', 'M-U10b: blackhole L10191-10223', 'M-U10b: quake L10224-10236', 'M-U10c: meteor L10237-10239', 'M-U10c: fireball L10240-10254', 'M-U10c: arrow·bullet L10255-10294', 'M-U10c: explode L10450-10499', 'M-U10c: ignite L1072-1077', 'M-U10d: shell L10295-10301', 'M-U10d: missile L10302-10310', 'M-U10d: shellBurst L9595-9620', 'M-U10d: nuke L12255-12260', 'M-U10d: onBuildingDestroyed raze 支 L4464-4498（capture/annex 支夹具外——M-U10e 候选）', 'M-U10e: airstrike L10311-10322', 'M-U10e: drone L10353-10368', 'M-U10e: mech L10394-10414', 'M-U10f: laser L10323-10353', '到期 splice L10439-10441', 'activeBattles %5 清理 L10443-10447', 'fx L9781-9799', 'attackBuilding L4446-4462', 'meltIce L2892（drought 消费）', 'setTerrain L969-1007（regrow L979 出账联动 + flood L983 贴花级联）', 'rebuildBuckets L3081-3104（注入相尾——arrow/bullet 桶扫描面）', 'gearBonus L1498-1520（armor 采样入 units0.gbArmor）', 'atWar L2061-2064（rel0 挂账）'],
     scenarioCount: scenarios.length,
   },
   scenarios,
