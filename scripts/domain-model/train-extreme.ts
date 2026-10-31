@@ -78,10 +78,10 @@ function teacherAction(f: Float32Array): number {
 
 // ====================== 训练主流程 ======================
 async function main() {
-  const NUM_TRAIN = 5000;
-  const NUM_VAL = 1000;
-  const EPOCHS = 30;
-  const LR = 1e-3;
+  const NUM_TRAIN = 10000;
+  const NUM_VAL = 2000;
+  const EPOCHS = 100;
+  const LR = 2e-3;
   const BATCH = 512;
 
   console.log(`🎯 极致训练：战略离线 AI`);
@@ -152,22 +152,71 @@ async function main() {
       for (const idx of batchIdx) {
         const { probs, cache } = forwardWithCache(trainX[idx]);
         batchLoss += -Math.log(probs[trainY[idx]] + 1e-8);
-        // 反向（简化版：输出层梯度 + 一层隐藏，其余用近似）
+        // 全量反向传播（4 层 MLP）
         const outDim = cfg.outDim;
         const d4 = new Float32Array(outDim);
         for (let j = 0; j < outDim; j++) d4[j] = probs[j] - (j === trainY[idx] ? 1 : 0);
-        // 更新 w4, b4
+
+        // gelu 近似导数
+        function geluP(z: number): number {
+          const t = Math.tanh(Math.sqrt(2 / Math.PI) * (z + 0.044715 * z * z * z));
+          return 0.5 * (1 + t) + 0.5 * z * (1 - t * t) * Math.sqrt(2 / Math.PI) * 0.044715 * 3 * z * z;
+        }
+
+        // Layer 3 -> 4: gw4[h3][outDim] = g3[h3] ⊗ d4[outDim]; d3[h3] = (w4 @ d4) .* gelu'(a3)
+        const gw4 = new Float32Array(h3 * outDim);
+        const d3 = new Float32Array(h3);
         for (let i = 0; i < h3; i++) {
+          let s = 0;
           for (let j = 0; j < outDim; j++) {
-            const g = cache.g3.data[i] * d4[j];
-            mom.vw4[i * outDim + j] = 0.9 * mom.vw4[i * outDim + j] - LR * g;
-            w.w4[i * outDim + j] += mom.vw4[i * outDim + j];
+            gw4[i * outDim + j] = cache.g3.data[i] * d4[j];
+            s += d4[j] * w.w4[i * outDim + j];
           }
+          d3[i] = s * geluP(cache.a3.data[i]);
         }
-        for (let j = 0; j < outDim; j++) {
-          mom.vb4[j] = 0.9 * mom.vb4[j] - LR * d4[j];
-          w.b4[j] += mom.vb4[j];
+        // Layer 2 -> 3: gw3[h2][h3] = g2[h2] ⊗ d3[h3]; d2[h2] = (w3 @ d3) .* gelu'(a2)
+        const gw3 = new Float32Array(h2 * h3);
+        const d2 = new Float32Array(h2);
+        for (let i = 0; i < h2; i++) {
+          let s = 0;
+          for (let j = 0; j < h3; j++) {
+            gw3[i * h3 + j] = cache.g2.data[i] * d3[j];
+            s += d3[j] * w.w3[i * h3 + j];
+          }
+          d2[i] = s * geluP(cache.a2.data[i]);
         }
+        // Layer 1 -> 2: gw2[h1][h2] = g1[h1] ⊗ d2[h2]; d1[h1] = (w2 @ d2) .* gelu'(a1)
+        const gw2 = new Float32Array(h1 * h2);
+        const d1 = new Float32Array(h1);
+        for (let i = 0; i < h1; i++) {
+          let s = 0;
+          for (let j = 0; j < h2; j++) {
+            gw2[i * h2 + j] = cache.g1.data[i] * d2[j];
+            s += d2[j] * w.w2[i * h2 + j];
+          }
+          d1[i] = s * geluP(cache.a1.data[i]);
+        }
+        // Layer 0 -> 1: gw1[inDim][h1] = x[inDim] ⊗ d1[h1]
+        const gw1 = new Float32Array(cfg.inDim * h1);
+        for (let i = 0; i < cfg.inDim; i++)
+          for (let j = 0; j < h1; j++)
+            gw1[i * h1 + j] = trainX[idx][i] * d1[j];
+
+        // SGD + 动量更新所有层
+        const upd = (wArr: Float32Array, g: Float32Array, v: Float32Array) => {
+          for (let i = 0; i < wArr.length; i++) {
+            v[i] = 0.9 * v[i] - LR * g[i];
+            wArr[i] += v[i];
+          }
+        };
+        upd(w.w4, gw4, mom.vw4);
+        upd(w.b4, d4, mom.vb4);
+        upd(w.w3, gw3, mom.vw3);
+        upd(w.b3, d3, mom.vb3);
+        upd(w.w2, gw2, mom.vw2);
+        upd(w.b2, d2, mom.vb2);
+        upd(w.w1, gw1, mom.vw1);
+        upd(w.b1, d1, mom.vb1);
         trainLoss += -Math.log(probs[trainY[idx]] + 1e-8);
       }
       trainLoss /= batchIdx.length;

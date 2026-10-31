@@ -413,7 +413,7 @@ function IB({
 export function TopBar() {
   const {
     speed, setSpeed, newWorld, toggleHelp, toggleMinimap, openSaveDialog,
-    soundOn, toggleSound, openMobilePanel, overlayMode, setOverlayMode,
+    soundOn, toggleSound, offlineAI, toggleOfflineAI, openMobilePanel, overlayMode, setOverlayMode,
     laws, setLaw, devMode, toggleDevMode, toggleDevPanel, showDev,
     toggleCinema, perfHud, togglePerfHud, showTitle, showSettings, toggleSettings,
     toggleCodex, showCodex, setPaletteOpen,
@@ -661,6 +661,9 @@ export function TopBar() {
 
           <IB label={soundOn ? '关闭音效' : '开启音效'} tip={`音效 ${soundOn ? '开' : '关'}`} onClick={toggleSound} on={soundOn} className="shrink-0">
             {soundOn ? <Volume2 className="h-4 w-4" aria-hidden /> : <VolumeX className="h-4 w-4" aria-hidden />}
+          </IB>
+          <IB label={offlineAI ? '离线AI:开' : '离线AI:关'} tip="离线战略AI（无外部API时接管文明决策）" onClick={toggleOfflineAI} on={offlineAI} className="shrink-0">
+            <BrainCircuit className="h-4 w-4" aria-hidden />
           </IB>
 
           {/* 设置中心 */}

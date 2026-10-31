@@ -1018,7 +1018,7 @@ export function GameCanvas() {
         engine.cinemaMode = useGameStore.getState().cinema;
         engine.frame(dt);
         // —— 原生离线战略 AI（无外部 API 时接管文明决策，每 120 tick 决策一次） ——
-        getOfflineAI(engine).tick(engine);
+        if (useGameStore.getState().offlineAI) getOfflineAI(engine).tick(engine);
         const { w, h } = sizeRef.current;
         // 性能仪表（Task 42-a）：渲染路径耗时与帧率 EMA —— 只写引擎实例字段，
         // 不走 zustand（避免高频更新引发重渲染风暴），后续性能 HUD 自行低频轮询

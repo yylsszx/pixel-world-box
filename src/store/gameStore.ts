@@ -702,6 +702,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
   councilAgents: initialCouncilAgentsMerged(),
   councilFeed: [],
   councilPending: [],
+  // 原生离线战略 AI（无外部 API 时接管文明决策）
+  offlineAI: false,
+  toggleOfflineAI: () => {
+    const next = !get().offlineAI;
+    sfx.ui('toggle');
+    set({ offlineAI: next });
+  },
   eventFilter: 'all',
   fxPrefs: initialFxPrefs,
   laws: initialLaws,

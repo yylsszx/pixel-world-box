@@ -5,11 +5,33 @@
 import { GameEngine } from '../engine';
 import { RACES, T } from '../types';
 import { W, H } from '../constants';
-import {
-  DEFAULT_POLICY_CONFIG, POLICY_ACTIONS, POLICY_ACTION_IDX,
-  initPolicyWeights, importPolicyQuantized, policyForward, type PolicyNetWeights,
-} from './policy-net';
-import { POLICY_WEIGHTS, POLICY_MODEL_META } from './policy-weights';
+import { POLICY_ACTIONS, POLICY_ACTION_IDX } from './policy-net';
+import { POLICY_WEIGHTS_FW } from './policy-weights-fw';
+
+/** 新版全参数权重前向传播（32→64→32→12，纯数组实现） */
+function forwardFW(x: Float32Array, w: typeof POLICY_WEIGHTS_FW): Float32Array {
+  const inDim = 32, h1 = 64, h2 = 32, outDim = 12;
+  const deq = (entry: { q: number[]; scale: number }) => entry.q.map(v => v / entry.scale);
+  const W1 = deq(w.w1), B1 = deq(w.b1), W2 = deq(w.w2), B2 = deq(w.b2), W3 = deq(w.w3), B3 = deq(w.b3);
+  const a1 = new Float32Array(h1);
+  for (let j = 0; j < h1; j++) { let s = 0; for (let i = 0; i < inDim; i++) s += x[i] * W1[i * h1 + j]; a1[j] = s + B1[j]; }
+  const g1 = new Float32Array(h1);
+  for (let i = 0; i < h1; i++) { const z = a1[i]; const t = Math.tanh(Math.sqrt(2 / Math.PI) * (z + 0.044715 * z * z * z)); g1[i] = 0.5 * z * (1 + t); }
+  const a2 = new Float32Array(h2);
+  for (let j = 0; j < h2; j++) { let s = 0; for (let i = 0; i < h1; i++) s += g1[i] * W2[i * h2 + j]; a2[j] = s + B2[j]; }
+  const g2 = new Float32Array(h2);
+  for (let i = 0; i < h2; i++) { const z = a2[i]; const t = Math.tanh(Math.sqrt(2 / Math.PI) * (z + 0.044715 * z * z * z)); g2[i] = 0.5 * z * (1 + t); }
+  const logits = new Float32Array(outDim);
+  for (let j = 0; j < outDim; j++) { let s = 0; for (let i = 0; i < h2; i++) s += g2[i] * W3[i * outDim + j]; logits[j] = s + B3[j]; }
+  // softmax
+  let max = -Infinity;
+  for (let j = 0; j < outDim; j++) if (logits[j] > max) max = logits[j];
+  let sum = 0;
+  const probs = new Float32Array(outDim);
+  for (let j = 0; j < outDim; j++) { probs[j] = Math.exp(logits[j] - max); sum += probs[j]; }
+  for (let j = 0; j < outDim; j++) probs[j] /= sum;
+  return probs;
+}
 
 /** 离线 AI 状态 */
 export interface OfflineAIState {
@@ -128,11 +150,12 @@ export function executeOfflineAction(eng: GameEngine, actionIdx: number, civIdx:
 /** 离线 AI 代理 */
 export class OfflineAI {
   readonly cfg = DEFAULT_POLICY_CONFIG;
-  readonly w: PolicyNetWeights;
+  /** 新版全参数权重（32→64→32→12，Int8 量化） */
+  readonly fwWeights: typeof POLICY_WEIGHTS_FW;
   readonly state: OfflineAIState;
 
   constructor(engine: GameEngine) {
-    this.w = importPolicyQuantized(DEFAULT_POLICY_CONFIG, POLICY_WEIGHTS);
+    this.fwWeights = POLICY_WEIGHTS_FW;
     this.state = {
       enabled: false,
       lastAction: null,
@@ -153,7 +176,7 @@ export class OfflineAI {
     // 选人口最大的文明作为 AI 控制目标
     const civIdx = civs.reduce((best, c, i) => (c.pop > civs[best].pop ? i : best), 0);
     const f = extractFeatures(eng, civIdx);
-    const probs = policyForward(f, this.w, this.cfg);
+    const probs = forwardFW(f, this.fwWeights);
     const actionIdx = this._sample(probs);
 
     const action = POLICY_ACTIONS[actionIdx];
