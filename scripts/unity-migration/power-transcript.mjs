@@ -1,10 +1,12 @@
 // ============================================================================
-// power-transcript.mjs —— M-U10a 游荡云族八种 + M-U10b 波前族/静态族五 kind 零引擎导入镜像（power.json 对账面）
-// 零 engine import：effectsTick L9801-10447 八支（tornado L9805-9824 / acid L9826-9850 /
+// power-transcript.mjs —— M-U10a 游荡云族八种 + M-U10b 波前族/静态族五 kind + M-U10c 命中族三 kind
+// 零引擎导入：effectsTick L9801-10447 八支（tornado L9805-9824 / acid L9826-9850 /
 //   blizzard L9915-9948 / locust L9949-9971 / drought L9972-9996 / rainstorm L9997-10022 /
 //   sandstorm L10068-10090 / famine L10170-10190）
 //   + M-U10b 五支（tsunami L9877-9914 / sinkhole L10120-10147 / iceage L10148-10169 /
 //   blackhole L10191-10223 / quake L10224-10236）
+//   + M-U10c 三支（meteor L10237-10239 / fireball L10240-10254 / arrow·bullet L10255-10294）
+//   + explode L10450-10499（terrain/nuke 全译——nuke 支夹具不触达注记）+ ignite L1072-1077
 //   + 到期 splice L10439-10441 + activeBattles %5 清理 L10443-10447 + fx L9781-9799 +
 //   attackBuilding L4446-4462
 //   （onBuildingDestroyed 天灾早退子集 L4464-4473）+ meltIce L2892-2895 + setTerrain
@@ -13,8 +15,8 @@
 //   markDirty L959-967 + BUILDING_DEFS hp 表（types.ts L325-337 逐值硬编码）。
 // 数学面：Math.hypot 原生（bun fdlibm——与 gen 同 runtime 同位；sinkhole/iceage/blackhole
 //   同消费面；C# 侧 FdHypot/V8Hypot 位精确件对账——WbPowerTests 闭合）。
-// 未译 kind 注记：volcano/wrath/holystorm/typhoon/meteor/fireball/arrow/bullet/…
-//   （L9851-10438）——else-if 链落空语义=蓝本无匹配（C# 侧同构落空）；到期 splice 对全 kind 生效逐位。
+// 未译 kind 注记：volcano/wrath/holystorm/typhoon/…war 面
+//   （L9851-10295-10438）——else-if 链落空语义=蓝本无匹配（C# 侧同构落空）；到期 splice 对全 kind 生效逐位。
 // 震屏面：shake 字段镜像（tsunami age1=6/sinkhole %2=4/quake=7 直写/blackhole=9——
 //   onSound 宿主回调黄金受控 undefined no-op）。
 // 运行：bun scripts/unity-migration/power-transcript.mjs（M-U7w 口径：黄金链一律 bun）
@@ -31,7 +33,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const T = { DEEP: 0, WATER: 1, SAND: 2, GRASS: 3, FOREST: 4, HILL: 5, MOUNTAIN: 6, SNOW: 7, LAVA: 8, BURNT: 9, ICE: 10, SWAMP: 11 };
 const W = 256, H = 160, N = W * H;
 const idx = (x, y) => y * W + x;
-const R = { ZOMBIE: 5, PENGUIN: 11, SNOWWOLF: 15, SKELETON: 16, DEMON: 17, WHITEWALKER: 23, ANGEL: 28 };
+const R = { HUMAN: 0, SHEEP: 6, ZOMBIE: 5, PENGUIN: 11, SNOWWOLF: 15, SKELETON: 16, DEMON: 17, MAGE: 18, WHITEWALKER: 23, ANGEL: 28 };
+const CIV_RACES = new Set([R.HUMAN, 1, 2, 3, 19, 20]);   // types.ts RACES isCiv 六族（HUMAN/ELF/DWARF/ORC/LIZARD/GOBLIN——L157-160/177-178）
+const FLAMMABLE = new Set([T.GRASS, T.FOREST]);          // constants.ts FLAMMABLE（ignite L1075 门——M-U7q 消费面）
 const BUILDING_HP = [0, 70, 240, 120, 40, 150, 340, 90, 110, 100, 140, 200];   // types.ts L325-337 逐值
 const BUILD_FARM = 4;                                   // types.ts L340 BUILD_KINDS.FARM
 
@@ -62,18 +66,22 @@ class MirrorWorld {
     this.frozen = new Set(fx.frozen0);
     this.flood = new Map();
     this.wet = new Map();
-    this.buildings = fx.building0.map((b) => ({ i: b.i, x: b.x, y: b.y, kind: b.kind, civ: -1 }));
+    this.buildings = fx.building0.map((b) => ({ i: b.i, x: b.x, y: b.y, kind: b.kind, civ: b.civ ?? -1 }));   // M-U10c civ 通道（箭矢建筑战争面）
     this.bIdx = new Map(fx.building0.map((b, k) => [b.i, k]));
     this.building = new Uint8Array(N);
     for (const b of fx.building0) this.building[b.i] = b.kind;
+    for (const [i, kind] of fx.orphanB0 ?? []) this.building[i] = kind;   // M-U10c 孤儿建筑格（building>0 无记录——L10289 undefined 镜像钉）
+    this.rel = new Map(fx.rel0 ?? []);     // M-U10c 外交挂账（pairKey 字符串键 → atWar L2061-2064）
     this.bHp = new Map();
     this.damagedSet = new Set();
     this.dirty = new Set();
     this.activeBattles = new Map(fx.battles0);
-    this.effects = fx.fx0.map((e) => ({ kind: e.kind, x: unhex(e.x), y: unhex(e.y), r: e.r, age: e.age, ttl: e.ttl, seed: e.seed, dir: unhex(e.dir) }));
-    this.units = fx.units0.map((u) => ({ id: u.id, race: u.race, x: unhex(u.x), y: unhex(u.y), hp: unhex(u.hp), maxHp: unhex(u.maxHp), hurt: u.hurt, chill: u.chill, dead: u.dead, boat: 0 }));   // boat 夹具恒 0（无船域注记）
+    this.effects = fx.fx0.map((e) => ({ kind: e.kind, x: unhex(e.x), y: unhex(e.y), r: e.r, age: e.age, ttl: e.ttl, seed: e.seed, dir: unhex(e.dir), src: e.src ?? undefined, dmg: e.dmg ?? undefined, quiet: e.quiet === true }));   // M-U10c src/dmg/quiet 通道
+    this.units = fx.units0.map((u) => ({ id: u.id, race: u.race, x: unhex(u.x), y: unhex(u.y), hp: unhex(u.hp), maxHp: unhex(u.maxHp), hurt: u.hurt, chill: u.chill, dead: u.dead, boat: 0, civ: u.civ ?? -1, gbArmor: u.gbArmor ?? 0 }));   // boat 夹具恒 0（无船域注记）；civ/gbArmor M-U10c 通道
+    this.rebuildBuckets();                 // M-U10c：arrow/bullet 桶扫描面（gen 注入相尾同构——纯函数零掷）
     this.worldEvents = [];
     this.shake = 0;                         // 震屏（effectsTick 四 kind 写面——S 基线 0）
+    this.fxPrefs = { dmgNumbers: true };    // engine L271 fxPrefs 默认（dmgNumbers 门——arrow dmg 数字面）
     this.yearF = sc.yearF;
     this.tickCount = sc.tickCount;
     this.seasons = sc.seasons;
@@ -212,6 +220,85 @@ class MirrorWorld {
     if (bi === undefined) return;
     this.destroyBuilding(i);
     if (byCiv == null || byCiv < 0) return;
+  }
+  rebuildBuckets() {                      // engine L3081-3104 机械（懒清空世代戳为性能优化——全清语义等价，桶内容=本世代全量 units 按 (x/4,y/4) 分桶，桶内序=units 序）
+    const bw = 64, bh = 40;               // engine L717-718 ceil(W/4)/ceil(H/4)——C# BKW/BKH 同源
+    this.buckets = Array.from({ length: bw * bh }, () => []);
+    for (const u of this.units) {
+      let cx = (u.x / 4) | 0;
+      let cy = (u.y / 4) | 0;
+      if (cx > bw - 1) cx = bw - 1; else if (cx < 0) cx = 0;
+      if (cy > bh - 1) cy = bh - 1; else if (cy < 0) cy = 0;
+      this.buckets[cy * bw + cx].push(u);
+    }
+  }
+  addEvent(kind, text, opts) {            // engine addEvent L13996 子集（unshift；cap 80 夹具不触达；x/y null 归一——events 全列对账面）
+    this.worldEvents.unshift({ kind, text, x: (opts && opts.x) ?? null, y: (opts && opts.y) ?? null });
+  }
+  ignite(i) {                             // engine ignite L1072-1077 机械（FLAMMABLE 门 + fire=150+floor(rng*90) 1 掷 + fireSet 入账）
+    const t = this.terrain[i];
+    if (this.fire[i] > 0) return;
+    if (!FLAMMABLE.has(t) && this.building[i] === 0) return;
+    this.fire[i] = 150 + Math.floor(this.rng() * 90);
+    this.fireSet.add(i);
+  }
+  atWar(a, b) {                           // engine atWar L2061-2064 机械（pairKey 字符串键——engine L34；v < -20 门）
+    const v = this.rel.get(a < b ? `${a}-${b}` : `${b}-${a}`);
+    return v !== undefined && v < -20;
+  }
+  gearBonus(u) {                          // gearBonus L1498-1520 桩形（engine 真 gearBonus(u).armor 于 gen 快照相采样入 units0.gbArmor——链甲 armor=8 位精确钉；余零同 GEAR_EMPTY L1496）
+    return { armor: u.gbArmor || 0, crit: 0, lifesteal: 0, thorns: 0, regen: 0, ranged: 0, speed: 1 };
+  }
+  isLand(t) {                             // constants.ts L70-72 机械（explode 消费——DEEP/WATER/LAVA 非陆；landForDepth L1011 含 ICE 异表注记）
+    return t !== T.DEEP && t !== T.WATER && t !== T.LAVA;
+  }
+  explode(x, y, r, opts) {                // engine explode L10450-10499 机械（nuke 支全译——夹具 terrain 支触达，nuke 支不触达注记）
+    // onSound?.(nuke ? 'nuke' : 'boom') —— 宿主回调（黄金受控 undefined no-op 同 gen 端）
+    for (let yy = Math.floor(y - r); yy <= y + r; yy++) {
+      for (let xx = Math.floor(x - r); xx <= x + r; xx++) {
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+        const d = Math.hypot(xx - x, yy - y);
+        if (d > r) continue;
+        const i = idx(xx, yy);
+        if (this.building[i] > 0) this.destroyBuilding(i);
+        if (opts && opts.terrain && this.isLand(this.terrain[i])) {
+          if (opts && opts.lava && d < 1.8) this.setTerrain(i, T.LAVA);
+          else if (this.terrain[i] !== T.MOUNTAIN) this.setTerrain(i, T.BURNT);
+          if (d > r * 0.55 && this.rng() < 0.3) this.ignite(i);
+        }
+      }
+    }
+    for (const u of this.units) {
+      const d = Math.hypot(u.x - x, u.y - y);
+      if (d < r + 0.8) {
+        u.hp -= 300 * Math.max(0.15, 1 - d / (r + 0.8));
+        u.hurt = 30;
+        if (u.hp <= 0) { u.dead = true; this.wwCountKill(u); }
+      }
+    }
+    this.shake = Math.max(this.shake, opts && opts.nuke ? 14 : 8);
+    this.fx('explosion', x, y, 26, { r });
+    for (let s = 0; s < 6; s++) {
+      this.fx('smoke', x + this.rng() * r - r / 2, y + this.rng() * r - r / 2, 34);
+    }
+    if (opts && opts.nuke) {
+      this.fx('flash', x, y, 14);
+      this.fx('mushroom', x, y, 90);
+      this.addEvent('nuke', '蘑菇云在大地上升起，幸存者将长久铭记这一天', { x, y });
+      for (let yy = Math.floor(y - 5); yy <= y + 5; yy++) {
+        for (let xx = Math.floor(x - 5); xx <= x + 5; xx++) {
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+          if (Math.hypot(xx - x, yy - y) < 5) {
+            const i = idx(xx, yy);
+            this.radiate[i] = 1;
+            this.radSet.set(i, this.tickCount + 2400);
+            this.markDirty(i);
+          }
+        }
+      }
+    }
+  }
+  wwCountKill(u) {                        // engine wwCountKill L8690 子集（killCredit 恒 null + worldWar idle 直跳——M-U3c 起大战域恒 idle，同 C# WbCivSim.WwCountKill 桩形）
   }
   effectsTick() {                         // engine L9801-10447 八支机械（未译 kind else-if 落空——夹具仅八 kind 注入）
     for (let i = this.effects.length - 1; i >= 0; i--) {   // L9802
@@ -533,6 +620,66 @@ class MirrorWorld {
             const j = idx(xx, yy);
             if (this.building[j] > 0) this.destroyBuilding(j);
             else if ((this.terrain[j] === T.GRASS || this.terrain[j] === T.FOREST) && this.rng() < 0.3) this.setTerrain(j, T.BURNT);
+          }
+        }
+      } else if (e.kind === 'meteor') {    // L10237-10239（M-U10c 命中族：age>=ttl → explode + 非quiet 入纪事）
+        if (e.age >= e.ttl) {
+          this.explode(e.x, e.y, 4.2, { terrain: true });
+          if (!e.quiet) this.addEvent('meteor', '一颗燃烧的陨石轰然坠地', { x: e.x, y: e.y });
+        }
+      } else if (e.kind === 'fireball') {  // L10240-10254（M-U10c：溅射 hp-=e.r〔r=伤害位面〕+ MAGE 豁免 + ignite 建筑门）
+        if (e.age >= e.ttl) {
+          for (const u of this.units) {
+            if (u.dead || u.race === R.MAGE) continue;
+            const d = Math.hypot(u.x - e.x, u.y - e.y);
+            if (d < 1.15) {
+              u.hp -= e.r;
+              u.hurt = 20;
+              if (u.hp <= 0) u.dead = true;
+            }
+          }
+          this.fx('explosion', e.x, e.y, 14, { r: 0.9 });
+          const fi = idx(Math.floor(e.x), Math.floor(e.y));
+          if (fi >= 0 && fi < W * H && this.building[fi] === 0) this.ignite(fi);
+        }
+      } else if (e.kind === 'arrow' || e.kind === 'bullet') {   // L10255-10294（M-U10c：桶扫描最近命中 + gearBonus armor 减伤 + 建筑战争面）
+        if (e.age >= e.ttl) {
+          let hit = null;
+          let hitD = 1.1;
+          const bw = 64, bh = 40;          // engine L717-718——C# BKW/BKH 同源
+          const abx = Math.min(bw - 1, Math.max(0, Math.floor(e.x / 4)));
+          const aby = Math.min(bh - 1, Math.max(0, Math.floor(e.y / 4)));
+          for (let by = aby - 1; by <= aby + 1; by++) {
+            for (let bx = abx - 1; bx <= abx + 1; bx++) {
+              if (bx < 0 || by < 0 || bx >= bw || by >= bh) continue;
+              for (const o of this.buckets[by * bw + bx]) {
+                if (o.dead) continue;
+                if (e.src !== undefined && o.civ === e.src) continue;
+                const d = Math.hypot(o.x - e.x, o.y - e.y);
+                if (d < hitD) { hitD = d; hit = o; }
+              }
+            }
+          }
+          if (hit) {
+            const dmg = e.dmg ?? 6;
+            const gD = CIV_RACES.has(hit.race) ? this.gearBonus(hit) : null;
+            const final = gD && gD.armor > 0 ? dmg * (1 - gD.armor / 100) : dmg;
+            hit.hp -= final;
+            hit.hurt = 20;
+            this.fx('hit', e.x, e.y, 6);
+            if (this.fxPrefs.dmgNumbers && (final >= 10 || this.rng() < 0.3)) this.fx('dmg', hit.x, hit.y, 24, { text: '-' + Math.round(final) });
+            if (hit.hp <= 0) {
+              hit.dead = true;
+              this.wwCountKill(hit);       // 大战阵亡计数（killCredit 恒 null + worldWar idle 直跳）
+            }
+          } else {
+            const fi = idx(Math.floor(e.x), Math.floor(e.y));
+            if (fi >= 0 && fi < W * H && this.building[fi] > 0) {
+              const b = this.buildings[this.bIdx.get(fi) ?? -1];   // OOB → undefined 镜像（孤儿建筑格钉）
+              if (b && e.src !== undefined && b.civ !== e.src && b.civ >= 0 && e.src >= 0 && this.atWar(e.src, b.civ)) {
+                this.attackBuilding(fi, (e.dmg ?? 6) * 0.8, e.src);
+              }
+            }
           }
         }
       }

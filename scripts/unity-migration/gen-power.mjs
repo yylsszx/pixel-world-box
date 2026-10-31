@@ -1,9 +1,12 @@
 // ============================================================================
-// gen-power.mjs —— M-U10a「effectsTick 游荡云族八种」+ M-U10b「波前族+静态族五 kind」黄金向量
+// gen-power.mjs —— M-U10a「effectsTick 游荡云族八种」+ M-U10b「波前族+静态族五 kind」
+//   + M-U10c「命中族三 kind + explode 消费面」黄金向量
 // （tornado L9805-9824 / acid L9826-9850 / blizzard L9915-9948 / locust L9949-9971 /
 //   drought L9972-9996 / rainstorm L9997-10022 / sandstorm L10068-10090 / famine L10170-10190
 //   + M-U10b: tsunami L9877-9914 / sinkhole L10120-10147 / iceage L10148-10169 /
 //   blackhole L10191-10223 / quake L10224-10236
+//   + M-U10c: meteor L10237-10239 / fireball L10240-10254 / arrow·bullet L10255-10294 /
+//   explode L10450-10499（terrain/nuke 全译，夹具 terrain 支触达）+ ignite L1072-1077
 //   + 到期 splice L10439-10441 + activeBattles %5 清理 L10443-10447）
 // 直接 import 现役 src/lib/game/engine.ts（真实现，非复制）。夹具 = 手术式字段直写：
 //   构造 GameEngine(baseSeed)（构造器 generate 全链）后 terrain/fire/fireSet/building/
@@ -26,6 +29,12 @@
 //   ⑤ 到期 splice：for 倒序 + splice(i,1) —— C# List 倒序 RemoveAt(i) 同构；age 从 0
 //     起 fx 注入，e.age++ 头递增。
 //   ⑥ activeBattles：Map<number,number> 迭代中删——C# 快照二段式（M-U8b 先例）。
+//   ⑦ M-U10c 命中族：arrow/bullet 桶扫描（3×3 环带）依赖 buckets——注入相尾 eng.rebuildBuckets()
+//     （纯函数零掷）→ 黄金步进期内桶态冻结（effectsTick 不重建——主循环 L2519 序镜像）；
+//     gearBonus 装备面：engine 真 gearBonus(u).armor 于快照相采样入 units0.gbArmor（链甲 armor=8
+//     → final=dmg*0.92 位精确钉），C# 镜像侧 GearBonusHook 桩回放同值；rel0 外交挂账通道
+//     （eng.rel.set pairKey）+ atWar <-20 门；孤儿建筑格通道 orphanBuilding（building[i]>0 而无
+//     buildings/bIdx 记录——L10289 bIdx.get ?? -1 → buildings[-1]=undefined 镜像钉）。
 //
 // 运行：bun scripts/unity-migration/gen-power.mjs（M-U7w 口径：黄金链一律 bun）
 // 输出：scripts/unity-migration/golden/power.json
@@ -67,7 +76,7 @@ const jiti = createJiti(import.meta.url, { alias: { '@': path.join(ROOT, 'src') 
 const engMod = await jiti.import(path.join(ROOT, 'src/lib/game/engine.ts'));
 const GameEngine = engMod.GameEngine ?? engMod.default?.GameEngine;
 if (typeof GameEngine !== 'function') throw new Error('GameEngine 未定位: ' + Object.keys(engMod).join(','));
-const { T, R } = await jiti.import(path.join(ROOT, 'src/lib/game/types.ts'));
+const { T, R, RACES } = await jiti.import(path.join(ROOT, 'src/lib/game/types.ts'));
 const { W, H } = await jiti.import(path.join(ROOT, 'src/lib/game/constants.ts'));
 const N = W * H;
 
@@ -128,21 +137,25 @@ function buildScenario(spec) {
 
   // 手术二·直写相收集（保序）
   const terrainW = [], fireW = [], buildingW = [], regrowS = [], frozenA = [], radiateW = [], radSetW = [], battlesW = [];
+  const orphanB = [];
   for (const p of spec.patches) {
     if (p.terrain) for (const [x, y, t] of p.terrain) terrainW.push([x, y, t]);
     if (p.fire) for (const [x, y, v] of p.fire) fireW.push([x, y, v]);
-    if (p.building) for (const [x, y, kind] of p.building) buildingW.push([x, y, kind]);
+    if (p.building) for (const [x, y, kind, civ] of p.building) buildingW.push([x, y, kind, civ ?? -1]);
+    if (p.orphanBuilding) for (const [x, y, kind] of p.orphanBuilding) orphanB.push([idx(x, y), kind]);
     if (p.regrow) for (const [x, y, at] of p.regrow) regrowS.push([x, y, at]);
     if (p.frozen) for (const [x, y] of p.frozen) frozenA.push([x, y]);
     if (p.radiate) for (const [x, y, v] of p.radiate) radiateW.push([x, y, v]);
     if (p.radSet) for (const [x, y, at] of p.radSet) radSetW.push([x, y, at]);
     if (p.battles) for (const [tile, exp] of p.battles) battlesW.push([tile, exp]);
+    if (p.rel) for (const [k, v] of p.rel) eng.rel.set(k, v);   // M-U10c 外交挂账（pairKey 字符串键——engine L34）
   }
+  for (const [i, kind] of orphanB) eng.building[i] = kind;       // 孤儿建筑格（building>0 而无 buildings/bIdx 记录——L10289 undefined 镜像钉）
   for (const [x, y, t] of terrainW) eng.terrain[idx(x, y)] = t;
   for (const [x, y, v] of fireW) { eng.fire[idx(x, y)] = v; eng.fireSet.add(idx(x, y)); }
-  for (const [x, y, kind] of buildingW) {
+  for (const [x, y, kind, civ] of buildingW) {
     eng.building[idx(x, y)] = kind;
-    eng.buildings.push({ i: idx(x, y), x, y, kind, civ: -1 });
+    eng.buildings.push({ i: idx(x, y), x, y, kind, civ });
     eng.bIdx.set(idx(x, y), eng.buildings.length - 1);
   }
   for (const [x, y, at] of regrowS) eng.regrow.set(idx(x, y), at);
@@ -152,21 +165,34 @@ function buildScenario(spec) {
   for (const [tile, exp] of battlesW) eng.activeBattles.set(tile, exp);
 
   // 手术二·单位真调用注入（spawnUnit 掷消耗 baseSeed 流——黄金掷链尾置清零后纯净起流）
+  //   M-U10c：civ 直传 spawnUnit opts（友军豁免面）+ gear.arm 装备直写（gearBonus armor 采样入快照）
   for (const up of spec.patches) {
     if (!up.units) continue;
     for (const u of up.units) {
-      const spawned = eng.spawnUnit(R[u.race], u.x, u.y, { silent: true });
+      const spawned = eng.spawnUnit(R[u.race], u.x, u.y, { silent: true, civ: u.civ });
       if (u.hp !== undefined) spawned.hp = u.hp;
       if (u.maxHp !== undefined) spawned.maxHp = u.maxHp;
       if (u.hurt !== undefined) spawned.hurt = u.hurt;
+      if (u.gear && u.gear.arm) spawned.arm = u.gear.arm;   // 装备槽直写（gearBonus 快路径破——七槽非空）
     }
   }
 
-  // 手术二·effects 真调用注入（fx seed/dir 双掷同上注入相）
+  // 手术二·effects 真调用注入（fx seed/dir 双掷同上注入相；M-U10c src/dmg/quiet 传参按在位键展开——
+  //   engine fx opts Partial<Effect> spread 语义：undefined 键不覆盖）
   for (const p of spec.patches) {
     if (!p.fx) continue;
-    for (const f of p.fx) eng.fx(f.kind, f.x, f.y, f.ttl, { r: f.r });
+    for (const f of p.fx) {
+      const opts = {};
+      if (f.r !== undefined) opts.r = f.r;
+      if (f.src !== undefined) opts.src = f.src;
+      if (f.dmg !== undefined) opts.dmg = f.dmg;
+      if (f.quiet !== undefined) opts.quiet = f.quiet;
+      eng.fx(f.kind, f.x, f.y, f.ttl, opts);
+    }
   }
+
+  // 手术二尾：桶重建（arrow/bullet 扫描面——主循环 L2519 rebuildBuckets 同构；纯函数零掷）
+  eng.rebuildBuckets();
 
   // 手术二·快照：直写后/effectsTick 前的镜像输入面（黄金 fixture 通道）
   const fixture = {
@@ -179,10 +205,12 @@ function buildScenario(spec) {
     radSet0: [...eng.radSet.entries()],
     regrow0: [...eng.regrow.entries()],
     frozen0: [...eng.frozen],
-    building0: buildingW.map(([x, y, kind]) => ({ i: idx(x, y), x, y, kind })),
+    building0: buildingW.map(([x, y, kind, civ]) => ({ i: idx(x, y), x, y, kind, civ })),
+    orphanB0: orphanB,                    // M-U10c 孤儿建筑格（building>0 无记录——L10289 镜像钉）
+    rel0: [...eng.rel.entries()],         // M-U10c 外交挂账（pairKey 字符串键 → atWar <-20 门）
     battles0: [...eng.activeBattles.entries()],
-    fx0: eng.effects.map((e) => ({ kind: e.kind, x: f64hex(e.x), y: f64hex(e.y), r: e.r, age: e.age, ttl: e.ttl, seed: e.seed, dir: f64hex(e.dir) })),
-    units0: eng.units.map((u) => ({ id: u.id, race: u.race, x: f64hex(u.x), y: f64hex(u.y), hp: f64hex(u.hp), maxHp: f64hex(u.maxHp), hurt: u.hurt, chill: u.chill, dead: u.dead })),
+    fx0: eng.effects.map((e) => ({ kind: e.kind, x: f64hex(e.x), y: f64hex(e.y), r: e.r, age: e.age, ttl: e.ttl, seed: e.seed, dir: f64hex(e.dir), src: e.src ?? null, dmg: e.dmg ?? null, quiet: e.quiet === true })),
+    units0: eng.units.map((u) => ({ id: u.id, race: u.race, x: f64hex(u.x), y: f64hex(u.y), hp: f64hex(u.hp), maxHp: f64hex(u.maxHp), hurt: u.hurt, chill: u.chill, dead: u.dead, civ: u.civ, gbArmor: RACES[u.race].isCiv ? eng.gearBonus(u).armor : 0 })),
   };
 
   // 手术三（尾置）：rngA 清零起流 → 步进 = tickCount++ + effectsTick（主循环 L2508/L2528 序）
@@ -411,6 +439,66 @@ const specs = [
     ],
     sanity: (eng) => true,
   },
+  {
+    // S15 meteor（M-U10c）：age>=ttl → explode(4.2,{terrain:true})——BURNT 环（MOUNTAIN 幸存/WATER isLand 门
+    //   整格跳过含 ignite 门掷）+ ignite 门掷 d>r*0.55（<0.3 短路）+ 单位 300*max(0.15,1-d/5) + shake max 8
+    //   + fx explosion {r:4.2} + smoke ×6（各 2 掷）+ 非quiet 入纪事（quiet 弹抑事件——双弹对照钉）
+    key: 'power-meteor', baseSeed: BASE + 35, seed: 0x0A0E0F, seasons: false, yearF: 2.5, tickCount: 14000, steps: 6, minDraws: 30,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 56; y < 65; y++) for (let x = 96; x < 105; x++) a.push([x, y, T.GRASS]); return a; })().concat([[98, 58, T.MOUNTAIN], [102, 58, T.WATER]])],
+        units: [{ race: 'SHEEP', x: 100.5, y: 60.5, hp: 500, maxHp: 500 }, { race: 'SHEEP', x: 106.5, y: 60.5, hp: 500, maxHp: 500 }],
+        fx: [{ kind: 'meteor', x: 100.5, y: 60.5, ttl: 3 }, { kind: 'meteor', x: 150.5, y: 80.5, ttl: 3, quiet: true }] },
+    ],
+    sanity: (eng) => eng.worldEvents.length === 1 && eng.worldEvents[0].kind === 'meteor'
+      && eng.terrain[idx(98, 58)] === T.MOUNTAIN && eng.terrain[idx(102, 58)] === T.WATER
+      && eng.shake === 8 && eng.effects.length === 14 && eng.effects.every((e) => e.kind === 'explosion' || e.kind === 'smoke')
+      && eng.units[0].hp > 150 && eng.units[0].hp < 250 && eng.units[1].hp === 500,
+  },
+  {
+    // S16 fireball（M-U10c）：age>=ttl → 溅射（MAGE 豁免 / hp-=e.r〔r=伤害位面——真法师火球 dmg 18〕/
+    //   dead）+ fx explosion {r:0.9} + ignite 建筑门（building[fi]>0 不烧——战争不纵火）与空地正面支（fireSet 入账）
+    key: 'power-fireball', baseSeed: BASE + 36, seed: 0x0A0E10, seasons: false, yearF: 2.5, tickCount: 15000, steps: 4, minDraws: 5,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 56; y < 65; y++) for (let x = 96; x < 105; x++) a.push([x, y, T.GRASS]); return a; })()],
+        building: [[102, 60, 1]],
+        units: [{ race: 'SHEEP', x: 102.5, y: 60.5, hp: 50 }, { race: 'SHEEP', x: 103.0, y: 60.5, hp: 3 }, { race: 'MAGE', x: 102.5, y: 61.0, hp: 50 }],
+        fx: [{ kind: 'fireball', x: 102.5, y: 60.5, ttl: 2, r: 18 }, { kind: 'fireball', x: 98.5, y: 58.5, ttl: 2, r: 18 }] },
+    ],
+    sanity: (eng) => eng.units[0].hp === 32 && eng.units[1].dead === true && eng.units[2].hp === 50
+      && eng.fireSet.has(idx(98, 58)) && eng.fireSet.size === 1 && eng.worldEvents.length === 0
+      && eng.effects.length === 2 && eng.effects.every((e) => e.kind === 'explosion'),
+  },
+  {
+    // S17 arrow·bullet（M-U10c）：桶扫描 3×3 最近命中（<1.1）——友军豁免（civ===src）/ gearBonus armor 减伤
+    //   （链甲 8 → final=dmg*0.92 位精确）/ 非 civ 免 gearBonus / dmgNumbers 双支（<10 掷 0.3 vs >=10 短路无掷）
+    //   / kill→wwCountKill（killCredit 恒 null + worldWar idle 直跳）/ 建筑支三分（自军免 b.civ===src /
+    //   atWar rel=-30 打 attackBuilding dmg*0.8 hp>0 支 bHp.set+damagedSet+fx hit / 无建筑落空零掷）
+    key: 'power-arrow', baseSeed: BASE + 37, seed: 0x0A0E11, seasons: false, yearF: 2.5, tickCount: 16000, steps: 3, minDraws: 8,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 76; y < 85; y++) for (let x = 196; x < 212; x++) a.push([x, y, T.GRASS]); return a; })()],
+        building: [[206, 80, 4, 1], [208, 80, 4, 2]],
+        rel: [['1-2', -30]],
+        units: [{ race: 'HUMAN', x: 200.5, y: 80.5, hp: 50, maxHp: 50, civ: 1 }, { race: 'HUMAN', x: 200.9, y: 80.5, hp: 50, maxHp: 50, civ: 2, gear: { arm: 'chain_mail' } }, { race: 'SHEEP', x: 204.0, y: 80.0, hp: 5, maxHp: 50 }],
+        fx: [{ kind: 'arrow', x: 200.5, y: 80.5, ttl: 1, src: 1, dmg: 6 }, { kind: 'arrow', x: 204.0, y: 80.0, ttl: 1, dmg: 12 }, { kind: 'bullet', x: 206.0, y: 80.0, ttl: 1, src: 2, dmg: 9 }, { kind: 'bullet', x: 208.0, y: 80.0, ttl: 1, src: 2, dmg: 6 }] },
+    ],
+    sanity: (eng) => eng.units[0].hp === 50 && eng.units[2].dead === true && eng.bHp.size === 1
+      && eng.damagedSet.has(idx(206, 80)) && !eng.damagedSet.has(idx(208, 80)) && eng.buildings.length === 2,
+  },
+  {
+    // S18 bullet 支路余面（M-U10c）：孤儿建筑格（building>0 无 bIdx 记录——buildings[-1]=undefined 镜像钉）
+    //   + 非战 rel（10 → atWar false 不打——bHp/damagedSet 零写面）+ 混批到期 splice（ttl=2 step2 出账）
+    key: 'power-bullet-misc', baseSeed: BASE + 38, seed: 0x0A0E12, seasons: false, yearF: 2.5, tickCount: 17000, steps: 4, minDraws: 2,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 56; y < 65; y++) for (let x = 96; x < 105; x++) a.push([x, y, T.GRASS]); return a; })()],
+        building: [[102, 60, 4, 2]],
+        orphanBuilding: [[100, 60, 1]],
+        rel: [['1-2', 10]],
+        units: [{ race: 'SHEEP', x: 110.5, y: 60.5, hp: 50, maxHp: 50 }],
+        fx: [{ kind: 'bullet', x: 100.5, y: 60.5, ttl: 1, src: 3, dmg: 8 }, { kind: 'bullet', x: 102.5, y: 60.5, ttl: 1, src: 1, dmg: 8 }, { kind: 'arrow', x: 130.5, y: 60.5, ttl: 2, src: 1, dmg: 6 }, { kind: 'fireball', x: 98.5, y: 56.5, ttl: 1, r: 18 }] },
+    ],
+    sanity: (eng) => eng.bHp.size === 0 && eng.damagedSet.size === 0 && eng.buildings.length === 1 && eng.effects.length === 1
+      && eng.fireSet.has(idx(98, 56)) && eng.effects[0].kind === 'explosion',
+  },
 ];
 
 const scenarios = specs.map(buildScenario);
@@ -434,7 +522,7 @@ const out = {
     protocol: 'GameEngine 构造 + 手术式夹具两相直写 + effects/spawnUnit 真调用注入（fx seed/dir 双掷注入相）+ rngA 尾置清零起流 + tickCount++/effectsTick 直调步进快照（主循环 L2508/L2528 序同构）',
     rng: 'eng.rngA 单流（类字段箭头 rng L728-733）；mulberry 纯数学反解 total（noise.ts L3-13）',
     math: 'tornado/sandstorm/famine Math.hypot——C# FdHypot/V8Hypot 位精确件对账（fdlibm 域）；acid/blizzard/locust/drought/rainstorm 纯平方距离',
-    domains: ['effectsTick L9801-10447', 'tornado L9805-9824', 'acid L9826-9850', 'blizzard L9915-9948', 'locust L9949-9971', 'drought L9972-9996', 'rainstorm L9997-10022', 'sandstorm L10068-10090', 'famine L10170-10190', 'M-U10b: tsunami L9877-9914', 'M-U10b: sinkhole L10120-10147', 'M-U10b: iceage L10148-10169', 'M-U10b: blackhole L10191-10223', 'M-U10b: quake L10224-10236', '到期 splice L10439-10441', 'activeBattles %5 清理 L10443-10447', 'fx L9781-9799', 'attackBuilding L4446-4462', 'meltIce L2892（drought 消费）', 'setTerrain L969-1007（regrow L979 出账联动 + flood L983 贴花级联）'],
+    domains: ['effectsTick L9801-10447', 'tornado L9805-9824', 'acid L9826-9850', 'blizzard L9915-9948', 'locust L9949-9971', 'drought L9972-9996', 'rainstorm L9997-10022', 'sandstorm L10068-10090', 'famine L10170-10190', 'M-U10b: tsunami L9877-9914', 'M-U10b: sinkhole L10120-10147', 'M-U10b: iceage L10148-10169', 'M-U10b: blackhole L10191-10223', 'M-U10b: quake L10224-10236', 'M-U10c: meteor L10237-10239', 'M-U10c: fireball L10240-10254', 'M-U10c: arrow·bullet L10255-10294', 'M-U10c: explode L10450-10499', 'M-U10c: ignite L1072-1077', '到期 splice L10439-10441', 'activeBattles %5 清理 L10443-10447', 'fx L9781-9799', 'attackBuilding L4446-4462', 'meltIce L2892（drought 消费）', 'setTerrain L969-1007（regrow L979 出账联动 + flood L983 贴花级联）', 'rebuildBuckets L3081-3104（注入相尾——arrow/bullet 桶扫描面）', 'gearBonus L1498-1520（armor 采样入 units0.gbArmor）', 'atWar L2061-2064（rel0 挂账）'],
     scenarioCount: scenarios.length,
   },
   scenarios,

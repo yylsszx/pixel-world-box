@@ -2482,8 +2482,80 @@ namespace PixelWorldBox.Wb
                         }
                     }
                 }
-                // 未译 kind 落空（volcano/wrath/holystorm/typhoon/
-                // meteor/fireball/arrow·bullet/…war 面 L9851-10438——后续切片插入；夹具仅十三 kind）
+                else if (e.kind == "meteor" && e.age >= e.ttl)                                                          // L10237（M-U10c 命中族：age>=ttl 门——蓝本 && 合取形）
+                {
+                    Explode(w, e.x, e.y, 4.2, true, null, null);                                                          // L10238（opts {terrain:true}——lava/nuke 缺位）
+                    if (!e.quiet) w.AddEvent("meteor", "一颗燃烧的陨石轰然坠地", null, e.x, e.y);                             // L10239（quiet 弹抑事件——衍生弹体面）
+                }
+                else if (e.kind == "fireball" && e.age >= e.ttl)                                                         // L10240
+                {
+                    foreach (WbU u in w.units)                                                                            // L10242（法师火球命中：溅射伤害〔法师自身免疫〕+ 点燃地面）
+                    {
+                        if (u.dead != 0 || u.race == WbConstants.R_MAGE) continue;                                        // L10243
+                        double d = WbMath.FdHypot(u.x - e.x, u.y - e.y);                                                  // L10244（Math.hypot fdlibm 位精确域）
+                        if (d < 1.15)                                                                                      // L10245
+                        {
+                            u.hp -= e.r;                                                                                   // L10246（r=伤害位面——真法师火球 dmg 18）
+                            u.hurt = 20;                                                                                   // L10247
+                            if (u.hp <= 0) u.dead = 1;                                                                     // L10248
+                        }
+                    }
+                    FxOptHook(w, "explosion", e.x, e.y, 14, null, null, null, 0.9, null);                                  // L10251（opts {r:0.9}——M-U7s o 面清偿）
+                    int fi = (int)System.Math.Floor(e.y) * WbWorld.W + (int)System.Math.Floor(e.x);                       // L10253
+                    if (fi >= 0 && fi < WbWorld.W * WbWorld.H && w.building[fi] == 0) IgniteE(w, fi);                      // L10254（法师火球不再点燃建筑格——战争不纵火）
+                }
+                else if ((e.kind == "arrow" || e.kind == "bullet") && e.age >= e.ttl)                                    // L10255（二元 kind 门 + ttl 合取）
+                {
+                    WbU hit = null;                                                                                        // L10257
+                    double hitD = 1.1;                                                                                     // L10258
+                    int abx = (int)System.Math.Min(WbWorld.BKW - 1, System.Math.Max(0, (int)System.Math.Floor(e.x / 4)));  // L10259（bw=ceil(W/4)=BKW L455 同源）
+                    int aby = (int)System.Math.Min(WbWorld.BKH - 1, System.Math.Max(0, (int)System.Math.Floor(e.y / 4)));  // L10260（bh=ceil(H/4)=BKH L456 同源）
+                    for (int by = aby - 1; by <= aby + 1; by++)                                                            // L10261（3×3 桶环扫描）
+                    {
+                        for (int bx = abx - 1; bx <= abx + 1; bx++)                                                        // L10262
+                        {
+                            if (bx < 0 || by < 0 || bx >= WbWorld.BKW || by >= WbWorld.BKH) continue;                      // L10263
+                            System.Collections.Generic.List<WbU> bucket = w.buckets[by * WbWorld.BKW + bx];                // L10264（引擎桶恒初始化 []——C# RebuildBuckets 前为 null ≡ 空桶，契约同构）
+                            if (bucket == null) continue;
+                            foreach (WbU o in bucket)
+                            {
+                                if (o.dead != 0) continue;                                                                 // L10265
+                                if (e.src.HasValue && o.civ == e.src.Value) continue;                                      // L10266（不误伤友军——src undefined 语义 null）
+                                double d = WbMath.FdHypot(o.x - e.x, o.y - e.y);                                           // L10267（Math.hypot fdlibm 位精确域）
+                                if (d < hitD) { hitD = d; hit = o; }                                                        // L10268
+                            }
+                        }
+                    }
+                    if (hit != null)                                                                                       // L10272
+                    {
+                        double dmg = e.dmg ?? 6;                                                                           // L10273（?? 语义：null → 6，0 → 0）
+                        WbGearBonus? gD = RStats[hit.race].isCiv ? GearBonusHook(w, hit) : (WbGearBonus?)null;             // L10275（RACES[hit.race].isCiv 门——非 civ 免 gearBonus）
+                        double final = gD.HasValue && gD.Value.armor > 0 ? dmg * (1 - gD.Value.armor / 100) : dmg;         // L10276（装备减伤结算）
+                        hit.hp -= final;                                                                                   // L10277
+                        hit.hurt = 20;                                                                                     // L10278
+                        FxHook(w, "hit", e.x, e.y, 6);                                                                     // L10279
+                        if (w.fxDmgNumbers && (final >= 10 || w.Rng() < 0.3)) w.Fx("dmg", hit.x, hit.y, 24, optText: "-" + WbMath.JsRound(final));   // L10280（text 携带面——M-U3h 第五批 w.Fx 直调先例；>=10 短路无掷）
+                        if (hit.hp <= 0)                                                                                   // L10281
+                        {
+                            hit.dead = 1;                                                                                   // L10282
+                            WbCivSim.WwCountKill(w, hit);                                                                   // L10283（大战阵亡计数——killCredit 恒 null + worldWar idle 直跳）
+                        }
+                    }
+                    else                                                                                                   // L10285
+                    {
+                        int fi2 = (int)System.Math.Floor(e.y) * WbWorld.W + (int)System.Math.Floor(e.x);                   // L10287（落点敌国建筑：箭矢/炮弹轰击城墙）
+                        if (fi2 >= 0 && fi2 < WbWorld.W * WbWorld.H && w.building[fi2] > 0)                                // L10288
+                        {
+                            WbBuilding b = w.bIdx.TryGetValue(fi2, out int biV) && biV >= 0 && biV < w.buildings.Count ? w.buildings[biV] : null;   // L10289（bIdx.get ?? -1 → buildings[-1]=undefined OOB 镜像）
+                            if (b != null && e.src.HasValue && b.civ != e.src.Value && b.civ >= 0 && e.src.Value >= 0 && WbCivSim.AtWar(w, e.src.Value, b.civ))   // L10290（五重门合取——蓝本序）
+                            {
+                                AttackBuilding(w, fi2, (e.dmg ?? 6) * 0.8, e.src.Value);                                    // L10291（城墙耐久 dmg*0.8——onBuildingDestroyed 摧毁级联随件）
+                            }
+                        }
+                    }
+                }
+                // 未译 kind 落空（volcano/wrath/holystorm/typhoon/…war 面
+                // shell L10295/missile/airstrike/laser/drone/orbital/mech/plasma/antimatter L10438——后续切片插入；夹具仅十七 kind）
                 if (e.age >= e.ttl)                                                                                      // L10439
                 {
                     w.effects.RemoveAt(i);                                                                               // L10440（倒序 splice 同构）
@@ -2508,6 +2580,75 @@ namespace PixelWorldBox.Wb
         private static bool WalkableT(byte t)
         {
             return t != WbWorld.T_DEEP && t != WbWorld.T_WATER && t != WbWorld.T_MOUNTAIN && t != WbWorld.T_LAVA;        // L73-76
+        }
+
+        // ================= explode L10450-10499（M-U10c 陨石消费面——sim 域切片） =================
+        // 机械翻译蓝本：engine.ts explode L10450-10499。opts {terrain?, lava?, nuke?} 三参布尔缺位语义
+        //   （JS undefined falsy）→ bool? null；nuke 支全译（核域 L12259 消费面——弹体未译先置全译，
+        //   radSet/radiate/markDirty 容器 M-U10a 起在位；黄金夹具 terrain 支触达，nuke 支不触达注记）。
+        // 掷序面（逐位）：地形环 ignite 门掷（d>r*0.55 短路——isLand 门整格跳过含门掷，WATER/DEEP/LAVA）
+        //   → ignite 内掷（FLAMMABLE[GRASS,FOREST] 门）→ 单位环零掷 → fx explosion 2 掷 → smoke ×6 各 2 掷。
+        // Math.hypot → FdHypot 位精确件（fdlibm 域——sinkhole/blackhole 同消费面先例）。
+        private static void Explode(WbWorld w, double x, double y, double r, bool? terrain, bool? lava, bool? nuke)
+        {
+            // onSound?.(opts?.nuke ? 'nuke' : 'boom') —— 宿主回调（黄金受控 undefined → no-op 同 gen 端）   // L10452
+            for (int yy = (int)System.Math.Floor(y - r); yy <= y + r; yy++)                                                 // L10453
+            {
+                for (int xx = (int)System.Math.Floor(x - r); xx <= x + r; xx++)                                             // L10454
+                {
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                                   // L10455
+                    double d = WbMath.FdHypot(xx - x, yy - y);                                                              // L10456（Math.hypot fdlibm 位精确域）
+                    if (d > r) continue;                                                                                    // L10457
+                    int i = yy * WbWorld.W + xx;                                                                            // L10458
+                    if (w.building[i] > 0) WbCivSim.DestroyBuilding(w, i);                                                  // L10459（smoke 2 掷级联——水吞三联同面）
+                    if (terrain == true && WbWorld.IsLand(w.terrain[i]))                                                    // L10460（isLand constants L70-72——DEEP/WATER/LAVA 非陆）
+                    {
+                        if (lava == true && d < 1.8) SetTerrain(w, i, WbConstants.T_LAVA);                                  // L10461
+                        else if (w.terrain[i] != WbConstants.T_MOUNTAIN) SetTerrain(w, i, WbConstants.T_BURNT);             // L10462（MOUNTAIN 幸存——不烧不掷）
+                        if (d > r * 0.55 && w.Rng() < 0.3) IgniteE(w, i);                                                   // L10463（门掷短路——ignite 内掷 FLAMMABLE 门）
+                    }
+                }
+            }
+            foreach (WbU u in w.units)                                                                                      // L10467（蓝本无 dead 跳过——机械保持）
+            {
+                double d = WbMath.FdHypot(u.x - x, u.y - y);                                                                // L10468
+                if (d < r + 0.8)                                                                                            // L10469
+                {
+                    u.hp -= 300 * System.Math.Max(0.15, 1 - d / (r + 0.8));                                                 // L10470
+                    u.hurt = 30;                                                                                            // L10471
+                    if (u.hp <= 0)                                                                                          // L10472
+                    {
+                        u.dead = 1;                                                                                         // L10473
+                        WbCivSim.WwCountKill(w, u);                                                                          // L10474（大战阵亡计数——爆炸/核爆致死）
+                    }
+                }
+            }
+            w.shake = System.Math.Max(w.shake, nuke == true ? 14 : 8);                                                       // L10478
+            FxOptHook(w, "explosion", x, y, 26, null, null, null, r, null);                                                  // L10479（opts {r}）
+            for (int s = 0; s < 6; s++)                                                                                      // L10480
+            {
+                FxHook(w, "smoke", x + w.Rng() * r - r / 2, y + w.Rng() * r - r / 2, 34);                                    // L10481
+            }
+            if (nuke == true)                                                                                                // L10483（核域支——弹面未译先置全译）
+            {
+                FxHook(w, "flash", x, y, 14);                                                                                // L10484
+                FxHook(w, "mushroom", x, y, 90);                                                                             // L10485
+                w.AddEvent("nuke", "蘑菇云在大地上升起，幸存者将长久铭记这一天", null, x, y);                                      // L10486
+                for (int yy = (int)System.Math.Floor(y - 5); yy <= y + 5; yy++)                                              // L10487
+                {
+                    for (int xx = (int)System.Math.Floor(x - 5); xx <= x + 5; xx++)                                          // L10488
+                    {
+                        if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                                // L10489
+                        if (WbMath.FdHypot(xx - x, yy - y) < 5)                                                              // L10490
+                        {
+                            int i = yy * WbWorld.W + xx;                                                                     // L10491
+                            w.radiate[i] = 1;                                                                                // L10492
+                            w.radSet[i] = w.tickCount + 2400;                                                                // L10493
+                            w.MarkDirty(i);                                                                                  // L10494
+                        }
+                    }
+                }
+            }
         }
 
         // ================= regrowTick L2830-2840（M-U8b regrow 域核心——sim 域切片） =================

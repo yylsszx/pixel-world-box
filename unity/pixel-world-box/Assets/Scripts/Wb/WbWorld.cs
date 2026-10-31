@@ -73,6 +73,8 @@ namespace PixelWorldBox.Wb
         public string colorHex;
         public double? dmg;                 // engine Effect.dmg（castArrow/bullet opts 覆盖域；dump 协议外占位 —— M-U3h case3）
         public string text;                 // engine Effect.text（fx('dmg',...,{text}) 拾取播报 —— M-U3h 第五批）
+        public int? src;                    // engine Effect.src（箭矢/远程施放者文明 id——伤害判定豁免友军；M-U10c arrow·bullet L10266/L10290 消费）
+        public bool quiet;                  // engine Effect.quiet（静默：陨石雨/火山熔岩弹衍生弹体不再单独入纪事；M-U10c meteor L10239 消费——JS undefined ≡ false）
     }
 
     /// 地面物品 —— engine items.push L5388 结构（tryPickup L5225 消费；M-U3h 第五批）

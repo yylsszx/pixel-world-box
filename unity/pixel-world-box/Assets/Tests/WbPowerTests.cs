@@ -1,18 +1,23 @@
 // ============================================================
 // WbPowerTests.cs — M-U10a effectsTick 游荡云族八种黄金对账 + 语义面（NUnit）
-// 黄金数据: Assets/StreamingAssets/WbGolden/power.json（14 场景——M-U10b 增波前族/静态族五 kind）
+// 黄金数据: Assets/StreamingAssets/WbGolden/power.json（18 场景——M-U10b 增波前族/静态族五 kind，
+//   M-U10c 增命中族三 kind + explode 消费面）
 //   由 scripts/unity-migration/gen-power.mjs 生成（真引擎 GameEngine 构造 + 手术式夹具
-//   两相直写 + effects/spawnUnit 真调用注入〔fx seed/dir 双掷注入相〕+ rngA 尾置清零起流
-//   + tickCount++/effectsTick 直调步进快照〔主循环 L2508/L2528 序同构〕；det 双跑字节级）。
-// 镜像: power-transcript.mjs 零引擎导入 14/14 ALL PASS（bun 口径——hypot fdlibm 原生）。
-// 验证链（纪律④）: 黄金向量(真引擎) → 零引擎镜像 14/14 → 本文件 NUnit C# 全链重放
+//   两相直写 + effects/spawnUnit 真调用注入〔fx seed/dir 双掷注入相〕+ rebuildBuckets 注入相尾
+//   + rngA 尾置清零起流 + tickCount++/effectsTick 直调步进快照〔主循环 L2508/L2528 序同构〕；
+//   det 双跑字节级）。
+// 镜像: power-transcript.mjs 零引擎导入 18/18 ALL PASS（bun 口径——hypot fdlibm 原生）。
+// 验证链（纪律④）: 黄金向量(真引擎) → 零引擎镜像 18/18 → 本文件 NUnit C# 全链重放
 //   （FdHypot 位精确件 + effects List 倒序 RemoveAt 同构 + activeBattles 快照二段式）逐位对账。
 // 对账面: 逐步 rngA + terrain md5 + fx 全列（kind/age/x/y/dir 位级）+ units 全列（hp/hurt/
 //   chill/dead/x/y 位级）+ fireSet 序 + regrow 序（L979 出账联动）+ radSet 序 + radiate md5 +
 //   bHp 全列 + battles 序（%5 清理）+ dirty 序（markDirty 五格面 + refreshWaterTierAround
 //   L1066 水深标脏——M-U8a 渲染簿记 no-op 注记消亡面）+ fxCount/eventsCount/buildingsCount。
+// M-U10c 通道: fx0 src/dmg/quiet + units0 civ/gbArmor（gearBonus armor 采样——GearBonusHook 桩
+//   回放同值）+ building0 civ + orphanB0 孤儿建筑格 + rel0 外交挂账（atWar <-20 门）。
 // 蓝本行号: effectsTick L9801-10447 八支 + M-U10b 五支（tsunami L9877/sinkhole L10120/iceage L10148/blackhole L10191/quake L10224）
-//   + 到期 splice L10439-10441 + activeBattles L10443-10447。
+//   + M-U10c 三支（meteor L10237/fireball L10240/arrow·bullet L10255）+ explode L10450-10499
+//   + ignite L1072-1077 + 到期 splice L10439-10441 + activeBattles L10443-10447。
 // Unity 侧执行: Window > General > Test Runner（EditMode）。
 // ============================================================
 using System;
@@ -65,8 +70,8 @@ namespace PixelWorldBox.Tests
             return sb.ToString();
         }
 
-        /// <summary>C# 全链重放：夹具灌注（effects/units/radSet/battles 注入）→ tickCount++/EffectsTick 逐步</summary>
-        private static WbWorld ReplayScenario(JObject sc)
+        /// <summary>C# 全链重放：夹具灌注（effects/units/radSet/battles 注入）→ tickCount++/EffectsTick 逐步（M-U10c 起 tuple 返 gearArmor 桩面）</summary>
+        private static (WbWorld w, Dictionary<int, double> gearArmor) ReplayScenario(JObject sc)
         {
             string key = sc.Value<string>("key");
             var fx = (JObject)sc["fixture"];
@@ -85,12 +90,16 @@ namespace PixelWorldBox.Tests
             {
                 var bo = (JObject)b;
                 w.building[bo.Value<int>("i")] = (byte)bo.Value<int>("kind");
-                w.buildings.Add(new WbBuilding { i = bo.Value<int>("i"), x = bo.Value<int>("x"), y = bo.Value<int>("y"), kind = bo.Value<int>("kind"), civ = -1 });
+                w.buildings.Add(new WbBuilding { i = bo.Value<int>("i"), x = bo.Value<int>("x"), y = bo.Value<int>("y"), kind = bo.Value<int>("kind"), civ = bo["civ"] != null ? bo.Value<int>("civ") : -1 });   // M-U10c civ 通道
                 w.bIdx[bo.Value<int>("i")] = w.buildings.Count - 1;
             }
+            foreach (var t in (JArray)(fx["orphanB0"] ?? new JArray())) w.building[t[0].Value<int>()] = (byte)t[1].Value<int>();   // M-U10c 孤儿建筑格（building>0 无记录——L10289 OOB 镜像钉）
+            foreach (var t in (JArray)(fx["rel0"] ?? new JArray())) w.rel[t[0].Value<string>()] = t[1].Value<double>();   // M-U10c 外交挂账（pairKey 字符串键 → AtWar <-20 门）
             foreach (var t in (JArray)fx["battles0"]) w.activeBattles[t[0].Value<int>()] = t[1].Value<int>();
             foreach (var t in (JArray)fx["flood0"]) w.flood[t[0].Value<int>()] = t[1].Value<long>();   // M-U10b 洪水挂账初始（手术清零后恒空——tsunami L9898 写面）
-            // effects 注入重建（fx0 = gen 真调用 eng.fx() 后快照——seed/dir 掷已消耗在注入相）
+            // effects 注入重建（fx0 = gen 真调用 eng.fx() 后快照——seed/dir 掷已消耗在注入相；
+            //   M-U10c src/dmg/quiet 通道——null/缺键 ≡ JS undefined 语义）
+            var gearArmor = new Dictionary<int, double>();   // M-U10c gearBonus armor 采样（gen 快照相 engine 真 gearBonus——桩回放同值）
             foreach (var e in (JArray)fx["fx0"])
             {
                 var eo = (JObject)e;
@@ -104,9 +113,13 @@ namespace PixelWorldBox.Tests
                     ttl = eo.Value<double>("ttl"),
                     seed = eo.Value<int>("seed"),
                     dir = F64FromHex(eo.Value<string>("dir")),
+                    src = eo["src"] != null && eo.Value<string>("src") != null ? (int?)eo.Value<int>("src") : null,
+                    dmg = eo["dmg"] != null && eo["dmg"].Type != JTokenType.Null ? (double?)eo.Value<double>("dmg") : null,
+                    quiet = eo.Value<bool?>("quiet") ?? false,
                 });
             }
-            // units 注入重建（spawnUnit 后手术覆写快照——WbU 语义面只含 effectsTick 消费字段）
+            // units 注入重建（spawnUnit 后手术覆写快照——WbU 语义面只含 effectsTick 消费字段；
+            //   M-U10c civ〔友军豁免面〕+ gbArmor〔gearBonus armor 桩面〕）
             foreach (var u in (JArray)fx["units0"])
             {
                 var uo = (JObject)u;
@@ -121,15 +134,18 @@ namespace PixelWorldBox.Tests
                     hurt = uo.Value<int>("hurt"),
                     chill = uo.Value<int>("chill"),
                     dead = uo.Value<bool>("dead") ? 1 : 0,
+                    civ = uo["civ"] != null ? uo.Value<int>("civ") : -1,
                 });
+                if (uo["gbArmor"] != null) gearArmor[uo.Value<int>("id")] = uo.Value<double>("gbArmor");
             }
+            w.RebuildBuckets();                                              // M-U10c：arrow/bullet 桶扫描面（gen 注入相尾同构——纯函数零掷）
             // 季节/时钟面（gen 手术一同期）
             w.laws.seasons = sc.Value<bool>("seasons");
             w.yearF = sc.Value<double>("yearF");
             w.tickCount = sc.Value<int>("tickCount");
             // rngA 尾置起流（gen 协议——掷值自 seed 纯净起流）
             w.rngA = unchecked((uint)sc.Value<int>("seed"));
-            return w;
+            return (w, gearArmor);
         }
 
         private static string RegrowSig(WbWorld w)
@@ -151,12 +167,16 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindPower()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(14));
+            Assert.That(scens.Count, Is.EqualTo(18));
+            var gear0 = WbBailRelay.GearBonusHook;                       // M-U10c：接缝置换 try/finally（Test30 桩先例——黄金回放 armor 采样桩）
+            try
+            {
             foreach (var scTok in scens)
             {
                 var sc = (JObject)scTok;
                 string key = sc.Value<string>("key");
-                var w = ReplayScenario(sc);
+                var (w, gearArmor) = ReplayScenario(sc);
+                WbBailRelay.GearBonusHook = (ww, u) => new WbGearBonus { armor = gearArmor.TryGetValue(u.id, out var a) ? a : 0, speed = 1 };   // gen stub 同构（余零 + speed=1 L3777——链甲 armor=8 位精确钉）
                 int steps = sc.Value<int>("steps");
                 var snaps = (JArray)sc["stepsSnap"];
                 for (int k = 0; k < steps; k++)
@@ -230,6 +250,23 @@ namespace PixelWorldBox.Tests
                 }
                 CollectionAssert.AreEqual(GunzipB64(sc.Value<string>("terrain")), w.terrain, $"terrain 终态 {key}");
                 CollectionAssert.AreEqual(GunzipB64(sc.Value<string>("radiate")), w.radiate, $"radiate 终态 {key}");
+                // M-U10c：events 全列对账（meteor 入纪事面——kind/text/x/y；null 归一通道）
+                var gEv = (JArray)sc["events"];
+                Assert.That(w.worldEvents.Count, Is.EqualTo(gEv.Count), $"events 终态 count {key}");
+                for (int k2 = 0; k2 < gEv.Count; k2++)
+                {
+                    var eo2 = (JObject)gEv[k2];
+                    var ev2 = w.worldEvents[k2];
+                    Assert.That(ev2.kind, Is.EqualTo(eo2.Value<string>("kind")), $"events kind {key}#{k2}");
+                    Assert.That(ev2.text, Is.EqualTo(eo2.Value<string>("text")), $"events text {key}#{k2}");
+                    Assert.That(ev2.x, Is.EqualTo(eo2["x"] != null && eo2["x"].Type != JTokenType.Null ? (double?)eo2.Value<double>("x") : null), $"events x {key}#{k2}");
+                    Assert.That(ev2.y, Is.EqualTo(eo2["y"] != null && eo2["y"].Type != JTokenType.Null ? (double?)eo2.Value<double>("y") : null), $"events y {key}#{k2}");
+                }
+            }
+            }
+            finally
+            {
+                WbBailRelay.GearBonusHook = gear0;                       // 接缝还原（多测试类共享 static hook——WbUnitsUpdateTests 先例）
             }
         }
 
