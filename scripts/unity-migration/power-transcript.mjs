@@ -5,7 +5,9 @@
 //   sandstorm L10068-10090 / famine L10170-10190）
 //   + M-U10b 五支（tsunami L9877-9914 / sinkhole L10120-10147 / iceage L10148-10169 /
 //   blackhole L10191-10223 / quake L10224-10236）
-//   + M-U10c 三支（meteor L10237-10239 / fireball L10240-10254 / arrow·bullet L10255-10294）
+//   + M-U10d 三支（shell L10295-10301 / missile L10302-10310 / shellBurst L9595-9620 + Nuke L12255-12260）
+//   + M-U10e 三支（airstrike/drone/mech）+ M-U10f laser L10323-10353 + M-U10g orbital L10370-10388
+//   + M-U10h plasma L10410-10432 + antimatter L10433-10437 + annihilate 本体 L9559-9591（war 面清零）
 //   + explode L10450-10499（terrain/nuke 全译——nuke 支夹具不触达注记）+ ignite L1072-1077
 //   + 到期 splice L10439-10441 + activeBattles %5 清理 L10443-10447 + fx L9781-9799 +
 //   attackBuilding L4446-4462
@@ -15,8 +17,9 @@
 //   markDirty L959-967 + BUILDING_DEFS hp 表（types.ts L325-337 逐值硬编码）。
 // 数学面：Math.hypot 原生（bun fdlibm——与 gen 同 runtime 同位；sinkhole/iceage/blackhole
 //   同消费面；C# 侧 FdHypot/V8Hypot 位精确件对账——WbPowerTests 闭合）。
-// 未译 kind 注记：volcano/wrath/holystorm/typhoon/…war 面
-//   （L9851-10295-10438）——else-if 链落空语义=蓝本无匹配（C# 侧同构落空）；到期 splice 对全 kind 生效逐位。
+// 未译 kind 注记：volcano/wrath/holystorm/typhoon（L9851-10295）——else-if 链落空语义=蓝本无匹配（C# 侧同构落空）；到期 splice 对全 kind 生效逐位。
+//   war 面（laser/airstrike/drone/orbital/mech/plasma/antimatter M-U10e~h 已全译清零）；armies 通道：
+//   fx.armies0 直写注入（plasma 军团 morale 面 L10423-10428 消费 a.civ/a.x/a.y/a.morale）+ 步进/终态 armies 对账。
 // 震屏面：shake 字段镜像（tsunami age1=6/sinkhole %2=4/quake=7 直写/blackhole=9——
 //   onSound 宿主回调黄金受控 undefined no-op）。
 // 运行：bun scripts/unity-migration/power-transcript.mjs（M-U7w 口径：黄金链一律 bun）
@@ -89,6 +92,7 @@ class MirrorWorld {
     this.warData = new Map();               // 战争建档表（夹具恒空——addWarScore L7236 早退语义钉）
     this.lastSiegeEventTick = 0;            // engine L521 初值（siege 纪事节流阀）
     this.killCredit = null;                 // engine L615（shell/missile wid 归属面——终态复位钉 L10297/L10300）
+    this.armies = (fx.armies0 ?? []).map((a) => ({ id: a.id, civ: a.civ, x: unhex(a.x), y: unhex(a.y), morale: unhex(a.morale) }));   // M-U10h 军团层（plasma morale 面——旧场景空表字节同构）
     this.statNukes = 0;                     // engine L230（nuke 成就计数——Nuke L12256 写点）
     this.fxPrefs = { dmgNumbers: true };    // engine L271 fxPrefs 默认（dmgNumbers 门——arrow dmg 数字面）
     this.yearF = sc.yearF;
@@ -261,6 +265,37 @@ class MirrorWorld {
     } else if (kind === 'raze' || kind === 'capture') {
       if (isA) wd.razedA += 1; else wd.razedB += 1;
     }
+  }
+  annihilate(x, y, r, src) {             // engine L9559-9591 机械（M-U10h 本体建库——单位环 600 伤/豁免/地形玻璃化双环/三 fx/强震屏）
+    for (const u of this.units) {        // L9560
+      if (u.dead) continue;              // L9561
+      if (src >= 0 && u.civ === src) continue;   // L9562（施放国豁免——src ?? -1 缺省支不触达）
+      const d = Math.hypot(u.x - x, u.y - y);    // L9563
+      if (d < r) {                       // L9564
+        u.hp -= 600;                     // L9565
+        u.hurt = 40;                     // L9566
+        if (u.hp <= 0) { u.dead = true; this.wwCountKill(u); }   // L9567（killCredit 零写面——恒 null）
+      }
+    }
+    const rr = Math.ceil(r);             // L9570
+    for (let yy = Math.floor(y - rr); yy <= y + rr; yy++) {   // L9571（双上界 y+rr number 语义）
+      for (let xx = Math.floor(x - rr); xx <= x + rr; xx++) { // L9572
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;   // L9573（边界裁剪零掷）
+        const d = Math.hypot(xx + 0.5 - x, yy + 0.5 - y);       // L9574（像素中心 +0.5 偏移）
+        if (d > r) continue;           // L9575
+        const i = idx(xx, yy);         // L9576
+        if (this.building[i] > 0) this.destroyBuilding(i);      // L9577（smoke 2 掷级联）
+        if (this.isLand(this.terrain[i])) {   // L9578（WATER 整格跳——零掷）
+          if (d < r * 0.28) this.setTerrain(i, T.LAVA);         // L9580（玻璃化内环——regrow 出账/markDirty 随件）
+          else if (this.terrain[i] !== T.MOUNTAIN) this.setTerrain(i, T.BURNT);   // L9581（焦土外环——山幸存）
+        }
+      }
+    }
+    this.fx('flash', x, y, 26, { r: 3 });          // L9586
+    this.fx('explosion', x, y, 30, { r: r * 0.7 });   // L9587
+    this.fx('mushroom', x, y, 60, { r: r * 0.9 });    // L9588
+    this.shake = Math.max(this.shake, 12);         // L9589
+    // onSound?.('nuke') —— 宿主回调 no-op 同 gen 端  // L9590
   }
   shellBurst(x, y, r, dmg, fire = false, src = -1) {   // engine L9595-9620 机械（M-U10d——单位环无 src 豁免/建筑环无友军门/ignite 四重门短路）
     for (const u of this.units) {
@@ -861,6 +896,31 @@ class MirrorWorld {
         this.killCredit = null;                              // L10386
         this.shake = Math.max(this.shake, 9);                // L10387（强震屏——shellBurst 内 min(5,5.5)=5 先写）
         // onSound?.('nuke') —— 宿主回调 no-op 同 gen 端
+      } else if (e.kind === 'plasma' && e.age >= e.ttl) {   // L10410-10432（M-U10h：等离子命中——大威力爆破 + EMP 麻痹 + 军团士气崩落；ttl 到期单发无周期相）
+        this.killCredit = e.wid ?? null;                     // L10412
+        this.shellBurst(e.x, e.y, e.r || 3.2, e.dmg ?? 80, true, e.src ?? -1);   // L10413（fire 恒 true——ignite 掷面；单位环无 src 豁免己军同账）
+        for (const u of this.units) {                        // L10414（EMP 环）
+          if (u.dead) continue;                              // L10415
+          if (e.src !== undefined && u.civ === e.src) continue;   // L10416（豁免——与 shellBurst 异构：弹环无/EMP 有）
+          if (Math.hypot(u.x - e.x, u.y - e.y) < (e.r || 3.2) + 2.5) {   // L10417
+            u.hurt = 60;                                     // L10418（长时硬直）
+            u.hp -= 6;                                       // L10419
+            if (u.hp <= 0) { u.dead = true; this.wwCountKill(u); }   // L10420
+          }
+        }
+        for (const a of this.armies) {                       // L10423（军团 morale 环——零掷纯写面）
+          if (e.src !== undefined && a.civ === e.src) continue;   // L10424
+          if (Math.hypot(a.x - e.x, a.y - e.y) < (e.r || 3.2) + 6) {   // L10425
+            a.morale = Math.max(8, a.morale - 15);           // L10426（地板锥 8）
+          }
+        }
+        if (e.wid != null) this.emergentPayload(e);          // L10429（铸域空表桩早退零掷）
+        this.killCredit = null;                              // L10430
+        this.fx('flash', e.x, e.y, 12, { r: 2 });            // L10431
+        // onSound?.('boom') —— 宿主回调 no-op 同 gen 端      // L10432
+      } else if (e.kind === 'antimatter' && e.age >= e.ttl) {   // L10433-10437（M-U10h：反物质湮灭——annihilate 消费 + superweapon 纪事； armies 零写面）
+        this.annihilate(e.x, e.y, 9, e.src ?? -1);           // L10435（r=9 硬编码）
+        this.addEvent('superweapon', '湮灭之光吞没大地——半径之内，物质归零，只余熔融的玻璃', { x: e.x, y: e.y });   // L10436
       }
       if (e.age >= e.ttl) {                // L10439-10441 到期 splice（全 kind——倒序 RemoveAt 同构）
         this.effects.splice(i, 1);
@@ -904,6 +964,7 @@ for (const sc of gold.scenarios) {
     eq([...m.activeBattles.entries()], g.battles, `${sc.key} S${k} battles 序`);
     eq([...m.flood.entries()], g.flood, `${sc.key} S${k} flood 序`);
     eq(m.shake, g.shake, `${sc.key} S${k} shake`);
+    eq(m.armies.map((a) => ({ id: a.id, morale: f64hex(a.morale) })), g.armies ?? [], `${sc.key} S${k} armies morale`);   // M-U10h（旧场景空表同构）
     eq([...m.dirty].sort((a, b) => a - b), g.dirty, `${sc.key} S${k} dirty 序`);
     eq(m.effects.length, g.fxCount, `${sc.key} S${k} fxCount`);
     eq(m.worldEvents.length, g.eventsCount, `${sc.key} S${k} eventsCount`);
@@ -918,7 +979,8 @@ for (const sc of gold.scenarios) {
   eq(m.worldEvents, sc.events, `${sc.key} events 全列`);
   eq(m.killCredit, sc.kc ?? null, `${sc.key} killCredit 终态`);
   eq(m.statNukes, sc.statN ?? 0, `${sc.key} statNukes 终态`);
+  eq(m.armies.map((a) => ({ id: a.id, civ: a.civ, x: f64hex(a.x), y: f64hex(a.y), morale: f64hex(a.morale) })), sc.armies ?? [], `${sc.key} armies 终态`);   // M-U10h（morale f64 位级）
   console.log(`${sc.key}: 逐位 PASS (steps=${sc.steps} draws=${sc.totalDraws} fx=${m.effects.length})`);
   pass++;
 }
-console.log(`power-transcript: ${pass}/${gold.scenarios.length} 场景 ALL PASS（零引擎导入镜像 · 掷值链闭合 · 八支+五支+命中族+war 面逐位）`);
+console.log(`power-transcript: ${pass}/${gold.scenarios.length} 场景 ALL PASS（零引擎导入镜像 · 掷值链闭合 · 八支+五支+命中族+war 面清零 M-U10h 逐位）`);

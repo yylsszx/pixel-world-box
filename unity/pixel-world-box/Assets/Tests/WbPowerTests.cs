@@ -105,6 +105,11 @@ namespace PixelWorldBox.Tests
                 w.civs[cid] = new WbCiv { id = cid, name = co.Value<string>("name"), colorHex = co.Value<string>("colorHex"), alive = true };
             }
             foreach (var t in (JArray)fx["battles0"]) w.activeBattles[t[0].Value<int>()] = t[1].Value<int>();
+            foreach (var a in (JArray)(fx["armies0"] ?? new JArray()))   // M-U10h 军团层（plasma morale 面——旧场景空表同构）
+            {
+                var ao = (JObject)a;
+                w.armies.Add(new WbArmy { id = ao.Value<int>("id"), civ = ao.Value<int>("civ"), x = F64FromHex(ao.Value<string>("x")), y = F64FromHex(ao.Value<string>("y")), morale = F64FromHex(ao.Value<string>("morale")) });
+            }
             foreach (var t in (JArray)fx["flood0"]) w.flood[t[0].Value<int>()] = t[1].Value<long>();   // M-U10b 洪水挂账初始（手术清零后恒空——tsunami L9898 写面）
             // effects 注入重建（fx0 = gen 真调用 eng.fx() 后快照——seed/dir 掷已消耗在注入相；
             //   M-U10c src/dmg/quiet 通道——null/缺键 ≡ JS undefined 语义）
@@ -182,7 +187,7 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindPower()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(28));
+            Assert.That(scens.Count, Is.EqualTo(30));
             var gear0 = WbBailRelay.GearBonusHook;                       // M-U10c：接缝置换 try/finally（Test30 桩先例——黄金回放 armor 采样桩）
             try
             {
@@ -246,6 +251,15 @@ namespace PixelWorldBox.Tests
                     foreach (var kv in w.flood) gotFlood.Add($"{kv.Key}:{kv.Value}");
                     Assert.That(gotFlood, Is.EqualTo(gFlood.Select(p => $"{Convert.ToInt32(p[0])}:{Convert.ToInt64(p[1])}").ToList()), $"flood 序 {key} S{k}");
                     Assert.That(w.shake, Is.EqualTo(g.Value<double>("shake")), $"shake {key} S{k}");
+                    // M-U10h：armies morale 步进对账（plasma L10426 写面——f64 位级；旧场景空表同构）
+                    var gArmies = (JArray)(g["armies"] ?? new JArray());
+                    Assert.That(w.armies.Count, Is.EqualTo(gArmies.Count), $"armiesCount {key} S{k}");
+                    for (int q4 = 0; q4 < gArmies.Count; q4++)
+                    {
+                        var ao4 = (JObject)gArmies[q4];
+                        Assert.That(w.armies[q4].id, Is.EqualTo(ao4.Value<int>("id")), $"army id {key} S{k}#{q4}");
+                        Assert.That(F64Hex(w.armies[q4].morale), Is.EqualTo(ao4.Value<string>("morale")), $"army morale {key} S{k}#{q4}");
+                    }
                     Assert.That(w.dirty.OrderBy(x => x).ToList(), Is.EqualTo(g["dirty"].ToObject<List<int>>()), $"dirty 序 {key} S{k}");
                     Assert.That(w.effects.Count, Is.EqualTo(g.Value<int>("fxCount")), $"fxCount2 {key} S{k}");
                     Assert.That(w.worldEvents.Count, Is.EqualTo(g.Value<int>("eventsCount")), $"eventsCount {key} S{k}");
@@ -280,6 +294,16 @@ namespace PixelWorldBox.Tests
                 // M-U10d：killCredit 复位/statNukes 终态钉（shell wid 面 L10297/L10300 + Nuke L12256）
                 Assert.That(w.killCredit, Is.EqualTo(sc["kc"] != null && sc["kc"].Type != JTokenType.Null ? (int?)sc.Value<int>("kc") : null), $"killCredit 终态 {key}");
                 Assert.That(w.statNukes, Is.EqualTo(sc.Value<int?>("statN") ?? 0), $"statNukes 终态 {key}");
+                // M-U10h：armies 终态（plasma morale 写面——f64 位级；旧场景空表同构）
+                var gArmiesF = (JArray)(sc["armies"] ?? new JArray());
+                Assert.That(w.armies.Count, Is.EqualTo(gArmiesF.Count), $"armies 终态 count {key}");
+                for (int q5 = 0; q5 < gArmiesF.Count; q5++)
+                {
+                    var ao5 = (JObject)gArmiesF[q5];
+                    Assert.That(w.armies[q5].id, Is.EqualTo(ao5.Value<int>("id")), $"army id 终 {key}#{q5}");
+                    Assert.That(w.armies[q5].civ, Is.EqualTo(ao5.Value<int>("civ")), $"army civ 终 {key}#{q5}");
+                    Assert.That(F64Hex(w.armies[q5].morale), Is.EqualTo(ao5.Value<string>("morale")), $"army morale 终 {key}#{q5}");
+                }
             }
             }
             finally

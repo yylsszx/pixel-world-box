@@ -2702,9 +2702,42 @@ namespace PixelWorldBox.Wb
                         /* onSound?.('boom') —— 宿主回调（同上） */                                                        // L10413
                     }
                 }
-                // 未译 kind 落空（volcano/wrath/holystorm/typhoon + antimatter
-                //   L10437-10440（annihilate 消费面）/ plasma L10416-10436（armies morale 面）——后续切片插入；
-                //   laser 已 M-U10f 清偿 L10323-10353 / orbital 已 M-U10g 清偿 L10370-10388）
+                else if (e.kind == "plasma" && e.age >= e.ttl)                                                         // L10410（等离子命中：大威力爆破 + 电磁脉冲（周遭敌军麻痹减速 + 敌军团士气崩落）——M-U10h war 面；ttl 到期单发无周期相）
+                {
+                    w.killCredit = e.wid;                                                                              // L10412（wid ?? null——int? 直传，涌现武器战绩归属）
+                    ShellBurst(w, e.x, e.y, e.r != 0 ? e.r : 3.2, e.dmg ?? 80, true, e.src ?? -1);                     // L10413（r||3.2 / dmg??80 / fire 恒 true——ignite 掷面；单位环无 src 豁免己军同账 M-U10d 异形再钉）
+                    foreach (WbU u in w.units)                                                                         // L10414（EMP 环）
+                    {
+                        if (u.dead != 0) continue;                                                                     // L10415
+                        if (e.src.HasValue && u.civ == e.src.Value) continue;                                          // L10416（src 豁免——与 shellBurst 异构：弹环无/EMP 有）
+                        if (WbMath.FdHypot(u.x - e.x, u.y - e.y) < (e.r != 0 ? e.r : 3.2) + 2.5)                       // L10417（Math.hypot fdlibm 位精确域）
+                        {
+                            u.hurt = 60;                                                                               // L10418（EMP 电击：长时硬直）
+                            u.hp -= 6;                                                                                 // L10419
+                            if (u.hp <= 0) { u.dead = 1; WbCivSim.WwCountKill(w, u); }                                 // L10420
+                        }
+                    }
+                    foreach (WbArmy a in w.armies)                                                                     // L10423（军团 morale 环——零掷纯写面）
+                    {
+                        if (e.src.HasValue && a.civ == e.src.Value) continue;                                          // L10424
+                        if (WbMath.FdHypot(a.x - e.x, a.y - e.y) < (e.r != 0 ? e.r : 3.2) + 6)                         // L10425
+                        {
+                            a.morale = System.Math.Max(8, a.morale - 15);                                              // L10426（电磁脉冲击溃军心——地板钳 8）
+                        }
+                    }
+                    if (e.wid.HasValue) EmergentPayload(w, e);                                                         // L10429（wid 面——铸域空表桩 L9399 早退零掷）
+                    w.killCredit = null;                                                                               // L10430
+                    FxOptHook(w, "flash", e.x, e.y, 12, null, null, null, 2.0, null);                                  // L10431（opts {r:2}）
+                    /* onSound?.('boom') —— 宿主回调（同上） */                                                          // L10432
+                }
+                else if (e.kind == "antimatter" && e.age >= e.ttl)                                                     // L10433（反物质湮灭：范围内敌方归零 + 地形玻璃化 + 全屏白闪——M-U10h war 面收官；armies 零写面 S30 钉）
+                {
+                    Annihilate(w, e.x, e.y, 9, e.src ?? -1);                                                           // L10435（r=9 硬编码——annihilate 本体 L9559 消费面）
+                    AddEventHook(w, "superweapon", "湮灭之光吞没大地——半径之内，物质归零，只余熔融的玻璃", null, e.x, e.y);   // L10436（addEvent opts {x,y} 无 colorHex——orbital L10384 同构）
+                }
+                // 未译 kind 落空（volcano/wrath/holystorm/typhoon——后续切片插入；
+                //   laser 已 M-U10f 清偿 L10323-10353 / orbital 已 M-U10g 清偿 L10370-10388 /
+                //   plasma+antimatter 已 M-U10h 清偿 L10410-10437——effectsTick war 面清零）
                 if (e.age >= e.ttl)                                                                                      // L10439
                 {
                     w.effects.RemoveAt(i);                                                                               // L10440（倒序 splice 同构）
@@ -2804,6 +2837,51 @@ namespace PixelWorldBox.Wb
         // 单位环无 src 豁免（己军同溅射——蓝本 L9596-9607 无门，S19 己方步兵钉）；建筑环 attackBuilding dmg*0.9
         //   （L9614 无友军门——摧毁级联归 onBuildingDestroyed 战争结算）；ignite 门掷 fire && isLand && !MOUNTAIN
         //   && rng<0.45（四重合取短路——S19 MOUNTAIN/WATER 零掷钉）；Math.hypot fdlibm 位精确域 ×2。
+        // ================= annihilate（engine L9559-9591 机械翻译：反物质湮灭本体——antimatter L10435 消费面，M-U10h 建库） =================
+        //   单位环（dead 跳过 / src>=0 施放国豁免 / d<9 → hp-=600 + hurt=40 + 死亡 wwCountKill——killCredit 零写面恒 null）
+        //   + 地形环（rr=ceil(r) 像素中心 +0.5 偏移 / d>r 跳 / 建筑摧毁级联 / isLand 门内 d<r*0.28 LAVA 内环
+        //   / !==MOUNTAIN BURNT 外环——山幸存水整格跳，零掷纯写面）+ 三 fx（flash/explosion/mushroom 2 掷×3）
+        //   + shake=max(12) + onSound nuke 宿主回调。
+        private static void Annihilate(WbWorld w, double x, double y, double r, int src)                           // L9559
+        {
+            foreach (WbU u in w.units)                                                                             // L9560
+            {
+                if (u.dead != 0) continue;                                                                         // L9561
+                if (src >= 0 && u.civ == src) continue;                                                            // L9562（施放国豁免（与弹体豁免一致）——src??-1 缺省支不触达）
+                double d = WbMath.FdHypot(u.x - x, u.y - y);                                                       // L9563（Math.hypot fdlibm 位精确域）
+                if (d < r)                                                                                         // L9564
+                {
+                    u.hp -= 600;                                                                                   // L9565
+                    u.hurt = 40;                                                                                   // L9566
+                    if (u.hp <= 0) { u.dead = 1; WbCivSim.WwCountKill(w, u); }                                     // L9567
+                }
+            }
+            int rr = (int)System.Math.Ceiling(r);                                                                  // L9570
+            for (int yy = (int)System.Math.Floor(y - rr); yy <= y + rr; yy++)                                      // L9571（双上界 y+rr number 语义同构——orbital L10375 同款）
+            {
+                for (int xx = (int)System.Math.Floor(x - rr); xx <= x + rr; xx++)                                  // L9572
+                {
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                          // L9573（边界裁剪零掷）
+                    double d = WbMath.FdHypot(xx + 0.5 - x, yy + 0.5 - y);                                         // L9574（像素中心 +0.5 偏移——与 explode 角距 L10456 异构勿混）
+                    if (d > r) continue;                                                                           // L9575
+                    int i = yy * WbWorld.W + xx;                                                                   // L9576
+                    if (w.building[i] > 0) WbCivSim.DestroyBuilding(w, i);                                         // L9577（smoke 2 掷级联）
+                    if (WbWorld.IsLand(w.terrain[i]))                                                              // L9578（WATER 整格跳零掷）
+                    {
+                        // 玻璃化：中心熔融成岩浆池，外环焦土玻璃
+                        if (d < r * 0.28) SetTerrain(w, i, WbConstants.T_LAVA);                                    // L9580（内环岩浆——regrow 出账/markDirty 随件）
+                        else if (w.terrain[i] != WbConstants.T_MOUNTAIN) SetTerrain(w, i, WbConstants.T_BURNT);    // L9581（外环焦土——山幸存）
+                    }
+                }
+            }
+            // 全屏白闪（复用核爆闪光通道）+ 双层爆炸特效 + 强震屏
+            FxOptHook(w, "flash", x, y, 26, null, null, null, 3.0, null);                                          // L9586（opts {r:3}）
+            FxOptHook(w, "explosion", x, y, 30, null, null, null, r * 0.7, null);                                  // L9587（opts {r:r*0.7}）
+            FxOptHook(w, "mushroom", x, y, 60, null, null, null, r * 0.9, null);                                   // L9588（opts {r:r*0.9}）
+            w.shake = System.Math.Max(w.shake, 12);                                                                // L9589（强震屏）
+            /* onSound?.('nuke') —— 宿主回调（同上） */                                                             // L9590
+        }
+
         private static void ShellBurst(WbWorld w, double x, double y, double r, double dmg, bool fire, int src)      // L9595
         {
             foreach (WbU u in w.units)                                                                               // L9596

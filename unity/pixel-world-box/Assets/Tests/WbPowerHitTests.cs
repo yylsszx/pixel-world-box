@@ -888,5 +888,146 @@ namespace PixelWorldBox.Tests
             Assert.That(w.worldEvents.Count, Is.EqualTo(0), "空转无纪事（L10384 在到期支内）");
             Assert.That(w.shake, Is.EqualTo(0), "空转零震屏（L10387/L9619 均在支内）");
         }
+
+        // ================= Test42：M-U10h plasma/antimatter 直测（L10410-10437 + annihilate L9559-9591——war 面清零收官：shellBurst(3.2,80,fire)+EMP 环+armies morale 环 / 湮灭 600 伤+玻璃化双环+建筑摧毁+三 fx） =================
+
+        [Test]
+        public void Test42_Plasma_GoldenMirror()
+        {
+            // 黄金 S29 镜像（seed 0x0A0E1E 同流，两步 tick ≡ stepsSnap 逐位）：shellBurst(3.2,80,fire=true) + EMP 环 + armies morale 环四支 + killCredit 往返 + shake 4.2 + fireSet=19
+            var w = new WbWorld();
+            w.tickCount = 28000;
+            for (int i = 0; i < w.terrain.Length; i++) w.terrain[i] = WbWorld.T_GRASS;   // gen 手术一全图 GRASS 同构（ignite 环 37 格全 GRASS 掷面）
+            w.units.Add(new WbU { id = 1, race = 0, x = 100.5, y = 60.5, hp = 50, maxHp = 50 });            // u0 中心 d=0 → 80 伤死
+            w.units.Add(new WbU { id = 2, race = 0, x = 104.0, y = 60.5, hp = 50, maxHp = 50 });            // u1 d=3.5 falloff 地板钳 + EMP 双吃
+            w.units.Add(new WbU { id = 3, race = 0, x = 105.0, y = 60.5, hp = 50, maxHp = 50 });            // u2 d=4.5 弹环外/EMP 内纯 EMP 面
+            w.units.Add(new WbU { id = 4, race = 0, x = 99.0, y = 60.5, hp = 50, maxHp = 50, civ = 1 });    // u3 civ=src：弹环无豁免吃满 falloff / EMP 豁免——异构面
+            w.units.Add(new WbU { id = 5, race = 0, x = 108.0, y = 60.5, hp = 50, maxHp = 50 });            // u4 d=7.5 双环外对照
+            w.units.Add(new WbU { id = 6, race = 0, x = 100.5, y = 63.0, hp = 10, maxHp = 50, dead = 1 });  // u5 dead 双环头跳过
+            w.armies.Add(new WbArmy { id = 1, civ = 1, x = 96.5, y = 60.5, morale = 40 });                  // a0 civ=src 豁免（d=4.0<9.2 界内不触达）
+            w.armies.Add(new WbArmy { id = 2, civ = 2, x = 103.0, y = 60.5, morale = 15 });                 // a1 d=2.5 → max(8,0)=8 地板钳
+            w.armies.Add(new WbArmy { id = 3, civ = 2, x = 112.0, y = 60.5, morale = 40 });                 // a2 d=11.5≥9.2 界外不动
+            w.armies.Add(new WbArmy { id = 4, civ = 2, x = 108.0, y = 62.5, morale = 40 });                 // a3 d≈7.76 → 25 无地板支
+            w.effects.Add(new WbFx { kind = "plasma", x = 100.5, y = 60.5, ttl = 2, src = 1, wid = 7, r = 0 });   // r:0 → ||3.2 回退钉（fx() 默认 r:1 L9794——gen 夹具同构）；dmg 缺 → ??80
+            w.rngA = 0x0A0E1Eu;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // k0：age 0→1 <2 空转（黄金 stepsSnap[0].rngA=000a0e1e=seed 自身）
+            Assert.That(w.rngA, Is.EqualTo(0x0A0E1Eu), "k0 空转零掷位证——rngA ≡ seed（无周期相单调到期，黄金 S29 步 0 同值）");
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // k1：age 1→2 = ttl：等离子命中（黄金 S29 同 60 掷流）
+            Assert.That(w.units[0].dead != 0, Is.True, "中心单位 shellBurst 80 伤死（d=0——单位环无 src 豁免）");
+            Assert.That(F64Hex(w.units[1].hp), Is.EqualTo(F64Hex(50 - 80 * System.Math.Max(0.25, 1 - 3.5 / (3.2 + 0.4)) - 6)), "u1 弹环 0.25 地板钳（falloff 0.028<0.25 → 80×0.25=20）+ EMP -6 位级");
+            Assert.That(w.units[1].hurt, Is.EqualTo(60), "u1 hurt=60 终态（EMP 覆写 shellBurst 24——L10418）");
+            Assert.That(w.units[2].hp, Is.EqualTo(44), "u2 纯 EMP 面 44（d=4.5 弹环外/EMP 环内——50-6）");
+            Assert.That(w.units[2].hurt, Is.EqualTo(60), "u2 hurt=60");
+            Assert.That(F64Hex(w.units[3].hp), Is.EqualTo(F64Hex(50 - 80 * (1 - 1.5 / (3.2 + 0.4)))), "u3 civ=src 弹环无豁免吃满 falloff 0.5833（无钳）——shellBurst/EMP 豁免异构面");
+            Assert.That(w.units[3].hurt, Is.EqualTo(24), "u3 hurt=24（EMP 豁免——shellBurst hurt 保留）");
+            Assert.That(w.units[4].hp, Is.EqualTo(50), "u4 双环外对照零伤");
+            Assert.That(w.units[5].hp == 10 && w.units[5].dead == 1, Is.True, "u5 dead=1 数值型保持（M-U10f 教训面）");
+            Assert.That(w.armies[0].morale, Is.EqualTo(40), "a0 civ=src 豁免 morale 不动（L10424——e.src!==undefined 门）");
+            Assert.That(w.armies[1].morale, Is.EqualTo(8), "a1 morale 15-15=0 → max(8,0)=8 地板钳（L10426）");
+            Assert.That(w.armies[2].morale, Is.EqualTo(40), "a2 d=11.5≥9.2 界外不动");
+            Assert.That(w.armies[3].morale, Is.EqualTo(25), "a3 morale 40-15=25 无地板支");
+            Assert.That(w.killCredit == null, Is.True, "killCredit wid=7 往返复位（L10412 写/L10430 复位）");
+            Assert.That(w.shake, Is.EqualTo(4.2), "shake=4.2（shellBurst min(5,1+3.2)——flash 不震屏）");
+            Assert.That(w.fireSet.Count, Is.EqualTo(19), "ignite 正面支 fireSet=19（37 格门掷 rng<0.45 掷中 19——黄金位级）");
+            Assert.That(w.effects.Count(f => f.kind == "flash"), Is.EqualTo(1), "flash {r:2} fx（L10431）");
+            Assert.That(w.effects.Count(f => f.kind == "explosion"), Is.EqualTo(1), "explosion fx（shellBurst L9618）");
+            Assert.That(w.rngA, Is.EqualTo(0x963aa38au), "final rngA ≡ 黄金 S29（60 掷流位级闭合——37 门+19 ignite+2 explosion+2 flash）");
+        }
+
+        [Test]
+        public void Test42_Antimatter_GoldenMirror()
+        {
+            // 黄金 S30 镜像（seed 0x0A0E1F 同流）：annihilate 本体（600 伤/src 豁免/玻璃化双环/建筑摧毁/三 fx/shake=12）+ superweapon 纪事 + armies 零写面 + killCredit 零写面
+            var w = new WbWorld();
+            w.tickCount = 29000;
+            for (int i = 0; i < w.terrain.Length; i++) w.terrain[i] = WbWorld.T_GRASS;
+            w.terrain[60 * WbWorld.W + 104] = WbWorld.T_MOUNTAIN;     // 山格：!==MOUNTAIN 断——零写
+            w.terrain[60 * WbWorld.W + 97] = WbWorld.T_WATER;         // 水格：isLand false——零掷零写
+            w.building[60 * WbWorld.W + 105] = 4;                     // FARM 建筑格（摧毁级联——smoke 2 掷）
+            w.buildings.Add(new WbBuilding { i = 60 * WbWorld.W + 105, x = 105, y = 60, kind = 4, civ = 1 });
+            w.bIdx[60 * WbWorld.W + 105] = 0;
+            w.civs.Add(null);                                          // civs[0] 稀疏位（黄金 civs0 通道同构）
+            w.civs.Add(new WbCiv { id = 1, name = "青禾部落", colorHex = "#40a060", alive = true });
+            w.units.Add(new WbU { id = 1, race = 0, x = 100.5, y = 60.5, hp = 50, maxHp = 50 });            // u0 中心 600 伤死
+            w.units.Add(new WbU { id = 2, race = 0, x = 108.5, y = 60.5, hp = 700, maxHp = 1000 });         // u1 d=8 → 700-600=100 幸存
+            w.units.Add(new WbU { id = 3, race = 0, x = 104.5, y = 60.5, hp = 50, maxHp = 50, civ = 1 });   // u2 civ=src 豁免
+            w.units.Add(new WbU { id = 4, race = 0, x = 90.5, y = 60.5, hp = 50, maxHp = 50 });             // u3 d=10≥9 界外
+            w.units.Add(new WbU { id = 5, race = 0, x = 96.5, y = 60.5, hp = 50, maxHp = 50, dead = 1 });   // u4 dead 循环头跳过
+            w.armies.Add(new WbArmy { id = 1, civ = 2, x = 100.5, y = 60.5, morale = 40 });                 // 界内军团——antimatter 零 armies 写面钉
+            w.effects.Add(new WbFx { kind = "antimatter", x = 100.5, y = 60.5, ttl = 2, src = 1 });
+            w.rngA = 0x0A0E1Fu;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // k0：age 0→1 <2 空转（黄金 stepsSnap[0].rngA=000a0e1f）
+            Assert.That(w.rngA, Is.EqualTo(0x0A0E1Fu), "k0 空转零掷位证（黄金 S30 步 0 同值）");
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // k1：age 1→2 = ttl：湮灭（黄金 S30 同 8 掷流）
+            Assert.That(w.units[0].dead != 0, Is.True, "中心 600 伤死（d=0<9——L9564）");
+            Assert.That(w.units[1].hp, Is.EqualTo(100), "u1 700-600=100 幸存（d=8<9——L9565 位级）");
+            Assert.That(w.units[1].hurt, Is.EqualTo(40), "u1 hurt=40（L9566）");
+            Assert.That(w.units[2].hp, Is.EqualTo(50), "u2 civ=src 豁免（src>=0 && civ===src——L9562）");
+            Assert.That(w.units[3].hp, Is.EqualTo(50), "u3 d=10≥9 界外");
+            Assert.That(w.units[4].hp == 50 && w.units[4].dead == 1, Is.True, "u4 dead 循环头跳过（L9561）");
+            Assert.That(w.armies[0].morale, Is.EqualTo(40), "armies 零写面钉（antimatter 无 armies 环——S30 对照）");
+            Assert.That(w.terrain[60 * WbWorld.W + 100], Is.EqualTo(WbWorld.T_LAVA), "中心玻璃化 LAVA（d=0<2.52——L9580）");
+            Assert.That(w.terrain[60 * WbWorld.W + 99], Is.EqualTo(WbWorld.T_LAVA), "(99,60) d=1 内环 LAVA");
+            Assert.That(w.terrain[60 * WbWorld.W + 103], Is.EqualTo(WbWorld.T_BURNT), "(103,60) d=3 焦土外环（L9581）");
+            Assert.That(w.terrain[60 * WbWorld.W + 104], Is.EqualTo(WbWorld.T_MOUNTAIN), "山格幸存（!==MOUNTAIN 断）");
+            Assert.That(w.terrain[60 * WbWorld.W + 97], Is.EqualTo(WbWorld.T_WATER), "水格幸存（isLand false 整格跳）");
+            Assert.That(w.buildings.Count, Is.EqualTo(0), "建筑摧毁（L9577 destroyBuilding 级联）");
+            Assert.That(w.shake, Is.EqualTo(12), "shake=max(12)（L9589 强震屏）");
+            Assert.That(w.killCredit == null, Is.True, "killCredit 零写面（annihilate 无 wid 挂账——恒 null 钉）");
+            Assert.That(w.statNukes, Is.EqualTo(0), "statNukes 零写（Nuke 未调用——antimatter 直呼 annihilate）");
+            Assert.That(w.worldEvents.Count, Is.EqualTo(1), "superweapon 纪事 ×1（L10436）");
+            Assert.That(w.worldEvents[0].text, Is.EqualTo("湮灭之光吞没大地——半径之内，物质归零，只余熔融的玻璃"), "纪事文本位级（L10436）");
+            Assert.That(w.effects.Count(f => f.kind == "mushroom"), Is.EqualTo(1), "mushroom fx（L9588 三 fx 面）");
+            Assert.That(w.rngA, Is.EqualTo(0x6965ddc7u), "final rngA ≡ 黄金 S30（8 掷流闭合——3 fx 6 + smoke 2）");
+        }
+
+        [Test]
+        public void Test42_Plasma_EmpKill_MinHp()
+        {
+            // EMP -6 击杀支（L10419-10420）：hp≤6 且弹环外/EMP 环内单位 → 死亡 + WwCountKill（killCredit=wid 时点账）
+            var w = new WbWorld();
+            w.tickCount = 28000;
+            for (int i = 0; i < w.terrain.Length; i++) w.terrain[i] = WbWorld.T_GRASS;
+            w.units.Add(new WbU { id = 1, race = 0, x = 105.0, y = 60.5, hp = 5, maxHp = 50 });   // d=4.5：弹环外（>3.6）EMP 内（<5.7）hp 5-6=-1 死
+            w.units.Add(new WbU { id = 2, race = 0, x = 108.0, y = 60.5, hp = 6, maxHp = 50 });   // d=7.5 双环外对照——hp 6 不动
+            w.effects.Add(new WbFx { kind = "plasma", x = 100.5, y = 60.5, ttl = 2, src = 1, wid = 9, r = 0 });
+            w.rngA = 0x0A0E20u;
+            w.tickCount++; WbBailRelay.EffectsTick(w);                // k0 空转
+            w.tickCount++; WbBailRelay.EffectsTick(w);                // k1 到期
+            Assert.That(w.units[0].dead != 0, Is.True, "EMP 击杀（hp 5-6≤0——L10420 death 支）");
+            Assert.That(F64Hex(w.units[0].hp), Is.EqualTo(F64Hex(-1.0)), "hp=-1 位级（5-6——负值保持非钳零）");
+            Assert.That(w.units[0].hurt, Is.EqualTo(60), "EMP hurt=60 先于死亡判（L10418/L10420 序）");
+            Assert.That(w.units[1].hp == 6 && w.units[1].dead == 0, Is.True, "双环外对照 hp 6 不动零死亡");
+            Assert.That(w.killCredit == null, Is.True, "killCredit wid=9 往返复位（L10412/L10430）");
+        }
+
+        [Test]
+        public void Test42_Antimatter_SetTerrainCascade_RegrowFireOut()
+        {
+            // annihilate SetTerrain 级联消费面（M-U8b regrow 出账 + fire 熄灭随件 L990-993）：内环 LAVA/外环 BURNT 双格 regrow 键出账 + 火种熄灭
+            var w = new WbWorld();
+            w.tickCount = 29000;
+            for (int i = 0; i < w.terrain.Length; i++) w.terrain[i] = WbWorld.T_GRASS;
+            int iTile = 60 * WbWorld.W + 100;                         // 中心 d=0 → LAVA
+            int oTile = 60 * WbWorld.W + 103;                         // d=3 → BURNT
+            w.regrow[iTile] = 29500;                                  // 预挂复苏账（BURNT 复绿时钟——M-U8b 出账消费面）
+            w.regrow[oTile] = 29600;
+            w.fire[oTile] = 120; w.fireSet.Add(oTile); w.fireSetList.Add(oTile);   // 焦土环预置火种——BURNT 覆写熄灭面
+            w.effects.Add(new WbFx { kind = "antimatter", x = 100.5, y = 60.5, ttl = 2, src = 1 });
+            w.rngA = 0x0A0E1Fu;
+            w.tickCount++; WbBailRelay.EffectsTick(w);                // k0 空转
+            w.tickCount++; WbBailRelay.EffectsTick(w);                // k1 湮灭
+            Assert.That(w.terrain[iTile], Is.EqualTo(WbWorld.T_LAVA), "中心 LAVA");
+            Assert.That(w.terrain[oTile], Is.EqualTo(WbWorld.T_BURNT), "外环 BURNT");
+            Assert.That(w.regrow.ContainsKey(iTile), Is.False, "LAVA 格 regrow 出账（setTerrain L979——M-U8b 消费面随件触达）");
+            Assert.That(w.regrow.ContainsKey(oTile), Is.False, "BURNT 格 regrow 出账（同键幂等出账）");
+            Assert.That(w.fire[oTile], Is.EqualTo(0), "BURNT 覆写火种熄灭（L990-993 fire=0 级联）");
+            Assert.That(w.fireSet.Contains(oTile), Is.False, "fireSet 出账");
+            Assert.That(w.fireSetList, Does.Not.Contain(oTile), "fireSetList 镜像同步");
+        }
     }
 }

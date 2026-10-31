@@ -1,7 +1,8 @@
 // ============================================================================
 // gen-power.mjs —— M-U10a「effectsTick 游荡云族八种」+ M-U10b「波前族+静态族五 kind」
 //   + M-U10c「命中族三 kind + explode 消费面」+ M-U10d「shell/missile/核弹」
-//   + M-U10e「war 面 airstrike/drone/mech」+ M-U10f「laser 光束线杀伤」+ M-U10g「orbital 轨道天罚」黄金向量
+//   + M-U10e「war 面 airstrike/drone/mech」+ M-U10f「laser 光束线杀伤」+ M-U10g「orbital 轨道天罚」
+//   + M-U10h「plasma 等离子 + antimatter 湮灭 + annihilate 本体建库」黄金向量
 // （tornado L9805-9824 / acid L9826-9850 / blizzard L9915-9948 / locust L9949-9971 /
 //   drought L9972-9996 / rainstorm L9997-10022 / sandstorm L10068-10090 / famine L10170-10190
 //   + M-U10b: tsunami L9877-9914 / sinkhole L10120-10147 / iceage L10148-10169 /
@@ -30,6 +31,9 @@
 //   ⑤ 到期 splice：for 倒序 + splice(i,1) —— C# List 倒序 RemoveAt(i) 同构；age 从 0
 //     起 fx 注入，e.age++ 头递增。
 //   ⑥ activeBattles：Map<number,number> 迭代中删——C# 快照二段式（M-U8b 先例）。
+//   ⑧ M-U10h armies 通道：spec.armies 直写注入（plasma 军团 morale 面——L10423-10428 消费
+//     a.civ/a.x/a.y/a.morale 四字段；Army 字面量全字段默认形）+ armies0 fixture + 步进/终态
+//     armies morale 快照（f64hex 位级）。
 //   ⑦ M-U10c 命中族：arrow/bullet 桶扫描（3×3 环带）依赖 buckets——注入相尾 eng.rebuildBuckets()
 //     （纯函数零掷）→ 黄金步进期内桶态冻结（effectsTick 不重建——主循环 L2519 序镜像）；
 //     gearBonus 装备面：engine 真 gearBonus(u).armor 于快照相采样入 units0.gbArmor（链甲 armor=8
@@ -122,6 +126,7 @@ function buildScenario(spec) {
   eng.dirty.clear();
   eng.units.length = 0;
   eng.unitById.clear();
+  eng.armies.length = 0;               // M-U10h 军团层清零（plasma armies morale 面——真调注入前基线）
   eng.effects.length = 0;
   eng.shake = 0;                        // M-U10b 震屏面基线（effectsTick 四 kind 写面——L185 字段）
   eng.worldEvents.length = 0;
@@ -205,6 +210,17 @@ function buildScenario(spec) {
     eng.civs[c.id] = { id: c.id, name: c.name, alive: true, colorHex: c.colorHex, tiles: [], color: [0, 0, 0], pop: 0 };
   }
 
+  // 手术二·armies 直写注入（M-U10h：plasma 军团 morale 面 L10423-10428——消费 a.civ/a.x/a.y/a.morale；
+  //   Army 全字段默认形直写先例同 civs——军团域重件未译，直写最小完备对象）
+  for (const a of spec.armies ?? []) {
+    eng.armies.push({
+      id: a.id, civ: a.civ, name: a.name ?? ('T' + a.id), members: [], leaderId: -1,
+      x: a.x, y: a.y, tx: a.x, ty: a.y, state: 'march',
+      formedTick: 0, size0: 0, morale: a.morale, targetCiv: -1, rot: 0,
+      kills: 0, losses: 0, evalTick: 0, lax: a.x, lay: a.y,
+    });
+  }
+
   // 手术二尾：桶重建（arrow/bullet 扫描面——主循环 L2519 rebuildBuckets 同构；纯函数零掷）
   eng.rebuildBuckets();
 
@@ -222,6 +238,7 @@ function buildScenario(spec) {
     building0: buildingW.map(([x, y, kind, civ]) => ({ i: idx(x, y), x, y, kind, civ })),
     orphanB0: orphanB,                    // M-U10c 孤儿建筑格（building>0 无记录——L10289 镜像钉）
     civs0: (spec.civs ?? []).map((c) => ({ id: c.id, name: c.name, colorHex: c.colorHex })),   // M-U10d raze 级联 alive/name/colorHex 最小语义面
+    armies0: (spec.armies ?? []).map((a) => ({ id: a.id, civ: a.civ, x: f64hex(a.x), y: f64hex(a.y), morale: f64hex(a.morale) })),   // M-U10h plasma 军团面（morale f64 位级）
     rel0: [...eng.rel.entries()],         // M-U10c 外交挂账（pairKey 字符串键 → atWar <-20 门）
     battles0: [...eng.activeBattles.entries()],
     fx0: eng.effects.map((e) => ({ kind: e.kind, x: f64hex(e.x), y: f64hex(e.y), r: e.r, age: e.age, ttl: e.ttl, seed: e.seed, dir: f64hex(e.dir), src: e.src ?? null, dmg: e.dmg ?? null, quiet: e.quiet === true, wid: e.wid ?? null, nuke: e.nuke ?? null, fire: e.fire ?? null, ...(e.x0 !== e.x || e.y0 !== e.y ? { x0: f64hex(e.x0), y0: f64hex(e.y0) } : {}) })),   // M-U10d wid/nuke/fire 通道（?? 语义：0 值保真）+ M-U10e 稀疏 x0/y0（航线 divergent 时才出键——旧 21 场景 fx0 字节不变）
@@ -248,6 +265,7 @@ function buildScenario(spec) {
       battles: [...eng.activeBattles.entries()],
       flood: [...eng.flood.entries()],               // M-U10b tsunami L9898 洪水挂账（JS Map 插入序——C# Dictionary 序对账面）
       shake: eng.shake,                              // M-U10b 震屏（tsunami age1=6/sinkhole %2=4/quake=7 直写/blackhole=9）
+      armies: eng.armies.map((a) => ({ id: a.id, morale: f64hex(a.morale) })),   // M-U10h 军团 morale 步进快照（plasma L10426 写面——f64 位级）
       dirty: [...eng.dirty].sort((a, b) => a - b),   // markDirty 脏集（渲染面顺序无关语义——排序对账：C# HashSet 无序）
       fxCount: eng.effects.length,
       eventsCount: eng.worldEvents.length,
@@ -285,6 +303,7 @@ function buildScenario(spec) {
     battles: [...eng.activeBattles.entries()],
     flood: [...eng.flood.entries()],                 // M-U10b tsunami 洪水挂账终态
     shake: eng.shake,
+    armies: eng.armies.map((a) => ({ id: a.id, civ: a.civ, x: f64hex(a.x), y: f64hex(a.y), morale: f64hex(a.morale) })),   // M-U10h 军团终态（morale f64 位级——plasma 写面）
     kc: eng.killCredit ?? null,                      // M-U10d killCredit 终态钉（shell/missile wid 面复位语义 L10297/L10300）
     statN: eng.statNukes,                            // M-U10d statNukes 终态钉（Nuke L12256 成就计数）
     buildingsCount: eng.buildings.length,
@@ -725,6 +744,79 @@ const specs = [
       && !eng.effects.some((e) => e.kind === 'orbital') && eng.effects.some((e) => e.kind === 'explosion')
       && eng.worldEvents.some((ev) => ev.kind === 'superweapon'),
   },
+  {
+    // S29 plasma（M-U10h）：等离子命中 ttl 到期单发全支位级（L10410-10432）
+    //   killCredit=wid 7 往返（L10412 写/L10430 复位）→ shellBurst(r||3.2, dmg??80, fire 恒 true, src??-1)
+    //   单位环**无 src 豁免**己军同账（u3 civ=1=src 照吃 falloff 80*(1-1.5/3.6)）+ ignite 四重门掷面
+    //   （37 格 d<3.6 门掷 <0.45 → 过门 ignite 内掷 + fx explosion 2 掷）→ EMP 单位环（L10414-10422：
+    //   dead 跳过 / e.src!==undefined && civ===src 豁免〔与 shellBurst 异构——弹环无豁免 EMP 有〕/
+    //   d<(r||3.2)+2.5 → hurt=60 硬直 + hp-=6）→ **armies morale 环（L10423-10428 首钉）**：
+    //   a0 civ=1 豁免 40 不动 / a1 d=2.5 morale 15 → max(8,0)=8 地板钳 / a2 d=11.5 界外 40 /
+    //   a3 d≈7.76 40-15=25（无地板）——零掷纯写面 → wid 门 emergentPayload 桩早退 → flash {r:2} 2 掷
+    //   + k0 age1<2 空转零掷步（orbital 同构）+ r:0→||3.2 回退钉 / dmg 缺→??80（fx() r:1 默认 L9794）
+    key: 'power-plasma', baseSeed: BASE + 49, seed: 0x0A0E1E, seasons: false, yearF: 2.5, tickCount: 28000, steps: 2, minDraws: 30,
+    armies: [
+      { id: 1, civ: 1, x: 96.5, y: 60.5, morale: 40 },   // a0 civ=src 豁免（d=4.0<9.2 界内不触达）
+      { id: 2, civ: 2, x: 103.0, y: 60.5, morale: 15 },  // a1 d=2.5 → 15-15=0 → max(8,0)=8 地板钳
+      { id: 3, civ: 2, x: 112.0, y: 60.5, morale: 40 },  // a2 d=11.5≥9.2 界外不动
+      { id: 4, civ: 2, x: 108.0, y: 62.5, morale: 40 },  // a3 d=hypot(7.5,2)≈7.76 → 25 无地板支
+    ],
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 56; y < 65; y++) for (let x = 96; x < 105; x++) a.push([x, y, T.GRASS]); return a; })()],
+        units: [
+          { race: 'SHEEP', x: 100.5, y: 60.5, hp: 50, maxHp: 50 },    // u0 中心 d=0 → shellBurst 80 伤死（EMP 环 dead 跳过）
+          { race: 'SHEEP', x: 104.0, y: 60.5, hp: 50, maxHp: 50 },    // u1 d=3.5 弹环+EMP 双吃（hurt 60 终态钉）
+          { race: 'SHEEP', x: 105.0, y: 60.5, hp: 50, maxHp: 50 },    // u2 d=4.5 弹环外/EMP 内纯 EMP 面 44
+          { race: 'SHEEP', x: 99.0, y: 60.5, hp: 50, maxHp: 50, civ: 1 },  // u3 civ=src：弹环无豁免吃 46.67 / EMP 豁免——异构面
+          { race: 'SHEEP', x: 108.0, y: 60.5, hp: 50, maxHp: 50 },    // u4 d=7.5 双环外对照 50
+          { race: 'SHEEP', x: 100.5, y: 63.0, hp: 10, maxHp: 50, dead: 1 },  // u5 dead=1 双环头跳过
+        ],
+        fx: [{ kind: 'plasma', x: 100.5, y: 60.5, ttl: 2, src: 1, wid: 7, r: 0 }],   // r:0 falsy → ||3.2 回退钉（fx() 默认 r:1 L9794——S20 shell r:0 同款通道）；dmg 缺 → ??80
+      },
+    ],
+    sanity: (eng) => eng.units[0].dead === true && eng.units[1].hp === 50 - 80 * Math.max(0.25, 1 - 3.5 / (3.2 + 0.4)) - 6   // d=3.5 → falloff 0.028<0.25 地板钳支（80×0.25=20）
+      && eng.units[1].hurt === 60 && eng.units[2].hp === 44 && eng.units[2].hurt === 60
+      && eng.units[3].hp === 50 - 80 * (1 - 1.5 / (3.2 + 0.4)) && eng.units[3].hurt === 24
+      && eng.units[4].hp === 50 && eng.units[5].hp === 10 && eng.units[5].dead === 1
+      && eng.armies[0].morale === 40 && eng.armies[1].morale === 8 && eng.armies[2].morale === 40 && eng.armies[3].morale === 25
+      && eng.killCredit === null && eng.shake === 4.2
+      && eng.effects.some((e) => e.kind === 'flash') && eng.effects.some((e) => e.kind === 'explosion'),
+  },
+  {
+    // S30 antimatter（M-U10h）：湮灭 ttl 到期单发（L10433-10437）→ annihilate(x,y,9,src??-1) 本体
+    //   （L9559-9591）：单位环 dead 跳过 / src>=0 && civ===src 豁免 / d<9 → hp-=600 + hurt=40 +
+    //   死亡 wwCountKill（**零 killCredit 写面——恒 null 钉**）→ 地形环 rr=ceil(9)=9 yy∈[51..69]/
+    //   xx∈[91..109]（双上界 y+rr=69.5 number 语义）像素中心 +0.5 偏移 d>9 跳 + 建筑摧毁（destroyBuilding
+    //   → fx smoke 2 掷）+ isLand 门内 d<9*0.28=2.52 → LAVA 内环 / !==MOUNTAIN → BURNT 外环（山幸存/
+    //   WATER 整格跳——**零掷纯写面**）→ flash {r:3}+explosion {r:6.3}+mushroom {r:8.1} 三 fx 6 掷 +
+    //   shake=max(12) + onSound nuke + superweapon 纪事文本位级 + **armies 零写面钉**（a0 界内 morale 40
+    //   不动）+ k0 age1<2 空转零掷步 + statNukes 零写钉
+    key: 'power-antimatter', baseSeed: BASE + 50, seed: 0x0A0E1F, seasons: false, yearF: 2.5, tickCount: 29000, steps: 2, minDraws: 5,
+    armies: [{ id: 1, civ: 2, x: 100.5, y: 60.5, morale: 40 }],   // 界内军团——antimatter 零 armies 写面钉
+    civs: [{ id: 1, name: '青禾部落', colorHex: '#40a060' }],
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 51; y < 70; y++) for (let x = 91; x < 110; x++) a.push([x, y, T.GRASS]); return a; })().concat([[104, 60, T.MOUNTAIN], [97, 60, T.WATER]])],
+        building: [[105, 60, 4, 1]],
+        units: [
+          { race: 'SHEEP', x: 100.5, y: 60.5, hp: 50, maxHp: 50 },    // u0 中心 d=0 → 600 伤死（LAVA 格上）
+          { race: 'SHEEP', x: 108.5, y: 60.5, hp: 700, maxHp: 1000 }, // u1 d=8 → 700-600=100 幸存 hurt 40
+          { race: 'SHEEP', x: 104.5, y: 60.5, hp: 50, maxHp: 50, civ: 1 },  // u2 civ=src 豁免 50
+          { race: 'SHEEP', x: 90.5, y: 60.5, hp: 50, maxHp: 50 },     // u3 d=10≥9 界外 50
+          { race: 'SHEEP', x: 96.5, y: 60.5, hp: 50, maxHp: 50, dead: 1 },  // u4 dead 跳过
+        ],
+        fx: [{ kind: 'antimatter', x: 100.5, y: 60.5, ttl: 2, src: 1 }],
+      },
+    ],
+    sanity: (eng) => eng.units[0].dead === true && eng.units[1].hp === 100 && eng.units[1].hurt === 40
+      && eng.units[2].hp === 50 && eng.units[3].hp === 50 && eng.units[4].hp === 50 && eng.units[4].dead === 1
+      && eng.armies[0].morale === 40
+      && eng.terrain[idx(100, 60)] === T.LAVA && eng.terrain[idx(104, 60)] === T.MOUNTAIN
+      && eng.terrain[idx(97, 60)] === T.WATER && eng.terrain[idx(105, 60)] === T.BURNT && eng.terrain[idx(103, 60)] === T.BURNT && eng.terrain[idx(99, 60)] === T.LAVA   // (99,60) d=1<2.52 内环岩浆/(103,60) d=3 焦土环
+      && eng.buildings.length === 0 && eng.shake === 12 && eng.killCredit === null && eng.statNukes === 0
+      && eng.worldEvents.length === 1 && eng.worldEvents[0].kind === 'superweapon'
+      && eng.worldEvents[0].text === '湮灭之光吞没大地——半径之内，物质归零，只余熔融的玻璃'
+      && eng.effects.some((e) => e.kind === 'mushroom'),
+  },
 ];
 
 const scenarios = specs.map(buildScenario);
@@ -748,7 +840,7 @@ const out = {
     protocol: 'GameEngine 构造 + 手术式夹具两相直写 + effects/spawnUnit 真调用注入（fx seed/dir 双掷注入相）+ rngA 尾置清零起流 + tickCount++/effectsTick 直调步进快照（主循环 L2508/L2528 序同构）',
     rng: 'eng.rngA 单流（类字段箭头 rng L728-733）；mulberry 纯数学反解 total（noise.ts L3-13）',
     math: 'tornado/sandstorm/famine Math.hypot——C# FdHypot/V8Hypot 位精确件对账（fdlibm 域）；acid/blizzard/locust/drought/rainstorm 纯平方距离',
-    domains: ['effectsTick L9801-10447', 'tornado L9805-9824', 'acid L9826-9850', 'blizzard L9915-9948', 'locust L9949-9971', 'drought L9972-9996', 'rainstorm L9997-10022', 'sandstorm L10068-10090', 'famine L10170-10190', 'M-U10b: tsunami L9877-9914', 'M-U10b: sinkhole L10120-10147', 'M-U10b: iceage L10148-10169', 'M-U10b: blackhole L10191-10223', 'M-U10b: quake L10224-10236', 'M-U10c: meteor L10237-10239', 'M-U10c: fireball L10240-10254', 'M-U10c: arrow·bullet L10255-10294', 'M-U10c: explode L10450-10499', 'M-U10c: ignite L1072-1077', 'M-U10d: shell L10295-10301', 'M-U10d: missile L10302-10310', 'M-U10d: shellBurst L9595-9620', 'M-U10d: nuke L12255-12260', 'M-U10d: onBuildingDestroyed raze 支 L4464-4498（capture/annex 支夹具外——M-U10e 候选）', 'M-U10e: airstrike L10311-10322', 'M-U10e: drone L10353-10368', 'M-U10e: mech L10394-10414', 'M-U10f: laser L10323-10353', 'M-U10g: orbital L10370-10388', '到期 splice L10439-10441', 'activeBattles %5 清理 L10443-10447', 'fx L9781-9799', 'attackBuilding L4446-4462', 'meltIce L2892（drought 消费）', 'setTerrain L969-1007（regrow L979 出账联动 + flood L983 贴花级联）', 'rebuildBuckets L3081-3104（注入相尾——arrow/bullet 桶扫描面）', 'gearBonus L1498-1520（armor 采样入 units0.gbArmor）', 'atWar L2061-2064（rel0 挂账）'],
+    domains: ['effectsTick L9801-10447', 'tornado L9805-9824', 'acid L9826-9850', 'blizzard L9915-9948', 'locust L9949-9971', 'drought L9972-9996', 'rainstorm L9997-10022', 'sandstorm L10068-10090', 'famine L10170-10190', 'M-U10b: tsunami L9877-9914', 'M-U10b: sinkhole L10120-10147', 'M-U10b: iceage L10148-10169', 'M-U10b: blackhole L10191-10223', 'M-U10b: quake L10224-10236', 'M-U10c: meteor L10237-10239', 'M-U10c: fireball L10240-10254', 'M-U10c: arrow·bullet L10255-10294', 'M-U10c: explode L10450-10499', 'M-U10c: ignite L1072-1077', 'M-U10d: shell L10295-10301', 'M-U10d: missile L10302-10310', 'M-U10d: shellBurst L9595-9620', 'M-U10d: nuke L12255-12260', 'M-U10d: onBuildingDestroyed raze 支 L4464-4498（capture/annex 支夹具外——M-U10e 候选）', 'M-U10e: airstrike L10311-10322', 'M-U10e: drone L10353-10368', 'M-U10e: mech L10394-10414', 'M-U10f: laser L10323-10353', 'M-U10g: orbital L10370-10388', 'M-U10h: plasma L10410-10432', 'M-U10h: antimatter L10433-10437', 'M-U10h: annihilate L9559-9591', '到期 splice L10439-10441', 'activeBattles %5 清理 L10443-10447', 'fx L9781-9799', 'attackBuilding L4446-4462', 'meltIce L2892（drought 消费）', 'setTerrain L969-1007（regrow L979 出账联动 + flood L983 贴花级联）', 'rebuildBuckets L3081-3104（注入相尾——arrow/bullet 桶扫描面）', 'gearBonus L1498-1520（armor 采样入 units0.gbArmor）', 'atWar L2061-2064（rel0 挂账）'],
     scenarioCount: scenarios.length,
   },
   scenarios,
