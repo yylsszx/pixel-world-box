@@ -230,6 +230,8 @@ export class GameEngine {
   statNukes = 0;
   statBlackholes = 0;
   statMeteorShowers = 0;
+  statPlasmas = 0;
+  statAnnihilations = 0;
 
   // ---------------- 终极世界大战（Ultimate World War · 开发者模式引燃） ----------------
   /** 大战状态（idle 未打响 / running 战火燃烧 / ended 已终战；随存档持久化） */
@@ -689,6 +691,8 @@ export class GameEngine {
   brushPreview = false;
   /** 带 radius 参数工具的预览圈半径（null = 回退通用笔刷 brush） */
   previewR: number | null = null;
+  /** 预览圈主题色（超级武器神力等单发工具的危险域提示；null = 默认白虚线） */
+  previewTint: string | null = null;
 
   onStats?: (s: StatsSnapshot) => void;
   onToast?: (t: ToastMsg) => void;
@@ -845,6 +849,8 @@ export class GameEngine {
     this.statNukes = 0;
     this.statBlackholes = 0;
     this.statMeteorShowers = 0;
+    this.statPlasmas = 0;
+    this.statAnnihilations = 0;
     this.achProgressCache = {};
     // 终极世界大战重置（新世界无战火）
     this.worldWar = GameEngine.IDLE_WORLD_WAR();
@@ -10936,6 +10942,30 @@ export class GameEngine {
     this.onSound?.('shield');
   }
 
+  /** 神力·等离子炮（玩家施放面：wwWeaponsTick launchPlasma 同源特效——无阵营豁免，
+   *  电浆光球按 x0/y0 弹道飞抵后触发 shellBurst 爆破 + EMP 麻痹环 + 军团士气崩落）。 */
+  plasmaCannon(x: number, y: number, dmg = 90) {
+    const x0 = Math.max(2, Math.min(W - 3, x - 7));
+    const y0 = Math.max(2, Math.min(H - 3, y - 9));
+    const dist = Math.hypot(x - x0, y - y0);
+    const ttl = Math.max(45, Math.min(110, Math.round(dist * 1.5)));
+    this.fx('plasma', x, y, ttl, { x0, y0, r: 3.2, dmg });
+    this.statPlasmas++; // 成就计数：电浆洗礼
+    this.addEvent('superweapon', '苍穹被一道电光撕开——等离子光球正携 EMP 之威坠向大地', { x, y });
+  }
+
+  /** 神力·湮灭之光（玩家施放面：launchAntimatter 同源特效——无阵营豁免，
+   *  反物质弹飞抵后 annihilate 半径 9 湮灭：敌方归零 + 地形玻璃化〔中心熔岩/外环焦土〕+ 全屏白闪）。 */
+  annihilationLight(x: number, y: number) {
+    const x0 = Math.max(2, Math.min(W - 3, x - 8));
+    const y0 = Math.max(2, Math.min(H - 3, y - 11));
+    const dist = Math.hypot(x - x0, y - y0);
+    const ttl = Math.max(50, Math.min(130, Math.round(dist * 1.4)));
+    this.fx('antimatter', x, y, ttl, { x0, y0 });
+    this.statAnnihilations++; // 成就计数：湮灭纪元
+    this.addEvent('superweapon', '造物主掌心凝起一粒反物质——湮灭之光即将吞没大地，物质归零', { x, y, colorHex: '#ff4d4d' });
+  }
+
   // ---------------- 天灾扩充（沙尘暴/台风/天坑/冰河寒潮/饥荒/黑洞） ----------------
 
   /** 沙尘暴：游荡沙暴 —— 草被沙埋、生物迷失风中（沙尘减速+轻伤） */
@@ -13396,6 +13426,13 @@ export class GameEngine {
         break;
       case 'holystorm':
         this.holyStorm(wx, wy, Math.max(4, r), durationP);
+        break;
+      // —— 超级武器神力（玩家施放面：wwWeaponsTick 同源特效直达） ——
+      case 'plasmacannon':
+        this.plasmaCannon(wx, wy, powerP);
+        break;
+      case 'annihilate':
+        this.annihilationLight(wx, wy);
         break;
       // —— 天灾扩充 ——
       case 'sandstorm':

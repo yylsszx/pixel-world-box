@@ -31,7 +31,7 @@ const BASICS: { icon: LucideIcon; title: string; desc: string }[] = [
   {
     icon: Flame,
     title: '降下神力',
-    desc: '「神力」与「天灾」标签页是你全部的权柄：闪电、陨石、核弹、龙卷风、瘟疫……也可以用治疗与绿洲抚平大地的创伤。',
+    desc: '「神力」与「天灾」标签页是你全部的权柄：闪电、陨石、核弹、龙卷风、瘟疫……乃至等离子炮与湮灭之光；也可以用治疗与绿洲抚平大地的创伤。',
   },
   {
     icon: Eye,

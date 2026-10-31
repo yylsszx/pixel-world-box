@@ -1916,14 +1916,17 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
   }
 
   // ---- 4. brush cursor preview ----
-  // P3：像素风短弧段圆环 —— 黑色描边打底（对比）+ 白 60% 虚线感短弧段（两遍同相位叠画）
+  // P3：像素风短弧段圆环 —— 黑色描边打底（对比）+ 主题色/白 60% 虚线感短弧段（两遍同相位叠画）
+  // previewTint：超级武器神力的危险域提示（青绿电浆/警戒红），null 时保持默认白虚线
   if (engine.cursor.on && engine.brushPreview) {
     const bpx = engine.cursor.wx * zoom + wox;
     const bpy = engine.cursor.wy * zoom + woy;
     const r = (engine.previewR ?? engine.brush) * zoom;
+    const tint = engine.previewTint;
+    const tintFill = tint ? tint.replace(/,[\d.]+\)$/, ',0.08)') : 'rgba(255,255,255,0.07)'; // 尾参 alpha 压到 8% 作底色
     ctx.beginPath();
     ctx.arc(bpx, bpy, r, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.07)';
+    ctx.fillStyle = tintFill;
     ctx.fill();
     const SEG = 8; // 短弧段数：虚线感（占空比 0.55）
     const span = (Math.PI * 2) / SEG;
@@ -1936,9 +1939,9 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
       ctx.arc(bpx, bpy, r, a0, a0 + span * 0.55);
       ctx.stroke();
     }
-    // 第二遍：白 60% 短弧段（同相位 —— 骑在黑描边上）
+    // 第二遍：主题色/白 60% 短弧段（同相位 —— 骑在黑描边上）
     ctx.lineWidth = 1.2;
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.strokeStyle = tint ?? 'rgba(255,255,255,0.6)';
     for (let k = 0; k < SEG; k++) {
       const a0 = k * span;
       ctx.beginPath();

@@ -136,6 +136,15 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     id: 'meteor-shower-user', name: '流星如愿', desc: '召唤一场陨石雨', tier: 'bronze', icon: 'sparkles',
     check: (e) => e.statMeteorShowers >= 1, progress: (e) => e.statMeteorShowers, goal: 1,
   },
+  // —— 超级武器神力 ——
+  {
+    id: 'plasma-user', name: '电浆洗礼', desc: '亲手发射一发等离子炮', tier: 'silver', icon: 'zap',
+    check: (e) => e.statPlasmas >= 1, progress: (e) => e.statPlasmas, goal: 1,
+  },
+  {
+    id: 'annihilator', name: '湮灭纪元', desc: '降下一次湮灭之光——让一片大地归零', tier: 'legend', icon: 'atom',
+    check: (e) => e.statAnnihilations >= 1, progress: (e) => e.statAnnihilations, goal: 1,
+  },
   // —— 进化之诗 ——
   {
     id: 'first-evolve', name: '自然选择', desc: '一个物种棘轮进化出新世代', tier: 'bronze', icon: 'dna',

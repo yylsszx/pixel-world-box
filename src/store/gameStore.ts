@@ -107,6 +107,23 @@ const PERFHUD_KEY = 'wb_perfhud';
 /** 环境音乐开关持久化（'0' = 关；缺省 = 开 —— 音量细调走 sfx 的 wb_vol） */
 const MUSIC_KEY = 'wb_music';
 
+/** 超级武器神力与高危天灾的危险域预览（单发工具的半径提示环）：
+ *  r 可为常量或随参数动态计算的函数（核弹当量环 7×power 随滑杆实时联动）；
+ *  主题色与弹体特效同源（青绿电浆/警戒红/橙焰核火/金黄陨雨） */
+type SuperPreview = { r?: number | ((params: Record<string, number>) => number); tint: string };
+export const SUPER_PREVIEW: Record<string, SuperPreview> = {
+  plasmacannon: { r: 5.7, tint: 'rgba(111,245,207,0.85)' }, // shellBurst 核心 3.2 + EMP 外扩 2.5
+  annihilate: { r: 9, tint: 'rgba(255,99,99,0.9)' }, // annihilate 固定半径 9
+  nuke: { r: (p) => Math.max(3, Math.min(24, 7 * (p.power ?? 1))), tint: 'rgba(255,155,45,0.9)' }, // 爆炸半径 7×当量（engine nuke 同源钳 3-24）
+  meteorshower: { tint: 'rgba(255,217,61,0.85)' }, // 散布半径已由 radius 参数路径接管，仅着色
+};
+/** 危险域预览半径解算：函数式随参数取值（缺参回退默认语义） */
+export function superPreviewR(id: string, params: Record<string, number> | undefined): number | undefined {
+  const sup = SUPER_PREVIEW[id];
+  if (!sup?.r) return undefined;
+  return typeof sup.r === 'function' ? sup.r(params ?? {}) : sup.r;
+}
+
 /** 从 localStorage 恢复成就元进度（损坏/缺失 → 空对象） */
 function readAch(): Record<string, number> {
   try {
@@ -973,11 +990,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
     // v5：造物图鉴工具（cre:uid）查动态表——count/radius 参数与预览圈同步生效
     const def = TOOL_BY_ID[id] ?? (id.startsWith('cre:') ? creationTools().find((t) => t.id === id) : undefined);
     if (eng) {
-      // 笔刷预览：笔刷类工具 / 带 radius 参数的工具 / 历史特殊名单
       const hasRadius = !!def?.params?.some((p) => p.key === 'radius');
-      eng.brushPreview = !!def?.brush || hasRadius || id === 'plague' || id === 'river' || id === 'oasis';
-      // 带 radius 参数的工具：预览圈跟随参数值；其余用通用笔刷半径
-      eng.previewR = hasRadius ? (useGameStore.getState().toolParams[id]?.radius ?? def!.params!.find((p) => p.key === 'radius')!.def) : null;
+      // 危险域预览：超级武器神力/高危天灾（核弹当量环随 power 滑杆实时联动）
+      const sup = SUPER_PREVIEW[id];
+      const supR = superPreviewR(id, useGameStore.getState().toolParams[id]);
+      eng.brushPreview = !!def?.brush || hasRadius || id === 'plague' || id === 'river' || id === 'oasis' || !!sup;
+      // 带 radius 参数的工具：预览圈跟随参数值；危险域工具用解算半径；其余用通用笔刷半径
+      eng.previewR = hasRadius ? (useGameStore.getState().toolParams[id]?.radius ?? def!.params!.find((p) => p.key === 'radius')!.def) : supR ?? null;
+      eng.previewTint = sup?.tint ?? null;
     }
     // v5 修复：选中带参数工具时初始化默认参数——面板显示的 def 值必须真实生效
     // （此前 toolParams 无条目 → 面板显示「数量 6」但 applyTool 收到 undefined → 只放 1 只——显示与执行不一致）
@@ -1032,8 +1052,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     } catch {
       /* 隐私模式忽略 */
     }
-    // radius 参数实时同步引擎预览圈半径
+    // radius 参数实时同步引擎预览圈半径；核弹等 power 参数工具同步危险域动态半径
     if (_engine && key === 'radius' && useGameStore.getState().tool === toolId) _engine.previewR = value;
+    if (_engine && key === 'power' && useGameStore.getState().tool === toolId) {
+      const dyn = superPreviewR(toolId, { ...useGameStore.getState().toolParams[toolId], power: value });
+      if (dyn !== undefined) _engine.previewR = dyn;
+    }
     set({ toolParams: next });
   },
   resetToolParam: (toolId) => {
@@ -1046,7 +1070,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     } catch {
       /* 隐私模式忽略 */
     }
-    if (_engine && useGameStore.getState().tool === toolId) _engine.previewR = fresh.radius ?? null;
+    if (_engine && useGameStore.getState().tool === toolId) {
+      const dyn = superPreviewR(toolId, fresh);
+      _engine.previewR = dyn !== undefined ? dyn : fresh.radius ?? null;
+    }
     sfx.click();
     set({ toolParams: next });
   },

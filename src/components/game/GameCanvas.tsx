@@ -23,7 +23,7 @@ import { TOOL_BY_ID } from '@/lib/game/constants';
 import { RACES } from '@/lib/game/types';
 import type { ToastMsg, WorldEvent } from '@/lib/game/types';
 import { sfx } from '@/lib/game/sfx';
-import { getEngine, useGameStore } from '@/store/gameStore';
+import { getEngine, useGameStore, SUPER_PREVIEW, superPreviewR } from '@/store/gameStore';
 import { beginStroke, endStroke, cancelStroke, strokeActive, undo, redo } from '@/lib/ui/undo';
 import { cancelFlight, tickFlight, saveBookmark, jumpBookmark } from '@/lib/ui/camera';
 
@@ -63,6 +63,8 @@ function throttleFor(tool: string): number {
 function toWorld(px: number, py: number, cw: number, ch: number) {
   return getEngine().screenToWorld(px, py, cw, ch);
 }
+
+/** 超级武器神力/高危天灾的危险域预览常量表见 gameStore（SUPER_PREVIEW 单源导出——本件 mount 面与 store 运行时面共用） */
 
 /** 神之视界文本（Task 70 造物主凝视）：长按空地一瞥 —— 地形/坐标/领土/火情/辐射/野生总量
  *  （只在长按瞬间计算一次，不跟随帧刷新；野生动物为全局非文明种族存活数） */
@@ -177,8 +179,12 @@ export function GameCanvas() {
     {
       const def = TOOL_BY_ID[store.tool];
       const hasRadius = !!def?.params?.some((p) => p.key === 'radius');
-      engine.brushPreview = !!def?.brush || hasRadius || store.tool === 'plague' || store.tool === 'river' || store.tool === 'oasis';
-      engine.previewR = hasRadius ? (store.toolParams[store.tool]?.radius ?? null) : null;
+      // 危险域预览（mount 面）：单源表与 setTool 运行时面共用——核弹当量环随 power 参数解算
+      const sup = SUPER_PREVIEW[store.tool];
+      const supR = superPreviewR(store.tool, store.toolParams[store.tool]);
+      engine.brushPreview = !!def?.brush || hasRadius || store.tool === 'plague' || store.tool === 'river' || store.tool === 'oasis' || !!sup;
+      engine.previewR = hasRadius ? (store.toolParams[store.tool]?.radius ?? null) : supR ?? null;
+      engine.previewTint = sup?.tint ?? null;
     }
     // 画面效果开关（伤害数字/红闪/河流动画/环境氛围）：从持久化的偏好恢复到引擎
     engine.fxPrefs = { ...store.fxPrefs };

@@ -409,6 +409,15 @@ export const ICONS: Record<string, string[]> = {
     '..ffff..', '.ffyyf..', 'ffyyyyf.', 'fyywyyf.',
     '.fyyyyf.', '..ffyf..', '...w.w..', '....w...',
   ],
+  // —— 超级武器神力（2：等离子炮/湮灭之光——wwWeaponsTick 同源特效的玩家施放面）——
+  plasma: [
+    '...tt...', '..t..t..', '...tt...', 'tttwwttt',
+    '.twwwwt.', 'twwwwwwt', '.twwwwt.', '..twwt..',
+  ],
+  antimatter: [
+    '...pp...', '..pddp..', '.pdddwp.', 'pddwwddp',
+    'pddddddp', '.pdddwp.', '..pddp..', '...pp...',
+  ],
   // —— 天灾扩充（6）——
   sandstorm: [
     '..ss....', '.sSSs...', 'sS..Ss..', 'sS..sSs.',
@@ -715,6 +724,10 @@ export const TOOLS: ToolDef[] = [
     { key: 'radius', label: '圣域半径', min: 4, max: 14, step: 1, def: 5 },
     { key: 'duration', label: '持续', min: 60, max: 300, step: 10, def: 200, fmt: 'sec' },
   ] },
+  { id: 'plasmacannon', label: '等离子炮', desc: '电浆光球坠地：大威力爆破 + 电磁脉冲——周遭生物麻痹硬直、军团士气崩落（威力可调）', tab: 'powers', icon: 'plasma', single: true, params: [
+    { key: 'power', label: '威力', min: 40, max: 160, step: 10, def: 90 },
+  ] },
+  { id: 'annihilate', label: '湮灭之光', desc: '反物质天启：半径九格内物质归零、大地玻璃化——中心熔岩、外环焦土（无差别打击）', tab: 'powers', icon: 'antimatter', single: true },
   // items（宝物：3 档宝箱 + 全量 102 件物品工具，由下方程序化生成）
   { id: 'chest', label: '宝箱', desc: '掉落一件随机宝物（普通为主），等待生物拾取', tab: 'items', icon: 'chest', single: true },
   { id: 'chest2', label: '秘银宝箱', desc: '掉落一件精良以上的宝物', tab: 'items', icon: 'chest2', single: true },
