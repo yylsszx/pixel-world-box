@@ -26,6 +26,7 @@ import { sfx } from '@/lib/game/sfx';
 import { getEngine, useGameStore } from '@/store/gameStore';
 import { beginStroke, endStroke, cancelStroke, strokeActive, undo, redo } from '@/lib/ui/undo';
 import { cancelFlight, tickFlight, saveBookmark, jumpBookmark } from '@/lib/ui/camera';
+import { getOfflineAI } from '@/lib/game/domain-model/offline-ai';
 
 const SPAWN_THROTTLE = 90;
 const LIGHTNING_THROTTLE = 160;
@@ -1016,6 +1017,8 @@ export function GameCanvas() {
         // 摄影模式同步到引擎（渲染层隐藏编辑器标记与战争暗角，保持画面纯净）
         engine.cinemaMode = useGameStore.getState().cinema;
         engine.frame(dt);
+        // —— 原生离线战略 AI（无外部 API 时接管文明决策，每 120 tick 决策一次） ——
+        getOfflineAI(engine).tick(engine);
         const { w, h } = sizeRef.current;
         // 性能仪表（Task 42-a）：渲染路径耗时与帧率 EMA —— 只写引擎实例字段，
         // 不走 zustand（避免高频更新引发重渲染风暴），后续性能 HUD 自行低频轮询
