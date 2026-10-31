@@ -1626,6 +1626,66 @@ const cvPutTbhp = mCiv.putTbhp, cvFillOwn = mCiv.fillOwnNeg1, cvPutCivs = mCiv.p
   }
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0;
+
+// 段 31：M-U9a 冰域（ice-transcript 镜像 5 场景逐位 + gen det 复跑〔bun——超函数链口径统一〕+ 双写 md5 + 台账）
+var iceVerifyFail = 0;
+{
+  const { execFileSync } = await import('node:child_process');
+  const { createHash, } = await import('node:crypto');
+  const { readFileSync } = await import('node:fs');
+  try {
+    // M-U7w 口径：黄金链一律 bun（iceTick 零超越函数——JS/C# 位安全域，bun/node 同位，口径统一防漂移）
+    execFileSync('bun', [new URL('./ice-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
+    console.log('ice 黄金回放 (ice-transcript 镜像 vs ice.json): PASS (5 场景 快照逐位 + frozen/flood/wet 序 + 逐步 rngA + fx/events 事件流)');
+  } catch (e) {
+    iceVerifyFail++;
+    console.error('ice 黄金回放: FAIL');
+    console.error(String(e.stdout ?? '').split('\n').slice(-8).join('\n'));
+  }
+  try {
+    const goldenPath = new URL('./golden/ice.json', import.meta.url).pathname;
+    const { readFile } = await import('node:fs/promises');
+    const h0 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    execFileSync('bun', [new URL('./gen-ice.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
+    const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
+    console.log('ice gen det 复跑 (gen-ice · bun): PASS (5 场景 sanity + GameEngine 真实现 + det 字节级)');
+  } catch (e) {
+    iceVerifyFail++;
+    console.error('ice gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+  try {
+    const g = JSON.parse(readFileSync(new URL('./golden/ice.json', import.meta.url), 'utf8'));
+    const fails = [];
+    const fail = (m) => fails.push(m);
+    if (!Array.isArray(g.scenarios) || g.scenarios.length !== 5) fail('场景数 ≠ 5');
+    const keys = g.scenarios.map((s) => s.key);
+    for (const want of ['hot-melt', 'spring-thaw', 'winter-freeze', 'flood-retreat', 'wet-dry-cascade'])
+      if (!keys.includes(want)) fail(`场景 ${want} 缺失`);
+    for (const s of g.scenarios) {
+      if (!s.fixture || !Array.isArray(s.fixture.frozen0) || !Array.isArray(s.fixture.setCalls)) fail(s.key + ' fixture 缺失');
+      if (!Array.isArray(s.stepsSnap) || s.stepsSnap.length !== s.steps) fail(s.key + ' stepsSnap ≠ steps');
+      if (typeof s.totalDraws !== 'number' || s.totalDraws < 0) fail(s.key + ' totalDraws 缺失');
+    }
+    const wf = g.scenarios.find((s) => s.key === 'winter-freeze');
+    if (!wf || wf.totalDraws < 1000 || !wf.stepsSnap.some((st) => st.frozen.length > 12)) fail('winter-freeze 大封冻签名缺失（掷数>1000 + frozen>12）');
+    const sp = g.scenarios.find((s) => s.key === 'spring-thaw');
+    if (!sp || !sp.events.some((e) => e.kind === 'geo') || sp.fx.length === 0) fail('spring-thaw 落冰湖纪事+融滴签名缺失');
+    const ca = g.scenarios.find((s) => s.key === 'wet-dry-cascade');
+    if (!ca || ca.fixture.setCalls.length !== 4) fail('wet-dry-cascade 级联直调面缺失（L981-984 四写点）');
+    const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/ice.json', import.meta.url));
+    const gl = readFileSync(new URL('./golden/ice.json', import.meta.url));
+    const md5a = createHash('md5').update(sa).digest('hex');
+    const md5b = createHash('md5').update(gl).digest('hex');
+    if (md5a !== md5b) fail(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
+    if (fails.length > 0) throw new Error(fails.join(' | '));
+    console.log(`ice 台账完备 (5 场景 + 大封冻/落冰湖/级联四写点签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  } catch (e) {
+    iceVerifyFail++;
+    console.error('ice 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);

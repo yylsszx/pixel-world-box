@@ -483,6 +483,16 @@ namespace PixelWorldBox.Wb
         // —— M-U8b regrow 域（字段只加）——
         public Dictionary<int, long> regrow = new Dictionary<int, long>();  // engine L167 regrow: Map<number, number>（焦土复苏计时表 tile → 到期 tick；JS Map 插入序。生产面 fireTick L2825/过度啃食 L12116/rainRegrow L10663 未译、save 桥不入 sim → 本域载入后纯删面：Dictionary 枚举序=插入序且删后无补位，regrowTick 快照迭代序=活 Map 序）
 
+        // —— M-U9a 冰域（字段只加）——
+        public HashSet<int> frozen = new HashSet<int>();       // engine L495 frozen: Set<number>（冰面格集——瞬态不入档，读档后地形扫描重建 L15401-15403；成员判定）
+        public List<int> frozenList = new List<int>();         // 插入序镜像（JS Set 迭代序——iceTick 相位一按序掷，riverTilesList 先例；删 List.Remove O(n) 夹具级小集可忽）
+        public Dictionary<int, long> flood = new Dictionary<int, long>();   // engine L497 flood: Map<number, number>（洪水淹没 tile → 退潮到期 tick；JS Map 插入序——生产面海啸 L9898/natureFlood L10680 未译，读档 L15406 清空域）
+        public Dictionary<int, long> wet = new Dictionary<int, long>();     // engine L499 wet: Map<number, number>（湿沙印记 tile → 干透到期 tick；生产面退潮 L3021 在译；贴花渲染面 L357 未译注记）
+        public byte[] tempMap = new byte[W * H];               // engine L671 tempMap: Uint8Array（worldgen 气温场 L778 gen.temp 灌注；暖候消融门 L2944 消费；worldsim tempTick 重算域未译——世界生成期静态值域）
+        public double ash = 0;                                 // nature.ts L78 ash（大气灰烬——storm/volcano 生产面未译恒 0 域；NatureIceMul L343 消费）
+        public bool iceChronDone = false;                      // nature.ts L178 封冻纪事旗（离冬复位 L218 seasonCheck 未译注记）
+        public bool thawChronDone = false;                     // nature.ts L180 落冰湖纪事旗（离春复位 L220 seasonCheck 未译注记）
+
         // ---------------- 集合层（M-U3c 战争/联盟/图谱域） ----------------
         public Dictionary<string, WbWarData> warData = new Dictionary<string, WbWarData>();  // key 'a-b'（a<b）
         public HashSet<string> totalWars = new HashSet<string>();
@@ -579,6 +589,15 @@ namespace PixelWorldBox.Wb
             if (!laws.seasons) return 1; // 永夏
             int s = (int)(((long)(yearF / 2) + seasonOffset) % 4);
             return s < 0 ? s + 4 : s;
+        }
+
+        /// nature.ts L341-345 iceMul——冰缘扩张系数（冬 1.8/夏 0.55/春秋 1）；ash 项机械保持（恒 0 域——x+0.0 位恒等）
+        public double NatureIceMul()
+        {
+            int s = NatureSeason();                                                                                      // L342
+            double m = s == 3 ? 1.8 : s == 1 ? 0.55 : 1;                                                                 // L343
+            m += ash * 0.8;                                                                                              // L344（ash 恒 0 域——storm/volcano 生产面未译）
+            return m;                                                                                                    // L345
         }
 
         /// engine.ts fx L9781-9799 —— 渲染侧效应入事件流（rng 消耗×2 是模拟语义，桩不掉）

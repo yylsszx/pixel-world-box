@@ -132,6 +132,7 @@ namespace PixelWorldBox.Host
             Orch.D[PixelWorldBox.Wb.WbTickOrch.DIRECTIVE] = () => PixelWorldBox.Wb.WbCivSim.DirectiveTick(World);
             Orch.D[PixelWorldBox.Wb.WbTickOrch.ARMY] = () => PixelWorldBox.Wb.WbCivSim.ArmyTick(World);
             Orch.D[PixelWorldBox.Wb.WbTickOrch.REGROW] = () => PixelWorldBox.Wb.WbBailRelay.RegrowTick(World);   // M-U8b：regrowTick 已译域真调（空表安全：regrow.Count==0 顶层早退）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.ICE] = () => PixelWorldBox.Wb.WbBailRelay.IceTick(World);         // M-U9a：iceTick 已译域真调（空集安全：frozen/flood/wet 顶层 Count==0 早退）
         }
 
         void EnsureScene()
@@ -424,7 +425,8 @@ namespace PixelWorldBox.Host
             PixelWorldBox.Wb.WbWorldGenResult gen = PixelWorldBox.Wb.WbWorldgen.GenerateWorld(unchecked((int)seed));
             System.Array.Copy(gen.Terrain, St.terrain, St.terrain.Length);   // L776 this.terrain = gen.terrain
             System.Array.Copy(gen.Variant, St.variant, St.variant.Length);   // L777 this.variant = gen.variant
-            // temp/moist（L778-779）渲染域不消费——overlay 温湿图自有黄金链直灌，宿主不暂存
+            System.Array.Copy(gen.Temp, World.tempMap, World.tempMap.Length); // L778 this.tempMap = gen.temp（M-U9a：暖候消融门 L2944 消费面——iceTick 已译域）
+            // moist（L779）sim 域不消费——overlay 温湿图自有黄金链直灌，宿主不暂存
             // —— M-U7k 河域：generate() L905-949 宿主等价全链（蓝本序保真）——
             PixelWorldBox.Wb.WbWorldgen.SoilInit(St.terrain, World.soilF);   // worldsim initFromTerrain L125（soilF = SOIL_BASE[t] ?? 128）
             World.rngA = (uint)(unchecked((int)seed) ^ unchecked((int)0x9e3779b9u));   // L773 engine.rngA 起流

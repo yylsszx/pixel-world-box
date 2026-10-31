@@ -1942,8 +1942,8 @@ namespace PixelWorldBox.Wb
         //   L976 worldsim.onTerrainChanged（glacier worldsim 未译——M-U7z 桥不覆盖面同注记）；
         //   L977-978 markDirty+propsDirty（渲染簿记——sim 侧 no-op，渲染面由宿主 SyncWorldFace 桥 +
         //     SyncTerrainDiffs 差分记账承接，M-U7z）；L979 regrow.delete 自 M-U8b 起点亮（regrowTick 已译——
-        //     焦土再生成计时随地形覆写作废）；
-        //   L981-984 frozen/flood/wet 贴花集（冬季贴花域未译——WbWorld 无容器，后续域切片入链时补）；
+        //     焦土再生成计时随地形覆写作废）；L981-984 frozen/flood/wet 贴花集自 M-U9a 起点亮
+        //     （冰域已译——贴花集随地形变化即时失效/结集；L983/984 水/沙异值才出账）；
         //   L1006 refreshWaterTierAround（waterTier worldgen 渲染专属未译）。
         // 级联零掷：全支路查表/集合记账，无 rng 消费——S1-S56 黄金掷值链零漂移（黄金 md5 fd09587b 不变的充要前提）。
         // 语义闸门（constants.ts L67-69 实证）：isWater(t)=DEEP||WATER——ICE 非水：寒冰之路冻 ICE 走
@@ -1954,6 +1954,10 @@ namespace PixelWorldBox.Wb
             if (prev == t) return;                                                                                       // L971 同值早退
             w.terrain[i] = t;                                                                                            // L972
             w.regrow.Remove(i);                                                                                          // L979（M-U8b 点亮：焦土复苏计时随地形覆写作废——regrowTick 已译件；同值早退 L971 不触达）
+            if (prev == WbConstants.T_ICE) { w.frozen.Remove(i); w.frozenList.Remove(i); }                               // L981（M-U9a 点亮：冰面集出账——List 插入序镜像同步）
+            if (t == WbConstants.T_ICE) { w.frozen.Add(i); w.frozenList.Add(i); }                                        // L982（M-U9a 点亮：冰面集入账——HashSet 重复 add no-op 同 Set 语义）
+            if (t != WbConstants.T_WATER) w.flood.Remove(i);                                                             // L983（M-U9a 点亮：非水覆写 → 洪水簿记失效）
+            if (t != WbConstants.T_SAND) w.wet.Remove(i);                                                                // L984（M-U9a 点亮：非沙覆写 → 湿沙簿记失效）
             if (!WbWorld.IsWater(t) && w.riverDir[i] > 0)                                                                // L986 河道被覆写为非水地形 → 清流向场（水工具画的普通水不算河，不补录）
             {
                 w.riverDir[i] = 0;                                                                                       // L987
@@ -2006,6 +2010,181 @@ namespace PixelWorldBox.Wb
                 if (w.terrain[i] == WbConstants.T_BURNT && w.owner[i] >= 0 || w.terrain[i] == WbConstants.T_BURNT)       // L2835（蓝本冗余门——机械保持）
                 {
                     SetTerrain(w, i, WbConstants.T_GRASS);                                                               // L2836
+                }
+            }
+        }
+
+        // ================= meltIce L2892-2895（M-U9a 冰域——消融统一入口，保持 frozen 簿记） =================
+        // 机械翻译蓝本：engine.ts L2892-2895。零掷：setTerrain 级联全簿记（L981-984 贴花集 M-U9a 点亮件承接）。
+        // L2955 dirs 字面量表（极地冻结采样四向——蓝本序 [上,下,左,右]）
+        private static readonly int[][] Dirs4 = { new[] { 0, -1 }, new[] { 0, 1 }, new[] { -1, 0 }, new[] { 1, 0 } };
+        internal static void MeltIce(WbWorld w, int i)
+        {
+            if (w.terrain[i] != WbConstants.T_ICE) return;                                                               // L2893
+            SetTerrain(w, i, WbConstants.T_WATER);                                                                       // L2894
+        }
+
+        // ================= iceTick L2902-3031（M-U9a 冰域核心——sim 域切片） =================
+        // 机械翻译蓝本：engine.ts L2902-3031。四相位：①热源/春汛/暖候消融（按 frozen 插入序逐格掷）
+        //   ②极地自然冻结（14×iceMul 采样）2b.冬季大封冻（1100 采样——岸冰/湖心/深洋三率）③海啸洪水退潮
+        //   （自然水邻接判：邻 flood 区互斥）④湿沙干透。
+        // 掷值面（黄金 ice.json 五场景闭合）：热源支路零掷；春汛 1 掷/格（latF 门先短——极地不掷）+
+        //   融滴 1 掷；暖候 1 掷/格（tempMap 门后置——掷必发生）；冻结采样 2 掷/点（SNOW 门后置——掷必发生）
+        //   + 雪缘 1-2 掷；大封冻 2 掷/点 + 命中水 1-2 掷（latF<0.26 赤道带不掷——门先短）；退潮/干透零掷。
+        // 季节面：NatureSeason（WbWorld 既有转写）×NatureIceMul（nature.ts L341-345 译件——ash 恒 0 域）。
+        // 未译域 no-op 注记：fx 渲染面（事件流 WbFx 译件承接——kind/x/y/ttl 位级对账黄金 fx 列）；
+        //   L357 湿沙贴花渲染（render 域）；beachedAquaticTick（冻结鱼归海自愈——独立槽位未译注记）。
+        internal static void IceTick(WbWorld w)
+        {
+            // 1. 热源消融 + 暖气候消融
+            if (w.frozen.Count > 0)                                                                                      // L2904
+            {
+                System.Collections.Generic.List<int> snap = new System.Collections.Generic.List<int>(w.frozenList);                                                  // L2905 [...this.frozen] 插入序快照（融化出账/冻结入账不进本轮迭代——JS Set 快照同构）
+                foreach (int i in snap)
+                {
+                    int x = i % WbWorld.W;                                                                               // L2906
+                    int y = i / WbWorld.W;                                                                               // L2907（JS (i/W)|0 截断同构——i 非负）
+                    bool hot = false;                                                                                    // L2908
+                    for (int k = 0; k < 4; k++)                                                                          // L2909
+                    {
+                        int xx = x + (k == 0 ? -1 : k == 1 ? 1 : 0);                                                     // L2910
+                        int yy = y + (k == 2 ? -1 : k == 3 ? 1 : 0);                                                     // L2911
+                        if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                            // L2912
+                        int j = yy * WbWorld.W + xx;                                                                     // L2913 idx
+                        if (w.terrain[j] == WbConstants.T_LAVA || w.fire[j] > 0) { hot = true; break; }                  // L2914
+                    }
+                    if (hot) { MeltIce(w, i); continue; }                                                                // L2916
+                    // 春汛解冻（Task 101）：春回大地，冻结线北退——中低纬冰面春季快速消融，极地不受此通道影响
+                    if (w.NatureSeason() == 0)                                                                           // L2919
+                    {
+                        double latF2 = System.Math.Abs(y / (double)WbWorld.H - 0.5) * 2;                                 // L2920
+                        if (latF2 < 0.62 && w.Rng() < 0.06 + 0.28 * (1 - latF2))                                         // L2921（&& 短路——latF 门先掷避）
+                        {
+                            MeltIce(w, i);                                                                               // L2922
+                            // 融滴（Task 102）：春汛解冻的细微水花反馈
+                            if (w.Rng() < 0.2) w.Fx("water", x + 0.5, y + 0.5, 26);                                      // L2924（fx 2 掷——译件内）
+                            // 落冰湖纪事（Task 103）：融冰瞬间冰面上若有非水生单位，它即将坠入湖水
+                            if (!w.thawChronDone)                                                                        // L2926
+                            {
+                                bool fell = false;                                                                       // L2927
+                                for (int ui = 0; ui < w.units.Count; ui++)                                               // L2928
+                                {
+                                    WbU u = w.units[ui];
+                                    if (u.dead != 0 || u.boat != 0) continue;                                            // L2929
+                                    RelayDef def = DefOf(u.race);                                                        // L2930
+                                    if (def.aquatic || def.flying) continue;                                             // L2931
+                                    if ((int)u.x == x && (int)u.y == y) { fell = true; break; }                          // L2932（JS u.x|0 截断同构）
+                                }
+                                if (fell)                                                                                // L2934
+                                {
+                                    w.thawChronDone = true;                                                              // L2935
+                                    w.AddEvent("geo", "春汛冰消——冰面上的行人随碎裂的冰层跌入湖水，春寒刺骨", null, x, y);   // L2936
+                                }
+                            }
+                            continue;                                                                                    // L2939
+                        }
+                    }
+                    // 暖气候小概率消融（极地 temp 低则几乎不化；夏季/火山冬调制）
+                    double meltP = 0.012 * w.NatureIceMul();                                                             // L2943
+                    if (w.Rng() < meltP && w.tempMap[i] > 96) MeltIce(w, i);                                             // L2944（掷先于 tempMap 门——蓝本序）
+                }
+            }
+            // 2. 极地自然冻结：随机采样雪地邻水点（冬季/火山冬冻结更活跃 → 冰缘扩张）
+            int freezeN = (int)WbMath.JsRound(14 * w.NatureIceMul());                                                    // L2948
+            for (int k = 0; k < freezeN; k++)                                                                            // L2949
+            {
+                int x = 1 + (int)System.Math.Floor(w.Rng() * (WbWorld.W - 2));                                           // L2950
+                int y = 1 + (int)System.Math.Floor(w.Rng() * (WbWorld.H - 2));                                           // L2951
+                int i = y * WbWorld.W + x;                                                                               // L2952
+                if (w.terrain[i] != WbConstants.T_SNOW) continue;                                                        // L2953（2 掷已消耗——采样点非雪即弃）
+                int[] d = Dirs4[(int)System.Math.Floor(w.Rng() * 4)];                                                    // L2955-2956
+                int j = (y + d[1]) * WbWorld.W + (x + d[0]);                                                             // L2957
+                if (j >= 0 && j < WbWorld.W * WbWorld.H)                                                                 // L2958（边界恒真——机械保持）
+                {
+                    byte t = w.terrain[j];
+                    if (t == WbConstants.T_WATER && w.Rng() < 0.3) SetTerrain(w, j, WbConstants.T_ICE);                  // L2960
+                    else if (t == WbConstants.T_DEEP && w.Rng() < 0.04) SetTerrain(w, j, WbConstants.T_ICE);             // L2961
+                }
+            }
+            // 2b. 冬季大封冻（Task 101「千里冰封」）：中纬度水面季节性结冰——岸缘优先封冻，赤道无冰带（latF<0.26）永不封冻
+            if (w.NatureSeason() == 3)                                                                                   // L2968
+            {
+                int frozeN = 0;                                                                                          // L2969
+                for (int k = 0; k < 1100; k++)                                                                           // L2970
+                {
+                    int x = 1 + (int)System.Math.Floor(w.Rng() * (WbWorld.W - 2));                                       // L2971
+                    int y = 1 + (int)System.Math.Floor(w.Rng() * (WbWorld.H - 2));                                       // L2972
+                    int i = y * WbWorld.W + x;                                                                           // L2973
+                    byte t = w.terrain[i];                                                                               // L2974
+                    if (t != WbConstants.T_WATER && t != WbConstants.T_DEEP) continue;                                   // L2975
+                    double latF = System.Math.Abs(y / (double)WbWorld.H - 0.5) * 2;                                      // L2976
+                    if (t == WbConstants.T_WATER)                                                                        // L2977
+                    {
+                        if (latF < 0.26) continue;                                                                       // L2978（赤道无冰带——2 掷已消耗）
+                        // 岸缘判定：4 邻存在任何陆地（非水）→ 岸冰全额概率，湖心缓冻
+                        bool shore = false;                                                                              // L2981
+                        for (int q = 0; q < 4 && !shore; q++)                                                            // L2982
+                        {
+                            int xx = x + (q == 0 ? -1 : q == 1 ? 1 : 0);                                                 // L2983
+                            int yy = y + (q == 2 ? -1 : q == 3 ? 1 : 0);                                                 // L2984
+                            if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                        // L2985
+                            byte tt = w.terrain[yy * WbWorld.W + xx];                                                    // L2986
+                            if (tt != WbConstants.T_WATER && tt != WbConstants.T_DEEP) shore = true;
+                        }
+                        if (w.Rng() < WbMath.JsMin(0.9, (latF - 0.24) * (shore ? 0.9 : 0.3)))                            // L2988
+                        {
+                            SetTerrain(w, i, WbConstants.T_ICE);                                                         // L2989
+                            frozeN++;                                                                                    // L2990
+                            // 封冻闪晶（Task 102）：1/4 概率在新冻格上绽开冰晶星芒
+                            if (w.Rng() < 0.25) w.Fx("frost", x + 0.5, y + 0.5, 36);                                     // L2992（fx 2 掷）
+                        }
+                    }
+                    else if (latF >= 0.5 && w.Rng() < (latF - 0.5) * 0.22) { SetTerrain(w, i, WbConstants.T_ICE); frozeN++; }   // L2994（&& 短路——latF<0.5 不掷）
+                }
+                // 封冻纪事（每冬至多一条；冰面可行走机制提示）
+                if (frozeN >= 12 && !w.iceChronDone)                                                                     // L2997
+                {
+                    w.iceChronDone = true;                                                                               // L2998
+                    w.AddEvent("geo", "千里冰封——寒潮封住了北地的湖泽，冰面覆霜可行走，鱼群潜入未冻的深水", null);          // L2999
+                }
+            }
+            // 3. 海啸洪水退潮：到期回退为沙滩 + 湿沙（接自然水域的保留为海）
+            if (w.flood.Count > 0)                                                                                       // L3003
+            {
+                System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<int, long>> fsnap = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<int, long>>(w.flood);   // L3004 [...this.flood] 插入序快照
+                foreach (System.Collections.Generic.KeyValuePair<int, long> kv in fsnap)
+                {
+                    int i = kv.Key;
+                    long at = kv.Value;
+                    if (w.tickCount < at) continue;                                                                      // L3005
+                    w.flood.Remove(i);                                                                                   // L3006
+                    if (w.terrain[i] != WbConstants.T_WATER) continue;                                                   // L3007（玩家已改造过）
+                    // 任一邻格是自然水（非洪水区）→ 保留为海（海湾被永久打开）
+                    int x = i % WbWorld.W;                                                                               // L3009
+                    int y = i / WbWorld.W;                                                                               // L3010
+                    bool natural = false;                                                                                // L3011
+                    for (int k = 0; k < 4 && !natural; k++)                                                              // L3012
+                    {
+                        int xx = x + (k == 0 ? -1 : k == 1 ? 1 : 0);                                                     // L3013
+                        int yy = y + (k == 2 ? -1 : k == 3 ? 1 : 0);                                                     // L3014
+                        if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                            // L3015
+                        int j = yy * WbWorld.W + xx;                                                                     // L3016
+                        if (WbWorld.IsWater(w.terrain[j]) && !w.flood.ContainsKey(j)) natural = true;                    // L3017
+                    }
+                    if (!natural)                                                                                        // L3019
+                    {
+                        SetTerrain(w, i, WbConstants.T_SAND);                                                            // L3020
+                        w.wet[i] = w.tickCount + 220;                                                                    // L3021（湿沙：退潮后的深色印记——零掷）
+                    }
+                }
+            }
+            // 4. 湿沙干透
+            if (w.wet.Count > 0)                                                                                         // L3026
+            {
+                System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<int, long>> wsnap = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<int, long>>(w.wet);     // L3027 插入序快照
+                foreach (System.Collections.Generic.KeyValuePair<int, long> kv in wsnap)
+                {
+                    if (w.tickCount >= kv.Value) w.wet.Remove(kv.Key);                                                   // L3028
                 }
             }
         }
