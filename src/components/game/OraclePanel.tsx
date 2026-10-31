@@ -1258,7 +1258,7 @@ function OracleBody() {
 }
 
 export function OraclePanel() {
-  const { showOracle, toggleOracle, mobilePanel, openMobilePanel, oracleMsgs } = useGameStore();
+  const { showOracle, toggleOracle, mobilePanel, openMobilePanel, oracleMsgs, offlineAI, toggleOfflineAI } = useGameStore();
   const count = oracleMsgs.length;
 
   return (
@@ -1280,6 +1280,16 @@ export function OraclePanel() {
             </span>
             <span className="flex shrink-0 items-center gap-1">
               <span className="font-mono text-[10px] font-bold text-zinc-500">{count}</span>
+              {/* 原生离线 AI 开关 —— 无外部 API 时自动接管文明战略决策 */}
+              <Button
+                variant={offlineAI ? 'default' : 'ghost'}
+                size="icon"
+                onClick={toggleOfflineAI}
+                aria-label={offlineAI ? '关闭离线 AI' : '开启离线 AI'}
+                className="h-6 w-6 border-2 border-transparent text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+              >
+                <BrainCircuit className="h-3 w-3" aria-hidden />
+              </Button>
               <Button
                 variant="ghost"
                 size="icon"
