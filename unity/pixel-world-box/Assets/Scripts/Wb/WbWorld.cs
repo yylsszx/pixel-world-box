@@ -75,6 +75,9 @@ namespace PixelWorldBox.Wb
         public string text;                 // engine Effect.text（fx('dmg',...,{text}) 拾取播报 —— M-U3h 第五批）
         public int? src;                    // engine Effect.src（箭矢/远程施放者文明 id——伤害判定豁免友军；M-U10c arrow·bullet L10266/L10290 消费）
         public bool quiet;                  // engine Effect.quiet（静默：陨石雨/火山熔岩弹衍生弹体不再单独入纪事；M-U10c meteor L10239 消费——JS undefined ≡ false）
+        public int? wid;                    // engine Effect.wid（涌现武器 id——shell/missile 命中结算 killCredit 归属 + emergentPayload 门；M-U10d L10297/L10299 消费——JS undefined ≡ false）
+        public double? nuke;                // engine Effect.nuke（核弹头当量——missile 核支门 nuke>0；M-U10d L10304 消费）
+        public int? fire;                   // engine Effect.fire（弹体纵火 0/1——shell !!e.fire 门；M-U10d L10298 消费——JS undefined ≡ false；蓝本生成面恒 0/1 L9467）
     }
 
     /// 地面物品 —— engine items.push L5388 结构（tryPickup L5225 消费；M-U3h 第五批）
@@ -405,6 +408,7 @@ namespace PixelWorldBox.Wb
         public int repairsDone;                    // engine L639 repairsDone（国民修缮统计；repair 播报节流 ≥6 门）
         public int lastFireOutEventTick = -2400;   // engine L641 灭火播报节流阀（ctor 初值）
         public int lastRepairEventTick = -2400;    // engine L643 修复播报节流阀
+        public int statNukes;                      // engine L230 statNukes（L12256 核打击成就计数——Nuke 入口写点；M-U10d 字段只加）
 
         public const int T_DEEP = 0, T_WATER = 1, T_SAND = 2, T_GRASS = 3, T_FOREST = 4, T_HILL = 5,
                          T_MOUNTAIN = 6, T_SNOW = 7, T_LAVA = 8, T_BURNT = 9, T_ICE = 10, T_SWAMP = 11;

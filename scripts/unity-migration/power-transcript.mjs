@@ -38,6 +38,9 @@ const CIV_RACES = new Set([R.HUMAN, 1, 2, 3, 19, 20]);   // types.ts RACES isCiv
 const FLAMMABLE = new Set([T.GRASS, T.FOREST]);          // constants.ts FLAMMABLE（ignite L1075 门——M-U7q 消费面）
 const BUILDING_HP = [0, 70, 240, 120, 40, 150, 340, 90, 110, 100, 140, 200];   // types.ts L325-337 逐值
 const BUILD_FARM = 4;                                   // types.ts L340 BUILD_KINDS.FARM
+const BUILD_CAPITAL = 2;                                // types.ts L340 BUILD_KINDS.CAPITAL
+const CAPTURABLE = new Set([1, 4, 9, 5, 7]);            // types.ts L343（HOUSE/FARM/MARKET/BARRACKS/PORT——M-U10d raze 级联门）
+const BUILD_NAME = ['空地', '住宅', '王都', '箭塔', '农田', '兵营', '城堡', '港口', '图书馆', '集市', '神殿', '城墙'];   // C# BuildName 同源（types.ts BUILDING_DEFS name）
 
 function mulberryDraw(a) {
   a = (a + 0x6d2b79f5) | 0;
@@ -76,11 +79,17 @@ class MirrorWorld {
     this.damagedSet = new Set();
     this.dirty = new Set();
     this.activeBattles = new Map(fx.battles0);
-    this.effects = fx.fx0.map((e) => ({ kind: e.kind, x: unhex(e.x), y: unhex(e.y), r: e.r, age: e.age, ttl: e.ttl, seed: e.seed, dir: unhex(e.dir), src: e.src ?? undefined, dmg: e.dmg ?? undefined, quiet: e.quiet === true }));   // M-U10c src/dmg/quiet 通道
+    this.effects = fx.fx0.map((e) => ({ kind: e.kind, x: unhex(e.x), y: unhex(e.y), r: e.r, age: e.age, ttl: e.ttl, seed: e.seed, dir: unhex(e.dir), src: e.src ?? undefined, dmg: e.dmg ?? undefined, quiet: e.quiet === true, wid: e.wid ?? undefined, nuke: e.nuke ?? undefined, fire: e.fire ?? undefined }));   // M-U10c src/dmg/quiet + M-U10d wid/nuke/fire 通道
     this.units = fx.units0.map((u) => ({ id: u.id, race: u.race, x: unhex(u.x), y: unhex(u.y), hp: unhex(u.hp), maxHp: unhex(u.maxHp), hurt: u.hurt, chill: u.chill, dead: u.dead, boat: 0, civ: u.civ ?? -1, gbArmor: u.gbArmor ?? 0 }));   // boat 夹具恒 0（无船域注记）；civ/gbArmor M-U10c 通道
     this.rebuildBuckets();                 // M-U10c：arrow/bullet 桶扫描面（gen 注入相尾同构——纯函数零掷）
     this.worldEvents = [];
     this.shake = 0;                         // 震屏（effectsTick 四 kind 写面——S 基线 0）
+    this.civs = [];                         // M-U10d（civs0 最小语义面——raze 级联 alive/name/colorHex 消费）
+    for (const c of fx.civs0 ?? []) this.civs[c.id] = { id: c.id, name: c.name, alive: true, colorHex: c.colorHex, tiles: [] };
+    this.warData = new Map();               // 战争建档表（夹具恒空——addWarScore L7236 早退语义钉）
+    this.lastSiegeEventTick = 0;            // engine L521 初值（siege 纪事节流阀）
+    this.killCredit = null;                 // engine L615（shell/missile wid 归属面——终态复位钉 L10297/L10300）
+    this.statNukes = 0;                     // engine L230（nuke 成就计数——Nuke L12256 写点）
     this.fxPrefs = { dmgNumbers: true };    // engine L271 fxPrefs 默认（dmgNumbers 门——arrow dmg 数字面）
     this.yearF = sc.yearF;
     this.tickCount = sc.tickCount;
@@ -215,11 +224,73 @@ class MirrorWorld {
       this.fx('hit', x + 0.5, y + 0.5, 6);
     }
   }
-  onBuildingDestroyed(i, byCiv) {         // engine L4464-4473 子集（天灾早退——夹具 civ=-1 byCiv=-1 战争结算面不触达）
+  onBuildingDestroyed(i, byCiv) {         // engine L4464-4498（M-U10d 扩：raze 支全译——capture/annex 支夹具外 loud-fail 注记）
     const bi = this.bIdx.get(i);
     if (bi === undefined) return;
+    const b = this.buildings[bi];
+    const kind = b.kind;
+    const victimCiv = b.civ;
     this.destroyBuilding(i);
-    if (byCiv == null || byCiv < 0) return;
+    if (byCiv == null || byCiv < 0 || byCiv === victimCiv) return;   // L4472 天灾/己方摧毁：无战争结算
+    const attacker = this.civs[byCiv];
+    const victim = this.civs[victimCiv];
+    if (!attacker || !attacker.alive || !victim || !victim.alive) return;   // L4475
+    if (!this.atWar(byCiv, victimCiv)) return;                       // L4476
+    if (CAPTURABLE.has(kind) && this.rng() < 0.45) {                 // L4478 占领支（45%）
+      // capture 支（buildBuilding+annexTiles+warScore 8+capture 纪事+spawn fx）——S20 seed 钉 raze 支不触达；
+      //   触达即夹具越界（须扩镜像镜像面）→ loud-fail 防静默漂移
+      throw new Error(`onBuildingDestroyed capture 支触达（kind=${kind}）——M-U10e 候选：扩 civs env + annexTiles 镜像`);
+    }
+    if (kind === BUILD_CAPITAL) {
+      // sackCapital 支（L4488-4491）——夹具无王都（kind∈{1,4}），触达即越界 loud-fail
+      throw new Error(`onBuildingDestroyed sackCapital 支触达——M-U10e 候选`);
+    }
+    this.addWarScore(byCiv, victimCiv, 5, 'raze');                   // L4493（warData 空表早退——零写面）
+    if (this.tickCount - this.lastSiegeEventTick > 150) {            // L4494 节流纪事
+      this.lastSiegeEventTick = this.tickCount;                      // L4495
+      this.addEvent('siege', `「${attacker.name}」的军队摧毁了「${victim.name}」的${BUILD_NAME[kind]}`, { colorHex: attacker.colorHex, x: b.x, y: b.y });   // L4496
+    }
+  }
+  addWarScore(byCiv, victimCiv, pts, kind) {   // engine L7234-7245 机械（warData 夹具恒空——wd 早退即全语义）
+    const wd = this.warData.get(byCiv < victimCiv ? `${byCiv}-${victimCiv}` : `${victimCiv}-${byCiv}`);
+    if (!wd) return;
+    const isA = wd.a === byCiv;
+    if (isA) wd.scoreA += pts; else wd.scoreB += pts;
+    if (kind === 'kill') {
+      if (isA) { wd.casB += 1; wd.exB += 1; } else { wd.casA += 1; wd.exA += 1; }
+    } else if (kind === 'raze' || kind === 'capture') {
+      if (isA) wd.razedA += 1; else wd.razedB += 1;
+    }
+  }
+  shellBurst(x, y, r, dmg, fire = false, src = -1) {   // engine L9595-9620 机械（M-U10d——单位环无 src 豁免/建筑环无友军门/ignite 四重门短路）
+    for (const u of this.units) {
+      if (u.dead) continue;
+      const d = Math.hypot(u.x - x, u.y - y);
+      if (d < r + 0.4) {
+        u.hp -= dmg * Math.max(0.25, 1 - d / (r + 0.4));
+        u.hurt = 24;
+        if (u.hp <= 0) { u.dead = true; this.wwCountKill(u); }
+      }
+    }
+    const rr = Math.ceil(r);
+    for (let yy = Math.floor(y - rr); yy <= y + rr; yy++) {
+      for (let xx = Math.floor(x - rr); xx <= x + rr; xx++) {
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+        if (Math.hypot(xx + 0.5 - x, yy + 0.5 - y) > r) continue;   // 格中心距（与 explode 角距异构注记）
+        const i = idx(xx, yy);
+        if (this.building[i] > 0) this.attackBuilding(i, dmg * 0.9, src);
+        if (fire && this.isLand(this.terrain[i]) && this.terrain[i] !== T.MOUNTAIN && this.rng() < 0.45) this.ignite(i);
+      }
+    }
+    this.fx('explosion', x, y, 16, { r });
+    this.shake = Math.max(this.shake, Math.min(5, 1 + r));
+  }
+  nuke(x, y, power = 1) {                // engine L12255-12260 机械（statNukes++ + 当量钳 + explode 核域支）
+    this.statNukes++;
+    const r = Math.max(3, Math.min(24, 7 * power));
+    this.explode(x, y, r, { terrain: true, lava: true, nuke: true });
+  }
+  emergentPayload(e) {                   // engine L9397-9436 桩形（emergentWeapons 恒空表——L9399 早退即全语义；铸造域入链按锚补译）
   }
   rebuildBuckets() {                      // engine L3081-3104 机械（懒清空世代戳为性能优化——全清语义等价，桶内容=本世代全量 units 按 (x/4,y/4) 分桶，桶内序=units 序）
     const bw = 64, bh = 40;               // engine L717-718 ceil(W/4)/ceil(H/4)——C# BKW/BKH 同源
@@ -682,6 +753,20 @@ class MirrorWorld {
             }
           }
         }
+      } else if (e.kind === 'shell' && e.age >= e.ttl) {   // L10295-10301（M-U10d：炮弹落地——killCredit 归属/复位 + wid 面 + 稀疏 boom 掷）
+        this.killCredit = e.wid ?? null;
+        this.shellBurst(e.x, e.y, e.r || 1.6, e.dmg ?? 30, !!e.fire, e.src ?? -1);
+        if (e.wid != null) this.emergentPayload(e);
+        this.killCredit = null;
+        if (this.rng() < 0.2) { /* onSound?.('boom') 宿主回调 no-op（掷骰流消费） */ }
+      } else if (e.kind === 'missile' && e.age >= e.ttl) { // L10302-10310（M-U10d：导弹命中——核弹头蘑菇云/常规大威力爆破+纵火）
+        if (e.nuke && e.nuke > 0) {
+          this.addEvent('nuke', '蘑菇云在战场上升起——核打击命中', { x: e.x, y: e.y });
+          this.nuke(e.x, e.y, e.nuke);
+        } else {
+          this.shellBurst(e.x, e.y, e.r || 2.8, e.dmg ?? 60, true, e.src ?? -1);
+          // onSound?.('boom') —— 宿主回调 no-op 同 gen 端
+        }
       }
       if (e.age >= e.ttl) {                // L10439-10441 到期 splice（全 kind——倒序 RemoveAt 同构）
         this.effects.splice(i, 1);
@@ -737,6 +822,8 @@ for (const sc of gold.scenarios) {
   eq(m.shake, sc.shake, `${sc.key} shake 终态`);
   eq(md5hex(m.radiate), sc.radiateMd5 || md5hex(ungz(sc.radiate)), `${sc.key} radiate 终态`);
   eq(m.worldEvents, sc.events, `${sc.key} events 全列`);
+  eq(m.killCredit, sc.kc ?? null, `${sc.key} killCredit 终态`);
+  eq(m.statNukes, sc.statN ?? 0, `${sc.key} statNukes 终态`);
   console.log(`${sc.key}: 逐位 PASS (steps=${sc.steps} draws=${sc.totalDraws} fx=${m.effects.length})`);
   pass++;
 }

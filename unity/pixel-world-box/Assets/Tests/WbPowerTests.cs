@@ -95,6 +95,13 @@ namespace PixelWorldBox.Tests
             }
             foreach (var t in (JArray)(fx["orphanB0"] ?? new JArray())) w.building[t[0].Value<int>()] = (byte)t[1].Value<int>();   // M-U10c 孤儿建筑格（building>0 无记录——L10289 OOB 镜像钉）
             foreach (var t in (JArray)(fx["rel0"] ?? new JArray())) w.rel[t[0].Value<string>()] = t[1].Value<double>();   // M-U10c 外交挂账（pairKey 字符串键 → AtWar <-20 门）
+            foreach (var c in (JArray)(fx["civs0"] ?? new JArray()))   // M-U10d raze 级联 alive/name/colorHex 最小语义面（稀疏序——civs[0] 恒 null）
+            {
+                var co = (JObject)c;
+                int cid = co.Value<int>("id");
+                while (w.civs.Count <= cid) w.civs.Add(null);
+                w.civs[cid] = new WbCiv { id = cid, name = co.Value<string>("name"), colorHex = co.Value<string>("colorHex"), alive = true };
+            }
             foreach (var t in (JArray)fx["battles0"]) w.activeBattles[t[0].Value<int>()] = t[1].Value<int>();
             foreach (var t in (JArray)fx["flood0"]) w.flood[t[0].Value<int>()] = t[1].Value<long>();   // M-U10b 洪水挂账初始（手术清零后恒空——tsunami L9898 写面）
             // effects 注入重建（fx0 = gen 真调用 eng.fx() 后快照——seed/dir 掷已消耗在注入相；
@@ -116,6 +123,9 @@ namespace PixelWorldBox.Tests
                     src = eo["src"] != null && eo.Value<string>("src") != null ? (int?)eo.Value<int>("src") : null,
                     dmg = eo["dmg"] != null && eo["dmg"].Type != JTokenType.Null ? (double?)eo.Value<double>("dmg") : null,
                     quiet = eo.Value<bool?>("quiet") ?? false,
+                    wid = eo["wid"] != null && eo["wid"].Type != JTokenType.Null ? (int?)eo.Value<int>("wid") : null,
+                    nuke = eo["nuke"] != null && eo["nuke"].Type != JTokenType.Null ? (double?)eo.Value<double>("nuke") : null,
+                    fire = eo["fire"] != null && eo["fire"].Type != JTokenType.Null ? (int?)eo.Value<int>("fire") : null,
                 });
             }
             // units 注入重建（spawnUnit 后手术覆写快照——WbU 语义面只含 effectsTick 消费字段；
@@ -167,7 +177,7 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindPower()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(18));
+            Assert.That(scens.Count, Is.EqualTo(21));
             var gear0 = WbBailRelay.GearBonusHook;                       // M-U10c：接缝置换 try/finally（Test30 桩先例——黄金回放 armor 采样桩）
             try
             {
@@ -262,6 +272,9 @@ namespace PixelWorldBox.Tests
                     Assert.That(ev2.x, Is.EqualTo(eo2["x"] != null && eo2["x"].Type != JTokenType.Null ? (double?)eo2.Value<double>("x") : null), $"events x {key}#{k2}");
                     Assert.That(ev2.y, Is.EqualTo(eo2["y"] != null && eo2["y"].Type != JTokenType.Null ? (double?)eo2.Value<double>("y") : null), $"events y {key}#{k2}");
                 }
+                // M-U10d：killCredit 复位/statNukes 终态钉（shell wid 面 L10297/L10300 + Nuke L12256）
+                Assert.That(w.killCredit, Is.EqualTo(sc["kc"] != null && sc["kc"].Type != JTokenType.Null ? (int?)sc.Value<int>("kc") : null), $"killCredit 终态 {key}");
+                Assert.That(w.statNukes, Is.EqualTo(sc.Value<int?>("statN") ?? 0), $"statNukes 终态 {key}");
             }
             }
             finally

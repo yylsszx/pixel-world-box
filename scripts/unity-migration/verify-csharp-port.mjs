@@ -1749,7 +1749,7 @@ var fireVerifyFail = 0;
 }
 
 
-// 段 33：M-U10a 云族八种 + M-U10b 波前/静态五 kind + M-U10c 命中族三 kind + explode（power-transcript 镜像 18 场景逐位 + gen det 复跑〔bun〕+ 双写 md5 + 台账）
+// 段 33：M-U10a 云族八种 + M-U10b 波前/静态五 kind + M-U10c 命中族三 kind + explode + M-U10d shell/missile/核弹（power-transcript 镜像 21 场景逐位 + gen det 复跑〔bun〕+ 双写 md5 + 台账）
 var powerVerifyFail = 0;
 {
   const { execFileSync } = await import('node:child_process');
@@ -1758,7 +1758,7 @@ var powerVerifyFail = 0;
   try {
     // M-U7w 口径：黄金链一律 bun（tornado/sandstorm/famine Math.hypot fdlibm——C# FdHypot/V8Hypot 位精确件对账面在 NUnit 侧）
     execFileSync('bun', [new URL('./power-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
-    console.log('power 黄金回放 (power-transcript 镜像 vs power.json): PASS (18 场景 快照逐位 + fx/units/bHp/battles/flood/shake 序 + regrow L979 出账联动 + 逐步 rngA + M-U10c 桶扫描/armor 减伤/events 全列)');
+    console.log('power 黄金回放 (power-transcript 镜像 vs power.json): PASS (21 场景 快照逐位 + fx/units/bHp/battles/flood/shake 序 + regrow L979 出账联动 + 逐步 rngA + M-U10c 桶扫描/armor 减伤/events 全列 + M-U10d shellBurst/raze 级联/核弹辐射圈)');
   } catch (e) {
     powerVerifyFail++;
     console.error('power 黄金回放: FAIL');
@@ -1771,7 +1771,7 @@ var powerVerifyFail = 0;
     execFileSync('bun', [new URL('./gen-power.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
     const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
     if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
-    console.log('power gen det 复跑 (gen-power · bun): PASS (18 场景 sanity + GameEngine 真实现 + det 字节级)');
+    console.log('power gen det 复跑 (gen-power · bun): PASS (21 场景 sanity + GameEngine 真实现 + det 字节级)');
   } catch (e) {
     powerVerifyFail++;
     console.error('power gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -1780,9 +1780,9 @@ var powerVerifyFail = 0;
     const g = JSON.parse(readFileSync(new URL('./golden/power.json', import.meta.url), 'utf8'));
     const fails = [];
     const fail = (m) => fails.push(m);
-    if (!Array.isArray(g.scenarios) || g.scenarios.length !== 18) fail('场景数 ≠ 18');
+    if (!Array.isArray(g.scenarios) || g.scenarios.length !== 21) fail('场景数 ≠ 21');
     const keys = g.scenarios.map((s) => s.key);
-    for (const want of ['power-tornado', 'power-acid', 'power-blizzard', 'power-locust', 'power-drought', 'power-rainstorm', 'power-sandstorm', 'power-famine', 'power-expiry', 'power-tsunami', 'power-sinkhole', 'power-iceage', 'power-blackhole', 'power-quake', 'power-meteor', 'power-fireball', 'power-arrow', 'power-bullet-misc'])
+    for (const want of ['power-tornado', 'power-acid', 'power-blizzard', 'power-locust', 'power-drought', 'power-rainstorm', 'power-sandstorm', 'power-famine', 'power-expiry', 'power-tsunami', 'power-sinkhole', 'power-iceage', 'power-blackhole', 'power-quake', 'power-meteor', 'power-fireball', 'power-arrow', 'power-bullet-misc', 'power-shell', 'power-missile', 'power-nukemissile'])
       if (!keys.includes(want)) fail(`场景 ${want} 缺失`);
     for (const s of g.scenarios) {
       if (!s.fixture || !Array.isArray(s.fixture.fx0) || !s.fixture.waterTier0) fail(s.key + ' fixture 缺失');
@@ -1826,13 +1826,31 @@ var powerVerifyFail = 0;
     if (!ar || ar.bHp.length !== 1 || ar.bHp[0][1] !== f64hexV(32.8)) fail('power-arrow attackBuilding dmg*0.8 签名缺失（40-7.2=32.8）');
     const bm = g.scenarios.find((s) => s.key === 'power-bullet-misc');
     if (!bm || bm.bHp.length !== 0) fail('power-bullet-misc 非战/孤儿格零写面签名缺失（bHp 空）');
+    // M-U10d shell/missile/核弹签名面
+    const shl = g.scenarios.find((s) => s.key === 'power-shell');
+    if (!shl || shl.bHp.length !== 2 || shl.bHp.some(([k, v]) => v !== f64hexV(43))) fail('power-shell attackBuilding dmg*0.9 签名缺失（70-27=43 双账——无友军门）');
+    if (!shl || shl.shake !== 2.6) fail('power-shell shake=min(5,1+r)=2.6 签名缺失（L9619）');
+    if (!shl || shl.fireSet.length < 1) fail('power-shell ignite 门掷正面支签名缺失（fire:1）');
+    if (!shl || shl.fx.filter((e) => e.kind === 'hit').length !== 2) fail('power-shell hit fx ×2 签名缺失（attackBuilding 双账）');
+    if (!shl || !shl.units.some((u) => u.dead) || !shl.units.some((u) => unhexV(u.hp) === 35)) fail('power-shell falloff 钳 0.25 支签名缺失（己方步兵同溅射——无 src 豁免）');
+    const ms = g.scenarios.find((s) => s.key === 'power-missile');
+    if (!ms || ms.events.length !== 1 || ms.events[0].kind !== 'siege') fail('power-missile raze 支 siege 纪事签名缺失（lastSiegeEventTick 节流首触）');
+    if (!ms || ms.events[0].text !== '「熔铁部族」的军队摧毁了「青禾部落」的农田') fail('power-missile siege 纪事命名域文本签名缺失');
+    if (!ms || ms.buildingsCount !== 0 || ms.bHp.length !== 0) fail('power-missile FARM 摧毁三账清签名缺失（swap-pop/bHp/damagedSet）');
+    if (!ms || ms.kc !== null || ms.statN !== 0) fail('power-missile killCredit 复位/statNukes 零写签名缺失');
+    const nk = g.scenarios.find((s) => s.key === 'power-nukemissile');
+    if (!nk || nk.statN !== 1) fail('power-nukemissile statNukes=1 签名缺失（Nuke L12256）');
+    if (!nk || nk.events.length !== 2 || nk.events[0].kind !== 'nuke' || nk.events[1].kind !== 'nuke') fail('power-nukemissile 双 nuke 纪事签名缺失（unshift 序：explode 先/missile 支后）');
+    if (!nk || nk.shake !== 14) fail('power-nukemissile shake=14 签名缺失（L10478 核域支）');
+    if (!nk || nk.radSet.length <= 70) fail('power-nukemissile radSet 11×11<5 辐射圈签名缺失');
+    if (!nk || !nk.fx.some((e) => e.kind === 'flash') || !nk.fx.some((e) => e.kind === 'mushroom')) fail('power-nukemissile flash/mushroom fx 签名缺失（L10484-10485）');
     const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/power.json', import.meta.url));
     const gl = readFileSync(new URL('./golden/power.json', import.meta.url));
     const md5a = createHash('md5').update(sa).digest('hex');
     const md5b = createHash('md5').update(gl).digest('hex');
     if (md5a !== md5b) fail(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
     if (fails.length > 0) throw new Error(fails.join(' | '));
-    console.log(`power 台账完备 (18 场景 + smoke/water fx/到期 splice/battles 清理 + M-U10b flood/sinkhole 无账/chill16/explosion/shake + M-U10c meteor 纪事/fireball ignite/arrow armor 位精确 签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+    console.log(`power 台账完备 (21 场景 + smoke/water fx/到期 splice/battles 清理 + M-U10b flood/sinkhole 无账/chill16/explosion/shake + M-U10c meteor 纪事/fireball ignite/arrow armor 位精确 + M-U10d shell 43×2/raze siege 纪事/statN=1/辐射圈 签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
   } catch (e) {
     powerVerifyFail++;
     console.error('power 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));

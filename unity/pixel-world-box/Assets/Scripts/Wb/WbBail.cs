@@ -2554,8 +2554,29 @@ namespace PixelWorldBox.Wb
                         }
                     }
                 }
+                else if (e.kind == "shell" && e.age >= e.ttl)                                                          // L10295（炮弹落地：抛物线弹道终点爆破——M-U10d war 面首两 kind）
+                {
+                    w.killCredit = e.wid;                                                                              // L10297（e.wid ?? null——涌现武器战绩归属；int? 直传）
+                    ShellBurst(w, e.x, e.y, e.r != 0 ? e.r : 1.6, e.dmg ?? 30, e.fire.HasValue && e.fire.Value != 0, e.src ?? -1);   // L10298（r||1.6 / dmg??30 / !!fire / src??-1）
+                    if (e.wid.HasValue) EmergentPayload(w, e);                                                         // L10299（wid 面——辐射/改地形/士气打击；铸域空表桩 L9399 早退）
+                    w.killCredit = null;                                                                               // L10300
+                    if (w.Rng() < 0.2) { /* onSound?.('boom') 稀疏爆破声——宿主回调黄金受控 undefined no-op（掷骰流消费） */ }   // L10301
+                }
+                else if (e.kind == "missile" && e.age >= e.ttl)                                                        // L10302（导弹命中：核弹头 → 蘑菇云；常规 → 大威力爆破+纵火）
+                {
+                    if (e.nuke.HasValue && e.nuke.Value > 0)                                                           // L10304（e.nuke && e.nuke > 0——undefined/0 假语义）
+                    {
+                        w.AddEvent("nuke", "蘑菇云在战场上升起——核打击命中", null, e.x, e.y);                              // L10305
+                        Nuke(w, e.x, e.y, e.nuke.Value);                                                               // L10306
+                    }
+                    else                                                                                               // L10307
+                    {
+                        ShellBurst(w, e.x, e.y, e.r != 0 ? e.r : 2.8, e.dmg ?? 60, true, e.src ?? -1);                 // L10308（常规弹 r||2.8 / dmg??60 / fire 恒 true）
+                        /* onSound?.('boom') —— 宿主回调（黄金受控 undefined no-op 同 gen 端） */                          // L10309
+                    }
+                }
                 // 未译 kind 落空（volcano/wrath/holystorm/typhoon/…war 面
-                // shell L10295/missile/airstrike/laser/drone/orbital/mech/plasma/antimatter L10438——后续切片插入；夹具仅十七 kind）
+                // airstrike/laser/drone/orbital/mech/plasma/antimatter L10311-10437——后续切片插入；夹具仅十九 kind）
                 if (e.age >= e.ttl)                                                                                      // L10439
                 {
                     w.effects.RemoveAt(i);                                                                               // L10440（倒序 splice 同构）
@@ -2649,6 +2670,60 @@ namespace PixelWorldBox.Wb
                     }
                 }
             }
+        }
+
+        // ================= shellBurst（engine L9595-9620 机械翻译：M-U10d war 面共用落点爆破——shell/missile 消费） =================
+        // 单位环无 src 豁免（己军同溅射——蓝本 L9596-9607 无门，S19 己方步兵钉）；建筑环 attackBuilding dmg*0.9
+        //   （L9614 无友军门——摧毁级联归 onBuildingDestroyed 战争结算）；ignite 门掷 fire && isLand && !MOUNTAIN
+        //   && rng<0.45（四重合取短路——S19 MOUNTAIN/WATER 零掷钉）；Math.hypot fdlibm 位精确域 ×2。
+        private static void ShellBurst(WbWorld w, double x, double y, double r, double dmg, bool fire, int src)      // L9595
+        {
+            foreach (WbU u in w.units)                                                                               // L9596
+            {
+                if (u.dead != 0) continue;                                                                           // L9597
+                double d = WbMath.FdHypot(u.x - x, u.y - y);                                                         // L9598（单位距——fdlibm 位精确域）
+                if (d < r + 0.4)                                                                                     // L9599
+                {
+                    u.hp -= dmg * System.Math.Max(0.25, 1 - d / (r + 0.4));                                          // L9600（falloff 0.25 钳——S19/S20 钳制支位精确）
+                    u.hurt = 24;                                                                                     // L9601
+                    if (u.hp <= 0)                                                                                   // L9602
+                    {
+                        u.dead = 1;                                                                                  // L9603
+                        WbCivSim.WwCountKill(w, u);                                                                  // L9604（大战阵亡计数——killCredit 桩形同构）
+                    }
+                }
+            }
+            int rr = (int)System.Math.Ceiling(r);                                                                    // L9608
+            for (int yy = (int)System.Math.Floor(y - rr); yy <= y + rr; yy++)                                        // L9609
+            {
+                for (int xx = (int)System.Math.Floor(x - rr); xx <= x + rr; xx++)                                    // L9610
+                {
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                            // L9611
+                    if (WbMath.FdHypot(xx + 0.5 - x, yy + 0.5 - y) > r) continue;                                    // L9612（格中心距——与 explode 角距 L10456 异构，勿混）
+                    int i = yy * WbWorld.W + xx;                                                                     // L9613
+                    if (w.building[i] > 0) AttackBuilding(w, i, dmg * 0.9, src);                                     // L9614（dmg*0.9——hp>0 支 bHp+damagedSet+hit fx / hp≤0 摧毁级联）
+                    if (fire && WbWorld.IsLand(w.terrain[i]) && w.terrain[i] != WbConstants.T_MOUNTAIN && w.Rng() < 0.45) IgniteE(w, i);   // L9615（isLand/MOUNTAIN 前置短路零掷——S19 门钉）
+                }
+            }
+            FxOptHook(w, "explosion", x, y, 16, null, null, null, r, null);                                          // L9618（opts {r}）
+            w.shake = System.Math.Max(w.shake, System.Math.Min(5, 1 + r));                                           // L9619（S19 shake=2.6 钉）
+        }
+
+        // ================= nuke（engine L12255-12260 机械翻译：核打击入口——missile 核支 L10306 消费） =================
+        private static void Nuke(WbWorld w, double x, double y, double power = 1)                                    // L12255
+        {
+            w.statNukes++;                                                                                           // L12256（成就计数：蘑菇云升起）
+            // 当量可调：爆炸半径 7 → 最高 24（蓝本注释 21 为旧值——min 钳 24 机械保持）
+            double r = System.Math.Max(3, System.Math.Min(24, 7 * power));                                           // L12258
+            Explode(w, x, y, r, true, true, true);                                                                   // L12259（{terrain:true, lava:true, nuke:true}——M-U10c 全译件复用；核域支 radSet/radiate/MarkDirty 随件）
+        }
+
+        // ================= emergentPayload（engine L9397-9436 桩形——武器铸造域 L8715+/L9440+ 未译） =================
+        //   emergentWeapons 恒空表（铸造域无写点）→ L9398 get(e.wid ?? -1) 恒 undefined → L9399 早退即全语义；
+        //   w.rad/w.terra/w.morale 躯干（辐射环 40%/奇点焦土 55%/士气崩落）随铸造域入链按锚补译（M-U10e+ 候选）。
+        private static void EmergentPayload(WbWorld w, WbFx e)                                                       // L9397
+        {
+            // const w = this.emergentWeapons.get(e.wid ?? -1)（L9398）——恒空表；if (!w) return（L9399）早退即全语义
         }
 
         // ================= regrowTick L2830-2840（M-U8b regrow 域核心——sim 域切片） =================

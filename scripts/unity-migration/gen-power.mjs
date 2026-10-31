@@ -187,8 +187,17 @@ function buildScenario(spec) {
       if (f.src !== undefined) opts.src = f.src;
       if (f.dmg !== undefined) opts.dmg = f.dmg;
       if (f.quiet !== undefined) opts.quiet = f.quiet;
+      if (f.wid !== undefined) opts.wid = f.wid;     // M-U10d 涌现武器 id（killCredit 归属面）
+      if (f.nuke !== undefined) opts.nuke = f.nuke;  // M-U10d 核弹头当量（missile 核支门）
+      if (f.fire !== undefined) opts.fire = f.fire;  // M-U10d 弹体纵火（shell !!e.fire 门）
       eng.fx(f.kind, f.x, f.y, f.ttl, opts);
     }
+  }
+
+  // 手术二·civs 直写注入（M-U10d：raze 级联 alive/name/colorHex 最小语义面——战争结算域消费；
+  //   文明创建无单点真调用 API（foundNation 重域），orphanBuilding 同款直写先例）
+  for (const c of spec.civs ?? []) {
+    eng.civs[c.id] = { id: c.id, name: c.name, alive: true, colorHex: c.colorHex, tiles: [], color: [0, 0, 0], pop: 0 };
   }
 
   // 手术二尾：桶重建（arrow/bullet 扫描面——主循环 L2519 rebuildBuckets 同构；纯函数零掷）
@@ -207,9 +216,10 @@ function buildScenario(spec) {
     frozen0: [...eng.frozen],
     building0: buildingW.map(([x, y, kind, civ]) => ({ i: idx(x, y), x, y, kind, civ })),
     orphanB0: orphanB,                    // M-U10c 孤儿建筑格（building>0 无记录——L10289 镜像钉）
+    civs0: (spec.civs ?? []).map((c) => ({ id: c.id, name: c.name, colorHex: c.colorHex })),   // M-U10d raze 级联 alive/name/colorHex 最小语义面
     rel0: [...eng.rel.entries()],         // M-U10c 外交挂账（pairKey 字符串键 → atWar <-20 门）
     battles0: [...eng.activeBattles.entries()],
-    fx0: eng.effects.map((e) => ({ kind: e.kind, x: f64hex(e.x), y: f64hex(e.y), r: e.r, age: e.age, ttl: e.ttl, seed: e.seed, dir: f64hex(e.dir), src: e.src ?? null, dmg: e.dmg ?? null, quiet: e.quiet === true })),
+    fx0: eng.effects.map((e) => ({ kind: e.kind, x: f64hex(e.x), y: f64hex(e.y), r: e.r, age: e.age, ttl: e.ttl, seed: e.seed, dir: f64hex(e.dir), src: e.src ?? null, dmg: e.dmg ?? null, quiet: e.quiet === true, wid: e.wid ?? null, nuke: e.nuke ?? null, fire: e.fire ?? null })),   // M-U10d wid/nuke/fire 通道（?? 语义：0 值保真）
     units0: eng.units.map((u) => ({ id: u.id, race: u.race, x: f64hex(u.x), y: f64hex(u.y), hp: f64hex(u.hp), maxHp: f64hex(u.maxHp), hurt: u.hurt, chill: u.chill, dead: u.dead, civ: u.civ, gbArmor: RACES[u.race].isCiv ? eng.gearBonus(u).armor : 0 })),
   };
 
@@ -244,7 +254,10 @@ function buildScenario(spec) {
   try { totalDraws = chainDraws(spec.seed >>> 0, eng.rngA >>> 0); }
   catch { throw new Error(`S${spec.key}: chainDraws 失败（final rngA=${(eng.rngA >>> 0).toString(16)} seed=${(spec.seed >>> 0).toString(16)}）`); }
   if (spec.minDraws && totalDraws < spec.minDraws) throw new Error(`S${spec.key}: 掷数 ${totalDraws} < 下限 ${spec.minDraws}`);
-  if (spec.sanity && !spec.sanity(eng)) throw new Error(`S${spec.key}: sanity 未过`);
+  if (spec.sanity && !spec.sanity(eng)) {
+    const dbg = { units: eng.units.map((u) => ({ hp: u.hp, dead: u.dead })), bHp: [...eng.bHp.entries()], damaged: [...eng.damagedSet], fireSet: eng.fireSet.size, shake: eng.shake, buildings: eng.buildings.length, fx: eng.effects.map((e) => e.kind), events: eng.worldEvents.map((e) => e.kind), statN: eng.statNukes, kc: eng.killCredit, radSet: eng.radSet.size, terr: [eng.terrain[idx(104, 60)], eng.terrain[idx(97, 60)], eng.terrain[idx(100, 60)]] };
+    throw new Error(`S${spec.key}: sanity 未过 ${JSON.stringify(dbg)}`);
+  }
 
   return {
     key: spec.key,
@@ -267,6 +280,8 @@ function buildScenario(spec) {
     battles: [...eng.activeBattles.entries()],
     flood: [...eng.flood.entries()],                 // M-U10b tsunami 洪水挂账终态
     shake: eng.shake,
+    kc: eng.killCredit ?? null,                      // M-U10d killCredit 终态钉（shell/missile wid 面复位语义 L10297/L10300）
+    statN: eng.statNukes,                            // M-U10d statNukes 终态钉（Nuke L12256 成就计数）
     buildingsCount: eng.buildings.length,
     fx: eng.effects.map((e) => ({ kind: e.kind, x: f64hex(e.x), y: f64hex(e.y), ttl: f64hex(e.ttl), seed: e.seed, dir: f64hex(e.dir), r: e.r ?? null, age: e.age })),
     units: eng.units.map((u) => ({ id: u.id, race: u.race, x: f64hex(u.x), y: f64hex(u.y), hp: f64hex(u.hp), maxHp: f64hex(u.maxHp), hurt: u.hurt, chill: u.chill, dead: u.dead })),
@@ -499,6 +514,67 @@ const specs = [
     sanity: (eng) => eng.bHp.size === 0 && eng.damagedSet.size === 0 && eng.buildings.length === 1 && eng.effects.length === 1
       && eng.fireSet.has(idx(98, 56)) && eng.effects[0].kind === 'explosion',
   },
+  {
+    // S19 shell（M-U10d）：shellBurst L9595-9620 全链——单位环 dmg*max(0.25,1-d/(r+0.4))（无 src 豁免——
+    //   己方步兵同溅射钉）+ kill→wwCountKill（killCredit 恒 null）/ 建筑环 attackBuilding dmg*0.9（无友军门——
+    //   己方住宅同账钉）+ fire:1 ignite 门掷（MOUNTAIN/WATER 短路无掷）+ fx explosion {r} + shake min(5,1+r)
+    //   + 空 area 弹（fire:0 零掷——纯 fx+shake 面）
+    key: 'power-shell', baseSeed: BASE + 39, seed: 0x0A0E13, seasons: false, yearF: 2.5, tickCount: 18000, steps: 3, minDraws: 8,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 56; y < 65; y++) for (let x = 96; x < 105; x++) a.push([x, y, T.GRASS]); return a; })().concat([[100, 59, T.MOUNTAIN], [101, 59, T.WATER]])],
+        building: [[100, 60, 1, 2], [101, 60, 1, 1]],
+        rel: [['1-2', -30]],
+        units: [{ race: 'SHEEP', x: 100.5, y: 60.5, hp: 25, maxHp: 50 }, { race: 'HUMAN', x: 101.5, y: 60.5, hp: 50, maxHp: 50, civ: 1 }, { race: 'SHEEP', x: 110.5, y: 60.5, hp: 50, maxHp: 50 }],
+        fx: [{ kind: 'shell', x: 100.5, y: 60.5, ttl: 1, src: 1, dmg: 30, r: 1.6, fire: 1 }, { kind: 'shell', x: 150.5, y: 80.5, ttl: 1, dmg: 30, fire: 0 }],
+      },
+    ],
+    sanity: (eng) => eng.units[0].dead === true && eng.units[1].hp === 35 && eng.units[2].hp === 50
+      && eng.bHp.size === 2 && eng.damagedSet.has(idx(100, 60)) && eng.damagedSet.has(idx(101, 60))
+      && eng.fireSet.size > 0 && eng.shake === 2.6 && eng.buildings.length === 2 && eng.effects.length === 4,
+  },
+  {
+    // S20 missile 常规弹 + raze 级联（M-U10d）：r||2.8/dmg??60/fire 恒 true → shellBurst →
+    //   attackBuilding dmg*0.9=54 > FARM 40 → onBuildingDestroyed 战争结算面（civs0 最小语义注入）：
+    //   alive 门 + atWar(rel -30) + CAPTURABLE 0.45 门（raze 支——addWarScore warData 空表早退 +
+    //   lastSiegeEventTick 节流 siege 纪事）+ shell r:0→||1.6 / dmg 缺→??30 / src 缺→-1 / fire 缺→falsy 无掷
+    //   + killCredit wid 面（铸域空表桩——L9399 早退）+ statNukes 零写钉
+    key: 'power-missile', baseSeed: BASE + 40, seed: 0x0A0E16, seasons: false, yearF: 2.5, tickCount: 19000, steps: 3, minDraws: 6,
+    civs: [{ id: 1, name: '青禾部落', colorHex: '#40a060' }, { id: 2, name: '熔铁部族', colorHex: '#c04040' }],
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 56; y < 65; y++) for (let x = 96; x < 105; x++) a.push([x, y, T.GRASS]); return a; })()],
+        building: [[100, 60, 4, 1]],
+        rel: [['1-2', -30]],
+        units: [{ race: 'SHEEP', x: 98.5, y: 58.5, hp: 50, maxHp: 50 }, { race: 'HUMAN', x: 100.5, y: 60.5, hp: 50, maxHp: 50, civ: 1 }],
+        fx: [
+          { kind: 'missile', x: 100.5, y: 60.5, ttl: 1, src: 2, r: 2.8, dmg: 60 },
+          { kind: 'shell', x: 104.5, y: 64.5, ttl: 1, r: 1.2, dmg: 12, fire: 1 },
+          { kind: 'shell', x: 96.5, y: 56.5, ttl: 1, r: 0 },
+          { kind: 'shell', x: 130.5, y: 70.5, ttl: 1, wid: 7 },
+        ],
+      },
+    ],
+    sanity: (eng) => eng.buildings.length === 0 && eng.bHp.size === 0 && eng.damagedSet.size === 0
+      && eng.worldEvents.length === 1 && eng.worldEvents[0].kind === 'siege'
+      && eng.units[1].dead === true && eng.units[0].hp === 35   // 60×0.25 钉制支（d=2.828≥2.4 → falloff 钳 0.25）
+      && eng.shake === 3.8 && eng.statNukes === 0 && eng.killCredit === null,
+  },
+  {
+    // S21 missile 核弹头（M-U10d）：nuke>0 → addEvent nuke（战场升起）+ Nuke L12255-12260（statNukes++ +
+    //   r=max(3,min(24,7p))=7）→ explode {terrain,lava,nuke}（LAVA 内环 d<1.8 角距 / MOUNTAIN 幸存 /
+    //   WATER isLand 整格跳 / 单位环 300*max(0.15,1-d/(r+0.8)) 无 dead 跳 + shake 14 + flash/mushroom
+    //   + 第二条 nuke 纪事（unshift 序）+ radSet 11×11 <5 辐射圈 + statNukes 终态钉）
+    key: 'power-nukemissile', baseSeed: BASE + 41, seed: 0x0A0E15, seasons: false, yearF: 2.5, tickCount: 20000, steps: 3, minDraws: 30,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 53; y < 68; y++) for (let x = 93; x < 108; x++) a.push([x, y, T.GRASS]); return a; })().concat([[104, 60, T.MOUNTAIN], [97, 60, T.WATER]])],
+        units: [{ race: 'SHEEP', x: 100.5, y: 60.5, hp: 250, maxHp: 500 }, { race: 'SHEEP', x: 107.5, y: 60.5, hp: 500, maxHp: 500 }, { race: 'SHEEP', x: 110.5, y: 60.5, hp: 500, maxHp: 500 }],
+        fx: [{ kind: 'missile', x: 100.5, y: 60.5, ttl: 1, src: 1, r: 0, dmg: 0, nuke: 1 }],
+      },
+    ],
+    sanity: (eng) => eng.statNukes === 1 && eng.worldEvents.length === 2 && eng.worldEvents[0].kind === 'nuke' && eng.worldEvents[1].kind === 'nuke'
+      && eng.terrain[idx(104, 60)] === T.MOUNTAIN && eng.terrain[idx(97, 60)] === T.WATER && eng.terrain[idx(100, 60)] === T.LAVA
+      && eng.shake === 14 && eng.radSet.size > 70 && eng.units[0].dead === true && eng.units[1].hp === 455   // 300×0.15 钳制支（d=7.0 → falloff 钳 0.15）
+      && eng.units[2].hp === 500 && eng.killCredit === null,
+  },
 ];
 
 const scenarios = specs.map(buildScenario);
@@ -522,7 +598,7 @@ const out = {
     protocol: 'GameEngine 构造 + 手术式夹具两相直写 + effects/spawnUnit 真调用注入（fx seed/dir 双掷注入相）+ rngA 尾置清零起流 + tickCount++/effectsTick 直调步进快照（主循环 L2508/L2528 序同构）',
     rng: 'eng.rngA 单流（类字段箭头 rng L728-733）；mulberry 纯数学反解 total（noise.ts L3-13）',
     math: 'tornado/sandstorm/famine Math.hypot——C# FdHypot/V8Hypot 位精确件对账（fdlibm 域）；acid/blizzard/locust/drought/rainstorm 纯平方距离',
-    domains: ['effectsTick L9801-10447', 'tornado L9805-9824', 'acid L9826-9850', 'blizzard L9915-9948', 'locust L9949-9971', 'drought L9972-9996', 'rainstorm L9997-10022', 'sandstorm L10068-10090', 'famine L10170-10190', 'M-U10b: tsunami L9877-9914', 'M-U10b: sinkhole L10120-10147', 'M-U10b: iceage L10148-10169', 'M-U10b: blackhole L10191-10223', 'M-U10b: quake L10224-10236', 'M-U10c: meteor L10237-10239', 'M-U10c: fireball L10240-10254', 'M-U10c: arrow·bullet L10255-10294', 'M-U10c: explode L10450-10499', 'M-U10c: ignite L1072-1077', '到期 splice L10439-10441', 'activeBattles %5 清理 L10443-10447', 'fx L9781-9799', 'attackBuilding L4446-4462', 'meltIce L2892（drought 消费）', 'setTerrain L969-1007（regrow L979 出账联动 + flood L983 贴花级联）', 'rebuildBuckets L3081-3104（注入相尾——arrow/bullet 桶扫描面）', 'gearBonus L1498-1520（armor 采样入 units0.gbArmor）', 'atWar L2061-2064（rel0 挂账）'],
+    domains: ['effectsTick L9801-10447', 'tornado L9805-9824', 'acid L9826-9850', 'blizzard L9915-9948', 'locust L9949-9971', 'drought L9972-9996', 'rainstorm L9997-10022', 'sandstorm L10068-10090', 'famine L10170-10190', 'M-U10b: tsunami L9877-9914', 'M-U10b: sinkhole L10120-10147', 'M-U10b: iceage L10148-10169', 'M-U10b: blackhole L10191-10223', 'M-U10b: quake L10224-10236', 'M-U10c: meteor L10237-10239', 'M-U10c: fireball L10240-10254', 'M-U10c: arrow·bullet L10255-10294', 'M-U10c: explode L10450-10499', 'M-U10c: ignite L1072-1077', 'M-U10d: shell L10295-10301', 'M-U10d: missile L10302-10310', 'M-U10d: shellBurst L9595-9620', 'M-U10d: nuke L12255-12260', 'M-U10d: onBuildingDestroyed raze 支 L4464-4498（capture/annex 支夹具外——M-U10e 候选）', '到期 splice L10439-10441', 'activeBattles %5 清理 L10443-10447', 'fx L9781-9799', 'attackBuilding L4446-4462', 'meltIce L2892（drought 消费）', 'setTerrain L969-1007（regrow L979 出账联动 + flood L983 贴花级联）', 'rebuildBuckets L3081-3104（注入相尾——arrow/bullet 桶扫描面）', 'gearBonus L1498-1520（armor 采样入 units0.gbArmor）', 'atWar L2061-2064（rel0 挂账）'],
     scenarioCount: scenarios.length,
   },
   scenarios,

@@ -354,5 +354,134 @@ namespace PixelWorldBox.Tests
             Assert.That(w.damagedSet.Count, Is.EqualTo(0), "damagedSet 零写面");
             Assert.That(w.buildings.Count, Is.EqualTo(1), "建筑零摧毁");
         }
+
+        // ================= Test38：M-U10d shell/missile 直测（shellBurst L9595-9620 + shell L10295-10301 + missile L10302-10310 + Nuke L12255-12260） =================
+
+        [Test]
+        public void Test38_ShellBurst_FalloffClamp_NoSrcExempt()
+        {
+            var w = new WbWorld();                                    // 单位环无 src 豁免（L9596-9607 蓝本无门——己军同溅射钉）
+            w.tickCount = 18000;
+            for (int y = 58; y < 63; y++) for (int x = 98; x < 103; x++) w.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            var near = new WbU { id = 1, race = 6, x = 100.5, y = 60.5, hp = 50, maxHp = 50 };          // d=0 → dmg 全额
+            var ownTroop = new WbU { id = 2, race = 0, x = 100.5, y = 61.5, hp = 50, maxHp = 50, civ = 1 };   // 己军 civ===src d=1.0
+            w.units.Add(near); w.units.Add(ownTroop);
+            w.effects.Add(new WbFx { kind = "shell", x = 100.5, y = 60.5, ttl = 1, age = 0, r = 1, src = 1, dmg = 40, fire = 0 });
+            w.rngA = 0x0A0E13u;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);
+            Assert.That(near.dead, Is.EqualTo(0), "d=0 → 40 全额 → hp 10 幸存（40×1=40）");
+            Assert.That(F64Hex(near.hp), Is.EqualTo(F64Hex(10)), "d=0 falloff=1 位精确");
+            Assert.That(F64Hex(ownTroop.hp), Is.EqualTo(F64Hex(50 - 40 * (1 - 1.0 / (1 + 0.4)))), "己军 d=1.0 falloff=1-1/1.4 → 40×(1-1/1.4)（无 src 豁免——同构表达式位级 f64）");
+            Assert.That(ownTroop.hurt, Is.EqualTo(24), "hurt 24（L9601）");
+            Assert.That(w.killCredit, Is.Null, "killCredit 恒 null（shell 无 wid——L10297 ?? null）");
+        }
+
+        [Test]
+        public void Test38_Shell_BuildingRing_NoFriendlyGate()
+        {
+            var w = new WbWorld();                                    // 建筑环无友军门（L9614——己方住宅同账钉）+ shake min(5,1+r)
+            w.tickCount = 18001;
+            for (int y = 58; y < 63; y++) for (int x = 98; x < 103; x++) w.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            int foe = 60 * WbWorld.W + 100;                           // 敵住宅 civ=2
+            int own = 61 * WbWorld.W + 100;                           // 己方住宅 civ=1（与 src 同军）
+            w.building[foe] = 1; w.building[own] = 1;
+            w.buildings.Add(new WbBuilding { i = foe, x = 100, y = 60, kind = 1, civ = 2 });
+            w.bIdx[foe] = 0;
+            w.buildings.Add(new WbBuilding { i = own, x = 100, y = 61, kind = 1, civ = 1 });
+            w.bIdx[own] = 1;
+            w.effects.Add(new WbFx { kind = "shell", x = 100.5, y = 60.5, ttl = 1, age = 0, r = 1.6, src = 1, dmg = 30, fire = 0 });
+            w.rngA = 0x0A0E13u;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);
+            Assert.That(F64Hex(w.bHp[foe]), Is.EqualTo(F64Hex(43)), "敵宅 70-30*0.9=43（L9614）");
+            Assert.That(F64Hex(w.bHp[own]), Is.EqualTo(F64Hex(43)), "己宅同账 43（无友军门——机械保持）");
+            Assert.That(w.damagedSet.Contains(foe) && w.damagedSet.Contains(own), Is.True, "damagedSet 双登记（attackBuilding hp>0 支）");
+            Assert.That(w.effects.Count(f2 => f2.kind == "hit"), Is.EqualTo(2), "hit fx ×2（attackBuilding 双账——2 掷注入相）");
+            Assert.That(w.shake, Is.EqualTo(2.6), "shake=min(5,1+1.6)=2.6（L9619）");
+            Assert.That(w.fireSet.Count, Is.EqualTo(0), "fire:0 → ignite 门短路零掷（!!e.fire 假语义）");
+        }
+
+        [Test]
+        public void Test38_Shell_WidKillCreditRoundtrip()
+        {
+            var w = new WbWorld();                                    // killCredit 归属/复位往返（L10297/L10299/L10300）+ 稀疏 boom 掷
+            w.tickCount = 18002;
+            for (int y = 68; y < 73; y++) for (int x = 128; x < 133; x++) w.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            w.effects.Add(new WbFx { kind = "shell", x = 130.5, y = 70.5, ttl = 1, age = 0, r = 1, wid = 7, dmg = 10, fire = 0 });
+            w.rngA = 0x0A0E13u;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);
+            Assert.That(w.killCredit, Is.Null, "终态 null（L10300 复位——wid 面记账即撤）");
+            Assert.That(w.statNukes, Is.EqualTo(0), "statNukes 零写（shell 不触 Nuke）");
+            Assert.That(w.effects.Any(f2 => f2.kind == "explosion"), Is.True, "fx explosion（L9618）");
+        }
+
+        [Test]
+        public void Test38_Missile_RazeCascade_SiegeEvent()
+        {
+            var w = new WbWorld();                                    // 常规导弹 → FARM 摧毁 → onBuildingDestroyed raze 支（L4464-4498 war 结算面）
+            w.tickCount = 19000;
+            for (int y = 56; y < 65; y++) for (int x = 96; x < 105; x++) w.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            int farm = 60 * WbWorld.W + 100;
+            w.building[farm] = 4;
+            w.buildings.Add(new WbBuilding { i = farm, x = 100, y = 60, kind = 4, civ = 1 });
+            w.bIdx[farm] = 0;
+            w.rel["1-2"] = -30;
+            w.civs.Add(null);                                         // civs[0] 稀疏位（黄金 civs0 通道同构）
+            w.civs.Add(new WbCiv { id = 1, name = "青禾部落", colorHex = "#40a060", alive = true });
+            w.civs.Add(new WbCiv { id = 2, name = "熔铁部族", colorHex = "#c04040", alive = true });
+            var sheep = new WbU { id = 1, race = 6, x = 98.5, y = 58.5, hp = 50, maxHp = 50 };
+            var human = new WbU { id = 2, race = 0, x = 100.5, y = 60.5, hp = 50, maxHp = 50, civ = 1 };
+            w.units.Add(sheep); w.units.Add(human);
+            w.effects.Add(new WbFx { kind = "missile", x = 100.5, y = 60.5, ttl = 1, age = 0, r = 2.8, src = 2, dmg = 60 });
+            w.rngA = 0x0A0E16u;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);
+            Assert.That(w.buildings.Count, Is.EqualTo(0), "FARM 40-60*0.9=-14 → 摧毁（swap-pop 三账清）");
+            Assert.That(w.bHp.Count, Is.EqualTo(0), "bHp 出账（destroyBuilding）");
+            Assert.That(w.damagedSet.Count, Is.EqualTo(0), "damagedSet 出账");
+            Assert.That(w.worldEvents.Count, Is.EqualTo(1), "raze 支 siege 纪事（capture 0.45 门未中——seed 钉）");
+            Assert.That(w.worldEvents[0].kind, Is.EqualTo("siege"), "siege kind（L4496）");
+            Assert.That(w.worldEvents[0].text, Is.EqualTo("「熔铁部族」的军队摧毁了「青禾部落」的农田"), "命名域文本（BUILD_NAME[4]=农田）");
+            Assert.That(F64Hex(sheep.hp), Is.EqualTo(F64Hex(35)), "falloff 钳 0.25 支（60×0.25=15 → 35——d=2.828≥2.4）");
+            Assert.That(human.dead != 0, Is.True, "d=0 → 60 全额 → dead（wwCountKill 桩形）");
+            Assert.That(w.shake, Is.EqualTo(3.8), "shake=min(5,1+2.8)=3.8");
+            Assert.That(w.killCredit, Is.Null, "killCredit 恒 null（missile 常规无 wid）");
+            Assert.That(w.statNukes, Is.EqualTo(0), "statNukes 零写");
+        }
+
+        [Test]
+        public void Test38_Missile_Nuke_MushroomRadiation()
+        {
+            var w = new WbWorld();                                    // 核弹头 → 蘑菇云（L10304-10306 nuke 门 + Nuke L12255 + explode 核域支）
+            w.tickCount = 20000;
+            for (int y = 53; y < 68; y++) for (int x = 93; x < 108; x++) w.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            w.terrain[60 * WbWorld.W + 104] = WbWorld.T_MOUNTAIN;     // 幸存面（d=3.54 ≥1.8 非 LAVA + MOUNTAIN 非 BURNT）
+            w.terrain[60 * WbWorld.W + 97] = WbWorld.T_WATER;         // isLand 整格跳（无 BURNT 无掷）
+            var center = new WbU { id = 1, race = 6, x = 100.5, y = 60.5, hp = 250, maxHp = 500 };
+            var mid = new WbU { id = 2, race = 6, x = 107.5, y = 60.5, hp = 500, maxHp = 500 };
+            var far = new WbU { id = 3, race = 6, x = 110.5, y = 60.5, hp = 500, maxHp = 500 };
+            w.units.Add(center); w.units.Add(mid); w.units.Add(far);
+            w.effects.Add(new WbFx { kind = "missile", x = 100.5, y = 60.5, ttl = 1, age = 0, r = 0, dmg = 0, nuke = 1 });
+            w.rngA = 0x0A0E15u;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);
+            Assert.That(w.statNukes, Is.EqualTo(1), "statNukes=1（L12256 成就计数）");
+            Assert.That(w.worldEvents.Count, Is.EqualTo(2), "双 nuke 纪事（missile 支 + explode 核域支）");
+            Assert.That(w.worldEvents[0].kind, Is.EqualTo("nuke"), "unshift 序：explode 后发先至（L10486）");
+            Assert.That(w.worldEvents[0].text, Is.EqualTo("蘑菇云在大地上升起，幸存者将长久铭记这一天"), "explode 核域支纪事文本");
+            Assert.That(w.worldEvents[1].text, Is.EqualTo("蘑菇云在战场上升起——核打击命中"), "missile 支纪事（L10305）");
+            Assert.That(w.shake, Is.EqualTo(14), "shake=14（L10478 核域支 max）");
+            Assert.That(w.terrain[60 * WbWorld.W + 100], Is.EqualTo(WbWorld.T_LAVA), "LAVA 内环（d=0.707<1.8——lava:true）");
+            Assert.That(w.terrain[60 * WbWorld.W + 104], Is.EqualTo(WbWorld.T_MOUNTAIN), "MOUNTAIN 幸存（L10462 else-if）");
+            Assert.That(w.terrain[60 * WbWorld.W + 97], Is.EqualTo(WbWorld.T_WATER), "WATER isLand 整格跳（L10460）");
+            Assert.That(w.radSet.Count, Is.GreaterThan(70), "radSet 11×11<5 辐射圈（L10487-10497）");
+            Assert.That(w.radiate[60 * WbWorld.W + 100], Is.EqualTo(1), "radiate=1 染毒");
+            Assert.That(center.dead != 0, Is.True, "d=0 → 300 全额 → dead");
+            Assert.That(F64Hex(mid.hp), Is.EqualTo(F64Hex(455)), "falloff 钳 0.15 支（300×0.15=45 → 455——d=7.0≥6.63）");
+            Assert.That(F64Hex(far.hp), Is.EqualTo(F64Hex(500)), "d=10>r+0.8=7.8 出环");
+            Assert.That(w.killCredit, Is.Null, "killCredit 恒 null（missile 核支无 wid 面）");
+        }
     }
 }
