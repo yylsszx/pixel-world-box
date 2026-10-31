@@ -1748,6 +1748,67 @@ var fireVerifyFail = 0;
   }
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0 && fireVerifyFail === 0;
+
+// 段 33：M-U10a effectsTick 游荡云族八种（power-transcript 镜像 9 场景逐位 + gen det 复跑〔bun〕+ 双写 md5 + 台账）
+var powerVerifyFail = 0;
+{
+  const { execFileSync } = await import('node:child_process');
+  const { createHash, } = await import('node:crypto');
+  const { readFileSync } = await import('node:fs');
+  try {
+    // M-U7w 口径：黄金链一律 bun（tornado/sandstorm/famine Math.hypot fdlibm——C# FdHypot/V8Hypot 位精确件对账面在 NUnit 侧）
+    execFileSync('bun', [new URL('./power-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
+    console.log('power 黄金回放 (power-transcript 镜像 vs power.json): PASS (9 场景 快照逐位 + fx/units/bHp/battles/dirty 序 + regrow L979 出账联动 + 逐步 rngA)');
+  } catch (e) {
+    powerVerifyFail++;
+    console.error('power 黄金回放: FAIL');
+    console.error(String(e.stdout ?? '').split('\n').slice(-8).join('\n'));
+  }
+  try {
+    const goldenPath = new URL('./golden/power.json', import.meta.url).pathname;
+    const { readFile } = await import('node:fs/promises');
+    const h0 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    execFileSync('bun', [new URL('./gen-power.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
+    const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
+    console.log('power gen det 复跑 (gen-power · bun): PASS (9 场景 sanity + GameEngine 真实现 + det 字节级)');
+  } catch (e) {
+    powerVerifyFail++;
+    console.error('power gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+  try {
+    const g = JSON.parse(readFileSync(new URL('./golden/power.json', import.meta.url), 'utf8'));
+    const fails = [];
+    const fail = (m) => fails.push(m);
+    if (!Array.isArray(g.scenarios) || g.scenarios.length !== 9) fail('场景数 ≠ 9');
+    const keys = g.scenarios.map((s) => s.key);
+    for (const want of ['power-tornado', 'power-acid', 'power-blizzard', 'power-locust', 'power-drought', 'power-rainstorm', 'power-sandstorm', 'power-famine', 'power-expiry'])
+      if (!keys.includes(want)) fail(`场景 ${want} 缺失`);
+    for (const s of g.scenarios) {
+      if (!s.fixture || !Array.isArray(s.fixture.fx0) || !s.fixture.waterTier0) fail(s.key + ' fixture 缺失');
+      if (!Array.isArray(s.stepsSnap) || s.stepsSnap.length !== s.steps) fail(s.key + ' stepsSnap ≠ steps');
+      if (typeof s.totalDraws !== 'number' || s.totalDraws < 0) fail(s.key + ' totalDraws 缺失');
+    }
+    const tn = g.scenarios.find((s) => s.key === 'power-tornado');
+    if (!tn || !tn.fx.some((e) => e.kind === 'smoke')) fail('power-tornado 建筑摧毁 smoke fx 签名缺失');
+    const rs = g.scenarios.find((s) => s.key === 'power-rainstorm');
+    if (!rs || rs.fx.filter((e) => e.kind === 'water').length < 3) fail('power-rainstorm water fx 签名缺失（灭火/复绿面）');
+    const ex = g.scenarios.find((s) => s.key === 'power-expiry');
+    if (!ex || ex.fx.length !== 1 || ex.fx[0].kind !== 'blizzard') fail('power-expiry 到期 splice 签名缺失（终态仅 blizzard ttl12）');
+    if (!ex || ex.battles.length !== 1 || !ex.battles.some(([t, exp]) => t === 12851 && exp === 200)) fail('power-expiry activeBattles 过期清理签名缺失（exp103 删/exp200 留）');
+    const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/power.json', import.meta.url));
+    const gl = readFileSync(new URL('./golden/power.json', import.meta.url));
+    const md5a = createHash('md5').update(sa).digest('hex');
+    const md5b = createHash('md5').update(gl).digest('hex');
+    if (md5a !== md5b) fail(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
+    if (fails.length > 0) throw new Error(fails.join(' | '));
+    console.log(`power 台账完备 (9 场景 + smoke/water fx/到期 splice/battles 清理签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  } catch (e) {
+    powerVerifyFail++;
+    console.error('power 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0 && fireVerifyFail === 0 && powerVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);

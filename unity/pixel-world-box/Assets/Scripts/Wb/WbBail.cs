@@ -1954,6 +1954,7 @@ namespace PixelWorldBox.Wb
             byte prev = w.terrain[i];                                                                                    // L970
             if (prev == t) return;                                                                                       // L971 同值早退
             w.terrain[i] = t;                                                                                            // L972
+            w.MarkDirty(i);                                                                                              // L976（M-U10a 点亮：中心+四邻脏标记——黄金 dirty 五格面对账；M-U8a 时渲染簿记省略，本轮模拟可观测）
             w.regrow.Remove(i);                                                                                          // L979（M-U8b 点亮：焦土复苏计时随地形覆写作废——regrowTick 已译件；同值早退 L971 不触达）
             if (prev == WbConstants.T_ICE) { w.frozen.Remove(i); w.frozenList.Remove(i); }                               // L981（M-U9a 点亮：冰面集出账——List 插入序镜像同步）
             if (t == WbConstants.T_ICE) { w.frozen.Add(i); w.frozenList.Add(i); }                                        // L982（M-U9a 点亮：冰面集入账——HashSet 重复 add no-op 同 Set 语义）
@@ -1982,13 +1983,367 @@ namespace PixelWorldBox.Wb
             {
                 w.road[i] = 0;                                                                                           // L1003
             }
-            // L1006 refreshWaterTierAround（waterTier worldgen 渲染专属未译——no-op 注记）
+            RefreshWaterTierAround(w, i);                                                                                // L1006 refreshWaterTierAround（M-U10a 点亮：水深场局部重算——tier 变化格 dirty.add L1066 模拟可观测面，no-op 注记消亡）
             // worldsim.onTerrainChanged L153-165 观测面（M-U9b 点亮——蓝本 L976 在 L972 写入后即时触发；
             //   本处级联尾置语义等价：soilF/glacier 为后续无消费的簿记面，regrow.set L2825 读 soilF
             //   在 setTerrain 返回后——时序与蓝本一致）:
             if (t == WbConstants.T_BURNT && w.soilF[i] > 8) w.soilF[i] -= 8;                                             // L157 火烧地力损耗（灰烬回田等腐殖质累积）
-            if ((WbWorld.IsWater(t) || t == WbConstants.T_LAVA) && w.glacier[i] > 0) w.glacier[i] = 0;                   // L159-163 水面/岩浆覆写清冰川（glacierTiles 计数/dirty 记账——worldsim 层非观测域注记）
+            if ((WbWorld.IsWater(t) || t == WbConstants.T_LAVA) && w.glacier[i] > 0)                                     // L159-163 水面/岩浆覆写清冰川（glacierTiles 计数——worldsim 层非观测域；eng.dirty.add L166 worldsim 面=glacier 门触达才写，夹具零值域）
+            {
+                w.glacier[i] = 0;
+            }
             // L155 elev 场（ELEV_TGT 回归）/ L164 driftAcc 场——worldsim 域未译注记维持
+        }
+
+        // ---- M-U10a 水深场三件（engine L1011-1070 机械翻译——refreshWaterTierAround dirty 面消费） ----
+        /// engine L1011-1013：陆格判定（水深分级扫描的 land 语义）
+        private static bool LandForDepth(byte t)
+        {
+            return t != WbWorld.T_DEEP && t != WbWorld.T_WATER && t != WbWorld.T_ICE;                                    // L1012
+        }
+
+        /// engine L1016-1046：单水格水深分级（WATER 0 浅礁/1 近岸/2 开阔；DEEP 3 陆架/4 深渊）
+        internal static int WaterTierAt(WbWorld w, int i)
+        {
+            byte t = w.terrain[i];                                                                                       // L1017
+            int x = i % WbWorld.W;                                                                                       // L1018
+            int y = (i / WbWorld.W) | 0;                                                                                 // L1019
+            if (t == WbConstants.T_DEEP)                                                                                 // L1020
+            {
+                for (int dy = -1; dy <= 1; dy++)                                                                         // L1021
+                {
+                    for (int dx = -1; dx <= 1; dx++)                                                                     // L1022
+                    {
+                        int xx = x + dx, yy = y + dy;                                                                    // L1023
+                        if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                            // L1024
+                        if (w.terrain[yy * WbWorld.W + xx] == WbConstants.T_WATER) return 3;                             // L1025 邻普通水 = 陆架
+                    }
+                }
+                return 4;                                                                                                // L1028 深渊
+            }
+            if (t != WbConstants.T_WATER) return 0;                                                                      // L1030
+            for (int r = 1; r <= 3; r++)                                                                                 // L1032 普通水：切比雪夫距离 1/2/3 内有陆地 → 浅礁/近岸/开阔
+            {
+                bool land = false;
+                for (int dy = -r; dy <= r && !land; dy++)                                                                // L1034
+                {
+                    for (int dx = -r; dx <= r; dx++)                                                                     // L1035
+                    {
+                        if (System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dy)) != r) continue;                    // L1036 只查外环
+                        int xx = x + dx, yy = y + dy;                                                                    // L1037
+                        if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                            // L1038
+                        if (LandForDepth(w.terrain[yy * WbWorld.W + xx])) { land = true; break; }                        // L1039
+                    }
+                }
+                if (land) return r - 1;                                                                                  // L1044
+            }
+            return 2;                                                                                                    // L1046
+        }
+
+        /// engine L1054-1070：地形变化后刷新半径 3 窗口内的水格分级并标脏（分级变了才重绘）
+        internal static void RefreshWaterTierAround(WbWorld w, int i)
+        {
+            int x = i % WbWorld.W;                                                                                       // L1055
+            int y = (i / WbWorld.W) | 0;                                                                                 // L1056
+            for (int dy = -3; dy <= 3; dy++)                                                                             // L1057
+            {
+                for (int dx = -3; dx <= 3; dx++)                                                                         // L1058
+                {
+                    int xx = x + dx, yy = y + dy;                                                                        // L1059
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                                // L1060
+                    int j = yy * WbWorld.W + xx;                                                                         // L1062
+                    byte tt = w.terrain[j];                                                                              // L1063
+                    if (tt != WbConstants.T_WATER && tt != WbConstants.T_DEEP) continue;                                 // L1064
+                    int tier = WaterTierAt(w, j);                                                                        // L1065
+                    if (w.waterTier[j] != tier)                                                                          // L1066
+                    {
+                        w.waterTier[j] = (byte)tier;                                                                     // L1067
+                        w.dirty.Add(j);                                                                                  // L1068（单格标脏——蓝本 dirty.add(j)，非 markDirty 五格面）
+                    }
+                }
+            }
+        }
+
+        // ================= effectsTick L9801-10447（M-U10a 游荡云族八种——sim 域切片） =================
+        // 机械翻译蓝本：engine.ts L9801-10447 的八支（tornado L9805-9824 / acid L9826-9850 /
+        //   blizzard L9915-9948 / locust L9949-9971 / drought L9972-9996 / rainstorm L9997-10022 /
+        //   sandstorm L10068-10090 / famine L10170-10190）+ 到期 splice L10439-10441 +
+        //   activeBattles %5 清理 L10443-10447。
+        // 未译 kind 注记：volcano L9851/tsunami L9877/wrath L10023/holystorm L10030/typhoon L10091/
+        //   sinkhole L10120/iceage L10148/blackhole L10191/quake L10224/meteor L10237/fireball L10240/
+        //   arrow·bullet L10255/…war 面 L10295-10438——else-if 链落空语义=蓝本无匹配（黄金夹具
+        //   仅八 kind 注入；到期 splice 对全 kind 生效逐位）；后续切片在对应蓝本位置插入分支。
+        // 掷序面（逐位）：游荡 dir 1 掷（drought 无游荡零掷）→ 采样门 1 掷（rainstorm 恒真 <1.2）
+        //   → ang/rr 2 掷 → 分支概率掷（短路 else-if 链逐位）→ fx('water'/'hit') 2 掷 →
+        //   attackBuilding 内掷。Math.hypot（tornado/sandstorm/famine）→ FdHypot 位精确件。
+        // 迭代语义：for 倒序 + splice(i,1)——C# List 倒序 RemoveAt(i) 同构。activeBattles
+        //   Map for...of 迭代中删——快照二段式（M-U8b 先例；清理门 tickCount%5 判定在快照外）。
+        internal static void EffectsTick(WbWorld w)
+        {
+            for (int i = w.effects.Count - 1; i >= 0; i--)                                                               // L9802
+            {
+                WbFx e = w.effects[i];
+                e.age++;                                                                                                 // L9803
+                if (e.kind == "tornado")                                                                                 // L9805
+                {
+                    e.dir += (w.Rng() - 0.5) * 0.35;                                                                     // L9806
+                    e.x = System.Math.Max(2, System.Math.Min(WbWorld.W - 3, e.x + System.Math.Cos(e.dir) * 0.2));        // L9807
+                    e.y = System.Math.Max(2, System.Math.Min(WbWorld.H - 3, e.y + System.Math.Sin(e.dir) * 0.2));        // L9808
+                    foreach (WbU u in w.units)                                                                           // L9809
+                    {
+                        if (u.dead != 0) continue;                                                                       // L9810
+                        double d = WbMath.FdHypot(u.x - e.x, u.y - e.y);                                                 // L9811（Math.hypot fdlibm 位精确域）
+                        if (d < 3.2)                                                                                     // L9812
+                        {
+                            double nx = u.x + ((u.x - e.x) / (d + 0.01)) * 0.4;                                          // L9813
+                            double ny = u.y + ((u.y - e.y) / (d + 0.01)) * 0.4;                                          // L9814
+                            if (WalkableT(w.terrain[(int)System.Math.Floor(ny) * WbWorld.W + (int)System.Math.Floor(nx)]) || DefOf(u.race).flying)   // L9815（walkable L73-76 || flying）
+                            {
+                                u.x = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, nx));                        // L9816
+                                u.y = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, ny));                        // L9817
+                            }
+                            u.hurt = 16;                                                                                 // L9819
+                            if (d < 2.2) u.hp -= 1.2;                                                                    // L9820
+                        }
+                    }
+                    int ti = (int)System.Math.Floor(e.y) * WbWorld.W + (int)System.Math.Floor(e.x);                      // L9821（idx(floor(e.x),floor(e.y))）
+                    if (w.building[ti] > 0 && w.Rng() < 0.3) WbCivSim.DestroyBuilding(w, ti);                            // L9822
+                    if (w.terrain[ti] == WbConstants.T_FOREST && w.Rng() < 0.08) SetTerrain(w, ti, WbConstants.T_GRASS); // L9823
+                }
+                else if (e.kind == "acid")                                                                               // L9826
+                {
+                    double ar2 = e.r * e.r;                                                                              // L9827 云盖半径平方（每 tick 常量，提出循环）
+                    foreach (WbU u in w.units)                                                                           // L9828
+                    {
+                        if (u.dead != 0) continue;                                                                       // L9829
+                        double adx = u.x - e.x;                                                                          // L9830
+                        double ady = u.y - e.y;                                                                          // L9831
+                        if (adx * adx + ady * ady < ar2)                                                                 // L9832
+                        {
+                            u.hp -= 0.3;                                                                                 // L9833
+                            u.hurt = 10;                                                                                 // L9834
+                            if (u.hp <= 0) u.dead = 1;                                                                   // L9835
+                        }
+                    }
+                    if (w.Rng() < 0.9)                                                                                   // L9837
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                       // L9838
+                        double rr = w.Rng() * e.r;                                                                       // L9839
+                        int j = (int)System.Math.Floor(e.y + System.Math.Sin(ang) * rr) * WbWorld.W + (int)System.Math.Floor(e.x + System.Math.Cos(ang) * rr);   // L9840
+                        if (j >= 0 && j < WbWorld.W * WbWorld.H)                                                         // L9841
+                        {
+                            byte t = w.terrain[j];                                                                       // L9842
+                            if (t == WbConstants.T_GRASS && w.Rng() < 0.55) SetTerrain(w, j, WbConstants.T_BURNT);       // L9843
+                            else if (t == WbConstants.T_FOREST && w.Rng() < 0.35) SetTerrain(w, j, WbConstants.T_GRASS); // L9844
+                            else if (t == WbConstants.T_SNOW && w.Rng() < 0.3) SetTerrain(w, j, WbConstants.T_GRASS);    // L9845
+                            if (w.building[j] > 0 && w.Rng() < 0.1) AttackBuilding(w, j, 3, -1);                         // L9846（独立 if 非 else-if——蓝本序）
+                        }
+                    }
+                }
+                else if (e.kind == "blizzard")                                                                           // L9915
+                {
+                    e.dir += (w.Rng() - 0.5) * 0.3;                                                                      // L9916
+                    e.x = System.Math.Max(2, System.Math.Min(WbWorld.W - 3, e.x + System.Math.Cos(e.dir) * 0.12));       // L9917
+                    e.y = System.Math.Max(2, System.Math.Min(WbWorld.H - 3, e.y + System.Math.Sin(e.dir) * 0.12));       // L9918
+                    double br2 = e.r * e.r;                                                                              // L9919 云盖半径平方（每 tick 常量，提出循环）
+                    foreach (WbU u in w.units)                                                                           // L9920
+                    {
+                        if (u.dead != 0) continue;                                                                       // L9921
+                        double bdx = u.x - e.x;                                                                          // L9922
+                        double bdy = u.y - e.y;                                                                          // L9923
+                        if (bdx * bdx + bdy * bdy < br2)                                                                 // L9924
+                        {
+                            bool coldBorn = u.race == WbConstants.R_PENGUIN || u.race == WbConstants.R_SNOWWOLF || u.race == WbConstants.R_WHITEWALKER;   // L9925
+                            if (!coldBorn)                                                                               // L9926
+                            {
+                                u.hp -= 0.22; u.hurt = 8; u.chill = 14;                                                  // L9927
+                                if (u.hp <= 0) u.dead = 1;                                                               // L9928
+                            }
+                        }
+                    }
+                    if (w.Rng() < 0.8)                                                                                   // L9931
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                       // L9932
+                        double rr = w.Rng() * e.r;                                                                       // L9933
+                        int j = (int)System.Math.Floor(e.y + System.Math.Sin(ang) * rr) * WbWorld.W + (int)System.Math.Floor(e.x + System.Math.Cos(ang) * rr);   // L9934
+                        if (j >= 0 && j < WbWorld.W * WbWorld.H)                                                         // L9935
+                        {
+                            byte t = w.terrain[j];                                                                       // L9936
+                            if (t == WbConstants.T_GRASS || t == WbConstants.T_BURNT) SetTerrain(w, j, WbConstants.T_SNOW);   // L9937
+                            else if (t == WbConstants.T_FOREST && w.Rng() < 0.4) SetTerrain(w, j, WbConstants.T_SNOW);   // L9938
+                            else if (t == WbConstants.T_SAND && w.Rng() < 0.2) SetTerrain(w, j, WbConstants.T_SNOW);     // L9939
+                            else if (t == WbConstants.T_WATER && w.Rng() < 0.45) SetTerrain(w, j, WbConstants.T_ICE);    // L9940 原子级：暴风雪冻结水面（浅水优先，深海更难冻实）
+                            else if (t == WbConstants.T_DEEP && w.Rng() < 0.06) SetTerrain(w, j, WbConstants.T_ICE);     // L9941
+                            if (w.fire[j] > 0) { w.fire[j] = 0; w.fireSet.Remove(j); w.fireSetList.Remove(j); }          // L9942-9943 寒霜也压熄火焰（fireSetList 插入序镜像同步——M-U9b）
+                        }
+                    }
+                }
+                else if (e.kind == "locust")                                                                             // L9949
+                {
+                    e.dir += (w.Rng() - 0.5) * 0.25;                                                                     // L9950
+                    e.x = System.Math.Max(2, System.Math.Min(WbWorld.W - 3, e.x + System.Math.Cos(e.dir) * 0.15));       // L9951
+                    e.y = System.Math.Max(2, System.Math.Min(WbWorld.H - 3, e.y + System.Math.Sin(e.dir) * 0.15));       // L9952
+                    double lr2 = e.r * e.r;                                                                              // L9953 云盖半径平方（每 tick 常量，提出循环）
+                    foreach (WbU u in w.units)                                                                           // L9954
+                    {
+                        if (u.dead != 0) continue;                                                                       // L9955
+                        double ldx = u.x - e.x;                                                                          // L9956
+                        double ldy = u.y - e.y;                                                                          // L9957
+                        if (ldx * ldx + ldy * ldy < lr2) { u.hp -= 0.06; if (u.hp <= 0) u.dead = 1; }                    // L9958
+                    }
+                    if (w.Rng() < 0.95)                                                                                  // L9960
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                       // L9961
+                        double rr = w.Rng() * e.r;                                                                       // L9962
+                        int j = (int)System.Math.Floor(e.y + System.Math.Sin(ang) * rr) * WbWorld.W + (int)System.Math.Floor(e.x + System.Math.Cos(ang) * rr);   // L9963
+                        if (j >= 0 && j < WbWorld.W * WbWorld.H)                                                         // L9964
+                        {
+                            byte t = w.terrain[j];                                                                       // L9965
+                            if (t == WbConstants.T_GRASS && w.Rng() < 0.6) SetTerrain(w, j, WbConstants.T_BURNT);        // L9966
+                            else if (t == WbConstants.T_FOREST && w.Rng() < 0.25) SetTerrain(w, j, WbConstants.T_GRASS); // L9967
+                            if (w.building[j] == 4) AttackBuilding(w, j, 4, -1);                                         // L9968（BUILD_KINDS.FARM=4——types.ts L340 字面量）
+                        }
+                    }
+                }
+                else if (e.kind == "drought")                                                                            // L9972（静态穹顶——零游荡零 dir 掷）
+                {
+                    if (w.Rng() < 0.85)                                                                                  // L9973
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                       // L9974
+                        double rr = w.Rng() * e.r;                                                                       // L9975
+                        int j = (int)System.Math.Floor(e.y + System.Math.Sin(ang) * rr) * WbWorld.W + (int)System.Math.Floor(e.x + System.Math.Cos(ang) * rr);   // L9976
+                        if (j >= 0 && j < WbWorld.W * WbWorld.H)                                                         // L9977
+                        {
+                            byte t = w.terrain[j];                                                                       // L9978
+                            if (t == WbConstants.T_GRASS && w.Rng() < 0.5) SetTerrain(w, j, WbConstants.T_SAND);         // L9979
+                            else if (t == WbConstants.T_FOREST && w.Rng() < 0.3) SetTerrain(w, j, WbConstants.T_BURNT);  // L9980
+                            else if (t == WbConstants.T_WATER && w.Rng() < 0.25) SetTerrain(w, j, WbConstants.T_SAND);   // L9981
+                            else if (t == WbConstants.T_ICE && w.Rng() < 0.4) MeltIce(w, j);                             // L9982 热浪融冰：干旱穹顶下的冰面无法存留
+                        }
+                    }
+                    double dr2 = e.r * e.r;                                                                              // L9985 穹顶半径平方（每 tick 常量，提出循环）
+                    foreach (WbU u in w.units)                                                                           // L9986
+                    {
+                        if (u.dead != 0) continue;                                                                       // L9987
+                        double ddx2 = u.x - e.x;                                                                         // L9988
+                        double ddy2 = u.y - e.y;                                                                         // L9989
+                        if (ddx2 * ddx2 + ddy2 * ddy2 < dr2)                                                             // L9990
+                        {
+                            bool heatproof = u.race == WbConstants.R_SKELETON || u.race == WbConstants.R_DEMON || u.race == WbConstants.R_ZOMBIE;   // L9991
+                            if (!heatproof) { u.hp -= 0.15; u.hurt = 6; if (u.hp <= 0) u.dead = 1; }                     // L9992
+                        }
+                    }
+                }
+                else if (e.kind == "rainstorm")                                                                          // L9997
+                {
+                    e.dir += (w.Rng() - 0.5) * 0.2;                                                                      // L9998
+                    e.x = System.Math.Max(2, System.Math.Min(WbWorld.W - 3, e.x + System.Math.Cos(e.dir) * 0.1));        // L9999
+                    e.y = System.Math.Max(2, System.Math.Min(WbWorld.H - 3, e.y + System.Math.Sin(e.dir) * 0.1));        // L10000
+                    if (w.Rng() < 1.2)                                                                                   // L10001（恒真门——掷位保持）
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                       // L10002
+                        double rr = w.Rng() * e.r;                                                                       // L10003
+                        int j = (int)System.Math.Floor(e.y + System.Math.Sin(ang) * rr) * WbWorld.W + (int)System.Math.Floor(e.x + System.Math.Cos(ang) * rr);   // L10004
+                        if (j >= 0 && j < WbWorld.W * WbWorld.H)                                                         // L10005
+                        {
+                            if (w.fire[j] > 0) { w.fire[j] = 0; w.fireSet.Remove(j); w.fireSetList.Remove(j); FxHook(w, "water", (j % WbWorld.W) + 0.5, ((j / WbWorld.W) | 0) + 0.5, 14); }   // L10006
+                            else if (w.radiate[j] > 0) { w.radiate[j] = 0; w.radSet.Remove(j); w.MarkDirty(j); }         // L10007（radSet 到期表 Remove 写面——radTick L2843 未译注入态）
+                            else if (w.terrain[j] == WbConstants.T_BURNT && w.Rng() < 0.3) { SetTerrain(w, j, WbConstants.T_GRASS); FxHook(w, "water", (j % WbWorld.W) + 0.5, ((j / WbWorld.W) | 0) + 0.5, 14); }   // L10008（复绿——setTerrain L979 regrow 出账联动）
+                            else if (w.terrain[j] == WbConstants.T_SNOW && w.Rng() < 0.1) SetTerrain(w, j, WbConstants.T_GRASS);   // L10009
+                        }
+                    }
+                    if (w.Rng() < 0.5)                                                                                   // L10013 治疗雨中生物（微弱生命甘霖）
+                    {
+                        double rr2 = e.r * e.r;                                                                          // L10014 云盖半径平方（提出循环）
+                        foreach (WbU u in w.units)                                                                       // L10015
+                        {
+                            if (u.dead != 0) continue;                                                                   // L10016
+                            double rdx = u.x - e.x;                                                                      // L10017
+                            double rdy = u.y - e.y;                                                                      // L10018
+                            if (rdx * rdx + rdy * rdy < rr2 && u.hp < u.maxHp) u.hp = System.Math.Min(u.maxHp, u.hp + 0.3);   // L10019
+                        }
+                    }
+                }
+                else if (e.kind == "sandstorm")                                                                          // L10068
+                {
+                    e.dir += (w.Rng() - 0.5) * 0.25;                                                                     // L10069
+                    e.x = System.Math.Max(2, System.Math.Min(WbWorld.W - 3, e.x + System.Math.Cos(e.dir) * 0.16));       // L10070
+                    e.y = System.Math.Max(2, System.Math.Min(WbWorld.H - 3, e.y + System.Math.Sin(e.dir) * 0.16));       // L10071
+                    if (w.Rng() < 0.9)                                                                                   // L10073
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                       // L10074
+                        double rr = w.Rng() * e.r;                                                                       // L10075
+                        int j = (int)System.Math.Floor(e.y + System.Math.Sin(ang) * rr) * WbWorld.W + (int)System.Math.Floor(e.x + System.Math.Cos(ang) * rr);   // L10076
+                        if (j >= 0 && j < WbWorld.W * WbWorld.H)                                                         // L10077
+                        {
+                            byte t = w.terrain[j];                                                                       // L10078
+                            if (t == WbConstants.T_GRASS && w.Rng() < 0.5) SetTerrain(w, j, WbConstants.T_SAND);         // L10079
+                            else if (t == WbConstants.T_FOREST && w.Rng() < 0.2) SetTerrain(w, j, WbConstants.T_GRASS);  // L10080
+                        }
+                    }
+                    foreach (WbU u in w.units)                                                                           // L10083
+                    {
+                        if (u.dead != 0) continue;                                                                       // L10084
+                        if (WbMath.FdHypot(u.x - e.x, u.y - e.y) < e.r)                                                  // L10085（Math.hypot fdlibm 位精确域）
+                        {
+                            u.chill = 12;                                                                                // L10086 风沙迷眼：踉跄减速
+                            u.hp -= 0.1; u.hurt = 8;                                                                     // L10087
+                            if (u.hp <= 0) u.dead = 1;                                                                   // L10088
+                        }
+                    }
+                }
+                else if (e.kind == "famine")                                                                             // L10170
+                {
+                    e.dir += (w.Rng() - 0.5) * 0.22;                                                                     // L10171
+                    e.x = System.Math.Max(2, System.Math.Min(WbWorld.W - 3, e.x + System.Math.Cos(e.dir) * 0.12));       // L10172
+                    e.y = System.Math.Max(2, System.Math.Min(WbWorld.H - 3, e.y + System.Math.Sin(e.dir) * 0.12));       // L10173
+                    foreach (WbU u in w.units)                                                                           // L10174
+                    {
+                        if (u.dead != 0) continue;                                                                       // L10175
+                        if (WbMath.FdHypot(u.x - e.x, u.y - e.y) < e.r)                                                  // L10176（Math.hypot fdlibm 位精确域）
+                        {
+                            bool undead = DefOf(u.race).undead;                                                          // L10177
+                            if (!undead) { u.hp -= 0.24; u.hurt = 10; if (u.hp <= 0) u.dead = 1; }                       // L10178
+                        }
+                    }
+                    if (w.Rng() < 0.7)                                                                                   // L10181
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                       // L10182
+                        double rr = w.Rng() * e.r;                                                                       // L10183
+                        int j = (int)System.Math.Floor(e.y + System.Math.Sin(ang) * rr) * WbWorld.W + (int)System.Math.Floor(e.x + System.Math.Cos(ang) * rr);   // L10184
+                        if (j >= 0 && j < WbWorld.W * WbWorld.H)                                                         // L10185
+                        {
+                            if (w.building[j] == 4) AttackBuilding(w, j, 4, -1);                                         // L10186（BUILD_KINDS.FARM=4）
+                            else if (w.terrain[j] == WbConstants.T_GRASS && w.Rng() < 0.12) SetTerrain(w, j, WbConstants.T_BURNT);   // L10186 寸草不生
+                        }
+                    }
+                }
+                // 未译 kind 落空（volcano/tsunami/wrath/holystorm/typhoon/sinkhole/iceage/blackhole/quake/
+                // meteor/fireball/arrow·bullet/…war 面 L9851-10438——后续切片插入；夹具仅八 kind）
+                if (e.age >= e.ttl)                                                                                      // L10439
+                {
+                    w.effects.RemoveAt(i);                                                                               // L10440（倒序 splice 同构）
+                }
+            }
+            // L10443-10447 战斗红闪过期清理（Map 迭代中删——快照二段式；门在快照外零掷）
+            if (w.activeBattles.Count > 0 && w.tickCount % 5 == 0)
+            {
+                System.Collections.Generic.List<int> dueKeys = null;                                                     // 过期键快照（懒分配——绝大多数 tick 无过期项）
+                foreach (System.Collections.Generic.KeyValuePair<int, int> kv in w.activeBattles)
+                {
+                    if (kv.Value <= w.tickCount) { (dueKeys ??= new System.Collections.Generic.List<int>()).Add(kv.Key); }
+                }
+                if (dueKeys != null)
+                {
+                    foreach (int k in dueKeys) w.activeBattles.Remove(k);
+                }
+            }
+        }
+
+        /// constants.ts L73-76：walkable（tornado 推拽门消费——WbCivSim.WalkableT private 同构内联复用形）
+        private static bool WalkableT(byte t)
+        {
+            return t != WbWorld.T_DEEP && t != WbWorld.T_WATER && t != WbWorld.T_MOUNTAIN && t != WbWorld.T_LAVA;        // L73-76
         }
 
         // ================= regrowTick L2830-2840（M-U8b regrow 域核心——sim 域切片） =================

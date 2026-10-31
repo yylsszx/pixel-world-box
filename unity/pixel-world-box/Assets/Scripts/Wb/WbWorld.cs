@@ -503,6 +503,10 @@ namespace PixelWorldBox.Wb
         public List<double[]> pSystems = new List<double[]>(); // nature.ts L74 气压中心 {x, y, kind, str, ttl}——windAt 科氏旋涡（x/y 像素域 f64；atmTick 生灭未译注入态）
         public List<double[]> storms = new List<double[]>();   // nature.ts L70 风暴 {x, y, strength}——windAt 气旋环流（stormTick 生灭未译注入态）
 
+        // —— M-U10a effectsTick 游荡云族域（字段只加）——
+        public Dictionary<int, int> radSet = new Dictionary<int, int>();   // engine L168 radSet Map<number, number>（辐射到期表：键 tile，值到期 tick——radTick L2843-2846 消费未译；rainstorm L10008 洗净 delete 写面）
+        public byte[] waterTier = new byte[W * H];             // engine L263 waterTier: Uint8Array（水深分级 0 浅礁/1 近岸/2 开阔/3 陆架/4 深渊——refreshWaterTierAround L1054 对比基线；generate rebuildWaterTiers 初始态=夹具注入 waterTier0）
+
         // ---------------- 集合层（M-U3c 战争/联盟/图谱域） ----------------
         public Dictionary<string, WbWarData> warData = new Dictionary<string, WbWarData>();  // key 'a-b'（a<b）
         public HashSet<string> totalWars = new HashSet<string>();
@@ -761,10 +765,11 @@ namespace PixelWorldBox.Wb
             }
         }
 
-        /// FX_MINOR（L9779）—— 次要特效种类（满载时逐出/丢弃）
+        /// FX_MINOR（L9779）—— 次要特效种类（满载时逐出/丢弃）；M-U10a 补齐 'bullet'/'frost' 两项（12 项对齐蓝本——此前为当时消费面子集）
         private static readonly HashSet<string> FxMinorSet = new HashSet<string>
         {
             "dmg", "hit", "smoke", "spawn", "heart", "skull", "arrow", "coin", "blood", "dust",
+            "bullet", "frost",
         };
 
         public static bool IsFxMinor(string kind) => FxMinorSet.Contains(kind);
