@@ -474,7 +474,7 @@ namespace PixelWorldBox.Wb
         public List<WbEv> worldEvents = new List<WbEv>();   // unshift 语义：新的在最前
         public List<WbToast> toasts = new List<WbToast>();  // onToast 回调收集（toast 本体不存储）
         public int eventSeq;
-        public int toastSeq;
+        public int toastSeq = 1;                    // engine L181 toastSeq = 1（类字段初始化——首条 toast id=1；M-U11 补译，存档链显式注入面不受影响）
 
         // —— M-U7k 河域（字段只加）——
         public byte[] soilF = new byte[W * H];                 // worldsim.ts L54 soilF: Uint8Array（initFromTerrain L125 SOIL_BASE[t] ?? 128 世界生成期初值）

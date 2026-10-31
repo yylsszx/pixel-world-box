@@ -3225,6 +3225,87 @@ namespace PixelWorldBox.Wb
             }
         }
 
+        // ================= M-U11 雨洪生产域（regrow 生产源之二 + flood 生产源两支——调用面 nature.ts L527/L532 暴雨云与 toolsTick L13370 未译，本体先行建库：M-U10h annihilate 本体先例同构） =================
+
+        // rainRegrow L10660-10671（雨区复苏：8×8 窗 4 采样命中焦土 → regrow 计时提前——max(tick+60, at-160)；
+        //   采样 2 掷/次、命中即返（掷数可变——黄金 totalDraws 记录对账））
+        internal static void RainRegrow(WbWorld w, double x0, double y0)
+        {
+            for (int k = 0; k < 4; k++)                                                                                    // L10662
+            {
+                double xx = x0 + System.Math.Floor(w.Rng() * 8.0);                                                         // L10663
+                double yy = y0 + System.Math.Floor(w.Rng() * 8.0);                                                         // L10664
+                if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                                      // L10665
+                int i = (int)yy * WbWorld.W + (int)xx;                                                                     // L10666（idx——floor 后整值 double 强转无损）
+                if (w.regrow.TryGetValue(i, out long at))                                                                  // L10667-10668（at != null → TryGetValue 语义同构）
+                {
+                    w.regrow[i] = System.Math.Max((long)w.tickCount + 60L, at - 160L);                                     // L10669（Math.max 整数域——JS number 位等）
+                    return;                                                                                                // L10670
+                }
+            }
+        }
+
+        // natureFlood L10673-10693（流域洪水：持续暴雨低地没顶——10 次极坐标采样 + 三地形门 + flood 门 +
+        //   setTerrain(WATER) 全级联 + flood.set(+180+rng*120) + 建筑摧毁 + flooded>=4 纪事；
+        //   极坐标 Math.cos/sin——fdlibm 域，C# FdCos/FdSin 位精确件对账）
+        internal static void NatureFlood(WbWorld w, double x, double y)
+        {
+            int flooded = 0;                                                                                               // L10674
+            for (int k = 0; k < 10; k++)                                                                                   // L10675
+            {
+                double ang = w.Rng() * System.Math.PI * 2.0;                                                               // L10676
+                double rr = w.Rng() * 4.5;                                                                                 // L10677
+                int xx = (int)System.Math.Floor(x + WbMath.FdCos(ang) * rr);                                               // L10678（fdlibm cos——bun 口径）
+                int yy = (int)System.Math.Floor(y + WbMath.FdSin(ang) * rr);                                               // L10679（fdlibm sin）
+                if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                                      // L10680
+                int i = yy * WbWorld.W + xx;                                                                               // L10681
+                byte t = w.terrain[i];                                                                                     // L10682
+                if ((t == WbConstants.T_GRASS || t == WbConstants.T_SAND || t == WbConstants.T_BURNT) && !w.flood.ContainsKey(i))   // L10683（GRASS/SAND/BURNT 门 + flood 门）
+                {
+                    SetTerrain(w, i, WbConstants.T_WATER);                                                                 // L10684（全级联——regrow 出账/owner 熄/fire 熄/road 清/waterTier 重算/glacier 清）
+                    w.flood[i] = (long)w.tickCount + 180L + (long)System.Math.Floor(w.Rng() * 120.0);                      // L10685（退潮到期）
+                    if (w.building[i] > 0) WbCivSim.DestroyBuilding(w, i);                                                 // L10686（smoke fx 2 掷级联）
+                    flooded++;                                                                                             // L10687
+                }
+            }
+            if (flooded >= 4)                                                                                              // L10689
+            {
+                AddEventHook(w, "geo", "持续的暴雨漫过了河岸，洼地化作一片泽国", null, x, y);                              // L10690（纪事——x/y 数字面）
+            }
+        }
+
+        // floodArea L10695-10723（神力洪水：目标半径内洼地漫成泽国——半径钳 [2,12] + Math.hypot 圆域门
+        //   （fdlibm——C# FdHypot 对账）+ 五地形门 + flood 门 + flood.set(+180+rng*180) + flooded>0 →
+        //   fx tsunami{r:rr+1,quiet} + shake max(3) + onSound 宿主回调注记 + toast）
+        internal static void FloodArea(WbWorld w, double x, double y, double r)
+        {
+            double rr = System.Math.Max(2.0, System.Math.Min(12.0, r));                                                    // L10696（Math.max/min——有限值域位等）
+            int flooded = 0;                                                                                               // L10697
+            for (int yy = (int)System.Math.Floor(y - rr); yy <= y + rr; yy++)                                              // L10698（双上界 y+rr number 语义——annihilate L9571 先例同构）
+            {
+                for (int xx = (int)System.Math.Floor(x - rr); xx <= x + rr; xx++)                                          // L10699
+                {
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                                  // L10700
+                    if (WbMath.FdHypot(xx - x, yy - y) > rr) continue;                                                     // L10701（fdlibm hypot——格角距无 0.5 偏移，annihilate L9574 中心距异构勿混）
+                    int i = yy * WbWorld.W + xx;                                                                           // L10703
+                    byte t = w.terrain[i];                                                                                 // L10704
+                    if (t != WbConstants.T_GRASS && t != WbConstants.T_SAND && t != WbConstants.T_BURNT && t != WbConstants.T_SWAMP && t != WbConstants.T_HILL) continue;   // L10705（五地形门）
+                    if (w.flood.ContainsKey(i)) continue;                                                                  // L10706（flood 门）
+                    SetTerrain(w, i, WbConstants.T_WATER);                                                                 // L10708（全级联）
+                    w.flood[i] = (long)w.tickCount + 180L + (long)System.Math.Floor(w.Rng() * 180.0);                      // L10709（半径越大涨水越久）
+                    if (w.building[i] > 0) WbCivSim.DestroyBuilding(w, i);                                                 // L10710
+                    flooded++;                                                                                             // L10711
+                }
+            }
+            if (flooded > 0)                                                                                               // L10715
+            {
+                FxOptHook(w, "tsunami", x, y, 30, null, null, null, rr + 1.0, null);                                       // L10716（opts {r:rr+1,quiet:true}——quiet 渲染面丢弃；kraken L3791 M-U7s 先例同构）
+                w.shake = System.Math.Max(w.shake, 3.0);                                                                   // L10717
+                /* onSound?.('tsunami') —— 宿主回调（L10718） */
+                w.Toast($"洪水漫过了大地（{flooded} 格），数秒后将退去", "info");                                           // L10719
+            }
+        }
+
         // isHerbivoreRace L2120-2128（猎物链底层判定：静态八种 + dynRaces 递归母族）
         private static bool IsHerbivoreRace(WbWorld w, int race)
         {

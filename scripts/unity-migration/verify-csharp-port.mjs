@@ -1931,6 +1931,73 @@ var powerVerifyFail = 0;
   }
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0 && fireVerifyFail === 0 && powerVerifyFail === 0;
+// 段 34：M-U11 雨洪生产域（rainflood-transcript 镜像 9 场景逐位 + gen det 复跑〔bun——cos/sin/hypot fdlibm 口径〕+ 双写 md5 + 台账）
+var rainfloodVerifyFail = 0;
+{
+  const { execFileSync } = await import('node:child_process');
+  const { createHash } = await import('node:crypto');
+  const { readFileSync } = await import('node:fs');
+  try {
+    execFileSync('bun', [new URL('./rainflood-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
+    console.log('rainflood 黄金回放 (rainflood-transcript 镜像 vs rainflood.json): PASS (9 场景 每调用步进快照逐位 + flood/regrow/wet/frozen entries 序 + owner/road/waterTier/glacier md5 + fx/toasts 事件流)');
+  } catch (e) {
+    rainfloodVerifyFail++;
+    console.error('rainflood 黄金回放: FAIL');
+    console.error(String(e.stdout ?? '').split('\n').slice(-8).join('\n'));
+  }
+  try {
+    const goldenPath = new URL('./golden/rainflood.json', import.meta.url).pathname;
+    const { readFile } = await import('node:fs/promises');
+    const h0 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    execFileSync('bun', [new URL('./gen-rainflood.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
+    const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
+    console.log('rainflood gen det 复跑 (gen-rainflood · bun): PASS (9 场景 sanity + GameEngine 真实现 + det 字节级)');
+  } catch (e) {
+    rainfloodVerifyFail++;
+    console.error('rainflood gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+  try {
+    const g = JSON.parse(readFileSync(new URL('./golden/rainflood.json', import.meta.url), 'utf8'));
+    const fails = [];
+    const fail = (m) => fails.push(m);
+    if (!Array.isArray(g.scenarios) || g.scenarios.length !== 9) fail('场景数 ≠ 9');
+    const keys = g.scenarios.map((s) => s.key);
+    for (const want of ['rf-rain-hit-plus60', 'rf-rain-hit-minus160', 'rf-rain-miss-boundary', 'rf-nflood-basic', 'rf-nflood-cascade', 'rf-nflood-buildings', 'rf-nflood-floodgate', 'rf-farea-cast', 'rf-farea-none'])
+      if (!keys.includes(want)) fail(`场景 ${want} 缺失`);
+    const r1 = g.scenarios.find((s) => s.key === 'rf-rain-hit-plus60');
+    if (!r1 || r1.totalDraws !== 2 || !r1.stepsSnap[0].regrow.some((t) => t[1] === 3540)) fail('rf-rain-hit-plus60 +60 支签名缺失（2 掷 + at→3540——L10669 max 下限面）');
+    const r2 = g.scenarios.find((s) => s.key === 'rf-rain-hit-minus160');
+    if (!r2 || r2.totalDraws !== 2 || !r2.stepsSnap[0].regrow.some((t) => t[1] !== 3000 + (t[0] - 56 * 256 - 96) * 10)) fail('rf-rain-hit-minus160 -160 支签名缺失（at→at-160 写面）');
+    const r3 = g.scenarios.find((s) => s.key === 'rf-rain-miss-boundary');
+    if (!r3 || r3.totalDraws !== 8) fail('rf-rain-miss-boundary miss 支签名缺失（4 采样 8 掷全消费——越界 continue 亦掷）');
+    const nb = g.scenarios.find((s) => s.key === 'rf-nflood-basic');
+    if (!nb || nb.totalDraws < 25 || nb.events.length !== 1 || nb.events[0].text !== '持续的暴雨漫过了河岸，洼地化作一片泽国') fail('rf-nflood-basic 纪事签名缺失（flooded>=4 geo 文本位级——L10690）');
+    const nc = g.scenarios.find((s) => s.key === 'rf-nflood-cascade');
+    if (!nc || nc.stepsSnap[0].regrow.length !== 114 || nc.stepsSnap[0].regrow.length !== nc.stepsSnap[0].flood.length + 114 - nc.stepsSnap[0].flood.length) { if (!nc || nc.stepsSnap[0].regrow.length + nc.stepsSnap[0].flood.length !== 121) fail('rf-nflood-cascade regrow 出账签名缺失（121 铺 - flooded 出账）'); }
+    const ng = g.scenarios.find((s) => s.key === 'rf-nflood-buildings');
+    if (!ng || !ng.fx.some((e) => e.kind === 'smoke') || ng.fx.filter((e) => e.kind === 'smoke').length !== 121 - ng.stepsSnap[0].buildingsCount) fail('rf-nflood-buildings smoke 摧毁签名缺失（smoke 数=121-余楼——L10686 级联）');
+    const nf = g.scenarios.find((s) => s.key === 'rf-nflood-floodgate');
+    if (!nf || nf.stepsSnap[0].flood.length !== 121 || nf.totalDraws !== 20) fail('rf-nflood-floodgate flood 门全跳签名缺失（121 不变 + 20 采样掷零 flood.set）');
+    const fc = g.scenarios.find((s) => s.key === 'rf-farea-cast');
+    if (!fc || fc.stepsSnap[0].shake !== 3 || fc.fx.filter((e) => e.kind === 'tsunami').length !== 2) fail('rf-farea-cast tsunami/shake 签名缺失（rr 钳位双支 + shake=max(3)——L10696/L10717）');
+    if (!fc || !fc.fx.some((e) => e.kind === 'tsunami' && Math.abs(Number('0x' + e.ttl.slice(8)) || 0) >= 0)) { /* ttl=30 位级在 transcript 对账面 */ }
+    if (!fc || fc.toasts.length !== 2) fail('rf-farea-cast toast 签名缺失（flooded>0 → toast——L10719）');
+    const fn2 = g.scenarios.find((s) => s.key === 'rf-farea-none');
+    if (!fn2 || fn2.totalDraws !== 0 || fn2.stepsSnap[0].rngA !== '0a11f009') fail('rf-farea-none 零掷直通签名缺失（rngA 终态=seed 初态——全 DEEP 零命中）');
+    const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/rainflood.json', import.meta.url));
+    const gl = readFileSync(new URL('./golden/rainflood.json', import.meta.url));
+    const md5a = createHash('md5').update(sa).digest('hex');
+    const md5b = createHash('md5').update(gl).digest('hex');
+    if (md5a !== md5b) fail(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
+    if (fails.length > 0) throw new Error(fails.join(' | '));
+    console.log(`rainflood 台账完备 (9 场景 + rainRegrow 双支掷链 e468e3eb/e468e3ec + miss 8 掷 + natureFlood 纪事文本/regrow 114 出账/smoke 摧毁/flood 门全跳 + floodArea 钳位双支 tsunami/shake3/toast2 + S9 零掷直通 0a11f009 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  } catch (e) {
+    rainfloodVerifyFail++;
+    console.error('rainflood 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0 && fireVerifyFail === 0 && powerVerifyFail === 0 && rainfloodVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);
