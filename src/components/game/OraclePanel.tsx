@@ -86,6 +86,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   { key: 'ollama', label: 'Ollama 本地', config: { kind: 'openai', label: 'Ollama 本地', baseUrl: 'http://localhost:11434/v1', model: 'llama3.1' } },
   { key: 'anthropic', label: 'Anthropic', config: { kind: 'anthropic', label: 'Anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-20250514' } },
   { key: 'custom', label: '自定义', config: { kind: 'openai', label: '自定义（OpenAI 兼容）', baseUrl: '', model: '' } },
+  { key: 'local-qwen05b', label: '本地 Qwen-0.5B', config: { kind: 'local', label: '本地 Qwen-0.5B', model: 'XENova/qwen2.5-0.5b-instruct', temperature: 0.7 } },
 ];
 
 const PROVIDER_STORE_KEY = 'oracle-provider-v1';
@@ -97,8 +98,8 @@ function loadProvider(): OracleProviderConfig {
     const raw = localStorage.getItem(PROVIDER_STORE_KEY);
     if (!raw) return DEFAULT_PROVIDER;
     const p = JSON.parse(raw) as OracleProviderConfig;
-    if (p && (p.kind === 'builtin' || p.kind === 'openai' || p.kind === 'anthropic')) {
-      return { kind: p.kind as ProviderKind, label: p.label, baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.model, temperature: p.temperature };
+    if (p && (p.kind === 'builtin' || p.kind === 'openai' || p.kind === 'anthropic' || p.kind === 'local')) {
+      return { kind: p.kind as ProviderKind, label: p.label, baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.model, temperature: p.temperature, forceCpu: p.forceCpu };
     }
   } catch {
     /* 坏存档回默认 */
@@ -110,6 +111,12 @@ function loadProvider(): OracleProviderConfig {
 function matchPresetKey(p: OracleProviderConfig): string {
   if (p.kind === 'builtin') return 'builtin';
   if (p.kind === 'anthropic') return 'anthropic';
+  if (p.kind === 'local') {
+    for (const pre of PROVIDER_PRESETS) {
+      if (pre.key !== 'custom' && pre.config.kind === 'local' && pre.config.model === p.model) return pre.key;
+    }
+    return 'custom';
+  }
   for (const pre of PROVIDER_PRESETS) {
     if (pre.key !== 'custom' && pre.config.kind === 'openai' && p.baseUrl && pre.config.baseUrl === p.baseUrl) return pre.key;
   }
@@ -472,6 +479,7 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
   const [test, setTest] = useState<{ state: 'idle' | 'testing' | 'ok' | 'fail'; msg?: string }>({ state: 'idle' });
   const activeKey = matchPresetKey(provider);
   const isBuiltin = provider.kind === 'builtin';
+  const isLocal = provider.kind === 'local';
 
   /** 测试连通：POST /api/oracle/agent 发最小会话，读首个 SSE data 事件判断成败 */
   const runTest = useCallback(async () => {
@@ -588,9 +596,11 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
       </div>
 
       {/* 端点配置（内置 Z.ai 免密钥，仅温度） */}
-      {isBuiltin ? (
+      {isBuiltin || isLocal ? (
         <p className="rounded-sm border border-teal-400/30 bg-teal-400/5 px-1.5 py-1 text-[9px] leading-relaxed text-teal-300/80">
-          内置 Z.ai 经本站后端直连，无需密钥。
+          {isLocal
+            ? '本地模型在浏览器端直接运行（transformers.js），无需服务端与密钥；首次使用会下载模型权重（约几百 MB），随后浏览器缓存离线可用。'
+            : '内置 Z.ai 经本站后端直连，无需密钥。'}
         </p>
       ) : (
         <div className="flex flex-col gap-1.5">
@@ -650,19 +660,53 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
         />
       </label>
 
-      {/* 测试连通 */}
-      <div className="flex items-center gap-1.5">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => void runTest()}
-          disabled={test.state === 'testing'}
-          aria-label="测试厂商连通性"
-          className="h-6 min-w-0 flex-1 gap-1 rounded-sm border-2 border-teal-400/40 bg-teal-400/10 px-1 text-[10px] font-bold text-teal-300 transition-colors hover:bg-teal-400/20 hover:text-teal-200 disabled:opacity-40"
-        >
-          <FlaskConical className="h-3 w-3 shrink-0" aria-hidden />
-          <span className="truncate">{test.state === 'testing' ? '测试中…' : '测试连通'}</span>
-        </Button>
+      {/* 本地模型专用配置 */}
+      {isLocal && (
+        <div className="flex flex-col gap-1.5">
+          <label className="flex flex-col gap-0.5">
+            <span className={labelCls}>模型标识符</span>
+            <input
+              value={provider.model ?? ''}
+              onChange={(e) => onApply({ ...provider, model: e.target.value || undefined })}
+              placeholder="XENova/qwen2.5-0.5b-instruct"
+              spellCheck={false}
+              className={inputCls}
+              aria-label="本地模型标识符"
+            />
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={provider.forceCpu === true}
+              onChange={(e) =>
+                onApply({ ...provider, forceCpu: e.target.checked })
+              }
+              className="w-3 h-3 rounded border-zinc-600 bg-zinc-800 text-amber-400 focus:ring-amber-400"
+            />
+            <span className="text-[9px] text-zinc-300">
+              强制 CPU（关闭 WebGPU，兼容性更好但更慢）
+            </span>
+          </label>
+          <p className="rounded-sm border border-amber-400/30 bg-amber-400/5 px-1.5 py-1 text-[9px] leading-relaxed text-amber-300/80">
+            推荐模型：Qwen2.5-0.5B-Instruct（0.5B 参数，4 位量化 ~350MB）。移动端首次加载需下载模型，建议 Wi-Fi 下进行；后续浏览器会缓存，离线可用。
+          </p>
+        </div>
+      )}
+
+      {/* 测试连通（仅云端厂商） */}
+      {!isLocal && (
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void runTest()}
+            disabled={test.state === 'testing'}
+            aria-label="测试厂商连通性"
+            className="h-6 min-w-0 flex-1 gap-1 rounded-sm border-2 border-teal-400/40 bg-teal-400/10 px-1 text-[10px] font-bold text-teal-300 transition-colors hover:bg-teal-400/20 hover:text-teal-200 disabled:opacity-40"
+          >
+            <FlaskConical className="h-3 w-3 shrink-0" aria-hidden />
+            <span className="truncate">{test.state === 'testing' ? '测试中…' : '测试连通'}</span>
+          </Button>
         {test.state === 'ok' && (
           <span className="shrink-0 rounded-sm border border-emerald-400/50 bg-emerald-400/10 px-1 py-0.5 text-[9px] font-bold text-emerald-300">
             ✓ 连通
@@ -677,6 +721,7 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
           </span>
         )}
       </div>
+      )}
 
       <p className="text-[8px] leading-relaxed text-zinc-600">
         apiKey 仅存本浏览器 localStorage，并经本站后端转发至厂商——不会出现在日志与世界存档中。

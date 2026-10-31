@@ -14,6 +14,7 @@ import type { AgentChatMessage, AgentToolCall, AgentToolResult, OracleProviderCo
 import { executeOracleTool } from './bridge';
 import { AGENT_TOOLS, type ToolArgDef } from './tools';
 import { getEngine } from '@/store/gameStore';
+import { callLocalModel } from './local-provider';
 
 /** 单条消息里携带的工具事件（面板气泡渲染用） */
 export interface OracleToolEvent {
@@ -413,6 +414,22 @@ async function callModel(
   signal: AbortSignal | undefined,
   onDelta: AgentTurnCallbacks['onDelta'],
 ): Promise<{ content: string; reasoning: string; err: string }> {
+  // ── 本地模型分支（浏览器端原生推理，无需服务器） ──
+  if (provider.kind === 'local') {
+    try {
+      const result = await callLocalModel(provider, messages, signal);
+      // 本地模型一次性返回完整文本，通过 onDelta 一次性推送，兼容 agent 循环的流式接口
+      onDelta?.({ text: result.content, reason: result.reasoning });
+      return {
+        content: result.content,
+        reasoning: result.reasoning,
+        err: result.err,
+      };
+    } catch (e) {
+      return { content: '', reasoning: '', err: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
   let content = '';
   let reasoning = '';
   let streamErr = '';

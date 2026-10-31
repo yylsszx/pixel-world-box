@@ -2,21 +2,23 @@
 // 全能 Agent 运行时的公共契约：多厂商 provider 配置、对话消息、
 // 工具调用协议（模型侧发起）与工具结果回传（客户端执行引擎后回填）。
 
-/** 模型提供方类别：builtin=内置 z-ai-web-dev-sdk；openai=任意 OpenAI 兼容端点；anthropic=Claude 系 */
-export type ProviderKind = 'builtin' | 'openai' | 'anthropic';
+/** 模型提供方类别：builtin=内置 z-ai-web-dev-sdk；openai=任意 OpenAI 兼容端点；anthropic=Claude 系；local=浏览器端本地模型（transformers.js） */
+export type ProviderKind = 'builtin' | 'openai' | 'anthropic' | 'local';
 
 export interface OracleProviderConfig {
   kind: ProviderKind;
-  /** 显示名（如 "DeepSeek"、"Claude"）——仅用于错误信息与日志 */
+  /** 显示名（如 "DeepSeek"、"Claude"、"本地 Qwen-0.5B"）——仅用于错误信息与日志 */
   label?: string;
-  /** API 根地址。openai/anthropic 必填（自动归一化拼接 /chat/completions 或 /v1/messages）；builtin 忽略 */
+  /** API 根地址。openai/anthropic 必填（自动归一化拼接 /chat/completions 或 /v1/messages）；builtin/local 忽略 */
   baseUrl?: string;
-  /** API 密钥。openai/anthropic 必填；builtin 忽略。绝不写入日志。 */
+  /** API 密钥。openai/anthropic 必填；builtin/local 忽略。绝不写入日志。 */
   apiKey?: string;
-  /** 模型名（openai/anthropic 必填，如 "deepseek-chat"、"claude-sonnet-4-20250514"） */
+  /** 模型名。openai/anthropic 必填；local 填 transformers.js 模型标识符（如 "XENova/qwen2.5-0.5b-instruct"）或本地 public 目录下的模型子路径 */
   model?: string;
   /** 采样温度 0-2，可选 */
   temperature?: number;
+  /** 本地模型：是否强制使用 CPU（回退）。默认 false，transformers.js 会自动使用 WebGPU/WASM */
+  forceCpu?: boolean;
 }
 
 export interface AgentChatMessage {
