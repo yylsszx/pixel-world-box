@@ -703,7 +703,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   councilFeed: [],
   councilPending: [],
   // 原生离线战略 AI（无外部 API 时接管文明决策）
-  offlineAI: false,
+  offlineAI: true,
   toggleOfflineAI: () => {
     const next = !get().offlineAI;
     sfx.ui('toggle');
