@@ -220,6 +220,22 @@ export function greedySample(logits: Float32Array, vocabSize: number): number {
   return best;
 }
 
+/** ===================== 反向传播（训练期用）===================== */
+/** 单样本交叉熵梯度：d_logits = probs - onehot(target) */
+export function xentGrad(logits: Float32Array, targetId: number, vocabSize: number): { loss: number; grad: Float32Array } {
+  let max = -Infinity;
+  for (let i = 0; i < vocabSize; i++) if (logits[i] > max) max = logits[i];
+  let sum = 0;
+  for (let i = 0; i < vocabSize; i++) { sum += Math.exp(logits[i] - max); }
+  const invSum = 1 / sum;
+  const probs = new Float32Array(vocabSize);
+  for (let i = 0; i < vocabSize; i++) probs[i] = Math.exp(logits[i] - max) * invSum;
+  const loss = -Math.log(probs[targetId] + 1e-8);
+  const grad = new Float32Array(vocabSize);
+  for (let i = 0; i < vocabSize; i++) grad[i] = probs[i] - (i === targetId ? 1 : 0);
+  return { loss, grad };
+}
+
 export function temperatureSample(logits: Float32Array, vocabSize: number, temperature: number, rng: () => number): number {
   const t = Math.max(0.01, temperature);
   const probs = new Float32Array(vocabSize);
