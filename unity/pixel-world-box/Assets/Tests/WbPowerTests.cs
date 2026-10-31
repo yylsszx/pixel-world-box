@@ -182,7 +182,7 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindPower()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(26));
+            Assert.That(scens.Count, Is.EqualTo(28));
             var gear0 = WbBailRelay.GearBonusHook;                       // M-U10c：接缝置换 try/finally（Test30 桩先例——黄金回放 armor 采样桩）
             try
             {

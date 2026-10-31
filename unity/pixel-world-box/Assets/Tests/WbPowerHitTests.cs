@@ -769,5 +769,124 @@ namespace PixelWorldBox.Tests
             Assert.That(wI.units[0].hp == 50 && wI.units[0].hurt == 0, Is.True, "空转单位零伤零 hurt");
             Assert.That(wI.effects.Count, Is.EqualTo(1), "laser 未 splice 未产 fx（age<ttl——L10439 门未开）");
         }
+
+        // ================= Test41：M-U10g orbital 直测（L10370-10388——ttl 到期单发：shellBurst(4.5,120,fire) + 焦化环 rng<0.8 四门短路 + superweapon 纪事 + shake=9 + 山/水/界外零掷 + 空转零掷） =================
+
+        [Test]
+        public void Test41_Orbital_GoldenMirror()
+        {
+            // 黄金 S27 镜像（seed 0x0A0E1C 同流，两步 tick ≡ stepsSnap 逐位）：全支位级 + fireSet=4 + 纪事 + killCredit 往返
+            var w = new WbWorld();
+            w.tickCount = 26000;
+            for (int i = 0; i < w.terrain.Length; i++) w.terrain[i] = WbWorld.T_GRASS;   // gen 手术一全图 GRASS 同构（焦化环 xx∈[96..105]/yy∈[56..65] 与 fire 面 rr=5 域均须陆地掷面）
+            w.terrain[58 * WbWorld.W + 98] = WbWorld.T_MOUNTAIN; w.terrain[58 * WbWorld.W + 99] = WbWorld.T_MOUNTAIN;   // 山格：isLand true 但 MOUNTAIN 豁免——fire/焦化双面零掷
+            w.terrain[62 * WbWorld.W + 102] = WbWorld.T_MOUNTAIN; w.terrain[62 * WbWorld.W + 103] = WbWorld.T_MOUNTAIN;
+            w.terrain[61 * WbWorld.W + 97] = WbWorld.T_WATER; w.terrain[61 * WbWorld.W + 98] = WbWorld.T_WATER;         // 水格：isLand false——双面零掷
+            w.terrain[59 * WbWorld.W + 103] = WbWorld.T_WATER; w.terrain[59 * WbWorld.W + 104] = WbWorld.T_WATER;
+            var u0 = new WbU { id = 1, race = 0, x = 100.5, y = 60.5, hp = 50, maxHp = 50 };    // 中心 d=0 → 120 伤死
+            var u1 = new WbU { id = 2, race = 0, x = 104.5, y = 64.5, hp = 50, maxHp = 50 };    // d=hypot(4,4)=5.657≥4.9 零伤
+            var u2 = new WbU { id = 3, race = 0, x = 101.5, y = 60.5, hp = 50, maxHp = 50, dead = 1 };   // dead 循环头跳过
+            var u3 = new WbU { id = 4, race = 0, x = 100.5, y = 61.5, hp = 50, maxHp = 50 };    // d=1 → 120*(1-1/4.9) 死
+            w.units.Add(u0); w.units.Add(u1); w.units.Add(u2); w.units.Add(u3);
+            w.effects.Add(new WbFx { kind = "orbital", x = 100.5, y = 60.5, ttl = 12, src = 1, wid = 7, age = 10 });
+            w.rngA = 0x0A0E1Cu;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // k0：age 10→11 <12 空转（黄金 stepsSnap[0].rngA=000a0e1c=seed 自身）
+            Assert.That(w.rngA, Is.EqualTo(0x0A0E1Cu), "k0 空转零掷位证——rngA ≡ seed（无周期相单调到期，黄金 S27 步 0 同值）");
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // k1：age 11→12 = ttl：轨道天罚（黄金 S27 同 156 掷流）
+            Assert.That(u0.dead != 0, Is.True, "中心单位 shellBurst 120 伤死（d=0——L9599 无 src 豁免）");
+            Assert.That(u3.dead != 0, Is.True, "近点单位死（d=1 → 120*(1-1/4.9)≈95.51>50——L9601 falloff）");
+            Assert.That(F64Hex(u1.hp), Is.EqualTo(F64Hex(50)), "远点零伤（d=5.657≥r+0.4=4.9——L9600 距离门）");
+            Assert.That(u2.hp == 50 && u2.dead == 1, Is.True, "dead=1 数值型保持（M-U10f 教训面——注入直写非 wwCountKill 置位）");
+            Assert.That(w.killCredit == null, Is.True, "killCredit wid=7 往返复位（L10373 写/L10386 复位）");
+            Assert.That(w.shake, Is.EqualTo(9), "shake=9（L10387 Max 覆盖 shellBurst 内 min(5,1+4.5)=5——强震屏）");
+            Assert.That(w.fireSet.Count, Is.EqualTo(4), "ignite 正面支 fireSet=4（fire 门 rng<0.45 掷中 4 格——黄金位级）");
+            Assert.That(w.worldEvents.Count, Is.EqualTo(1), "superweapon 纪事 ×1（L10384）");
+            Assert.That(w.worldEvents[0].kind, Is.EqualTo("superweapon"), "纪事 kind（unshift/Insert(0) 同构）");
+            Assert.That(w.worldEvents[0].text, Is.EqualTo("天罚降临——钨棒轰然砸穿大地，留下焦黑的弹坑"), "纪事文本位级（L10384）");
+            Assert.That(w.worldEvents[0].x.HasValue && w.worldEvents[0].x.Value == 100.5 && w.worldEvents[0].y.Value == 60.5, Is.True, "纪事坐标 opts {x,y}（L10384）");
+            Assert.That(w.effects.Count(f => f.kind == "explosion"), Is.EqualTo(1), "fx 终态仅 explosion（orbital 到期 splice——L10439）");
+            Assert.That(w.terrain[58 * WbWorld.W + 98], Is.EqualTo(WbWorld.T_MOUNTAIN), "山格焦化零写（L10379 MOUNTAIN 短路——isLand 过但 !==MOUNTAIN 断）");
+            Assert.That(w.terrain[61 * WbWorld.W + 97], Is.EqualTo(WbWorld.T_WATER), "水格焦化零写（isLand false 首门断）");
+            Assert.That(w.rngA, Is.EqualTo(0x86885f68u), "final rngA ≡ 黄金 S27（156 掷流位级闭合——fire 门+ignite+焦化环+explosion）");
+        }
+
+        [Test]
+        public void Test41_OrbitalEdge_GoldenMirror()
+        {
+            // 黄金 S28 镜像（seed 0x0A0E1D 同流）：贴边负裁剪支 + 左半 WATER 零掷 + wid/src 缺省 + falloff 位精确
+            var w = new WbWorld();
+            w.tickCount = 27000;
+            for (int i = 0; i < w.terrain.Length; i++) w.terrain[i] = WbWorld.T_GRASS;
+            for (int y = 0; y < 9; y++) for (int x = 0; x < 3; x++) w.terrain[y * WbWorld.W + x] = WbWorld.T_WATER;   // 左半水域（含负裁剪区——xx∈[-2..2] 零掷）
+            var u0 = new WbU { id = 1, race = 0, x = 2.5, y = 2.5, hp = 50, maxHp = 50 };       // 中心（WATER 上）——shellBurst 单位环无地形门照样吃伤
+            var u1 = new WbU { id = 2, race = 0, x = 5.5, y = 2.5, hp = 50, maxHp = 50 };       // d=3 → 幸存
+            w.units.Add(u0); w.units.Add(u1);
+            w.effects.Add(new WbFx { kind = "orbital", x = 2.5, y = 2.5, ttl = 12, age = 10 });   // wid/src 缺省——killCredit ??null 往返 + shellBurst src ?? -1
+            w.rngA = 0x0A0E1Du;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // k0 空转（黄金 stepsSnap[0].rngA=000a0e1d）
+            Assert.That(w.rngA, Is.EqualTo(0x0A0E1Du), "k0 空转零掷位证（黄金 S28 步 0 同值）");
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // k1：到期触发（黄金 S28 同 58 掷流）
+            Assert.That(u0.dead != 0, Is.True, "WATER 上中心单位死（shellBurst 单位环无 isLand 门——L9597-9607）");
+            Assert.That(F64Hex(u1.hp), Is.EqualTo(F64Hex(50 - 120 * (1 - 3 / 4.9))), "右缘 falloff 位精确（d=3 → 120*max(0.25, 1-3/4.9)——L9601）");
+            Assert.That(w.killCredit == null, Is.True, "wid null → killCredit ??null 双写往返（L10373/L10386）+ emergentPayload 门不触达（L10385）");
+            Assert.That(w.shake, Is.EqualTo(9), "shake=9（同 S27 覆盖语义）");
+            Assert.That(w.fireSet.Count, Is.EqualTo(3), "右半 GRASS ignite fireSet=3（左半 WATER 零掷——isLand 短路位证）");
+            Assert.That(w.worldEvents.Count == 1 && w.worldEvents[0].kind == "superweapon" && w.worldEvents[0].x.Value == 2.5 && w.worldEvents[0].y.Value == 2.5, Is.True, "贴边纪事坐标（L10384 opts {x,y}）");
+            Assert.That(w.terrain[2 * WbWorld.W + 1], Is.EqualTo(WbWorld.T_WATER), "左半水格零写（负裁剪 + isLand 双零掷面）");
+            Assert.That(w.rngA, Is.EqualTo(0xbbe3af9fu), "final rngA ≡ 黄金 S28（58 掷流位级闭合）");
+        }
+
+        [Test]
+        public void Test41_Orbital_ScorchGate_ExemptZeroWrite()
+        {
+            // 山/水豁免对照位证：同种子双世界——差异格世界掷面少 8+ 掷（每差异格 fire 门 1 + 焦化环 1），rngA 必异 + 差异格零写零入账
+            WbWorld MkWorld(bool withDiff, uint seed)
+            {
+                var w2 = new WbWorld();
+                w2.tickCount = 26000;
+                for (int i = 0; i < w2.terrain.Length; i++) w2.terrain[i] = WbWorld.T_GRASS;
+                if (withDiff)
+                {
+                    w2.terrain[58 * WbWorld.W + 98] = WbWorld.T_MOUNTAIN; w2.terrain[58 * WbWorld.W + 99] = WbWorld.T_MOUNTAIN;
+                    w2.terrain[61 * WbWorld.W + 97] = WbWorld.T_WATER; w2.terrain[61 * WbWorld.W + 98] = WbWorld.T_WATER;
+                }
+                w2.effects.Add(new WbFx { kind = "orbital", x = 100.5, y = 60.5, ttl = 12, src = 1, wid = 7, age = 11 });
+                w2.rngA = seed;
+                w2.tickCount++;
+                WbBailRelay.EffectsTick(w2);                          // 单步到期（age 11→12）
+                return w2;
+            }
+            var wA = MkWorld(false, 0x0A0E2Au);                       // 全 GRASS 对照
+            var wB = MkWorld(true, 0x0A0E2Au);                        // 2 山 + 2 水差异格
+            Assert.That(wB.rngA, Is.Not.EqualTo(wA.rngA), "差异格世界 rngA ≠ 全 GRASS 世界——四格×双面（fire+焦化）掷面缺失位证");
+            Assert.That(MulAdv(wB.rngA, 4), Is.Not.EqualTo(wA.rngA), "掷面差 >4 掷（下限位证——fire 门 4 + 焦化环 4 起步，ignite 内掷另计）");
+            Assert.That(wB.terrain[58 * WbWorld.W + 98] == WbWorld.T_MOUNTAIN && wB.terrain[61 * WbWorld.W + 97] == WbWorld.T_WATER, Is.True, "差异格 terrain 零写（豁免短路——L10379 双门）");
+            Assert.That(wB.fireSet.Contains(58 * WbWorld.W + 98) || wB.fireSet.Contains(61 * WbWorld.W + 97), Is.False, "差异格 fireSet 零入账（fire 门 isLand/MOUNTAIN 短路零掷）");
+            Assert.That(wA.effects.Count(f => f.kind == "explosion"), Is.EqualTo(1), "对照世界 explosion 常在（shellBurst fx 面）");
+            Assert.That(wB.worldEvents.Count, Is.EqualTo(1), "纪事与地形无关恒发（L10384 无条件面）");
+        }
+
+        [Test]
+        public void Test41_Orbital_IdleStepZeroDraw()
+        {
+            // 空转步零掷位证：age 10→11 <ttl——无周期相（laser 同构）；orbital 分支 age>=ttl 门未开
+            var w = new WbWorld();
+            w.tickCount = 26000;
+            for (int i = 0; i < w.terrain.Length; i++) w.terrain[i] = WbWorld.T_GRASS;
+            w.units.Add(new WbU { id = 1, race = 0, x = 100.5, y = 60.5, hp = 50, maxHp = 50 });
+            w.effects.Add(new WbFx { kind = "orbital", x = 100.5, y = 60.5, ttl = 12, src = 1, wid = 7, age = 10 });
+            w.rngA = 0x0A0E1Cu;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // age 10→11：空转
+            Assert.That(w.rngA, Is.EqualTo(0x0A0E1Cu), "空转步零掷——rngA 不动（age<ttl 无支触达）");
+            Assert.That(w.units[0].hp == 50 && w.units[0].hurt == 0 && w.units[0].dead == 0, Is.True, "空转单位零伤零 hurt 零死亡");
+            Assert.That(w.effects.Count, Is.EqualTo(1), "orbital 未 splice 未产 fx（age<ttl——L10439 门未开）");
+            Assert.That(w.worldEvents.Count, Is.EqualTo(0), "空转无纪事（L10384 在到期支内）");
+            Assert.That(w.shake, Is.EqualTo(0), "空转零震屏（L10387/L9619 均在支内）");
+        }
     }
 }

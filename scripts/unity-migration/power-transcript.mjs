@@ -843,6 +843,24 @@ class MirrorWorld {
           this.shellBurst(e.x, e.y, e.r || 2.2, e.dmg ?? 45, false, e.src ?? -1);   // fire 恒 false
           // onSound?.('boom') —— 宿主回调 no-op 同 gen 端
         }
+      } else if (e.kind === 'orbital' && e.age >= e.ttl) {   // L10370-10388（M-U10g：轨道天罚 ttl 到期单发——钨棒大爆破 + 地形焦化环 + 强震屏）
+        const or = 4.5;                                      // L10372
+        this.killCredit = e.wid ?? null;                     // L10373
+        this.shellBurst(e.x, e.y, or, 120, true, e.src ?? -1);   // L10374（dmg=120 硬编码 / fire=true——ignite 掷面）
+        for (let yy = Math.floor(e.y - or); yy <= e.y + or; yy++) {    // L10375
+          for (let xx = Math.floor(e.x - or); xx <= e.x + or; xx++) {  // L10376
+            if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;      // L10377（边界裁剪零掷）
+            const d = Math.hypot(xx + 0.5 - e.x, yy + 0.5 - e.y);      // L10378（像素中心 +0.5 偏移）
+            if (d < or && this.isLand(this.terrain[idx(xx, yy)]) && this.terrain[idx(xx, yy)] !== T.MOUNTAIN && this.rng() < 0.8) {   // L10379（四门短路——山/水/界外零掷）
+              this.setTerrain(idx(xx, yy), T.BURNT);                   // L10380（M-U8b SetTerrain regrow 出账消费面）
+            }
+          }
+        }
+        this.addEvent('superweapon', '天罚降临——钨棒轰然砸穿大地，留下焦黑的弹坑', { x: e.x, y: e.y });   // L10384（无 colorHex——opts x/y 面）
+        if (e.wid != null) this.emergentPayload(e);          // L10385（铸域空表桩早退零掷）
+        this.killCredit = null;                              // L10386
+        this.shake = Math.max(this.shake, 9);                // L10387（强震屏——shellBurst 内 min(5,5.5)=5 先写）
+        // onSound?.('nuke') —— 宿主回调 no-op 同 gen 端
       }
       if (e.age >= e.ttl) {                // L10439-10441 到期 splice（全 kind——倒序 RemoveAt 同构）
         this.effects.splice(i, 1);

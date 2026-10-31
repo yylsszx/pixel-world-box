@@ -1,7 +1,7 @@
 // ============================================================================
 // gen-power.mjs —— M-U10a「effectsTick 游荡云族八种」+ M-U10b「波前族+静态族五 kind」
 //   + M-U10c「命中族三 kind + explode 消费面」+ M-U10d「shell/missile/核弹」
-//   + M-U10e「war 面 airstrike/drone/mech」+ M-U10f「laser 光束线杀伤」黄金向量
+//   + M-U10e「war 面 airstrike/drone/mech」+ M-U10f「laser 光束线杀伤」+ M-U10g「orbital 轨道天罚」黄金向量
 // （tornado L9805-9824 / acid L9826-9850 / blizzard L9915-9948 / locust L9949-9971 /
 //   drought L9972-9996 / rainstorm L9997-10022 / sandstorm L10068-10090 / famine L10170-10190
 //   + M-U10b: tsunami L9877-9914 / sinkhole L10120-10147 / iceage L10148-10169 /
@@ -675,6 +675,56 @@ const specs = [
     sanity: (eng) => eng.units[0].hp === 50 - 30 * 0.7 && eng.units[1].hp === 50 && eng.killCredit === null
       && eng.effects.some((e) => e.kind === 'explosion') && eng.effects.filter((e) => e.kind === 'hit').length === 1,
   },
+  {
+    // S27 orbital（M-U10g）：轨道天罚 ttl 到期单发全支位级（L10370-10388）
+    //   or=4.5 → shellBurst(100.5,60.5,4.5,120,true,src=1) 单位环零掷（d<4.9 几何伤害——无 src 豁免）+
+    //   地形环 rr=ceil(4.5)=5 fire 门（isLand&&!MOUNTAIN 短路——WATER/MOUNTAIN 差异格零掷）→ GRASS 格
+    //   rng<0.45 门掷 → ignite 内掷 FLAMMABLE[GRASS] 过 → fire=150+floor(rng*90) 第二掷 + fx explosion 2 掷
+    //   → 焦化环 yy∈[56..65]/xx∈[96..105]（d<4.5 && isLand && !MOUNTAIN 掷 1/格 <0.8 → setTerrain BURNT
+    //   ——M-U8b SetTerrain regrow 出账消费面）+ superweapon 纪事（AddEventHook x/y 无 colorHex）+
+    //   wid=7 emergentPayload 桩门（铸域空表 L9399 早退零掷）+ killCredit 往返（??null 写/复位）+
+    //   shake=max(min(5,5.5)=5, 9)=9 + k0 preAge 10→age 11<12 空转零掷步（无周期相——laser 同构）
+    key: 'power-orbital', baseSeed: BASE + 47, seed: 0x0A0E1C, seasons: false, yearF: 2.5, tickCount: 26000, steps: 2, minDraws: 50,
+    patches: [
+      { terrain: [
+          [98, 58, T.MOUNTAIN], [99, 58, T.MOUNTAIN], [102, 62, T.MOUNTAIN], [103, 62, T.MOUNTAIN],
+          [97, 61, T.WATER], [98, 61, T.WATER], [103, 59, T.WATER], [104, 59, T.WATER],
+        ],
+        units: [
+          { race: 'SHEEP', x: 100.5, y: 60.5, hp: 50, maxHp: 50 },   // u0 中心 d=0 → 120 伤死
+          { race: 'SHEEP', x: 104.5, y: 64.5, hp: 50, maxHp: 50 },   // u1 d=hypot(4,4)=5.657≥4.9 零伤
+          { race: 'SHEEP', x: 101.5, y: 60.5, hp: 50, maxHp: 50, dead: 1 },   // u2 dead 循环头跳过
+          { race: 'SHEEP', x: 100.5, y: 61.5, hp: 50, maxHp: 50 },   // u3 d=1 → 120*(1-1/4.9) 死
+        ],
+        fx: [{ kind: 'orbital', x: 100.5, y: 60.5, ttl: 12, src: 1, wid: 7, preAge: 10 }],
+      },
+    ],
+    sanity: (eng) => eng.units[0].dead === true && eng.units[3].dead === true && eng.units[1].hp === 50
+      && eng.units[2].hp === 50 && eng.units[2].dead === 1 && eng.killCredit === null && eng.shake === 9
+      && eng.terrain[idx(98, 58)] === T.MOUNTAIN && eng.terrain[idx(97, 61)] === T.WATER
+      && !eng.effects.some((e) => e.kind === 'orbital') && eng.effects.some((e) => e.kind === 'explosion')
+      && eng.worldEvents.some((ev) => ev.kind === 'superweapon'),
+  },
+  {
+    // S28 orbital 边缘面（M-U10g）：贴边中心 (2.5,2.5) → 焦化环 xx/yy∈[-2..7] 负裁剪支（xx<0||yy<0
+    //   continue 零掷）+ 左半水域 x∈[0..2] WATER（isLand false 零掷——中心格本身 WATER 语义：shellBurst
+    //   单位环无地形门水上照样吃伤）+ 右半 GRASS 掷面 + wid/src 缺省（killCredit ??null null 往返 +
+    //   emergentPayload 门不触达 + shellBurst src ?? -1）+ u1 d=3 → 120*(1-3/4.9)=46.5306… 幸存位级
+    key: 'power-orbital-edge', baseSeed: BASE + 48, seed: 0x0A0E1D, seasons: false, yearF: 2.5, tickCount: 27000, steps: 2, minDraws: 15,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 0; y < 9; y++) for (let x = 0; x < 3; x++) a.push([x, y, T.WATER]); return a; })()],
+        units: [
+          { race: 'SHEEP', x: 2.5, y: 2.5, hp: 50, maxHp: 50 },      // u0 中心（WATER 上）d=0 死
+          { race: 'SHEEP', x: 5.5, y: 2.5, hp: 50, maxHp: 50 },      // u1 d=3 → 幸存
+        ],
+        fx: [{ kind: 'orbital', x: 2.5, y: 2.5, ttl: 12, preAge: 10 }],
+      },
+    ],
+    sanity: (eng) => eng.units[0].dead === true && eng.units[1].hp === 50 - 120 * (1 - 3 / 4.9)
+      && eng.killCredit === null && eng.shake === 9 && eng.terrain[idx(1, 2)] === T.WATER
+      && !eng.effects.some((e) => e.kind === 'orbital') && eng.effects.some((e) => e.kind === 'explosion')
+      && eng.worldEvents.some((ev) => ev.kind === 'superweapon'),
+  },
 ];
 
 const scenarios = specs.map(buildScenario);
@@ -698,7 +748,7 @@ const out = {
     protocol: 'GameEngine 构造 + 手术式夹具两相直写 + effects/spawnUnit 真调用注入（fx seed/dir 双掷注入相）+ rngA 尾置清零起流 + tickCount++/effectsTick 直调步进快照（主循环 L2508/L2528 序同构）',
     rng: 'eng.rngA 单流（类字段箭头 rng L728-733）；mulberry 纯数学反解 total（noise.ts L3-13）',
     math: 'tornado/sandstorm/famine Math.hypot——C# FdHypot/V8Hypot 位精确件对账（fdlibm 域）；acid/blizzard/locust/drought/rainstorm 纯平方距离',
-    domains: ['effectsTick L9801-10447', 'tornado L9805-9824', 'acid L9826-9850', 'blizzard L9915-9948', 'locust L9949-9971', 'drought L9972-9996', 'rainstorm L9997-10022', 'sandstorm L10068-10090', 'famine L10170-10190', 'M-U10b: tsunami L9877-9914', 'M-U10b: sinkhole L10120-10147', 'M-U10b: iceage L10148-10169', 'M-U10b: blackhole L10191-10223', 'M-U10b: quake L10224-10236', 'M-U10c: meteor L10237-10239', 'M-U10c: fireball L10240-10254', 'M-U10c: arrow·bullet L10255-10294', 'M-U10c: explode L10450-10499', 'M-U10c: ignite L1072-1077', 'M-U10d: shell L10295-10301', 'M-U10d: missile L10302-10310', 'M-U10d: shellBurst L9595-9620', 'M-U10d: nuke L12255-12260', 'M-U10d: onBuildingDestroyed raze 支 L4464-4498（capture/annex 支夹具外——M-U10e 候选）', 'M-U10e: airstrike L10311-10322', 'M-U10e: drone L10353-10368', 'M-U10e: mech L10394-10414', 'M-U10f: laser L10323-10353', '到期 splice L10439-10441', 'activeBattles %5 清理 L10443-10447', 'fx L9781-9799', 'attackBuilding L4446-4462', 'meltIce L2892（drought 消费）', 'setTerrain L969-1007（regrow L979 出账联动 + flood L983 贴花级联）', 'rebuildBuckets L3081-3104（注入相尾——arrow/bullet 桶扫描面）', 'gearBonus L1498-1520（armor 采样入 units0.gbArmor）', 'atWar L2061-2064（rel0 挂账）'],
+    domains: ['effectsTick L9801-10447', 'tornado L9805-9824', 'acid L9826-9850', 'blizzard L9915-9948', 'locust L9949-9971', 'drought L9972-9996', 'rainstorm L9997-10022', 'sandstorm L10068-10090', 'famine L10170-10190', 'M-U10b: tsunami L9877-9914', 'M-U10b: sinkhole L10120-10147', 'M-U10b: iceage L10148-10169', 'M-U10b: blackhole L10191-10223', 'M-U10b: quake L10224-10236', 'M-U10c: meteor L10237-10239', 'M-U10c: fireball L10240-10254', 'M-U10c: arrow·bullet L10255-10294', 'M-U10c: explode L10450-10499', 'M-U10c: ignite L1072-1077', 'M-U10d: shell L10295-10301', 'M-U10d: missile L10302-10310', 'M-U10d: shellBurst L9595-9620', 'M-U10d: nuke L12255-12260', 'M-U10d: onBuildingDestroyed raze 支 L4464-4498（capture/annex 支夹具外——M-U10e 候选）', 'M-U10e: airstrike L10311-10322', 'M-U10e: drone L10353-10368', 'M-U10e: mech L10394-10414', 'M-U10f: laser L10323-10353', 'M-U10g: orbital L10370-10388', '到期 splice L10439-10441', 'activeBattles %5 清理 L10443-10447', 'fx L9781-9799', 'attackBuilding L4446-4462', 'meltIce L2892（drought 消费）', 'setTerrain L969-1007（regrow L979 出账联动 + flood L983 贴花级联）', 'rebuildBuckets L3081-3104（注入相尾——arrow/bullet 桶扫描面）', 'gearBonus L1498-1520（armor 采样入 units0.gbArmor）', 'atWar L2061-2064（rel0 挂账）'],
     scenarioCount: scenarios.length,
   },
   scenarios,

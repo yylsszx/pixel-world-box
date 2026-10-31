@@ -2652,6 +2652,30 @@ namespace PixelWorldBox.Wb
                         /* onSound?.('boom') —— 宿主回调（同上） */                                                        // L10367
                     }
                 }
+                else if (e.kind == "orbital" && e.age >= e.ttl)                                                        // L10370（轨道天罚命中：天顶动能钨棒大爆破 + 地形焦化环 + 强震屏——M-U10g war 面；ttl 到期单发无周期相）
+                {
+                    double orR = 4.5;                                                                                  // L10372（蓝本名 or——C# 上下文关键字避讳注记）
+                    w.killCredit = e.wid;                                                                              // L10373（wid ?? null——int? 直传，涌现武器战绩归属）
+                    ShellBurst(w, e.x, e.y, orR, 120, true, e.src ?? -1);                                              // L10374（dmg=120 硬编码 / fire=true——ignite 掷面；shake 先写 min(5,1+4.5)=5）
+                    for (int yy = (int)System.Math.Floor(e.y - orR); yy <= e.y + orR; yy++)                            // L10375（yy int vs double 上界比较——JS number 语义同构）
+                    {
+                        for (int xx = (int)System.Math.Floor(e.x - orR); xx <= e.x + orR; xx++)                        // L10376
+                        {
+                            if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                      // L10377（边界裁剪零掷）
+                            int oj = yy * WbWorld.W + xx;                                                              // idx(xx,yy) 内联（blackhole L10213 先例同构——纯函数单次求值）
+                            double d = WbMath.FdHypot(xx + 0.5 - e.x, yy + 0.5 - e.y);                                 // L10378（Math.hypot fdlibm 位精确域；像素中心 +0.5 偏移）
+                            if (d < orR && WbWorld.IsLand(w.terrain[oj]) && w.terrain[oj] != WbConstants.T_MOUNTAIN && w.Rng() < 0.8)   // L10379（四门短路——山/水/界外零掷）
+                            {
+                                SetTerrain(w, oj, WbConstants.T_BURNT);                                                // L10380（M-U8b SetTerrain regrow 出账消费面）
+                            }
+                        }
+                    }
+                    AddEventHook(w, "superweapon", "天罚降临——钨棒轰然砸穿大地，留下焦黑的弹坑", null, e.x, e.y);      // L10384（addEvent opts {x,y} 无 colorHex——x/y 纪事坐标面）
+                    if (e.wid.HasValue) EmergentPayload(w, e);                                                         // L10385（wid 面——铸域空表桩 L9399 早退零掷）
+                    w.killCredit = null;                                                                               // L10386
+                    w.shake = System.Math.Max(w.shake, 9);                                                             // L10387（强震屏——Max 覆盖 shellBurst 内 5）
+                    /* onSound?.('nuke') —— 宿主回调（同上） */                                                          // L10388
+                }
                 else if (e.kind == "mech")                                                                             // L10394（机甲突击：地面推进沿途机炮扫射（小杀伤+曳光视觉）；抵达终点爆破——M-U10e war 面）
                 {
                     double mt = System.Math.Min(1, e.age / e.ttl);                                                     // L10395
@@ -2678,9 +2702,9 @@ namespace PixelWorldBox.Wb
                         /* onSound?.('boom') —— 宿主回调（同上） */                                                        // L10413
                     }
                 }
-                // 未译 kind 落空（volcano/wrath/holystorm/typhoon + war 面 orbital L10370-10392 + antimatter
+                // 未译 kind 落空（volcano/wrath/holystorm/typhoon + antimatter
                 //   L10437-10440（annihilate 消费面）/ plasma L10416-10436（armies morale 面）——后续切片插入；
-                //   laser 已 M-U10f 清偿 L10323-10353）
+                //   laser 已 M-U10f 清偿 L10323-10353 / orbital 已 M-U10g 清偿 L10370-10388）
                 if (e.age >= e.ttl)                                                                                      // L10439
                 {
                     w.effects.RemoveAt(i);                                                                               // L10440（倒序 splice 同构）
