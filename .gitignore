@@ -28,6 +28,9 @@ node_modules
 
 # debug
 npm-debug.log*
+
+# 域小模型权重（自动生成，体积大，不入版本）
+/src/lib/game/domain-model/domain-weights.ts
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
