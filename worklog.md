@@ -24,6 +24,46 @@
 6. UI：像素图标工具栏（5 分类 30 工具）、顶栏（纪元/人口/战争数/火情/种族分布）、速度控制（暂停/1x/3x/8x）、单位检查器（跟随/抹除）、文明检查器（战况/首都跳转）、小地图（点击跳转）、Toast 事件流、新手帮助弹窗、移动端适配
 
 ---
+Task ID: 164
+Agent: 主 Agent (Z.ai Code)
+Task: 自研游戏专业领域小模型1B（Transformer 战略决策与世界模拟）
+
+项目当前状态描述/判断:
+- 像素上帝模拟器已具备完整引擎（文明/战争/天灾/神力/存档等），现有 NeuroCore 仅 465 参数三头微型 MLP 用于战斗微决策（命中/姿态/战或逃），Ruler 议会依赖外部 LLM（Z.ai/OpenAI/Anthropic）做战略决策。
+- 用户需求：自研一个专业领域（用于这个游戏）的小模型 1B —— 需要一套可落地的领域小模型架构、训练管线、前端推理器，以及与游戏引擎的集成桥接层。
+
+当前目标/已完成的修改/验证结果:
+1. 【领域小模型架构 — src/lib/game/domain-model/】
+   - tensor.ts：零依赖手写张量库（matmul 分块、layerNorm、gelu、softmax、Int8 逐张量量化/反量化、Tensor reshape）。
+   - transformer.ts：手写 Transformer 前向（Embedding → 多层因果自注意力 → FFN → LayerNorm → LM Head），支持可配置 hidden/layers/heads，默认 ~1.34B 配置（hidden=2048, layers=24, heads=32），浏览器小版 ~21.1M（hidden=256, layers=6, heads=8）。
+   - tokenizer.ts：游戏领域分词器（32k 词表，<CIV>/<UNIT>/<TERRAIN>/<EVENT>/<WAR>/<ACTION> 特殊 token），encodeWorldState 把引擎世界状态序列化为 token 流，decodeModelAction 把模型输出解码为结构化游戏动作（移动/攻击/宣战/议和/生成/建造/施法/等待）。
+   - model.ts：DomainModel 类（前向/think/predictNext/exportQuantized/fromQuantized），Int8 量化权重导出与恢复，DEFAULT_SMALL_CONFIG（浏览器可用）/LARGE_1B_CONFIG（1B 目标）两档配置。
+   - game-bridge.ts：GameEngine 集成桥接（captureWorldState 抽取引擎快照，DomainModelAgent 每 60 tick 做一次战略推理并可选执行动作到引擎）。
+
+2. 【训练管线 — scripts/domain-model/train-domain-model.ts】
+   - 行为克隆（Behavior Cloning）：合成教师数据生成（基于 engine.policy 启发式规则），2000 训练 / 400 验证样本，交叉熵损失，前向冒烟测试。
+   - 导出 Int8 量化权重文件（domain-weights.ts，已加入 .gitignore，体积大不入版本）。
+   - 量化权重复检：反量化后推理损失与原模型一致，架构可用。
+
+3. 【验证结果】
+   - 1B 目标配置参数量：1,339,031,552 ≈ 1.34B（hidden=2048, layers=24, heads=32, intermediate=8192, vocab=32000）。
+   - 浏览器小版参数量：21,102,592 ≈ 21.1M（hidden=256, layers=6, heads=8, intermediate=1024）。
+   - 端到端推理测试通过：世界状态 → token 序列 → Transformer 前向 → 采样 → 结构化游戏动作，耗时可接受。
+   - 训练脚本运行通过：bun scripts/domain-model/train-domain-model.ts 全流程 green（数据生成 → 模型构建 → 前向 → 量化导出 → 复检）。
+   - 实际 1B 级训练建议：PyTorch 训练 → ONNX 导出 → Int8 量化 → 通过 DomainModel.fromQuantized 前端推理（浏览器端零依赖，可实时运行）。
+
+Stage Summary:
+- 产出：游戏领域小模型完整框架（架构+训练+推理+引擎集成），1B 参数目标配置已定义并可估算，浏览器可用小版已实测可推理。
+- 关键决策：领域聚焦「战略决策与世界模拟」（文明/外交/天灾时机/资源分配），与现有 NeuroCore（战斗微决策）互不重叠；浏览器端用 21M 小版实时推理，1B 大版服务端离线训练后量化导入；Int8 量化将权重体积压缩 4×。
+- 验证结论：模型前向、采样、量化/反量化、训练流程全部 bun 实测通过。
+
+未解决问题或风险，建议下一阶段优先事项:
+1. 【中】真实 1B 级训练需 PyTorch/ONNX 管线（本 sandbox 内存 8Gi 无法直接训练 1B 参数模型，仅完成架构与训练框架）。
+2. 【中】与 Ruler 议会系统的深度集成：让 DomainModel Agent 与现有 LLM 驱动的 council 并行/比对。
+3. 【低】模型前向在浏览器中的性能优化（当前纯 JS 实现，大序列下较慢；可接 WebGL/WASM 加速）。
+4. 【低】领域分词器可升级为 BPE/WordPiece 真实子词分词，提升对生成文本的表达力。
+
+---
 Task ID: 1
 Agent: 主 Agent (Z.ai Code)
 Task: 从零构建 WorldBox 像素级复刻（调研 → 引擎 → 渲染 → UI → 浏览器端到端验证）
