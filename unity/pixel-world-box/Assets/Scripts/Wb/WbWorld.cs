@@ -487,7 +487,12 @@ namespace PixelWorldBox.Wb
         public HashSet<int> fireSet = new HashSet<int>();      // engine L166 fireSet: Set<number>（火格索引集合；国民防灾 bigFire 域消费切片）
 
         // —— M-U8b regrow 域（字段只加）——
-        public Dictionary<int, long> regrow = new Dictionary<int, long>();  // engine L167 regrow: Map<number, number>（焦土复苏计时表 tile → 到期 tick；JS Map 插入序。生产面 fireTick L2825/过度啃食 L12116/rainRegrow L10663 未译、save 桥不入 sim → 本域载入后纯删面：Dictionary 枚举序=插入序且删后无补位，regrowTick 快照迭代序=活 Map 序）
+        public Dictionary<int, long> regrow = new Dictionary<int, long>();  // engine L167 regrow: Map<number, number>（焦土复苏计时表 tile → 到期 tick；JS Map 插入序。生产面 fireTick L2825〔M-U9a〕/过度啃食 L12146〔M-U12〕/rainRegrow L10663〔M-U11〕已译、save 桥不入 sim → 本域载入后纯删面：Dictionary 枚举序=插入序且删后无补位，regrowTick 快照迭代序=活 Map 序）
+
+        // —— M-U12 ecoTick 生态承载域（字段只加）——
+        public string ecoState = "balanced";                   // engine L248 ecoState: 'overgrass'|'balanced'|'overgraze'|'collapse'（播报去重状态机——四态切换 L12161）
+        public int ecoLastNoteYear = -999;                     // engine L250 ecoLastNoteYear（生态播报冷却锚——15 年门 L12162；reset L837 重置）
+        public int ecoRepopYear = -999;                        // engine L252 ecoRepopYear（迁徙入境节流锚——≥25 年门 L12178；reset L838 重置）
 
         // —— M-U9a 冰域（字段只加）——
         public HashSet<int> frozen = new HashSet<int>();       // engine L495 frozen: Set<number>（冰面格集——瞬态不入档，读档后地形扫描重建 L15401-15403；成员判定）

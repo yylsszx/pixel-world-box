@@ -1998,6 +1998,69 @@ var rainfloodVerifyFail = 0;
   }
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0 && fireVerifyFail === 0 && powerVerifyFail === 0 && rainfloodVerifyFail === 0;
+// 段 35：M-U12 ecoTick 生态承载域（eco-transcript 镜像 12 场景逐位 + gen det 复跑〔bun——纯算术域 + spawn 静默掷流〕+ 双写 md5 + 台账）
+var ecoVerifyFail = 0;
+{
+  const { execFileSync } = await import('node:child_process');
+  const { createHash } = await import('node:crypto');
+  const { readFileSync } = await import('node:fs');
+  try {
+    execFileSync('bun', [new URL('./eco-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
+    console.log('eco 黄金回放 (eco-transcript 镜像 vs eco.json): PASS (12 场景 每调用步进快照逐位 + regrow entries 序 + grassTiles/preyGridMd5/ecoState + units dump 位级 + events 事件流)');
+  } catch (e) {
+    ecoVerifyFail++;
+    console.error('eco 黄金回放: FAIL');
+    console.error(String(e.stdout ?? '').split('\n').slice(-8).join('\n'));
+  }
+  try {
+    const goldenPath = new URL('./golden/eco.json', import.meta.url).pathname;
+    const { readFile } = await import('node:fs/promises');
+    const h0 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    execFileSync('bun', [new URL('./gen-eco.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
+    const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
+    console.log('eco gen det 复跑 (gen-eco · bun): PASS (12 场景 sanity + GameEngine 真实现 + det 字节级)');
+  } catch (e) {
+    ecoVerifyFail++;
+    console.error('eco gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+  try {
+    const g = JSON.parse(readFileSync(new URL('./golden/eco.json', import.meta.url), 'utf8'));
+    const fails = [];
+    const fail = (m) => fails.push(m);
+    if (!Array.isArray(g.scenarios) || g.scenarios.length !== 12) fail('场景数 ≠ 12');
+    const keys = g.scenarios.map((s) => s.key);
+    for (const want of ['eco-empty-collapse', 'eco-starve-nogene', 'eco-starve-fitness', 'eco-graze-burn-soil255', 'eco-graze-burn-soil0', 'eco-graze-buildingGate', 'eco-graze-regrowGate', 'eco-pred-comp', 'eco-preygrid-clamp', 'eco-repop-herb', 'eco-repop-pred', 'eco-note-silent'])
+      if (!keys.includes(want)) fail(`场景 ${want} 缺失`);
+    const s1 = g.scenarios.find((s) => s.key === 'eco-empty-collapse');
+    if (!s1 || s1.totalDraws !== 0 || s1.ecoState !== 'collapse' || s1.events.length !== 1) fail('eco-empty-collapse 零掷 collapse 播报签名缺失（迁徙 a 支 grass 短路 + b 支 herb 短路）');
+    const s4 = g.scenarios.find((s) => s.key === 'eco-graze-burn-soil255');
+    if (!s4 || s4.totalDraws !== 6 || s4.terrain.length === 0 || !s4.regrow.some((t) => t[0] === 60 * 256 + 120) || s4.grassTiles !== 4) fail('eco-graze-burn-soil255 啃食链签名缺失（6 掷 + gi=15480 regrow.set + grassTiles=4 快照语义）');
+    const s7 = g.scenarios.find((s) => s.key === 'eco-graze-regrowGate');
+    if (!s7 || !s7.regrow.some((t) => t[0] === 70 * 256 + 130 && t[1] === 5555)) fail('eco-graze-regrowGate 场外键保留签名缺失（级联出账域精确性——L979 只删 gi）');
+    const s8 = g.scenarios.find((s) => s.key === 'eco-pred-comp');
+    if (!s8 || s8.totalDraws !== 2 || !s8.preyGrid.every((v) => v === 0)) fail('eco-pred-comp aquatic 跳过签名缺失（鱼/鲨不入账——preyGrid 全 0 + 竞争 2 掷）');
+    const s9 = g.scenarios.find((s) => s.key === 'eco-preygrid-clamp');
+    if (!s9 || s9.totalDraws !== 0 || s9.preyGrid.reduce((a, b) => a + b, 0) !== 8 || s9.preyGrid[0] !== 2 || s9.preyGrid[19 * 32 + 31] !== 2) fail('eco-preygrid-clamp 钳位分布签名缺失（gx/gy 双钳 + 叠格计数）');
+    const s10 = g.scenarios.find((s) => s.key === 'eco-repop-herb');
+    if (!s10 || s10.units.length !== 7 || s10.events.length !== 2 || s10.ecoRepopYear !== 2) fail('eco-repop-herb 迁徙 a 支签名缺失（5 sheep silent spawn + 双事件 + repop 节流写入）');
+    const s11 = g.scenarios.find((s) => s.key === 'eco-repop-pred');
+    if (!s11 || s11.units.length !== 63 || !s11.units.some((u) => u.race === 7)) fail('eco-repop-pred 迁徙 b 支签名缺失（2 wolf 循 herd spawn）');
+    const s12 = g.scenarios.find((s) => s.key === 'eco-note-silent');
+    if (!s12 || s12.events.length !== 0 || s12.ecoState !== 'overgraze') fail('eco-note-silent 冷却静默切换签名缺失（else-if L12172——无事件变生态态）');
+    const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/eco.json', import.meta.url));
+    const gl = readFileSync(new URL('./golden/eco.json', import.meta.url));
+    const md5a = createHash('md5').update(sa).digest('hex');
+    const md5b = createHash('md5').update(gl).digest('hex');
+    if (md5a !== md5b) fail(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
+    if (fails.length > 0) throw new Error(fails.join(' | '));
+    console.log(`eco 台账完备 (12 场景 + 空场零掷 collapse + 饥饿 fitness 链 + 啃食 soil 除子双面/building 门/级联出账复合 + aquatic 跳过 + preyGrid 钳位 + 迁徙双支 spawn 掷流 + 冷却静默 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  } catch (e) {
+    ecoVerifyFail++;
+    console.error('eco 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0 && fireVerifyFail === 0 && powerVerifyFail === 0 && rainfloodVerifyFail === 0 && ecoVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);

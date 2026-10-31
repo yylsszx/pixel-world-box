@@ -135,6 +135,7 @@ namespace PixelWorldBox.Host
             Orch.D[PixelWorldBox.Wb.WbTickOrch.REGROW] = () => PixelWorldBox.Wb.WbBailRelay.RegrowTick(World);   // M-U8b：regrowTick 已译域真调（空表安全：regrow.Count==0 顶层早退）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.ICE] = () => PixelWorldBox.Wb.WbBailRelay.IceTick(World);         // M-U9a：iceTick 已译域真调（空集安全：frozen/flood/wet 顶层 Count==0 早退）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.EFFECTS] = () => PixelWorldBox.Wb.WbBailRelay.EffectsTick(World); // M-U10a：effectsTick 游荡云族八种已译域真调（空集安全：effects.Count==0 循环零进）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.ECO] = () => PixelWorldBox.Wb.WbBailRelay.EcoTick(World);         // M-U12：ecoTick 已译域真调（零场安全：空 units 时 grass 重算+播报仍走——蓝本 L12096 无早退门，机械保持）
         }
 
         void EnsureScene()

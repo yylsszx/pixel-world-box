@@ -3319,6 +3319,155 @@ namespace PixelWorldBox.Wb
             return IsHerbivoreRace(w, d.parent);                                                            // L2129 递归母族
         }
 
+        // isPredatorRace L2169-2178（捕食者链判定：五静态 + 狐/鲨 + dynRaces eco==='pred' 递归母族——M-U12 ecoTick 依赖面）
+        private static bool IsPredatorRace(WbWorld w, int race)
+        {
+            if (race == WbConstants.R_WOLF || race == WbConstants.R_SNOWWOLF || race == WbConstants.R_BEAR || race == WbConstants.R_SCORPION || race == WbConstants.R_SNAKE) return true;   // L2170
+            // 八新动物：狐（陆猎手）与鲨（海猎手）参与捕食压力                                                              // L2172
+            if (race == WbConstants.R_FOX || race == WbConstants.R_SHARK) return true;                      // L2173
+            WbDynRace d = w.dynRaces.TryGetValue(race, out WbDynRace d0) ? d0 : null;                       // L2174
+            if (d == null) return false;
+            if (d.eco == "pred") return true;                                                               // L2176
+            if (d.eco != null) return false;
+            return IsPredatorRace(w, d.parent);                                                             // L2178 递归母族
+        }
+
+        // ================= ecoTick 生态承载域（engine L12096-12202 机械翻译——M-U12） =================
+        // 蓝本：ecoTick L12096-12202 六段（植被重算/种群清点/食草承载饥饿/过度啃食 regrow 生产源之三/
+        //   捕食者竞争/状态播报）+ 生态自愈迁徙 L12177-12200（silent spawn 双支）。
+        // 依赖面：isHerbivoreRace L2120（已译件）/ isPredatorRace L2169（本切片新建）/ RStats[aquatic]
+        //   （L12115 水生跳过）/ grassTiles+preyGrid 宿主字段（WbWorld L456/L460——索敌导航 L1459/
+        //   繁衍增益 L1598 已译消费面自本切片点亮）/ regrow+setTerrain 级联（M-U8a/M-U8b 已译件）/
+        //   WorldsimSoilMulAt（M-U7k 已译件）/ SpawnUnit 静默链（L1886 骷髅先例全链真掷）。
+        // ep 内联（M-U7m 先例）：eco.grazeRate=1（engineParams L29 value）、eco.regrowBase=700（L28 value）。
+        // 掷数序：饥饿 3 掷/轮 → 啃食门 1 → grazer 1 → regrow 900 域 1（has 门短路）→ 竞争 1 掷/轮 →
+        //   迁徙 a 门 1 → 采样 2 掷/轮 → spawn 掷流 → b 门 1 → herd 1 → spawn 掷流。
+        // 调度：WbTickOrch.ECO 槽 34（%120===9 L2575）宿主接线 WbGameHost.WireOrch（M-U12）。
+        public static void EcoTick(WbWorld w)
+        {
+            // 1) 植被重算（草原+森林 = 食草承载力底座）                                                       // L12097
+            int grass = 0;
+            for (int i = 0; i < WbWorld.W * WbWorld.H; i++)
+            {
+                byte t = w.terrain[i];                                                                              // L12100
+                if (t == WbConstants.T_GRASS || t == WbConstants.T_FOREST) grass++;                         // L12101
+            }
+            w.grassTiles = grass;                                                                                   // L12103
+            // 2) 种群清点（同步重算猎物密度场 —— 饥饿捕食者的宏观导航底图）                                // L12104
+            int herb = 0;
+            int pred = 0;
+            System.Collections.Generic.List<WbU> herbivores = new System.Collections.Generic.List<WbU>();          // L12107
+            System.Collections.Generic.List<WbU> predators = new System.Collections.Generic.List<WbU>();           // L12108
+            System.Array.Clear(w.preyGrid, 0, w.preyGrid.Length);                                                   // L12109（preyGrid.fill(0)）
+            foreach (WbU u in w.units)
+            {
+                if (u.dead != 0) continue;                                                                          // L12111
+                RaceStat udef = RStats[u.race];                                                                     // L12112
+                // 水生物种（鱼/蟹/龟/鲨等）不入陆地承载账本（海洋生态由 wildCapOf 封顶）；
+                // 鲨鱼计入猎物密度场导航无意义（自身即猎手），跳过                                                  // L12113-12114
+                if (udef.aquatic) continue;                                                                         // L12115
+                if (IsHerbivoreRace(w, u.race))
+                {
+                    herb++; herbivores.Add(u);                                                                      // L12117
+                    int gx = System.Math.Min(31, System.Math.Max(0, (int)(u.x / 8)));                       // L12118（(u.x/8)|0 ToInt32 截断——C# (int) 同向零语义，负坐标 -0.625→0 同构）
+                    int gy = System.Math.Min(19, System.Math.Max(0, (int)(u.y / 8)));                       // L12119（同上）
+                    w.preyGrid[gy * 32 + gx]++;                                                                     // L12120
+                }
+                else if (IsPredatorRace(w, u.race)) { pred++; predators.Add(u); }                                   // L12122
+            }
+            // 3) 食草动物 vs 植被承载力（竞争性饥饿：弱者先饿；缺口越大饿殍越多 —— 不再保护性封顶）     // L12124
+            double capacity = grass * 1.6;                                                                          // L12125
+            if (herb > capacity)
+            {
+                int starve = (int)System.Math.Min(10.0, System.Math.Ceiling((herb - capacity) * 0.2));      // L12127
+                for (int k = 0; k < starve; k++)
+                {
+                    // 竞争性饥饿：三选一，体魄与敏捷最弱者先倒下（自然选择）                                      // L12129
+                    WbU victim = null;
+                    double worst = double.PositiveInfinity;                                                         // L12131
+                    for (int j = 0; j < 3; j++)
+                    {
+                        WbU cand = herbivores[(int)System.Math.Floor(w.Rng() * herbivores.Count)];          // L12133
+                        if (cand == null || cand.dead != 0) continue;                                               // L12134
+                        double fitness = (cand.geneC != null ? cand.geneC.h : 1.0) * (cand.geneC != null ? cand.geneC.s : 1.0);   // L12135（gene?.h ?? 1 语义域——geneC null 镜像 TS undefined）
+                        if (fitness < worst) { worst = fitness; victim = cand; }                                    // L12136
+                    }
+                    if (victim != null) { victim.hp -= 15; victim.hurtN = 20; }                                     // L12138（u.hurt=20 语义域 hurtN——fire 域 L3543 先例同构）
+                }
+                // 过度啃食：草地被啃秃（via regrow 循环自愈；啃食速率热参数可调）                                // L12140
+                if (w.Rng() < 0.6 * 1.0 && herbivores.Count > 0)                                            // L12141（ep('eco.grazeRate') 内联 1——engineParams L29）
+                {
+                    WbU grazer = herbivores[(int)System.Math.Floor(w.Rng() * herbivores.Count)];                // L12142
+                    int gi = WbWorld.Idx((int)System.Math.Max(0.0, System.Math.Min((double)(WbWorld.W - 1), System.Math.Floor(grazer.x))), (int)System.Math.Max(0.0, System.Math.Min((double)(WbWorld.H - 1), System.Math.Floor(grazer.y))));   // L12143
+                    if (w.terrain[gi] == WbConstants.T_GRASS && w.building[gi] == 0)                        // L12144
+                    {
+                        SetTerrain(w, gi, WbConstants.T_BURNT);                                                     // L12145（setTerrain 全级联——regrow 出账 L979 级联先行）
+                        if (!w.regrow.ContainsKey(gi)) w.regrow[gi] = w.tickCount + (long)WbMath.JsRound((WbMath.JsRound(700 * 1.3) + System.Math.Floor(w.Rng() * 900.0)) / w.WorldsimSoilMulAt(gi));   // L12146（ep('eco.regrowBase') 内联 700——L28；has 门短路 900 域掷）
+                    }
+                }
+            }
+            // 4) 食肉动物 vs 猎物存量（捕食者过密互竞争 → 饿殍；缺口越大淘汰越狠）                          // L12150
+            double predCap = herb / 4.5;                                                                            // L12151
+            if (pred > predCap && predators.Count > 4)
+            {
+                int starve = (int)System.Math.Min(8.0, System.Math.Ceiling((pred - predCap) * 0.25));       // L12153
+                for (int k = 0; k < starve; k++)
+                {
+                    WbU cand = predators[(int)System.Math.Floor(w.Rng() * predators.Count)];                    // L12155
+                    if (cand != null && cand.dead == 0) { cand.hp -= 14; cand.hurtN = 20; }                     // L12156
+                }
+            }
+            // 5) 状态播报（去重：状态切换时才报，冷却 15 年）                                                // L12159
+            double ratio = capacity > 0 ? herb / capacity : 0.0;                                            // L12160
+            string nextState = herb < 8 ? "collapse" : ratio > 1.15 ? "overgraze" : ratio < 0.25 ? "overgrass" : "balanced";   // L12161
+            if (nextState != w.ecoState && (int)System.Math.Floor(w.yearF) - w.ecoLastNoteYear > 15)
+            {
+                w.ecoLastNoteYear = (int)System.Math.Floor(w.yearF);                                                // L12163
+                string msg = nextState == "overgrass" ? "植被繁茂而食草动物稀少 —— 大地静待新的种群"
+                    : nextState == "balanced" ? "食草与捕食重回平衡，草原生生不息"
+                    : nextState == "overgraze" ? $"食草动物超过了植被承载力（{herb}/{(long)WbMath.JsRound(capacity)}）——饥饿蔓延"
+                    : "野生动物几近绝迹 —— 生态面临崩溃";                                                    // L12164-12169
+                w.AddEvent("eco", msg, "#a3e635");                                                                  // L12170（colorHex 面——事件流纪律③）
+                w.ecoState = nextState;                                                                             // L12171
+            }
+            else if (nextState != w.ecoState)
+            {
+                w.ecoState = nextState; // 冷却中静默切换                                                           // L12173
+            }
+            // 6) 生态自愈（迁徙入境）：植被繁茂而食草寥寥 → 种群循草而来；羊多而捕食者绝 → 荒野狼群循猎而来
+            //    （局部灭绝不再永逝 —— 大自然自己补种，间隔 ≥ 25 年，且远离文明密集区）                     // L12175-12176
+            int yearNow = (int)System.Math.Floor(w.yearF);                                                          // L12177
+            if (yearNow - w.ecoRepopYear > 25)
+            {
+                if (ratio < 0.22 && grass > 1800 && w.Rng() < 0.35)
+                {
+                    // 食草种群迁徙：在无主的茂草处落户 5 只（雪原入鹿、草原入羊）                              // L12180
+                    for (int k = 0; k < 10; k++)
+                    {
+                        int gx = 4 + (int)System.Math.Floor(w.Rng() * (WbWorld.W - 8));                     // L12182
+                        int gy = 4 + (int)System.Math.Floor(w.Rng() * (WbWorld.H - 8));                     // L12183
+                        int gi = gy * WbWorld.W + gx;                                                               // L12184
+                        byte tt = w.terrain[gi];                                                                    // L12185
+                        if (tt != WbConstants.T_GRASS && tt != WbConstants.T_FOREST) continue;              // L12186
+                        if (w.owner[gi] >= 0 || w.building[gi] > 0) continue;                                       // L12187
+                        int race = tt == WbConstants.T_FOREST ? WbConstants.R_DEER : WbConstants.R_SHEEP;   // L12188
+                        for (int n = 0; n < 5; n++) _ = SpawnUnit(w, race, gx + w.Rng() * 2 - 1, gy + w.Rng() * 2 - 1, new WbSpawnOpts { silent = true });   // L12189（spawn 掷流：trait0.15/maxAge/flip/breath/family0.06——骷髅先例同构）
+                        w.AddEvent("eco", $"一群{RStats[race].name}迁徙而来，在这片丰茂的草原上落户", "#a3e635", gx, gy);   // L12190
+                        w.ecoRepopYear = yearNow;                                                                   // L12191
+                        break;
+                    }
+                }
+                else if (herb > 60 && pred < 6 && herbivores.Count > 0 && w.Rng() < 0.25)
+                {
+                    // 捕食者迁入：狼群循着猎物的踪迹入境（跟随羊群而非随机落点）                              // L12195
+                    WbU herd = herbivores[(int)System.Math.Floor(w.Rng() * herbivores.Count)];                  // L12196
+                    for (int n = 0; n < 2; n++) _ = SpawnUnit(w, WbConstants.R_WOLF, herd.x + w.Rng() * 6 - 3, herd.y + w.Rng() * 6 - 3, new WbSpawnOpts { silent = true });   // L12197
+                    w.AddEvent("eco", "荒野狼群循着猎物的踪迹迁徙入境", "#c084fc", herd.x, herd.y);             // L12198
+                    w.ecoRepopYear = yearNow;                                                                   // L12199
+                }
+            }
+        }
+
         // ================= 敌意判定域（isEnemyFast/isEnemy 机械翻译——M-U7m 扫描域批次二） =================
         // isEnemyFast L2070-2081（桶扫描专用快速通道）：野生 vs 野生命中 LUT（引擎私有缓存随 World 实例——
         // LUT 键仅 race 对，鲨鱼地形分支 L2113 依赖被扫者站位——跨格缓存污染为蓝本既有行为，机械保持）
