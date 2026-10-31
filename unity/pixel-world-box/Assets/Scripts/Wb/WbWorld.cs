@@ -493,6 +493,16 @@ namespace PixelWorldBox.Wb
         public bool iceChronDone = false;                      // nature.ts L178 封冻纪事旗（离冬复位 L218 seasonCheck 未译注记）
         public bool thawChronDone = false;                     // nature.ts L180 落冰湖纪事旗（离春复位 L220 seasonCheck 未译注记）
 
+        // —— M-U9b fire 域（字段只加）——
+        public List<int> fireSetList = new List<int>();        // fireSet 插入序镜像（JS Set 迭代序——fireTick 活迭代逐位面；Ignite/SetTerrain L992/白行者 L3581/ExtinguishFire L4589 四写点同步）
+        public List<int> fireDone = new List<int>();           // engine L667 fireDone（fireTick 熄灭列表复用——热路径零分配语义）
+        public double windPhase = 0;                           // nature.ts L63 windPhase（大气湍流相位——atmTick L432 演绎未译，夹具注入态）
+        public int natureSeed = 0;                             // nature.ts L88 seed（nature 系统种子——windAt valueNoise 输入）
+        public byte[] rainCell = new byte[WbConstants.AW * WbConstants.AH];   // nature.ts L65 rainCell: Uint8Array（雨区格——fireMul 雨区难燃门 L316；atmTick 演绎未译注入态）
+        public byte[] glacier = new byte[W * H];               // worldsim.ts L90 glacier: Uint8Array（冰川覆被——fireMul 冰上不燃门 L312；glacierTick 演绎未译注入态）
+        public List<double[]> pSystems = new List<double[]>(); // nature.ts L74 气压中心 {x, y, kind, str, ttl}——windAt 科氏旋涡（x/y 像素域 f64；atmTick 生灭未译注入态）
+        public List<double[]> storms = new List<double[]>();   // nature.ts L70 风暴 {x, y, strength}——windAt 气旋环流（stormTick 生灭未译注入态）
+
         // ---------------- 集合层（M-U3c 战争/联盟/图谱域） ----------------
         public Dictionary<string, WbWarData> warData = new Dictionary<string, WbWarData>();  // key 'a-b'（a<b）
         public HashSet<string> totalWars = new HashSet<string>();
@@ -598,6 +608,107 @@ namespace PixelWorldBox.Wb
             double m = s == 3 ? 1.8 : s == 1 ? 0.55 : 1;                                                                 // L343
             m += ash * 0.8;                                                                                              // L344（ash 恒 0 域——storm/volcano 生产面未译）
             return m;                                                                                                    // L345
+        }
+
+        /// nature.ts L350-354 cellOf——粗网格单格序（钳制面：x/CELL 截断 + 边界钳）
+        public int NatureCellOf(double x, double y)
+        {
+            int cx = (int)x / WbConstants.NATURE_CELL;                                                                   // L351（JS (x/CELL)|0 截断同构——x 非负）
+            if (cx > WbConstants.AW - 1) cx = WbConstants.AW - 1; else if (cx < 0) cx = 0;
+            int cy = (int)y / WbConstants.NATURE_CELL;                                                                   // L352
+            if (cy > WbConstants.AH - 1) cy = WbConstants.AH - 1; else if (cy < 0) cy = 0;
+            return cy * WbConstants.AW + cx;                                                                             // L353
+        }
+
+        /// nature.ts L336-340 itczLat——赤道辐合带纬度（季节摆动；laws.seasons 门）
+        public double NatureItczLat()
+        {
+            if (!laws.seasons) return 0.5;                                                                               // L337
+            int s = NatureSeason();
+            return 0.5 + (s == 1 ? 0.062 : s == 0 ? 0.034 : s == 2 ? -0.026 : -0.062);                                   // L339
+        }
+
+        /// nature.ts L332-335 jetMul——急流强度季节调制（冬 1.35/夏 0.85/其余 1）
+        public double NatureJetMul()
+        {
+            int s = NatureSeason();
+            return s == 3 ? 1.35 : s == 1 ? 0.85 : 1;                                                                    // L334
+        }
+
+        /// nature.ts L309-318 fireMul——火焰蔓延季节/降雨系数（冰上不燃 L312 + 季节 L314 + 雨区难燃 L316）
+        public double NatureFireMul(int i)
+        {
+            if (glacier[i] > 80) return 0;                                                                               // L312 冰上不燃（冰上无草木可焚）
+            int s = NatureSeason();
+            double m = s == 3 ? 0.45 : s == 2 ? 0.8 : s == 0 ? 1.0 : 1.3;                                                // L314
+            int c = NatureCellOf(i % W, i / W);                                                                          // L315
+            if (rainCell[c] > 60) m *= 0.45;                                                                             // L316 雨区难燃
+            return m;
+        }
+
+        /// nature.ts L320-324 regrowMul——植被复苏系数（春 0.65/夏 0.9/秋 1.15/冬 2.0）
+        public double NatureRegrowMul()
+        {
+            int s = NatureSeason();
+            return s == 0 ? 0.65 : s == 1 ? 0.9 : s == 2 ? 1.15 : 2.0;                                                   // L322
+        }
+
+        /// worldsim.ts L168-170 soilMulAt——土壤肥力复苏除子（0.6 贫痠 ↔ 1.4 沃土；soilF 字段 M-U7k 在案）
+        public double WorldsimSoilMulAt(int i)
+        {
+            return 0.6 + (soilF[i] / 255.0) * 0.8;                                                                       // L169
+        }
+
+        /// nature.ts L356-420 windAt——风矢量（ITCZ 三环 + exp 急流〔WbMath.FdExp 位精确件〕+ valueNoise 湍流
+        /// 〔WbNoise.ValueNoise〕+ 气压旋涡/风暴环流〔Math.hypot → WbNoise.V8Hypot 位精确件〕）
+        public (double u, double v) NatureWindAt(int cx, int cy)
+        {
+            double lat = cy / (double)(WbConstants.AH - 1);                                                              // L357
+            double itcz = NatureItczLat();                                                                              // L358
+            double latA = System.Math.Abs(lat - itcz) * 2;                                                               // L359
+            double u;                                                                                                    // L361 三环环流
+            if (latA < 0.32) u = -0.55 + latA * 0.9;
+            else if (latA < 0.72) u = 0.75 - (latA - 0.32) * 0.35;
+            else u = -0.45 + (latA - 0.72) * 1.6;
+            double jet = NatureJetMul();                                                                                // L366
+            double g1 = WbMath.FdExp(-((latA - 0.38) * (latA - 0.38)) / 0.005);                                          // L367（x**2 → 平方同构；exp fdlibm）
+            double g2 = WbMath.FdExp(-((latA - 0.62) * (latA - 0.62)) / 0.0098);                                         // L368
+            u += (g1 * 0.55 + g2 * 0.95) * jet;                                                                          // L369
+            double n = WbNoise.ValueNoise(cx / 6.0 + windPhase, cy / 6.0 - windPhase * 0.6, natureSeed + 313) - 0.5;     // L371-372 湍流
+            double n2 = WbNoise.ValueNoise(cx / 9.0 - windPhase * 0.7, cy / 9.0 + windPhase * 0.4, natureSeed + 727) - 0.5;
+            u += n * 0.5;                                                                                                // L373
+            double v = n2 * 0.35;                                                                                        // L374
+            for (int pi = 0; pi < pSystems.Count; pi++)                                                                  // L376 气压旋涡
+            {
+                double[] ps = pSystems[pi];
+                double dx = cx - ps[0] / WbConstants.NATURE_CELL;                                                        // L377-378
+                double dy = cy - ps[1] / WbConstants.NATURE_CELL;
+                double d = WbNoise.V8Hypot(dx, dy);                                                                      // L379
+                if (d < 7 && d > 0.3)                                                                                    // L380
+                {
+                    double nh = lat < 0.5 ? 1 : -1;                                                                      // L381 科氏符号
+                    double sw = (ps[3] * 1.35) / (d * 0.8 + 1);                                                          // L382
+                    double sgn = ps[2] == 0 ? 1 : -1;                                                                    // L383
+                    u += (-dy / d) * nh * sw * sgn + (dx / d) * sw * (ps[2] == 0 ? -0.22 : 0.16);                        // L384
+                    v += (dx / d) * nh * sw * sgn + (dy / d) * sw * (ps[2] == 0 ? -0.22 : 0.16);                         // L385
+                }
+            }
+            for (int si = 0; si < storms.Count; si++)                                                                    // L389 风暴环流
+            {
+                double[] st = storms[si];
+                double sx = st[0] / WbConstants.NATURE_CELL;                                                             // L390-391
+                double sy = st[1] / WbConstants.NATURE_CELL;
+                double dx = cx - sx;                                                                                     // L392-393
+                double dy = cy - sy;
+                double d = WbNoise.V8Hypot(dx, dy);                                                                      // L394
+                if (d < 5 && d > 0.4)                                                                                    // L395
+                {
+                    double pull = (st[2] * 1.6) / (d * d + 1) * 0.8;                                                     // L396
+                    u += (-dy / d) * pull;                                                                               // L397
+                    v += (dx / d) * pull;                                                                                // L398
+                }
+            }
+            return (u, v);                                                                                               // L405
         }
 
         /// engine.ts fx L9781-9799 —— 渲染侧效应入事件流（rng 消耗×2 是模拟语义，桩不掉）

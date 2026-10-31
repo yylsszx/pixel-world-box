@@ -445,7 +445,7 @@ namespace PixelWorldBox.Wb
                         if (t == WbConstants.T_GRASS || t == WbConstants.T_BURNT || t == WbConstants.T_SAND) SetTerrain(w, j, WbConstants.T_SNOW);   // L3577（M-U8a 重接 setTerrain L969 全级联——M-U7k no-op 注记消亡；四写点 prev≠t 恒真，同值早退 L971 零触达零漂移）
                         else if (t == WbConstants.T_FOREST && w.Rng() < 0.4) SetTerrain(w, j, WbConstants.T_SNOW);       // L3578（&& 短路 1 掷）
                         else if (WbWorld.IsWater(t) && w.Rng() < 0.5) SetTerrain(w, j, WbConstants.T_ICE);               // L3579（冰封水面）
-                        if (w.fire[j] > 0) { w.fire[j] = 0; w.fireSet.Remove(j); }                                       // L3581（寒霜灭火）
+                        if (w.fire[j] > 0) { w.fire[j] = 0; w.fireSet.Remove(j); w.fireSetList.Remove(j); }              // L3581（寒霜灭火；fireSetList 镜像同步——M-U9b）
                     }
                 }
                 if (WbWorld.IsWater(w.terrain[ti]) && w.Rng() < 0.6) SetTerrain(w, ti, WbConstants.T_ICE);               // L3588（寒冰之路；&& 短路 1 掷——M-U8a 重接全级联：ICE 非-water 语义闸门，riverDir 清/fire 熄支路可达，owner/建筑/道路三联不可达）
@@ -1175,7 +1175,7 @@ namespace PixelWorldBox.Wb
             bool flammable = t == WbConstants.T_GRASS || t == WbConstants.T_FOREST;                                              // L1075
             if (!flammable && w.building[i] == 0) return;                                                                        // L1075
             w.fire[i] = (byte)(150 + System.Math.Floor(w.Rng() * 90));                                                          // L1076
-            w.fireSet.Add(i);                                                                                                    // L1077
+            w.fireSet.Add(i); w.fireSetList.Add(i);                                                                              // L1077（fireSetList 插入序镜像同步——M-U9b）
         }
 
         // ================= leadAim L4351-4357（弹道预测：目标提前量 + 落点抖动 2 掷——M-U7o 远程域消费） =================
@@ -1938,12 +1938,13 @@ namespace PixelWorldBox.Wb
         // ================= setTerrain L969-1007（M-U8a 地形簿记全级联——sim 域切片） =================
         // 机械翻译蓝本：engine.ts L969-1007。地形写入门面：同值早退（L971）→ 写入（L972）→ 级联簿记。
         // 未译域 no-op 注记（M-U7k「L950 簿记 no-op 域」注记自本轮起消亡——级联本体真实现）：
-        //   L974 ambTouch（氛围候选表——ambience 域未译，harness env.ambience:false 桩域）；
-        //   L976 worldsim.onTerrainChanged（glacier worldsim 未译——M-U7z 桥不覆盖面同注记）；
         //   L977-978 markDirty+propsDirty（渲染簿记——sim 侧 no-op，渲染面由宿主 SyncWorldFace 桥 +
         //     SyncTerrainDiffs 差分记账承接，M-U7z）；L979 regrow.delete 自 M-U8b 起点亮（regrowTick 已译——
         //     焦土再生成计时随地形覆写作废）；L981-984 frozen/flood/wet 贴花集自 M-U9a 起点亮
         //     （冰域已译——贴花集随地形变化即时失效/结集；L983/984 水/沙异值才出账）；
+        //     L976 worldsim.onTerrainChanged 观测面自 M-U9b 起点亮（L157 火烧扣地力 soilF-8——
+        //     regrow 除子消费面；L159-163 水覆写清冰川——fireMul 冰上不燃门消费面；
+        //     L155 elev 场/L164 driftAcc 场 worldsim 未观测域注记维持）；
         //   L1006 refreshWaterTierAround（waterTier worldgen 渲染专属未译）。
         // 级联零掷：全支路查表/集合记账，无 rng 消费——S1-S56 黄金掷值链零漂移（黄金 md5 fd09587b 不变的充要前提）。
         // 语义闸门（constants.ts L67-69 实证）：isWater(t)=DEEP||WATER——ICE 非水：寒冰之路冻 ICE 走
@@ -1967,7 +1968,7 @@ namespace PixelWorldBox.Wb
             if (w.fire[i] > 0)                                                                                           // L990 地形变更 → 火焰奄灭
             {
                 w.fire[i] = 0;                                                                                           // L991
-                w.fireSet.Remove(i);                                                                                     // L992
+                w.fireSet.Remove(i); w.fireSetList.Remove(i);                                                            // L992（fireSetList 插入序镜像同步——M-U9b）
             }
             if ((WbWorld.IsWater(t) || t == WbConstants.T_LAVA) && w.owner[i] >= 0)                                      // L994 水/岩浆吞没 → 领土熄灭
             {
@@ -1982,6 +1983,12 @@ namespace PixelWorldBox.Wb
                 w.road[i] = 0;                                                                                           // L1003
             }
             // L1006 refreshWaterTierAround（waterTier worldgen 渲染专属未译——no-op 注记）
+            // worldsim.onTerrainChanged L153-165 观测面（M-U9b 点亮——蓝本 L976 在 L972 写入后即时触发；
+            //   本处级联尾置语义等价：soilF/glacier 为后续无消费的簿记面，regrow.set L2825 读 soilF
+            //   在 setTerrain 返回后——时序与蓝本一致）:
+            if (t == WbConstants.T_BURNT && w.soilF[i] > 8) w.soilF[i] -= 8;                                             // L157 火烧地力损耗（灰烬回田等腐殖质累积）
+            if ((WbWorld.IsWater(t) || t == WbConstants.T_LAVA) && w.glacier[i] > 0) w.glacier[i] = 0;                   // L159-163 水面/岩浆覆写清冰川（glacierTiles 计数/dirty 记账——worldsim 层非观测域注记）
+            // L155 elev 场（ELEV_TGT 回归）/ L164 driftAcc 场——worldsim 域未译注记维持
         }
 
         // ================= regrowTick L2830-2840（M-U8b regrow 域核心——sim 域切片） =================
@@ -2185,6 +2192,94 @@ namespace PixelWorldBox.Wb
                 foreach (System.Collections.Generic.KeyValuePair<int, long> kv in wsnap)
                 {
                     if (w.tickCount >= kv.Value) w.wet.Remove(kv.Key);                                                   // L3028
+                }
+            }
+        }
+
+        // ================= fireTick L2772-2821（M-U9b fire 域核心——sim 域切片） =================
+        // 机械翻译蓝本：engine.ts L2772-2821。野火循环：火格活迭代（强度衰减/建筑摧毁/风驱蔓延）→
+        //   熄灭列表（BURNT 化 + regrow 计时挂账）。
+        // 掷值面（黄金 fire.json 五场景闭合）：蔓延尝试 1 掷/火格（L2789）+ 邻格蔓延 1 掷/可燃邻
+        //   （L2809 p>0 门先短——零概率不掷）+ ignite 强度 1 掷（L1076——双门前置不掷）+
+        //   destroyBuilding smoke fx 2 掷（L1954 译件内）+ regrow 挂账 1 掷/焦土（L2823）。
+        // 活迭代语义（L2776 for...of + 体内 ignite add / setTerrain 灭 delete）：JS Set 迭代器
+        //   含运行时新增（追加项当 tick 即燃）；C# 队列仿真 = 快照 + ignite 成功尾插 + 访问时
+        //   fireSet 成员判定跳过（JS 桶判定同构——充要）。复燃边（队列内已删项再点燃——JS 尾插
+        //   重访/C# 原位处理，时序异）为夹具零触达域（注记：复燃生产域入链时审计）。
+        // Uint8Array wrap 语义（L2783 fire[i] -= 5）：强度 ≢0 mod 5 时回绕 254 续燃——蓝本既有
+        //   行为，C# byte 未检查回绕同构（默认 unchecked 上下文）。
+        // 大气依赖面：NatureCellOf/NatureWindAt（exp→WbMath.FdExp / hypot→WbNoise.V8Hypot /
+        //   valueNoise→WbNoise.ValueNoise 位精确件——fdlibm 域，M-U7t/M-U7w 口径先例）+
+        //   NatureFireMul（glacier 冰上不燃 L312 / 雨区难燃 L316）。
+        // ep 内联（M-U7m 先例）：fire.spreadMul=1（engineParams L30 value）× regrowBase=700（L28 value）。
+        internal static void FireTick(WbWorld w)
+        {
+            if (w.fireSet.Count == 0) return;                                                                        // L2773
+            w.fireDone.Clear();                                                                                      // L2775（熄灭列表复用——热路径零分配语义）
+            System.Collections.Generic.List<int> queue = new System.Collections.Generic.List<int>(w.fireSetList);    // L2776 活迭代队列（JS Set 插入序快照 + 追加尾插仿真）
+            for (int qi = 0; qi < queue.Count; qi++)
+            {
+                int i = queue[qi];
+                if (!w.fireSet.Contains(i)) continue;                                                                // 活迭代删除未达项跳过（JS 访问时桶判定同构）
+                // 火焰落在冰面上：热量直接把脚下冰烧融（火也随水熄灭）
+                if (w.terrain[i] == WbConstants.T_ICE)                                                               // L2778
+                {
+                    MeltIce(w, i);                                                                                   // L2779（terrain 已 ICE → setTerrain WATER——meltIce L2892 统一入口）
+                    w.fire[i] = 0;                                                                                   // L2780
+                    w.fireDone.Add(i);                                                                               // L2781
+                    continue;
+                }
+                w.fire[i] -= 5;                                                                                      // L2783（byte 回绕——Uint8Array 同构）
+                if (w.fire[i] <= 0) { w.fireDone.Add(i); continue; }                                                 // L2784
+                if (w.building[i] > 0 && w.fire[i] < 100)                                                            // L2785 建筑焚毁
+                {
+                    WbCivSim.DestroyBuilding(w, i);                                                                  // L2787（已全译件——smoke fx 2 掷/swap-pop/bIdx/Bhp/damagedSet）
+                    w.fireDone.Add(i);                                                                               // L2788
+                    continue;
+                }
+                if (w.Rng() < 0.4)                                                                                   // L2789 蔓延尝试门
+                {
+                    int x = i % WbWorld.W;                                                                           // L2791
+                    int y = i / WbWorld.W;                                                                           // L2792
+                    // 风驱蔓延（v2）：下风向火势更旺、上风向受抑（大气与野火的因果链）
+                    int wcell = w.NatureCellOf(x, y);                                                                // L2794
+                    (double wu, double wv) = w.NatureWindAt(wcell % WbConstants.AW, wcell / WbConstants.AW);         // L2795
+                    for (int dy = -1; dy <= 1; dy++)                                                                 // L2797
+                    {
+                        for (int dx = -1; dx <= 1; dx++)                                                             // L2798
+                        {
+                            if (dx == 0 && dy == 0) continue;                                                        // L2799
+                            int xx = x + dx;                                                                         // L2800
+                            int yy = y + dy;                                                                         // L2801
+                            if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                    // L2802
+                            int j = yy * WbWorld.W + xx;                                                             // L2803
+                            // 火焰融冰：燃烧产生的热量使邻近冰面消融为水
+                            if (w.terrain[j] == WbConstants.T_ICE) { MeltIce(w, j); continue; }                      // L2805（meltIce 统一入口）
+                            byte t = w.terrain[j];
+                            double p = (w.building[j] > 0 ? 0.25 : t == WbConstants.T_FOREST ? 0.13 : t == WbConstants.T_GRASS ? 0.05 : t == WbConstants.T_SNOW ? 0.008 : 0) * w.NatureFireMul(j) * 1.0;   // L2807（spreadMul=1 内联）
+                            // 邻格对角距离只会是 1 或 √2——查表替代 Math.hypot
+                            double dl = dx != 0 && dy != 0 ? System.Math.Sqrt(2.0) : 1.0;                            // L2809（Math.SQRT2 位恒等）
+                            double wproj = (wu * dx + wv * dy) / dl;                                                 // L2810
+                            p *= wproj > 0.35 ? 2.1 : wproj < -0.35 ? 0.4 : 1;                                       // L2811 顺风 ×2.1 / 逆风 ×0.4
+                            if (p > 0 && w.Rng() < p)                                                                // L2812（&& 短路——p=0 不掷）
+                            {
+                                IgniteE(w, j);                                                                       // L2812（强度 1 掷——L1076）
+                                if (w.fire[j] > 0 && !queue.Contains(j)) queue.Add(j);                               // 活迭代追加仿真（ignite 成功且未在队列 → 尾插；JS Set 追加序同构）
+                            }
+                        }
+                    }
+                }
+            }
+            foreach (int i in w.fireDone)                                                                            // L2815 熄灭列表
+            {
+                w.fireSet.Remove(i); w.fireSetList.Remove(i);                                                        // L2816
+                w.fire[i] = 0;                                                                                       // L2817
+                byte t = w.terrain[i];                                                                               // L2818
+                if (t == WbConstants.T_FOREST || t == WbConstants.T_GRASS)                                           // L2819
+                {
+                    SetTerrain(w, i, WbConstants.T_BURNT);                                                           // L2821（全级联——L157 火烧扣地力承接收口）
+                    // 季节影响复苏速度（春快冬慢；雨区加速）× 土壤肥力 × 热参数
+                    w.regrow[i] = w.tickCount + (long)WbMath.JsRound((700.0 + System.Math.Floor(w.Rng() * 900.0)) / (w.NatureRegrowMul() * w.WorldsimSoilMulAt(i)));   // L2823（soilF 已被 L157 扣减——蓝本 L976 时序同构）
                 }
             }
         }
@@ -3163,7 +3258,7 @@ namespace PixelWorldBox.Wb
         private static void ExtinguishFire(WbWorld w, int i, WbU by)
         {
             w.fire[i] = 0;                                                                       // L4588
-            w.fireSet.Remove(i);                                                                 // L4589
+            w.fireSet.Remove(i); w.fireSetList.Remove(i);                                        // L4589（fireSetList 镜像同步——M-U9b）
             w.firesOut++;                                                                        // L4590
             FxHook(w, "water", (i % WbWorld.W) + 0.5, ((i / WbWorld.W) | 0) + 0.5, 16);          // L4591
             // 节流播报：累积 3 次以上才上纪事，间隔 ≥ 480 tick

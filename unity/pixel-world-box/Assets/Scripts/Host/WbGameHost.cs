@@ -123,6 +123,7 @@ namespace PixelWorldBox.Host
         void WireOrch()
         {
             Orch = new PixelWorldBox.Wb.WbTickOrch { w = World };
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.FIRE] = () => PixelWorldBox.Wb.WbBailRelay.FireTick(World);       // M-U9b：fireTick 已译域真调（空集安全：fireSet.Count==0 顶层早退）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.REBUILD_CIV_BUILD_COUNTS] = () => PixelWorldBox.Wb.WbCivSim.RebuildCivBuildCounts(World);
             Orch.D[PixelWorldBox.Wb.WbTickOrch.CIVS] = () => PixelWorldBox.Wb.WbCivSim.CivsTick(World);
             Orch.D[PixelWorldBox.Wb.WbTickOrch.TECH] = () => PixelWorldBox.Wb.WbCivSim.TechTick(World);

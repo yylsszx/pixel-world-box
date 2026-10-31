@@ -417,5 +417,9 @@ namespace PixelWorldBox.Wb
         public const int NW_FRL = 768;
         // 节律（constants.ts L9 —— M-U7c' tick 母体编排；place! 序尾追加）
         public const int YEAR_TICKS = 40;
+        // 大气粗网格（nature.ts L17-19 —— M-U9b fire 域；place! 序尾追加）
+        public const int AW = W / 8;            // Math.floor(W / 8) = 32
+        public const int AH = H / 8;            // Math.floor(H / 8) = 20
+        public const int NATURE_CELL = 8;       // CELL=8（tile/大气格）
     }
 }

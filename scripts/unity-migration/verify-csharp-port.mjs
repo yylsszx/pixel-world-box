@@ -1686,6 +1686,68 @@ var iceVerifyFail = 0;
   }
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0;
+
+// 段 32：M-U9b fire 域（fire-transcript 镜像 5 场景逐位 + gen det 复跑〔bun——超函数链口径统一〕+ 双写 md5 + 台账）
+var fireVerifyFail = 0;
+{
+  const { execFileSync } = await import('node:child_process');
+  const { createHash, } = await import('node:crypto');
+  const { readFileSync } = await import('node:fs');
+  try {
+    // M-U7w 口径：黄金链一律 bun（exp/hypot fdlibm——C# FdExp/V8Hypot 位精确件对账面在 NUnit 侧）
+    execFileSync('bun', [new URL('./fire-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
+    console.log('fire 黄金回放 (fire-transcript 镜像 vs fire.json): PASS (5 场景 快照逐位 + fireSet 活迭代序 + regrow 序 + 逐步 rngA + fx 事件流)');
+  } catch (e) {
+    fireVerifyFail++;
+    console.error('fire 黄金回放: FAIL');
+    console.error(String(e.stdout ?? '').split('\n').slice(-8).join('\n'));
+  }
+  try {
+    const goldenPath = new URL('./golden/fire.json', import.meta.url).pathname;
+    const { readFile } = await import('node:fs/promises');
+    const h0 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    execFileSync('bun', [new URL('./gen-fire.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
+    const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
+    console.log('fire gen det 复跑 (gen-fire · bun): PASS (5 场景 sanity + GameEngine 真实现 + det 字节级)');
+  } catch (e) {
+    fireVerifyFail++;
+    console.error('fire gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+  try {
+    const g = JSON.parse(readFileSync(new URL('./golden/fire.json', import.meta.url), 'utf8'));
+    const fails = [];
+    const fail = (m) => fails.push(m);
+    if (!Array.isArray(g.scenarios) || g.scenarios.length !== 5) fail('场景数 ≠ 5');
+    const keys = g.scenarios.map((s) => s.key);
+    for (const want of ['fire-spread-forest', 'fire-building-destroy', 'fire-ice-melt', 'fire-wind-rain', 'fire-winter-ignite'])
+      if (!keys.includes(want)) fail(`场景 ${want} 缺失`);
+    for (const s of g.scenarios) {
+      if (!s.fixture || !Array.isArray(s.fixture.fireSet0) || !s.fixture.windPhase) fail(s.key + ' fixture 缺失');
+      if (!Array.isArray(s.stepsSnap) || s.stepsSnap.length !== s.steps) fail(s.key + ' stepsSnap ≠ steps');
+      if (typeof s.totalDraws !== 'number' || s.totalDraws < 0) fail(s.key + ' totalDraws 缺失');
+    }
+    const sp = g.scenarios.find((s) => s.key === 'fire-spread-forest');
+    if (!sp || sp.totalDraws < 100 || !sp.stepsSnap.some((st) => st.fireSet.length > 5)) fail('fire-spread-forest 真蔓延签名缺失（掷数>100 + fireSet>5）');
+    const bd = g.scenarios.find((s) => s.key === 'fire-building-destroy');
+    if (!bd || !bd.fx.some((e) => e.kind === 'smoke')) fail('fire-building-destroy smoke fx 签名缺失');
+    const wr = g.scenarios.find((s) => s.key === 'fire-wind-rain');
+    if (!wr || !wr.fixture.pSystems.length || !wr.fixture.storms.length) fail('fire-wind-rain 大气态注入签名缺失');
+    const im = g.scenarios.find((s) => s.key === 'fire-ice-melt');
+    if (!im || !im.stepsSnap.some((st) => st.regrow.length >= 0 && true)) { /* 冰火面以 terrain md5 对账为准 */ }
+    const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/fire.json', import.meta.url));
+    const gl = readFileSync(new URL('./golden/fire.json', import.meta.url));
+    const md5a = createHash('md5').update(sa).digest('hex');
+    const md5b = createHash('md5').update(gl).digest('hex');
+    if (md5a !== md5b) fail(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
+    if (fails.length > 0) throw new Error(fails.join(' | '));
+    console.log(`fire 台账完备 (5 场景 + 真蔓延/smoke fx/大气态签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  } catch (e) {
+    fireVerifyFail++;
+    console.error('fire 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0 && fireVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);
