@@ -79,7 +79,7 @@ class MirrorWorld {
     this.damagedSet = new Set();
     this.dirty = new Set();
     this.activeBattles = new Map(fx.battles0);
-    this.effects = fx.fx0.map((e) => ({ kind: e.kind, x: unhex(e.x), y: unhex(e.y), r: e.r, age: e.age, ttl: e.ttl, seed: e.seed, dir: unhex(e.dir), src: e.src ?? undefined, dmg: e.dmg ?? undefined, quiet: e.quiet === true, wid: e.wid ?? undefined, nuke: e.nuke ?? undefined, fire: e.fire ?? undefined }));   // M-U10c src/dmg/quiet + M-U10d wid/nuke/fire 通道
+    this.effects = fx.fx0.map((e) => { const ex = unhex(e.x), ey = unhex(e.y); return { kind: e.kind, x: ex, y: ey, x0: e.x0 !== undefined ? unhex(e.x0) : ex, y0: e.y0 !== undefined ? unhex(e.y0) : ey, r: e.r, age: e.age, ttl: e.ttl, seed: e.seed, dir: unhex(e.dir), src: e.src ?? undefined, dmg: e.dmg ?? undefined, quiet: e.quiet === true, wid: e.wid ?? undefined, nuke: e.nuke ?? undefined, fire: e.fire ?? undefined }; });   // M-U10c src/dmg/quiet + M-U10d wid/nuke/fire 通道 + M-U10e 稀疏 x0/y0（缺键 ≡ fx() 默认 x0=x/y0=y L9793-9797）
     this.units = fx.units0.map((u) => ({ id: u.id, race: u.race, x: unhex(u.x), y: unhex(u.y), hp: unhex(u.hp), maxHp: unhex(u.maxHp), hurt: u.hurt, chill: u.chill, dead: u.dead, boat: 0, civ: u.civ ?? -1, gbArmor: u.gbArmor ?? 0 }));   // boat 夹具恒 0（无船域注记）；civ/gbArmor M-U10c 通道
     this.rebuildBuckets();                 // M-U10c：arrow/bullet 桶扫描面（gen 注入相尾同构——纯函数零掷）
     this.worldEvents = [];
@@ -767,6 +767,53 @@ class MirrorWorld {
           this.shellBurst(e.x, e.y, e.r || 2.8, e.dmg ?? 60, true, e.src ?? -1);
           // onSound?.('boom') —— 宿主回调 no-op 同 gen 端
         }
+      } else if (e.kind === 'airstrike') {                 // L10311-10322（M-U10e：轰炸机沿航线周期投弹 + 终点收尾爆破——无 killCredit 写面蓝本异形，与 drone 对位）
+        const at = Math.min(1, e.age / e.ttl);
+        const ax = e.x0 + (e.x - e.x0) * at;               // x0 ?? e.x——fx() 恒置 x0=x，?? 支不可达（镜像同构直读）
+        const ay = e.y0 + (e.y - e.y0) * at;
+        if (e.age > 6 && e.age % 16 === 0 && at < 0.92) {
+          this.shellBurst(ax, ay, 1.2, 22, this.rng() < 0.4, e.src ?? -1);   // fire 实参掷——门过方掷
+        }
+        if (e.age >= e.ttl) {
+          this.shellBurst(e.x, e.y, e.r || 1.8, e.dmg ?? 30, true, e.src ?? -1);
+          // onSound?.('boom') —— 宿主回调 no-op 同 gen 端
+        }
+      } else if (e.kind === 'drone') {                     // L10353-10368（M-U10e：无人机蜂群游猎扫射 + 终点集束——killCredit wid 往返 + emergentPayload 门）
+        const dt = Math.min(1, e.age / e.ttl);
+        const dxp = e.x0 + (e.x - e.x0) * dt;
+        const dyp = e.y0 + (e.y - e.y0) * dt;
+        if (e.age > 8 && e.age % 12 === 0 && dt < 0.92) {
+          this.killCredit = e.wid ?? null;
+          this.shellBurst(dxp, dyp, 1.0, e.dmg ?? 14, false, e.src ?? -1);   // fire 恒 false——零 ignite 掷
+          this.killCredit = null;
+        }
+        if (e.age >= e.ttl) {
+          this.killCredit = e.wid ?? null;
+          this.shellBurst(e.x, e.y, e.r || 2.6, (e.dmg ?? 14) * 2.6, true, e.src ?? -1);   // 集束 (dmg??14)*2.6 f64 位级
+          if (e.wid != null) this.emergentPayload(e);
+          this.killCredit = null;
+          // onSound?.('boom') —— 宿主回调 no-op 同 gen 端
+        }
+      } else if (e.kind === 'mech') {                      // L10394-10414（M-U10e：机甲突击机炮扫射 + 终点爆破——src 豁免前置距离门前短路）
+        const mt = Math.min(1, e.age / e.ttl);
+        const mx = e.x0 + (e.x - e.x0) * mt;
+        const my = e.y0 + (e.y - e.y0) * mt;
+        if (e.age > 6 && e.age % 12 === 0 && mt < 0.9) {
+          for (const u of this.units) {
+            if (u.dead) continue;
+            if (e.src !== undefined && u.civ === e.src) continue;
+            if (Math.hypot(u.x - mx, u.y - my) < 2.4) {
+              u.hp -= 14 + this.rng() * 8;                 // 圈内每单位 1 掷
+              u.hurt = 20;
+              if (u.hp <= 0) { u.dead = true; this.wwCountKill(u); }
+            }
+          }
+          this.fx('bullet', mx + this.rng() * 2 - 1, my + this.rng() * 2 - 1, 5, { x0: mx, y0: my, src: e.src, r: 0, dmg: 0 });   // 曳光面：坐标 2 掷 + seed/dir 2 掷
+        }
+        if (e.age >= e.ttl) {
+          this.shellBurst(e.x, e.y, e.r || 2.2, e.dmg ?? 45, false, e.src ?? -1);   // fire 恒 false
+          // onSound?.('boom') —— 宿主回调 no-op 同 gen 端
+        }
       }
       if (e.age >= e.ttl) {                // L10439-10441 到期 splice（全 kind——倒序 RemoveAt 同构）
         this.effects.splice(i, 1);
@@ -827,4 +874,4 @@ for (const sc of gold.scenarios) {
   console.log(`${sc.key}: 逐位 PASS (steps=${sc.steps} draws=${sc.totalDraws} fx=${m.effects.length})`);
   pass++;
 }
-console.log(`power-transcript: ${pass}/${gold.scenarios.length} 场景 ALL PASS（零引擎导入镜像 · 掷值链闭合 · 八支+五支逐位）`);
+console.log(`power-transcript: ${pass}/${gold.scenarios.length} 场景 ALL PASS（零引擎导入镜像 · 掷值链闭合 · 八支+五支+命中族+war 面逐位）`);

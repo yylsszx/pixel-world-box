@@ -311,8 +311,15 @@ namespace PixelWorldBox.Wb
         };
         // —— M-U7s：fx opts 面接缝（弹道/爆炸/海啸 opts 承载 —— 可空参对齐 TS opts undefined→null；默认真实现 = w.Fx 全参存储；
         //  Test30 置换事件捕获 o 面与黄金变长 fx 记录对账）——
+        //  M-U10e 缝隙清偿：src 参补写 WbFx.src（L4369/L4375/L4389/L10408 opts.src 消费面——effectsTick 弹支/mech 环豁免
+        //  读 src 非 civ；M-U7s 期仅写 civ 槽系弹支未译时代遗形，M-U10c src 消费面点亮后成潜伏分歧——黄金夹具路径直构
+        //  WbFx.src 未暴露；civ 槽写入保留〔渲染铁律字段只加不改〕，TS Effect 无 civ 字段、渲染侧不读 fx.civ 双端核实在案）
         internal static System.Action<WbWorld, string, double, double, double, double?, double?, int?, double?, double?> FxOptHook =
-            (w, k, x, y, ttl, x0, y0, src, r, dmg) => w.Fx(k, x, y, ttl, optR: r, optCiv: src, optX0: x0, optY0: y0, optDmg: dmg);
+            (w, k, x, y, ttl, x0, y0, src, r, dmg) =>
+            {
+                WbFx f = w.Fx(k, x, y, ttl, optR: r, optCiv: src, optX0: x0, optY0: y0, optDmg: dmg);
+                if (f != null) f.src = src;                                                                        // opts.src spread → Effect.src（TS L9797 spread 语义）
+            };
 
         // ================= updateUnit L3455-4113（批次一 L3455-3590 全译 + 扫描域 L3592-3669 批次二全译（M-U7m）+
         //                  无敌壳 L3927/4110-4112；战斗/远程/近战/神经/击杀/龙息域 L3671-3978 M-U7n~M-U7q 全译；peaceful 职业域 L3981-4109 哨兵保留——批次三余域） =================
@@ -2575,8 +2582,71 @@ namespace PixelWorldBox.Wb
                         /* onSound?.('boom') —— 宿主回调（黄金受控 undefined no-op 同 gen 端） */                          // L10309
                     }
                 }
-                // 未译 kind 落空（volcano/wrath/holystorm/typhoon/…war 面
-                // airstrike/laser/drone/orbital/mech/plasma/antimatter L10311-10437——后续切片插入；夹具仅十九 kind）
+                else if (e.kind == "airstrike")                                                                        // L10311（轰炸机：沿航线飞行，周期性投弹；抵达终点收尾爆破——M-U10e war 面）
+                {
+                    double at = System.Math.Min(1, e.age / e.ttl);                                                     // L10312
+                    double ax = e.x0 + (e.x - e.x0) * at;                                                              // L10313（x0 ?? e.x——fx() L9793 恒置 x0=x 默认，?? 支不可达；C# Fx 同构直读）
+                    double ay = e.y0 + (e.y - e.y0) * at;                                                              // L10314
+                    if (e.age > 6 && e.age % 16 == 0 && at < 0.92)                                                     // L10315（三重门合取短路——零掷）
+                    {
+                        ShellBurst(w, ax, ay, 1.2, 22, w.Rng() < 0.4, e.src ?? -1);                                    // L10316（fire 实参掷——门过方掷；src??-1）
+                    }
+                    if (e.age >= e.ttl)                                                                                // L10318
+                    {
+                        ShellBurst(w, e.x, e.y, e.r != 0 ? e.r : 1.8, e.dmg ?? 30, true, e.src ?? -1);                 // L10319（终点收尾爆破 r||1.8 / dmg??30 / fire 恒 true）
+                        /* onSound?.('boom') —— 宿主回调（黄金受控 undefined no-op 同 gen 端） */                          // L10320
+                    }
+                    // 蓝本异形注记：airstrike 无 killCredit 写面（直呼 shellBurst 不挂 wid——与 drone 对位）              // L10311-10322
+                }
+                else if (e.kind == "drone")                                                                            // L10353（无人机蜂群：沿航线游猎扫射（周期小爆破）；抵达终点集束爆破——M-U10e war 面）
+                {
+                    double dt = System.Math.Min(1, e.age / e.ttl);                                                     // L10354
+                    double dxp = e.x0 + (e.x - e.x0) * dt;                                                             // L10355
+                    double dyp = e.y0 + (e.y - e.y0) * dt;                                                             // L10356
+                    if (e.age > 8 && e.age % 12 == 0 && dt < 0.92)                                                     // L10357
+                    {
+                        w.killCredit = e.wid;                                                                          // L10358（wid ?? null——int? 直传，涌现武器战绩归属）
+                        ShellBurst(w, dxp, dyp, 1.0, e.dmg ?? 14, false, e.src ?? -1);                                 // L10359（周期小爆破 fire 恒 false——零 ignite 掷）
+                        w.killCredit = null;                                                                           // L10360
+                    }
+                    if (e.age >= e.ttl)                                                                                // L10362
+                    {
+                        w.killCredit = e.wid;                                                                          // L10363
+                        ShellBurst(w, e.x, e.y, e.r != 0 ? e.r : 2.6, (e.dmg ?? 14) * 2.6, true, e.src ?? -1);         // L10364（集束爆破 (dmg??14)*2.6——f64 乘法位精确）
+                        if (e.wid.HasValue) EmergentPayload(w, e);                                                     // L10365（wid 面——铸域空表桩 L9399 早退）
+                        w.killCredit = null;                                                                           // L10366
+                        /* onSound?.('boom') —— 宿主回调（同上） */                                                        // L10367
+                    }
+                }
+                else if (e.kind == "mech")                                                                             // L10394（机甲突击：地面推进沿途机炮扫射（小杀伤+曳光视觉）；抵达终点爆破——M-U10e war 面）
+                {
+                    double mt = System.Math.Min(1, e.age / e.ttl);                                                     // L10395
+                    double mx = e.x0 + (e.x - e.x0) * mt;                                                              // L10396
+                    double my = e.y0 + (e.y - e.y0) * mt;                                                              // L10397
+                    if (e.age > 6 && e.age % 12 == 0 && mt < 0.9)                                                      // L10398
+                    {
+                        foreach (WbU u in w.units)                                                                     // L10399
+                        {
+                            if (u.dead != 0) continue;                                                                 // L10400
+                            if (e.src.HasValue && u.civ == e.src.Value) continue;                                      // L10401（src 豁免前置——距离门前短路零掷）
+                            if (WbMath.FdHypot(u.x - mx, u.y - my) < 2.4)                                              // L10402（Math.hypot fdlibm 位精确域）
+                            {
+                                u.hp -= 14 + w.Rng() * 8;                                                              // L10403（圈内每单位 1 掷）
+                                u.hurt = 20;                                                                           // L10404
+                                if (u.hp <= 0) { u.dead = 1; WbCivSim.WwCountKill(w, u); }                             // L10405
+                            }
+                        }
+                        FxOptHook(w, "bullet", mx + w.Rng() * 2 - 1, my + w.Rng() * 2 - 1, 5, mx, my, e.src, 0.0, 0.0);   // L10408（曳光视觉 opts {x0:mx,y0:my,src,r:0,dmg:0}——坐标 2 掷 + seed/dir 2 掷）
+                    }
+                    if (e.age >= e.ttl)                                                                                // L10410
+                    {
+                        ShellBurst(w, e.x, e.y, e.r != 0 ? e.r : 2.2, e.dmg ?? 45, false, e.src ?? -1);                // L10411（r||2.2 / dmg??45 / fire 恒 false——零 ignite 掷）
+                        /* onSound?.('boom') —— 宿主回调（同上） */                                                        // L10413
+                    }
+                }
+                // 未译 kind 落空（volcano/wrath/holystorm/typhoon + war 面 laser L10323-10350（fxPrefs.dmgNumbers 线杀伤）/
+                //   orbital L10370-10392 + antimatter L10437-10440（annihilate 消费面）/ plasma L10416-10436（armies morale 面）
+                //   ——后续切片插入；夹具仅二十二 kind）
                 if (e.age >= e.ttl)                                                                                      // L10439
                 {
                     w.effects.RemoveAt(i);                                                                               // L10440（倒序 splice 同构）

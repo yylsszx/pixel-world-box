@@ -190,7 +190,10 @@ function buildScenario(spec) {
       if (f.wid !== undefined) opts.wid = f.wid;     // M-U10d 涌现武器 id（killCredit 归属面）
       if (f.nuke !== undefined) opts.nuke = f.nuke;  // M-U10d 核弹头当量（missile 核支门）
       if (f.fire !== undefined) opts.fire = f.fire;  // M-U10d 弹体纵火（shell !!e.fire 门）
+      if (f.x0 !== undefined) opts.x0 = f.x0;        // M-U10e 航线起点（airstrike/drone/mech 插值面——fx() 默认 x0=x 可被 opts 覆盖 L9797）
+      if (f.y0 !== undefined) opts.y0 = f.y0;
       eng.fx(f.kind, f.x, f.y, f.ttl, opts);
+      if (f.preAge !== undefined) eng.effects[eng.effects.length - 1].age = f.preAge;   // M-U10e 手术覆写 age（周期门首掷对位——fx() age:0 默认后直写，同 spawnUnit hp 覆写先例）
     }
   }
 
@@ -219,7 +222,7 @@ function buildScenario(spec) {
     civs0: (spec.civs ?? []).map((c) => ({ id: c.id, name: c.name, colorHex: c.colorHex })),   // M-U10d raze 级联 alive/name/colorHex 最小语义面
     rel0: [...eng.rel.entries()],         // M-U10c 外交挂账（pairKey 字符串键 → atWar <-20 门）
     battles0: [...eng.activeBattles.entries()],
-    fx0: eng.effects.map((e) => ({ kind: e.kind, x: f64hex(e.x), y: f64hex(e.y), r: e.r, age: e.age, ttl: e.ttl, seed: e.seed, dir: f64hex(e.dir), src: e.src ?? null, dmg: e.dmg ?? null, quiet: e.quiet === true, wid: e.wid ?? null, nuke: e.nuke ?? null, fire: e.fire ?? null })),   // M-U10d wid/nuke/fire 通道（?? 语义：0 值保真）
+    fx0: eng.effects.map((e) => ({ kind: e.kind, x: f64hex(e.x), y: f64hex(e.y), r: e.r, age: e.age, ttl: e.ttl, seed: e.seed, dir: f64hex(e.dir), src: e.src ?? null, dmg: e.dmg ?? null, quiet: e.quiet === true, wid: e.wid ?? null, nuke: e.nuke ?? null, fire: e.fire ?? null, ...(e.x0 !== e.x || e.y0 !== e.y ? { x0: f64hex(e.x0), y0: f64hex(e.y0) } : {}) })),   // M-U10d wid/nuke/fire 通道（?? 语义：0 值保真）+ M-U10e 稀疏 x0/y0（航线 divergent 时才出键——旧 21 场景 fx0 字节不变）
     units0: eng.units.map((u) => ({ id: u.id, race: u.race, x: f64hex(u.x), y: f64hex(u.y), hp: f64hex(u.hp), maxHp: f64hex(u.maxHp), hurt: u.hurt, chill: u.chill, dead: u.dead, civ: u.civ, gbArmor: RACES[u.race].isCiv ? eng.gearBonus(u).armor : 0 })),
   };
 
@@ -575,6 +578,52 @@ const specs = [
       && eng.shake === 14 && eng.radSet.size > 70 && eng.units[0].dead === true && eng.units[1].hp === 455   // 300×0.15 钳制支（d=7.0 → falloff 钳 0.15）
       && eng.units[2].hp === 500 && eng.killCredit === null,
   },
+  {
+    // S22 airstrike（M-U10e）：沿航线插值周期投弹（age>6 && age%16===0 && at<0.92 → shellBurst(ax,ay,1.2,22,rng<0.4,src??-1)——
+    //   fire 实参掷门过方掷）+ 终点收尾爆破（age>=ttl → shellBurst(e.x,e.y,r||1.8,dmg??30,true)）+ 无 killCredit 写面
+    //   （蓝本异形——airstrike 直呼 shellBurst 不挂 wid，与 drone 对位）+ preAge 15 → S1 age16 周期（at=16/18=0.889<0.92，
+    //   插值点 ax=96.5+4*(16/18) 非整浮点位级钉）/ S2 age17 空转零掷 / S3 age18 终点+splice；x0/y0 fx0 稀疏通道首钉
+    key: 'power-airstrike', baseSeed: BASE + 42, seed: 0x0A0E17, seasons: false, yearF: 2.5, tickCount: 21000, steps: 3, minDraws: 10,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 56; y < 65; y++) for (let x = 96; x < 105; x++) a.push([x, y, T.GRASS]); return a; })()],
+        units: [{ race: 'SHEEP', x: 100.5, y: 60.5, hp: 50, maxHp: 50, civ: 2 }, { race: 'SHEEP', x: 130.5, y: 80.5, hp: 50, maxHp: 50 }],
+        fx: [{ kind: 'airstrike', x: 100.5, y: 60.5, ttl: 18, x0: 96.5, y0: 56.5, src: 1, dmg: 30, r: 1.4, preAge: 15 }],
+      },
+    ],
+    sanity: (eng) => eng.effects.length === 2 && eng.effects.every((e) => e.kind === 'explosion') && eng.shake === 2.4
+      && eng.buildings.length === 0 && eng.units[0].hp > 5 && eng.units[0].hp < 40 && eng.units[1].hp === 50,
+  },
+  {
+    // S23 drone（M-U10e）：killCredit wid 写面（周期+终点 set/reset 往返——L10358-10360/L10363-10366）+ 周期游猎
+    //   （age>8 && age%12===0 && dt<0.92 → shellBurst(dxp,dyp,1.0,dmg??14,false)——fire 恒 false 零 ignite 掷）+ 终点集束
+    //   （r||2.6 / (dmg??14)*2.6 / fire true——f64 乘法 36.4 位级）+ emergentPayload wid 门（铸域空表桩早退）+ preAge 11
+    //   → S1 age12 周期（dt=12/14=0.857，dxp=99.92857… 非整浮点）/ S3 age14 终点+splice；建筑受损不摧毁（零级联）
+    key: 'power-drone', baseSeed: BASE + 43, seed: 0x0A0E18, seasons: false, yearF: 2.5, tickCount: 22000, steps: 3, minDraws: 15,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 56; y < 65; y++) for (let x = 96; x < 105; x++) a.push([x, y, T.GRASS]); return a; })()],
+        building: [[102, 60, 4, 2]],
+        units: [{ race: 'SHEEP', x: 100.0, y: 60.0, hp: 12, maxHp: 50 }, { race: 'SHEEP', x: 110.5, y: 60.5, hp: 50, maxHp: 50 }],
+        fx: [{ kind: 'drone', x: 100.5, y: 60.5, ttl: 14, x0: 96.5, y0: 56.5, src: 1, dmg: 14, r: 2.6, wid: 7, preAge: 11 }],
+      },
+    ],
+    sanity: (eng) => eng.units[0].dead === true && eng.units[1].hp === 50 && eng.killCredit === null
+      && eng.bHp.size === 1 && eng.damagedSet.has(idx(102, 60)) && eng.effects.every((e) => e.kind === 'explosion' || e.kind === 'hit'),
+  },
+  {
+    // S24 mech（M-U10e）：地面推进机炮扫射（age>6 && age%12===0 && mt<0.9 → 单位环 hypot<2.4 逐位掷 14+rng*8
+    //   + src 豁免前置短路〔civ 相同零掷零伤〕+ fx bullet 曳光面 {x0:mx,y0:my,src,r:0,dmg:0}——坐标 2 掷 + seed/dir 2 掷）
+    //   + 终点爆破（r||2.2 / dmg??45 / fire false 零 ignite——shellBurst 无 src 豁免己军同账）+ preAge 11 → S1 age12 周期
+    //   （mt=12/14=0.857，mx=99.92857…）/ S3 age14 终点+splice；S1 步 fx bullet 存活至终态（ttl5>2 余步）
+    key: 'power-mech', baseSeed: BASE + 44, seed: 0x0A0E19, seasons: false, yearF: 2.5, tickCount: 23000, steps: 3, minDraws: 5,
+    patches: [
+      { terrain: [...(() => { const a = []; for (let y = 56; y < 65; y++) for (let x = 96; x < 105; x++) a.push([x, y, T.GRASS]); return a; })()],
+        units: [{ race: 'HUMAN', x: 100.0, y: 60.0, hp: 50, maxHp: 50, civ: 1 }, { race: 'SHEEP', x: 100.5, y: 60.5, hp: 50, maxHp: 50 }, { race: 'SHEEP', x: 105.5, y: 70.5, hp: 50, maxHp: 50 }],
+        fx: [{ kind: 'mech', x: 100.5, y: 60.5, ttl: 14, x0: 96.5, y0: 56.5, src: 1, dmg: 45, r: 2.2, preAge: 11 }],
+      },
+    ],
+    sanity: (eng) => eng.units[0].hp === 50 - 45 * (1 - Math.hypot(0.5, 0.5) / 2.6) && eng.units[1].dead === true && eng.units[2].hp === 50
+      && eng.shake === 3.2 && eng.effects.some((e) => e.kind === 'bullet') && eng.effects.some((e) => e.kind === 'explosion'),
+  },
 ];
 
 const scenarios = specs.map(buildScenario);
@@ -598,7 +647,7 @@ const out = {
     protocol: 'GameEngine 构造 + 手术式夹具两相直写 + effects/spawnUnit 真调用注入（fx seed/dir 双掷注入相）+ rngA 尾置清零起流 + tickCount++/effectsTick 直调步进快照（主循环 L2508/L2528 序同构）',
     rng: 'eng.rngA 单流（类字段箭头 rng L728-733）；mulberry 纯数学反解 total（noise.ts L3-13）',
     math: 'tornado/sandstorm/famine Math.hypot——C# FdHypot/V8Hypot 位精确件对账（fdlibm 域）；acid/blizzard/locust/drought/rainstorm 纯平方距离',
-    domains: ['effectsTick L9801-10447', 'tornado L9805-9824', 'acid L9826-9850', 'blizzard L9915-9948', 'locust L9949-9971', 'drought L9972-9996', 'rainstorm L9997-10022', 'sandstorm L10068-10090', 'famine L10170-10190', 'M-U10b: tsunami L9877-9914', 'M-U10b: sinkhole L10120-10147', 'M-U10b: iceage L10148-10169', 'M-U10b: blackhole L10191-10223', 'M-U10b: quake L10224-10236', 'M-U10c: meteor L10237-10239', 'M-U10c: fireball L10240-10254', 'M-U10c: arrow·bullet L10255-10294', 'M-U10c: explode L10450-10499', 'M-U10c: ignite L1072-1077', 'M-U10d: shell L10295-10301', 'M-U10d: missile L10302-10310', 'M-U10d: shellBurst L9595-9620', 'M-U10d: nuke L12255-12260', 'M-U10d: onBuildingDestroyed raze 支 L4464-4498（capture/annex 支夹具外——M-U10e 候选）', '到期 splice L10439-10441', 'activeBattles %5 清理 L10443-10447', 'fx L9781-9799', 'attackBuilding L4446-4462', 'meltIce L2892（drought 消费）', 'setTerrain L969-1007（regrow L979 出账联动 + flood L983 贴花级联）', 'rebuildBuckets L3081-3104（注入相尾——arrow/bullet 桶扫描面）', 'gearBonus L1498-1520（armor 采样入 units0.gbArmor）', 'atWar L2061-2064（rel0 挂账）'],
+    domains: ['effectsTick L9801-10447', 'tornado L9805-9824', 'acid L9826-9850', 'blizzard L9915-9948', 'locust L9949-9971', 'drought L9972-9996', 'rainstorm L9997-10022', 'sandstorm L10068-10090', 'famine L10170-10190', 'M-U10b: tsunami L9877-9914', 'M-U10b: sinkhole L10120-10147', 'M-U10b: iceage L10148-10169', 'M-U10b: blackhole L10191-10223', 'M-U10b: quake L10224-10236', 'M-U10c: meteor L10237-10239', 'M-U10c: fireball L10240-10254', 'M-U10c: arrow·bullet L10255-10294', 'M-U10c: explode L10450-10499', 'M-U10c: ignite L1072-1077', 'M-U10d: shell L10295-10301', 'M-U10d: missile L10302-10310', 'M-U10d: shellBurst L9595-9620', 'M-U10d: nuke L12255-12260', 'M-U10d: onBuildingDestroyed raze 支 L4464-4498（capture/annex 支夹具外——M-U10e 候选）', 'M-U10e: airstrike L10311-10322', 'M-U10e: drone L10353-10368', 'M-U10e: mech L10394-10414', '到期 splice L10439-10441', 'activeBattles %5 清理 L10443-10447', 'fx L9781-9799', 'attackBuilding L4446-4462', 'meltIce L2892（drought 消费）', 'setTerrain L969-1007（regrow L979 出账联动 + flood L983 贴花级联）', 'rebuildBuckets L3081-3104（注入相尾——arrow/bullet 桶扫描面）', 'gearBonus L1498-1520（armor 采样入 units0.gbArmor）', 'atWar L2061-2064（rel0 挂账）'],
     scenarioCount: scenarios.length,
   },
   scenarios,

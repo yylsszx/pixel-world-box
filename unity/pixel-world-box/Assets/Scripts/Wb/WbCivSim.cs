@@ -3543,7 +3543,7 @@ namespace PixelWorldBox.Wb
                 {
                     double fx = foe.x + w.Rng() * 2 - 1, fy = foe.y + w.Rng() * 2 - 1;
                     WbFx e = w.Fx("bullet", fx, fy, 5, 0, a.civ);
-                    if (e != null) { e.x0 = a.x; e.y0 = a.y; }
+                    if (e != null) { e.x0 = a.x; e.y0 = a.y; e.src = a.civ; }   // M-U10e 缝隙清偿（L6521 opts {x0,y0,src:a.civ,r:0,dmg:0}——src 豁免消费面；civ 槽写入保留）
                 }
             }
             // —— 战线阵列（Task 35）：近战前排压向敌旗 2.4 格列横队，弓手后排距敌 5.5 格展开（L6524-6558）——

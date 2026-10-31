@@ -1758,7 +1758,7 @@ var powerVerifyFail = 0;
   try {
     // M-U7w 口径：黄金链一律 bun（tornado/sandstorm/famine Math.hypot fdlibm——C# FdHypot/V8Hypot 位精确件对账面在 NUnit 侧）
     execFileSync('bun', [new URL('./power-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
-    console.log('power 黄金回放 (power-transcript 镜像 vs power.json): PASS (21 场景 快照逐位 + fx/units/bHp/battles/flood/shake 序 + regrow L979 出账联动 + 逐步 rngA + M-U10c 桶扫描/armor 减伤/events 全列 + M-U10d shellBurst/raze 级联/核弹辐射圈)');
+    console.log('power 黄金回放 (power-transcript 镜像 vs power.json): PASS (24 场景 快照逐位 + fx/units/bHp/battles/flood/shake 序 + regrow L979 出账联动 + 逐步 rngA + M-U10c 桶扫描/armor 减伤/events 全列 + M-U10d shellBurst/raze 级联/核弹辐射圈 + M-U10e airstrike/drone/mech)');
   } catch (e) {
     powerVerifyFail++;
     console.error('power 黄金回放: FAIL');
@@ -1771,7 +1771,7 @@ var powerVerifyFail = 0;
     execFileSync('bun', [new URL('./gen-power.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
     const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
     if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
-    console.log('power gen det 复跑 (gen-power · bun): PASS (21 场景 sanity + GameEngine 真实现 + det 字节级)');
+    console.log('power gen det 复跑 (gen-power · bun): PASS (24 场景 sanity + GameEngine 真实现 + det 字节级)');
   } catch (e) {
     powerVerifyFail++;
     console.error('power gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -1780,9 +1780,9 @@ var powerVerifyFail = 0;
     const g = JSON.parse(readFileSync(new URL('./golden/power.json', import.meta.url), 'utf8'));
     const fails = [];
     const fail = (m) => fails.push(m);
-    if (!Array.isArray(g.scenarios) || g.scenarios.length !== 21) fail('场景数 ≠ 21');
+    if (!Array.isArray(g.scenarios) || g.scenarios.length !== 24) fail('场景数 ≠ 24');
     const keys = g.scenarios.map((s) => s.key);
-    for (const want of ['power-tornado', 'power-acid', 'power-blizzard', 'power-locust', 'power-drought', 'power-rainstorm', 'power-sandstorm', 'power-famine', 'power-expiry', 'power-tsunami', 'power-sinkhole', 'power-iceage', 'power-blackhole', 'power-quake', 'power-meteor', 'power-fireball', 'power-arrow', 'power-bullet-misc', 'power-shell', 'power-missile', 'power-nukemissile'])
+    for (const want of ['power-tornado', 'power-acid', 'power-blizzard', 'power-locust', 'power-drought', 'power-rainstorm', 'power-sandstorm', 'power-famine', 'power-expiry', 'power-tsunami', 'power-sinkhole', 'power-iceage', 'power-blackhole', 'power-quake', 'power-meteor', 'power-fireball', 'power-arrow', 'power-bullet-misc', 'power-shell', 'power-missile', 'power-nukemissile', 'power-airstrike', 'power-drone', 'power-mech'])
       if (!keys.includes(want)) fail(`场景 ${want} 缺失`);
     for (const s of g.scenarios) {
       if (!s.fixture || !Array.isArray(s.fixture.fx0) || !s.fixture.waterTier0) fail(s.key + ' fixture 缺失');
@@ -1844,13 +1844,27 @@ var powerVerifyFail = 0;
     if (!nk || nk.shake !== 14) fail('power-nukemissile shake=14 签名缺失（L10478 核域支）');
     if (!nk || nk.radSet.length <= 70) fail('power-nukemissile radSet 11×11<5 辐射圈签名缺失');
     if (!nk || !nk.fx.some((e) => e.kind === 'flash') || !nk.fx.some((e) => e.kind === 'mushroom')) fail('power-nukemissile flash/mushroom fx 签名缺失（L10484-10485）');
+    // M-U10e war 面三 kind 签名面
+    const as = g.scenarios.find((s) => s.key === 'power-airstrike');
+    if (!as || as.shake !== 2.4) fail('power-airstrike shake=2.4 签名缺失（两弹 max min(5,1+1.4)）');
+    if (!as || as.fx.length !== 2 || !as.fx.every((e) => e.kind === 'explosion')) fail('power-airstrike 双 explosion 签名缺失（终点 splice——无 killCredit 写面蓝本异形）');
+    if (!as || !as.fixture.fx0.some((e) => e.kind === 'airstrike' && e.x0 !== undefined)) fail('power-airstrike fx0 稀疏 x0/y0 通道首钉缺失（航线 divergent 出键）');
+    const dr = g.scenarios.find((s) => s.key === 'power-drone');
+    if (!dr || dr.units.some((u) => u.dead) !== true || !dr.units.some((u) => unhexV(u.hp) === 50)) fail('power-drone 周期猎杀/远端幸存签名缺失');
+    if (!dr || dr.kc !== null) fail('power-drone killCredit 复位签名缺失（wid=7 往返 L10363/L10366）');
+    if (!dr || dr.bHp.length !== 1 || dr.bHp[0][1] !== f64hexV(40 - 14 * 2.6 * 0.9)) fail('power-drone 集束 attackBuilding (dmg*2.6)*0.9 签名缺失（40-32.76=7.24 位精确）');
+    if (!dr || !dr.fixture.fx0.some((e) => e.wid === 7)) fail('power-drone wid=7 fixture 通道签名缺失（emergentPayload 门）');
+    const mc = g.scenarios.find((s) => s.key === 'power-mech');
+    if (!mc || !mc.fx.some((e) => e.kind === 'bullet')) fail('power-mech 曳光 fx bullet 签名缺失（L10408）');
+    if (!mc || mc.shake !== 3.2) fail('power-mech shake=min(5,1+2.2)=3.2 签名缺失');
+    if (!mc || !mc.units.some((u) => u.dead) || !mc.units.some((u) => unhexV(u.hp) === 50 - 45 * (1 - Math.hypot(0.5, 0.5) / 2.6))) fail('power-mech 豁免友军/终点无豁免 falloff 位精确签名缺失（L10401 vs L9614 无门）');
     const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/power.json', import.meta.url));
     const gl = readFileSync(new URL('./golden/power.json', import.meta.url));
     const md5a = createHash('md5').update(sa).digest('hex');
     const md5b = createHash('md5').update(gl).digest('hex');
     if (md5a !== md5b) fail(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
     if (fails.length > 0) throw new Error(fails.join(' | '));
-    console.log(`power 台账完备 (21 场景 + smoke/water fx/到期 splice/battles 清理 + M-U10b flood/sinkhole 无账/chill16/explosion/shake + M-U10c meteor 纪事/fireball ignite/arrow armor 位精确 + M-U10d shell 43×2/raze siege 纪事/statN=1/辐射圈 签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+    console.log(`power 台账完备 (24 场景 + smoke/water fx/到期 splice/battles 清理 + M-U10b flood/sinkhole 无账/chill16/explosion/shake + M-U10c meteor 纪事/fireball ignite/arrow armor 位精确 + M-U10d shell 43×2/raze siege 纪事/statN=1/辐射圈 + M-U10e airstrike 航线/drone killCredit 往返/mech 豁免序 签名 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
   } catch (e) {
     powerVerifyFail++;
     console.error('power 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));

@@ -101,11 +101,14 @@ namespace PixelWorldBox.Tests
             foreach (var e in (JArray)fx["fx0"])
             {
                 var eo = (JObject)e;
+                double ex0 = F64FromHex(eo.Value<string>("x")), ey0 = F64FromHex(eo.Value<string>("y"));
                 w.effects.Add(new WbFx
                 {
                     kind = eo.Value<string>("kind"),
-                    x = F64FromHex(eo.Value<string>("x")),
-                    y = F64FromHex(eo.Value<string>("y")),
+                    x = ex0,
+                    y = ey0,
+                    x0 = eo["x0"] != null && eo["x0"].Type != JTokenType.Null ? F64FromHex(eo.Value<string>("x0")) : ex0,   // M-U10e 稀疏 x0/y0（HitKeys 四 kind 不消费——防御性对齐 WbPowerTests 同构）
+                    y0 = eo["y0"] != null && eo["y0"].Type != JTokenType.Null ? F64FromHex(eo.Value<string>("y0")) : ey0,
                     r = eo.Value<double>("r"),
                     age = eo.Value<double>("age"),
                     ttl = eo.Value<double>("ttl"),
@@ -482,6 +485,146 @@ namespace PixelWorldBox.Tests
             Assert.That(F64Hex(mid.hp), Is.EqualTo(F64Hex(455)), "falloff 钳 0.15 支（300×0.15=45 → 455——d=7.0≥6.63）");
             Assert.That(F64Hex(far.hp), Is.EqualTo(F64Hex(500)), "d=10>r+0.8=7.8 出环");
             Assert.That(w.killCredit, Is.Null, "killCredit 恒 null（missile 核支无 wid 面）");
+        }
+
+        // ================= Test39：M-U10e airstrike/drone/mech 直测（L10311-10322/L10353-10368/L10394-10414 + FxOptHook src 缝隙清偿钉） =================
+
+        [Test]
+        public void Test39_Airstrike_Trajectory_PeriodicFinale()
+        {
+            var w = new WbWorld();                                    // 航线插值周期投弹（age16 at=16/18 位级）+ S2 空转零掷 + S3 终点
+            w.tickCount = 21000;
+            for (int y = 56; y < 65; y++) for (int x = 96; x < 105; x++) w.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            var sheep = new WbU { id = 1, race = 6, x = 100.5, y = 60.5, hp = 50, maxHp = 50, civ = 2 };
+            w.units.Add(sheep);
+            w.effects.Add(new WbFx { kind = "airstrike", x = 100.5, y = 60.5, x0 = 96.5, y0 = 56.5, ttl = 18, age = 15, src = 1, dmg = 30, r = 1.4 });
+            w.rngA = 0x0A0E17u;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // age 16：at=16/18=0.889<0.92 → 周期 shellBurst(ax,ay,1.2,22,fire?,1)
+            double ax16 = 96.5 + (100.5 - 96.5) * (16.0 / 18.0), ay16 = 56.5 + (60.5 - 56.5) * (16.0 / 18.0);
+            var exp1 = w.effects.Single(f => f.kind == "explosion");
+            Assert.That(F64Hex(exp1.x), Is.EqualTo(F64Hex(ax16)), "周期弹落点 = 航线插值位精确（L10313）");
+            Assert.That(F64Hex(exp1.y), Is.EqualTo(F64Hex(ay16)), "ay 同构");
+            Assert.That(exp1.r, Is.EqualTo(1.2), "周期弹 r=1.2（L10316）");
+            Assert.That(sheep.hp, Is.LessThan(50), "周期弹 d=0.628<1.6 入环减伤");
+            uint rngAfterS1 = w.rngA;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // age 17：17%16≠0 → 空转零掷
+            Assert.That(w.rngA, Is.EqualTo(rngAfterS1), "S2 零掷（合取门短路——rngA 不动）");
+            Assert.That(w.effects.Count(f2 => f2.kind == "explosion"), Is.EqualTo(1), "S2 无新弹");
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // age 18：终点 shellBurst(100.5,60.5,1.4,30,true) + splice
+            Assert.That(w.effects.Any(f2 => f2.kind == "airstrike"), Is.False, "终点 splice（L10439）");
+            var exp2 = w.effects.First(f2 => f2.kind == "explosion" && f2.r == 1.4);   // 终点弹判别面（r=1.4 ≠ 周期弹 1.2）
+            Assert.That(F64Hex(exp2.x), Is.EqualTo(F64Hex(100.5)), "终点弹落点 = e.x（L10319）");
+            Assert.That(exp2.r, Is.EqualTo(1.4), "r||1.8——r=1.4 真值保真");
+            Assert.That(w.shake, Is.EqualTo(2.4), "shake=min(5,1+1.4)=2.4（两弹 max）");
+
+            var w2 = new WbWorld();                                   // r=0 falsy → 终点 r||1.8 回退支（L10319）
+            w2.tickCount = 21001;
+            for (int y = 56; y < 65; y++) for (int x = 96; x < 105; x++) w2.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            var mid = new WbU { id = 1, race = 6, x = 102.5, y = 60.5, hp = 50, maxHp = 50 };   // d=2.0：>1.8 出 r1.4 环 / <2.2 入 r1.8 环（判别带）
+            w2.units.Add(mid);
+            w2.effects.Add(new WbFx { kind = "airstrike", x = 100.5, y = 60.5, ttl = 18, age = 17, src = 1, dmg = 30, r = 0 });
+            w2.rngA = 0x0A0E17u;
+            w2.tickCount++;
+            WbBailRelay.EffectsTick(w2);
+            Assert.That(mid.hp, Is.LessThan(50), "r=0 → ||1.8 回退：d=2.0 < 2.2 入环（回退支位证——r1.4 时 2.0>1.8 出环）");
+        }
+
+        [Test]
+        public void Test39_Drone_KillCreditRoundtrip_EmergentGate()
+        {
+            var w = new WbWorld();                                    // 终点集束 (dmg??14)*2.6 位级 + fire=true ignite + wid=7 killCredit 往返/emergentPayload 桩门
+            w.tickCount = 22000;
+            for (int y = 56; y < 65; y++) for (int x = 96; x < 105; x++) w.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            var mid = new WbU { id = 1, race = 6, x = 100.5, y = 61.5, hp = 50, maxHp = 50 };   // d=1.0 < 3.0 入环
+            w.units.Add(mid);
+            w.effects.Add(new WbFx { kind = "drone", x = 100.5, y = 60.5, x0 = 96.5, y0 = 56.5, ttl = 14, age = 13, src = 1, dmg = 14, r = 2.6, wid = 7 });
+            w.rngA = 0x0A0E18u;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // age 14：14%12≠0 零周期 → 终点集束
+            Assert.That(F64Hex(mid.hp), Is.EqualTo(F64Hex(50 - (14 * 2.6) * (1 - 1.0 / (2.6 + 0.4)))), "集束 dmg=(dmg??14)*2.6 falloff d=1.0 位精确（L10364→L9600）");
+            Assert.That(mid.hurt, Is.EqualTo(24), "hurt 24（shellBurst 面）");
+            Assert.That(w.fireSet.Count, Is.GreaterThan(0), "终点 fire=true → GRASS ignite（seed 0x0A0E18 钉 14 格）");
+            Assert.That(w.radSet.Count, Is.EqualTo(0), "emergentPayload 桩早退零写（wid=7 门过——铸域空表 L9399）");
+            Assert.That(w.killCredit, Is.Null, "killCredit 终态 null（L10363 set → L10366 复位往返）");
+            Assert.That(w.effects.Any(f2 => f2.kind == "drone"), Is.False, "终点 splice");
+
+            var w2 = new WbWorld();                                   // 周期支 fire 恒 false → GRASS 零 ignite（L10359）
+            w2.tickCount = 22001;
+            for (int y = 56; y < 65; y++) for (int x = 96; x < 105; x++) w2.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            w2.effects.Add(new WbFx { kind = "drone", x = 100.5, y = 60.5, x0 = 96.5, y0 = 56.5, ttl = 14, age = 11, src = 1, dmg = 14, r = 2.6, wid = 7 });
+            w2.rngA = 0x0A0E18u;
+            w2.tickCount++;
+            WbBailRelay.EffectsTick(w2);                              // age 12：12%12===0 && dt=0.857<0.92 → 周期 shellBurst(…,1.0,14,false,…)
+            Assert.That(w2.fireSet.Count, Is.EqualTo(0), "周期 fire=false → 零 ignite 掷零入账（L10359）");
+            Assert.That(w2.shake, Is.EqualTo(2.0), "shake=min(5,1+1.0)=2.0（周期弹 r=1.0）");
+        }
+
+        [Test]
+        public void Test39_Mech_SrcExemptZeroDraw_BulletOFace()
+        {
+            var wA = new WbWorld();                                   // A 世界：友军+敌军+界外三单位
+            wA.tickCount = 23000;
+            for (int y = 56; y < 65; y++) for (int x = 96; x < 105; x++) wA.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            var humanA = new WbU { id = 1, race = 0, x = 100.0, y = 60.0, hp = 50, maxHp = 50, civ = 1 };   // 圈内 civ===src → 豁免前置
+            var sheepA = new WbU { id = 2, race = 6, x = 100.5, y = 60.5, hp = 50, maxHp = 50 };            // 圈内 d=0.808 → 1 掷
+            var farA = new WbU { id = 3, race = 6, x = 105.5, y = 70.5, hp = 50, maxHp = 50 };              // d≈11.9 出环 → 零掷
+            wA.units.Add(humanA); wA.units.Add(sheepA); wA.units.Add(farA);
+            wA.effects.Add(new WbFx { kind = "mech", x = 100.5, y = 60.5, x0 = 96.5, y0 = 56.5, ttl = 14, age = 11, src = 1, dmg = 45, r = 2.2 });
+            wA.rngA = 0x0A0E19u;
+            wA.tickCount++;
+            WbBailRelay.EffectsTick(wA);                              // age 12：周期机炮扫射
+            var wB = new WbWorld();                                   // B 世界：无友军（对照——掷链同构证豁免零掷）
+            wB.tickCount = 23000;
+            for (int y = 56; y < 65; y++) for (int x = 96; x < 105; x++) wB.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            var sheepB = new WbU { id = 2, race = 6, x = 100.5, y = 60.5, hp = 50, maxHp = 50 };
+            var farB = new WbU { id = 3, race = 6, x = 105.5, y = 70.5, hp = 50, maxHp = 50 };
+            wB.units.Add(sheepB); wB.units.Add(farB);
+            wB.effects.Add(new WbFx { kind = "mech", x = 100.5, y = 60.5, x0 = 96.5, y0 = 56.5, ttl = 14, age = 11, src = 1, dmg = 45, r = 2.2 });
+            wB.rngA = 0x0A0E19u;
+            wB.tickCount++;
+            WbBailRelay.EffectsTick(wB);
+            Assert.That(humanA.hp, Is.EqualTo(50), "友军豁免零伤（L10401 前置）");
+            Assert.That(wA.rngA, Is.EqualTo(wB.rngA), "豁免零掷位证：含友军世界 rngA ≡ 不含世界（距离门前短路——若豁免后置则多 1 掷）");
+            Assert.That(F64Hex(sheepA.hp), Is.EqualTo(F64Hex(sheepB.hp)), "敌军减伤不受友军在场影响（掷流同构）");
+            Assert.That(farA.hp, Is.EqualTo(50), "d>2.4 出环零掷零伤");
+            double mx12 = 96.5 + (100.5 - 96.5) * (12.0 / 14.0), my12 = 56.5 + (60.5 - 56.5) * (12.0 / 14.0);
+            var bullet = wA.effects.Single(f2 => f2.kind == "bullet");
+            Assert.That(F64Hex(bullet.x0), Is.EqualTo(F64Hex(mx12)), "曳光 o 面 x0=mx 插值位精确（L10408）");
+            Assert.That(F64Hex(bullet.y0), Is.EqualTo(F64Hex(my12)), "y0=my 同构");
+            Assert.That(bullet.src.HasValue && bullet.src.Value == 1, Is.True, "曳光 src=e.src（FxOptHook src 缝隙清偿面）");
+            Assert.That(bullet.r, Is.EqualTo(0), "r:0");
+            Assert.That(bullet.dmg.HasValue && bullet.dmg.Value == 0, Is.True, "dmg:0");
+            wA.tickCount++;
+            WbBailRelay.EffectsTick(wA);                              // age 13：13%12≠0 空转
+            wA.tickCount++;
+            WbBailRelay.EffectsTick(wA);                              // age 14：终点 shellBurst 无 src 豁免 → 友军同账（M-U10d 异形再钉）
+            Assert.That(F64Hex(humanA.hp), Is.EqualTo(F64Hex(50 - 45 * (1 - WbMath.FdHypot(0.5, 0.5) / (2.2 + 0.4)))), "终点 shellBurst 无 src 豁免：d=0.707 falloff 位级（L10411→L9600）");
+            Assert.That(sheepA.dead != 0, Is.True, "d=0 → 45 全额 → dead");
+        }
+
+        [Test]
+        public void Test39_FxSeam_SrcRepair_CastShapeExempt()
+        {
+            var w = new WbWorld();                                    // M-U10e 缝隙清偿钉：FxOptHook src 参 → WbFx.src（M-U7s 期仅写 civ 槽——弹支豁免消费面失联）
+            w.tickCount = 24000;
+            for (int y = 58; y < 63; y++) for (int x = 98; x < 103; x++) w.terrain[y * WbWorld.W + x] = WbWorld.T_GRASS;
+            var friendly = new WbU { id = 1, race = 0, x = 102.2, y = 60.5, hp = 50, maxHp = 50, civ = 1 };   // 距弹着 0.3（若无豁免则被误伤）
+            var foe = new WbU { id = 2, race = 6, x = 103.0, y = 60.5, hp = 50, maxHp = 50, civ = 2 };       // 距弹着 0.5
+            w.units.Add(friendly); w.units.Add(foe);
+            WbBailRelay.FxOptHook(w, "bullet", 102.5, 60.5, 1, 100.5, 60.5, 1, 0.0, 8.0);   // 模拟 castBullet 生成面（src=civ1——L4375 opts）
+            var bullet = w.effects.Single(f2 => f2.kind == "bullet");
+            Assert.That(bullet.src.HasValue && bullet.src.Value == 1, Is.True, "缝隙修复：FxOptHook src 参落 WbFx.src（原仅写 civ 槽）");
+            Assert.That(bullet.civ.HasValue && bullet.civ.Value == 1, Is.True, "civ 槽写入保留（渲染铁律字段只加不改）");
+            w.RebuildBuckets();
+            w.rngA = 0x0A0E12u;
+            w.tickCount++;
+            WbBailRelay.EffectsTick(w);                               // 弹 expiry：桶扫描最近命中——友军豁免后命中敌军
+            Assert.That(friendly.hp, Is.EqualTo(50), "豁免生效：civ===src 友军零伤（L10266）");
+            Assert.That(F64Hex(foe.hp), Is.EqualTo(F64Hex(42)), "敌军命中 50-8=42（dmg=8 无 armor）");
+            Assert.That(foe.hurt, Is.EqualTo(20), "hurt 20（L10278）");
         }
     }
 }

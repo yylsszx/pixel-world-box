@@ -1,6 +1,6 @@
 // ============================================================
 // WbPowerTests.cs — M-U10a effectsTick 游荡云族八种黄金对账 + 语义面（NUnit）
-// 黄金数据: Assets/StreamingAssets/WbGolden/power.json（18 场景——M-U10b 增波前族/静态族五 kind，
+// 黄金数据: Assets/StreamingAssets/WbGolden/power.json（24 场景——M-U10b 增波前族/静态族五 kind，
 //   M-U10c 增命中族三 kind + explode 消费面）
 //   由 scripts/unity-migration/gen-power.mjs 生成（真引擎 GameEngine 构造 + 手术式夹具
 //   两相直写 + effects/spawnUnit 真调用注入〔fx seed/dir 双掷注入相〕+ rebuildBuckets 注入相尾
@@ -110,11 +110,14 @@ namespace PixelWorldBox.Tests
             foreach (var e in (JArray)fx["fx0"])
             {
                 var eo = (JObject)e;
+                double ex0 = F64FromHex(eo.Value<string>("x")), ey0 = F64FromHex(eo.Value<string>("y"));
                 w.effects.Add(new WbFx
                 {
                     kind = eo.Value<string>("kind"),
-                    x = F64FromHex(eo.Value<string>("x")),
-                    y = F64FromHex(eo.Value<string>("y")),
+                    x = ex0,
+                    y = ey0,
+                    x0 = eo["x0"] != null && eo["x0"].Type != JTokenType.Null ? F64FromHex(eo.Value<string>("x0")) : ex0,   // M-U10e 稀疏 x0/y0（缺键 ≡ fx() 默认 x0=x L9793——航线 divergent 时 gen 才出键）
+                    y0 = eo["y0"] != null && eo["y0"].Type != JTokenType.Null ? F64FromHex(eo.Value<string>("y0")) : ey0,
                     r = eo.Value<double>("r"),
                     age = eo.Value<double>("age"),
                     ttl = eo.Value<double>("ttl"),
@@ -177,7 +180,7 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindPower()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(21));
+            Assert.That(scens.Count, Is.EqualTo(24));
             var gear0 = WbBailRelay.GearBonusHook;                       // M-U10c：接缝置换 try/finally（Test30 桩先例——黄金回放 armor 采样桩）
             try
             {
