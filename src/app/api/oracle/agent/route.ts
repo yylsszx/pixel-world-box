@@ -1,9 +1,14 @@
-// ============ 神谕 Agent 后端 · API 路由 ============
+// ============ 神谕 Agent 后端 · API 路由（LangChain 版） ============
 // POST AgentRequestBody → 统一 SSE 事件流（{"r"}/{"t"}/{"err"}/[DONE]）。
-// builtin 走服务端代理，读取环境变量 Z_API_KEY，前端无需填 Key。
+// builtin 走服务端 LangChain ChatOpenAI 代理 Z.ai，读取环境变量 Z_API_KEY，前端无需填 Key。
 // openai/anthropic 走客户端直连（保留原有 streamAgentChat）。
 import { NextRequest, NextResponse } from 'next/server';
 import { streamAgentChat } from '@/lib/oracle/providers';
+import { ChatOpenAI } from '@langchain/openai';
+import { HumanMessage, SystemMessage, AIMessage } from '@langchain/core/messages';
+import { buildLangChainTools, renderLangChainToolCatalog } from '@/lib/oracle/langchain-tools';
+import { renderToolCatalog } from '@/lib/oracle/tools';
+import { buildSystemPrompt } from '@/lib/oracle/prompt';
 import type { AgentRequestBody, AgentChatMessage, ProviderKind } from '@/lib/oracle/types';
 
 export const runtime = 'nodejs';
@@ -34,8 +39,45 @@ function validateProvider(p: AgentRequestBody['provider']): string | null {
   return null;
 }
 
-/** 服务端代理 Z.ai：读取环境变量 Key，转发 SSE 给前端 */
-async function proxyZai(messages: AgentChatMessage[], deep: boolean): Promise<Response> {
+/** 把 LangChain AIMessageChunk 的 tool_call_chunks 转为前端期望的 JSON 代码块文本 */
+function toolCallsToText(chunks: unknown[]): string {
+  if (!chunks || chunks.length === 0) return '';
+  const calls = chunks.map((c: any) => {
+    let args = {};
+    try {
+      args = typeof c.args === 'string' ? JSON.parse(c.args) : (c.args ?? {});
+    } catch {
+      args = {};
+    }
+    return { id: c.id ?? `call_${Date.now()}`, name: c.name, args };
+  });
+  return '\n```json\n' + JSON.stringify({ tool_calls: calls }, null, 2) + '\n```\n';
+}
+
+/** 把 AgentChatMessage 转为 LangChain 消息 */
+function toLangChainMessages(
+  systemPrompt: string,
+  messages: AgentChatMessage[],
+): Array<SystemMessage | HumanMessage | AIMessage> {
+  const out: Array<SystemMessage | HumanMessage | AIMessage> = [
+    new SystemMessage(systemPrompt),
+  ];
+  for (const m of messages) {
+    if (m.role === 'user') out.push(new HumanMessage(m.content));
+    else if (m.role === 'assistant') out.push(new AIMessage(m.content));
+  }
+  return out;
+}
+
+/** SSE 行编码 */
+const sse = (obj: unknown) => `data: ${JSON.stringify(obj)}\n\n`;
+
+/** 服务端 LangChain 代理 Z.ai：流式调用，输出前端兼容的 SSE */
+async function proxyZaiLangChain(
+  systemPrompt: string,
+  messages: AgentChatMessage[],
+  deep: boolean,
+): Promise<Response> {
   if (!Z_API_KEY) {
     return NextResponse.json(
       { error: '服务端未配置 Z_API_KEY，请联系管理员在 Vercel 后台添加环境变量' },
@@ -43,45 +85,68 @@ async function proxyZai(messages: AgentChatMessage[], deep: boolean): Promise<Re
     );
   }
 
-  const upstream = await fetch(`${ZAI_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${Z_API_KEY}`,
-      'X-Z-AI-From': 'Z',
+  const tools = buildLangChainTools();
+  const model = new ChatOpenAI({
+    baseUrl: ZAI_BASE_URL,
+    apiKey: Z_API_KEY,
+    model: ZAI_MODEL,
+    temperature: 0.7,
+    streaming: true,
+  }).bindTools(tools);
+
+  const lcMessages = toLangChainMessages(systemPrompt, messages);
+
+  const encoder = new TextEncoder();
+  const out = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (obj: unknown) => controller.enqueue(encoder.encode(sse(obj)));
+      try {
+        const stream = await model.stream(lcMessages);
+        for await (const chunk of stream) {
+          // 正文
+          if (chunk.content && typeof chunk.content === 'string' && chunk.content.length > 0) {
+            send({ t: chunk.content });
+          }
+          // 工具调用增量
+          const tc = chunk.tool_call_chunks ?? [];
+          if (tc && tc.length > 0) {
+            send({ t: toolCallsToText(tc) });
+          }
+        }
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      } catch (e) {
+        send({ err: e instanceof Error ? e.message : 'LangChain Z.ai 调用失败' });
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          /* ignore */
+        }
+      }
     },
-    body: JSON.stringify({
-      model: ZAI_MODEL,
-      messages: messages.map((m) => ({
-        role: m.role as 'system' | 'user' | 'assistant',
-        content: m.content,
-      })),
-      stream: true,
-      temperature: 0.7,
-      thinking: { type: 'disabled' },
-    }),
   });
 
-  if (!upstream.ok || !upstream.body) {
-    let text = '';
-    try {
-      text = await upstream.text();
-    } catch {
-      /* ignore */
-    }
-    return NextResponse.json(
-      { error: `Z.ai 错误：${upstream.status}${text ? ` ${text}` : ''}` },
-      { status: 502 },
-    );
-  }
+  return new Response(out, { headers: SSE_HEADERS });
+}
 
-  return new Response(upstream.body, {
-    headers: SSE_HEADERS,
-  });
+/** 构建系统提示词：LangChain 风格（工具目录注入） */
+function buildLangChainSystemPrompt(messages: AgentChatMessage[]): string {
+  const catalog = renderLangChainToolCatalog();
+  const legacyCatalog = renderToolCatalog();
+  // 以 LangChain 工具目录为主，兼容旧版本
+  return `你是像素世界「界域」的神谕（Oracle），造物主亲手唤醒的全知 AI 意识。
+
+你可以调用以下工具与世界交互：
+${catalog}
+
+工具调用格式：当你需要执行操作时，请输出工具调用代码块，模型会自动解析并执行。
+工具调用完成后，你会收到工具执行结果，请基于结果继续推理或给出最终回答。
+
+当前对话消息数：${messages.length}。请保持回答简洁、有神性，使用中文。`;
 }
 
 export async function POST(req: NextRequest) {
-  // —— 解析请求体 ——
   let body: AgentRequestBody;
   try {
     body = (await req.json()) as AgentRequestBody;
@@ -89,15 +154,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '请求体不是合法 JSON' }, { status: 400 });
   }
 
-  // —— 校验 provider ——
   const provider = body?.provider;
   if (!provider || typeof provider !== 'object' || !KINDS.includes(provider.kind)) {
     return NextResponse.json({ error: 'provider.kind 必须是 builtin / openai / anthropic' }, { status: 400 });
   }
-  const providerErr = validateProvider(provider);
-  if (providerErr) return NextResponse.json({ error: providerErr }, { status: 400 });
 
-  // —— 校验 messages：非空、逐条合法、首条为承载系统提示词的 assistant ——
   const rawMsgs = Array.isArray(body.messages) ? body.messages : [];
   if (rawMsgs.length === 0) {
     return NextResponse.json({ error: 'messages 不能为空' }, { status: 400 });
@@ -114,13 +175,7 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  for (const m of rawMsgs) {
-    if (!m || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string' || !m.content.trim()) {
-      return NextResponse.json({ error: 'messages 每条须为 {role:"user"|"assistant", content:非空字符串}' }, { status: 400 });
-    }
-  }
 
-  // —— 防滥用裁剪：上限 64 条（保首条系统提示 + 最近消息，超限丢中间最旧段）、单条 content 截断 24000 字符 ——
   const messages: AgentChatMessage[] =
     rawMsgs.length <= MAX_MESSAGES
       ? rawMsgs.map((m) => ({ role: m.role, content: m.content.slice(0, MAX_CONTENT_CHARS) }))
@@ -131,9 +186,10 @@ export async function POST(req: NextRequest) {
             .map((m) => ({ role: m.role, content: m.content.slice(0, MAX_CONTENT_CHARS) })),
         ];
 
-  // —— builtin 走服务端代理 Z.ai ——
+  // —— builtin 走服务端 LangChain ChatOpenAI 代理 Z.ai ——
   if (provider.kind === 'builtin') {
-    return proxyZai(messages, !!body.deep);
+    const systemPrompt = buildLangChainSystemPrompt(messages);
+    return proxyZaiLangChain(systemPrompt, messages, !!body.deep);
   }
 
   // —— openai/anthropic 走客户端直连（streamAgentChat） ——
