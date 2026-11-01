@@ -1962,6 +1962,7 @@ namespace PixelWorldBox.Wb
             if (prev == t) return;                                                                                       // L971 同值早退
             w.terrain[i] = t;                                                                                            // L972
             w.MarkDirty(i);                                                                                              // L976（M-U10a 点亮：中心+四邻脏标记——黄金 dirty 五格面对账；M-U8a 时渲染簿记省略，本轮模拟可观测）
+            w.propsDirty.Add(i);                                                                                          // L977（M-U17 点亮：树冠重绘集无条件入账——seasonCheck 全图刷/setTerrain 增量面同源；propsDirty 无 rng 纯增零回归）
             w.regrow.Remove(i);                                                                                          // L979（M-U8b 点亮：焦土复苏计时随地形覆写作废——regrowTick 已译件；同值早退 L971 不触达）
             if (prev == WbConstants.T_ICE) { w.frozen.Remove(i); w.frozenList.Remove(i); }                               // L981（M-U9a 点亮：冰面集出账——List 插入序镜像同步）
             if (t == WbConstants.T_ICE) { w.frozen.Add(i); w.frozenList.Add(i); }                                        // L982（M-U9a 点亮：冰面集入账——HashSet 重复 add no-op 同 Set 语义）

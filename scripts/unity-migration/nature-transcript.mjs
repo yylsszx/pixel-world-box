@@ -146,7 +146,6 @@ class NatEng {
     // stress 直写面（pre 钩子产物已固化在 stress0）
     this.countersKey = ['quakes', 'quakesBig', 'eruptions', 'uplifts', 'erosions', 'cyclones', 'tsunamis', 'floods', 'blizzards', 'droughts'];
     // 建筑面 + 单位面注入（pre 钩子 mkBuilding/mkUnitAt 动态面——attackBuilding 门/伤亡循环消费）
-    this.building.set ? null : null;
     {
       const bb = gunzip(fx.building0);
       for (let k = 0; k < bb.length; k++) if (bb[k]) this.building[k] = bb[k];
