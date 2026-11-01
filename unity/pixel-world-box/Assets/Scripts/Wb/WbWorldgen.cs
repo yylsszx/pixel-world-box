@@ -395,7 +395,8 @@ namespace PixelWorldBox.Wb
         // setTerrain 簿记（amb/frozen/flood/wet/fire/owner/building/markDirty）在世界生成域均为 no-op
         // （空表/全 -1/L950 dirty 全量兜底）——terrain 直写等价（M-U7g 宿主接力先例）。
         static readonly int[] SoilBase = { 40, 45, 64, 142, 152, 112, 66, 92, 30, 96, 45 };   // worldsim.ts L31-34 [T.DEEP..T.ICE]；SWAMP 等 → ?? 128
-        const int Brush = 3;                                                                   // engine.ts L686 brush = 3（世界生成期无笔刷 UI）
+        // M-U15 参化：原 const int Brush = 3（engine.ts L686 世界生成期无笔刷 UI）升为 CarveRiver 可选参 brush——
+        //   世界生成期调用不传 → 默认 3 语义不变；玩家路径 applyTool river case L13355 传 w.brush（runtime carveRiver L12307/L12319 this.brush 消费面）
         static readonly (int, int)[] RiverDirs = { (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1) };   // L63-65
 
         static bool IsWaterT(int t) => t == WbConstants.T_DEEP || t == WbConstants.T_WATER;    // constants.ts L67-69
@@ -457,8 +458,9 @@ namespace PixelWorldBox.Wb
             FxSpawn(w, cx + 0.5, cy + 0.5, 30);                                                    // L12410（2 掷）
         }
 
-        /// <summary>engine.ts L12282-12392 carveRiver（BFS 距水场 + 加权随机下降游走 + 圆形刻蚀绕山 + 沿岸灌溉）</summary>
-        public static bool CarveRiver(WbWorld w, byte[] terrain, byte[] moistMap, double wx, double wy, int? widthOverride)
+        /// <summary>engine.ts L12312-12415 carveRiver（BFS 距水场 + 加权随机下降游走 + 圆形刻蚀绕山 + 沿岸灌溉；
+        ///   M-U15 参化：brush 默认 3=世界生成期常量原值，玩家路径传 w.brush——moistMap 桩参体未消费保持）</summary>
+        public static bool CarveRiver(WbWorld w, byte[] terrain, byte[] moistMap, double wx, double wy, int? widthOverride, int brush = 3)
         {
             int W = WbConstants.W, H = WbConstants.H, N = W * H;
             int sx = (int)Math.Max(0, Math.Min(W - 1, Math.Floor(wx)));                            // L12283
@@ -483,11 +485,13 @@ namespace PixelWorldBox.Wb
             }
             if (dist[start] == -1)                                                                 // L12305-12312（山脉环抱洼地 → 内流湖）
             {
-                CarveLake(w, terrain, sx, sy, Math.Max(2, Brush));                                 // L12307
-                w.AddEvent("river", "群山之间诞生了一泓内流湖");                                    // L12309（toast/onSound 宿主 UI 域不译——零 rng）
+                CarveLake(w, terrain, sx, sy, Math.Max(2, brush));                                 // L12307（this.brush → 参化 brush）
+                w.Toast("群山环抱的洼地积水成湖", "info");                                          // L12308（toast 宿主回调——M-U15 补译：玩家路径黄金对账面，零 rng）
+                w.AddEvent("river", "群山之间诞生了一泓内流湖", null, sx + 0.5, sy + 0.5);           // L12309（坐标 sx+0.5——M-U15 补译：runtime addEvent 恒带 {x,y}，M-U7k 世界生成期省略面）
+                /* onSound?.('heal') —— 宿主回调（L12310——黄金受控 undefined no-op） */
                 return true;
             }
-            int width = widthOverride.HasValue ? widthOverride.Value : Math.Max(0, (Brush - 1) / 2);   // L12315（自然河 genesis 传 0 单宽涓流）
+            int width = widthOverride.HasValue ? widthOverride.Value : Math.Max(0, (brush - 1) / 2);   // L12319（this.brush → 参化 brush；自然河 genesis 传 0 单宽涓流）
             byte[] visited = new byte[N];                                                          // L12316
             int cx = sx, cy = sy, carved = 0;
             bool reached = false;
@@ -555,7 +559,9 @@ namespace PixelWorldBox.Wb
             if (carved > 0)                                                                        // L12384-12390
             {
                 FxSpawn(w, wx, wy, 30);                                                            // L12385（2 掷）
-                w.AddEvent("river", reached ? "一条大河诞生了，蜿蜒流向大海" : "一条河在洼地尽头汇成了湖");   // L12387
+                w.Toast(reached ? "一条大河蜿蜒入海" : "河流在洼地尽头积成了湖", "info");             // L12386（toast 宿主回调——M-U15 补译，零 rng；toast 文 ≠ 事件文异构）
+                w.AddEvent("river", reached ? "一条大河诞生了，蜿蜒流向大海" : "一条河在洼地尽头汇成了湖", null, sx + 0.5, sy + 0.5);   // L12387（坐标 sx+0.5——M-U15 补译：runtime addEvent 恒带 {x,y}）
+                /* onSound?.('heal') —— 宿主回调（L12389——黄金受控 undefined no-op） */
                 return true;
             }
             return false;                                                                          // L12391

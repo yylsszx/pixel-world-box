@@ -2797,7 +2797,7 @@ namespace PixelWorldBox.Wb
                 if (d < r + 0.8)                                                                                            // L10469
                 {
                     u.hp -= 300 * System.Math.Max(0.15, 1 - d / (r + 0.8));                                                 // L10470
-                    u.hurt = 30;                                                                                            // L10471
+                    u.hurtN = 30; u.hurt = 30;                                                                              // L10471（hurt 语义域双轨并写：hurtN=JS 真域镜像〔dump 位级〕+ hurt=legacy int 镜像〔updateUnit L329 同步语义〕——M-U15 纠偏：原仅写 legacy 轨系 M-U10c 译件缺口，tool2 链 dump 位级照亮）
                     if (u.hp <= 0)                                                                                          // L10472
                     {
                         u.dead = 1;                                                                                         // L10473
@@ -3225,6 +3225,53 @@ namespace PixelWorldBox.Wb
             }
         }
 
+        // ================= M-U15 三神力创建函数·上（lightning/earthquake 机械翻译——SpawnTornado 见 FloodArea 块后；
+        //                  调用面 applyTool L13333-13341 case 本轮点亮；natureLightning L10548/板块地震 L10565+ nature 域挂账不译） =================
+
+        static readonly int[] Nb4 = { -1, 0, 1, 0, 0, -1, 0, 1 };   // L10522 蓝本字面量表 [[-1,0],[1,0],[0,-1],[0,1]] 扁平化
+
+        // lightning L10507-10531（神力天雷：连击散布 + 单位环 95×pw + 中心点燃 + 四邻 0.5 门——与 natureLightning L10548 弱伤不点燃域异构勿混）
+        public static void Lightning(WbWorld w, double x, double y, double? count = null, double? power = null)
+        {
+            /* onSound?.('thunder') —— 宿主回调（黄金受控 undefined no-op 同 gen 端；连击只播一次） */                 // L10508
+            int n = (int)System.Math.Max(1.0, System.Math.Min(12.0, System.Math.Floor(count ?? 1.0)));                  // L10509（clamp 1-12）
+            double pw = System.Math.Max(0.5, System.Math.Min(3.0, power ?? 1.0));                                       // L10510（clamp 0.5-3）
+            for (int k = 0; k < n; k++)                                                                                 // L10511
+            {
+                // 连击：首击精确命中，其余在 ±max(2, n) 范围内散布——蓝本 n>1 门在循环内（首击 n>1 时亦 2 掷散布）
+                double lx = n > 1 ? x + (w.Rng() - 0.5) * System.Math.Max(2.0, (double)n) : x;                          // L10513
+                double ly = n > 1 ? y + (w.Rng() - 0.5) * System.Math.Max(2.0, (double)n) : y;                          // L10514
+                FxOptHook(w, "bolt", lx, ly, 10, null, null, null, null, null);                                          // L10515（opts 缺省 → WbWorld.Fx r=optR??1 默认面）
+                foreach (WbU u in w.units)                                                                              // L10516（蓝本无 dead 过滤——机械保持）
+                {
+                    double d = WbMath.FdHypot(u.x - lx, u.y - ly);                                                      // L10517（Math.hypot fdlibm 位精确域）
+                    if (d < 1.9) { u.hp -= 95.0 * pw; u.hurtN = 30; if (u.hp <= 0) u.dead = 1; }                        // L10518（hurt 语义域 hurtN——fire 域 L3543/Boom L12296 先例；dead bool→int 镜像）
+                }
+                int li = (int)System.Math.Floor(ly) * WbWorld.W + (int)System.Math.Floor(lx);                           // L10519（idx 无钘——floor 负值行回绕/真 OOB 面）
+                if (li >= 0 && li < WbWorld.W * WbWorld.H) IgniteE(w, li);                                              // L10520（ignite L1078 译件——界内正常路径）
+                else { w.Rng(); w.fireSet.Add(li); w.fireSetList.Add(li); }                                             // L10520 OOB 分支（terrain/fire/building 读 undefined → FLAMMABLE.includes(undefined)=false && building[i]===0=undefined===0=false → 合取不过门不早退 → 1 掷消费（fire[i] 定型数组 OOB 写静默丢弃）+ fireSet.add(i) 负索引入集——JS 语义显式镜像，S4 钉）
+                for (int d = 0; d < 4; d++)                                                                             // L10522
+                {
+                    int nbx = (int)System.Math.Floor(lx) + Nb4[d * 2];                                                  // L10523
+                    int nby = (int)System.Math.Floor(ly) + Nb4[d * 2 + 1];                                              // L10524
+                    if (nbx < 0 || nby < 0 || nbx >= WbWorld.W || nby >= WbWorld.H) continue;                           // L10525（先界外后掷——rng 序敏感）
+                    if (w.Rng() < 0.5) IgniteE(w, nby * WbWorld.W + nbx);                                               // L10526（1 掷/格 + ignite 门内掷）
+                }
+            }
+            w.shake = System.Math.Max(w.shake, 4.0);                                                                    // L10530（max 不覆写——与 quake 直写异构）
+        }
+
+        // earthquake L10532-10544（神力地震：本体即 fx + shake 直写——每 tick 抽样塌毁在 effectsTick quake 云族 M-U10b 已译；
+        //   板块地震 L10565+（nature 域）以震级驱动取代固定参数——挂账不译）
+        public static void Earthquake(WbWorld w, double x, double y, double? r = null, double? power = null)
+        {
+            /* onSound?.('quake') —— 宿主回调（黄金受控 undefined no-op 同 gen 端） */                                   // L10533
+            double rr = System.Math.Max(3.0, System.Math.Min(24.0, r ?? 9.0));                                          // L10534（r=9 默认参）
+            double pw = System.Math.Max(0.5, System.Math.Min(3.0, power ?? 1.0));                                       // L10535
+            FxOptHook(w, "quake", x, y, System.Math.Max(30.0, System.Math.Floor(90.0 * pw)), null, null, null, rr, null); // L10537（opts {r:rr}——烈度→震波时长）
+            w.shake = System.Math.Min(12.0, WbMath.JsRound(8.0 * pw));                                                  // L10538（Math.round → JsRound——JS .5 上取整；C# Math.Round 银行家舍入禁止；直写非 max——M-U10b 云族 L10224 覆写语义同源）
+        }
+
         // ================= M-U11 雨洪生产域（regrow 生产源之二 + flood 生产源两支——调用面 nature.ts L527/L532 暴雨云与 toolsTick L13370 未译，本体先行建库：M-U10h annihilate 本体先例同构） =================
 
         // rainRegrow L10660-10671（雨区复苏：8×8 窗 4 采样命中焦土 → regrow 计时提前——max(tick+60, at-160)；
@@ -3330,6 +3377,24 @@ namespace PixelWorldBox.Wb
             if (d.eco == "pred") return true;                                                               // L2176
             if (d.eco != null) return false;
             return IsPredatorRace(w, d.parent);                                                             // L2178 递归母族
+        }
+
+        // ================= M-U15 三神力创建函数·下（spawnTornado 机械翻译——acidRain L10739/volcano L10752+ 天灾域挂账不译） =================
+
+        // spawnTornado L10725-10737（神力龙卷：filter 快照计数 + 全局 6 上限 + k=0 精确零掷——ttl=340 长命云族，
+        //   消费面 effectsTick tornado M-U10a 已译）
+        public static void SpawnTornado(WbWorld w, double x, double y, double? count = null)
+        {
+            int n = (int)System.Math.Max(1.0, System.Math.Min(6.0, System.Math.Floor(count ?? 1.0)));                   // L10726（clamp 1-6）
+            int cur = 0;                                                                                                 // L10727（filter 快照——一次遍历计数，循环内不重算）
+            for (int ei = 0; ei < w.effects.Count; ei++) if (w.effects[ei].kind == "tornado") cur++;
+            for (int k = 0; k < n; k++)                                                                                  // L10728
+            {
+                if (cur + k >= 6) break;                                                                                 // L10729（全局上限防刷屏）
+                double ox = k == 0 ? 0.0 : (w.Rng() - 0.5) * System.Math.Max(4.0, n * 2.0);                              // L10730（k=0 零掷精确落点）
+                double oy = k == 0 ? 0.0 : (w.Rng() - 0.5) * System.Math.Max(4.0, n * 2.0);                              // L10731
+                FxOptHook(w, "tornado", x + ox, y + oy, 340, null, null, null, null, null);                               // L10732（ttl=340；opts 缺省 → r=1 默认面）
+            }
         }
 
         // ================= ecoTick 生态承载域（engine L12096-12202 机械翻译——M-U12） =================
@@ -3838,10 +3903,12 @@ namespace PixelWorldBox.Wb
                     }
                     break;
                 }
-                // L13337-13351 挂账：lightning/tornado/earthquake/meteor（callee 未译——随天灾域切片）
-                // L13352 挂账：nuke（callee Nuke L2919 在位——M-U15 切片二随三神力创建函数接入）
-                // L13353 挂账：river（callee WbWorldgen.CarveRiver M-U7k 译件在位——内联 const Brush=3 世界
-                //   生成期常量，玩家路径须 w.brush 参化后接入）
+                case "lightning": Lightning(w, wx, wy, countP, powerP); break;                                      // L13333-13335（countP/powerP undefined → 方法默认参 1——JS 默认参语义）
+                case "tornado": SpawnTornado(w, wx, wy, countP); break;                                             // L13336-13338
+                case "earthquake": Earthquake(w, wx, wy, rP ?? 9.0, powerP); break;                                 // L13339-13341（rP ?? 9）
+                // L13342-13350 挂账：meteor（callee 未译——随天灾域切片）
+                case "nuke": Nuke(w, wx, wy, powerP ?? 1.0); break;                                                 // L13351-13353（powerP undefined → JS 默认参 1）
+                case "river": WbWorldgen.CarveRiver(w, w.terrain, null, wx, wy, null, w.brush); break;              // L13354-13356（runtime carveRiver=this.brush 参化——M-U7k 译件复用；moistMap 桩参不消费传 null；widthOverride undefined → null）
                 case "oasis": CreateOasis(w, wx, wy); break;                                                        // L13355-13356
                 case "smooth": SmoothTerrain(w, wx, wy, r); break;                                                  // L13357-13358
                 case "rough": RoughenTerrain(w, wx, wy, r); break;                                                  // L13359-13360

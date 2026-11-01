@@ -2195,6 +2195,77 @@ var toolVerifyFail = 0;
   }
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0 && fireVerifyFail === 0 && powerVerifyFail === 0 && rainfloodVerifyFail === 0 && ecoVerifyFail === 0 && brushVerifyFail === 0 && toolVerifyFail === 0;
+// 段 38：M-U15 切片二三神力创建函数 + nuke/river 调用面（tool2-transcript 镜像 12 场景逐位 + gen det 复跑 + 双写 md5 + 台账）
+var tool2VerifyFail = 0;
+{
+  const { execFileSync } = await import('node:child_process');
+  const { createHash } = await import('node:crypto');
+  const { readFileSync } = await import('node:fs');
+  try {
+    execFileSync('bun', [new URL('./tool2-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
+    console.log('tool2 黄金回放 (tool2-transcript 镜像 vs tool2.json): PASS (12 场景三神力/nuke/river 每调用步进快照逐位 + lightning 散布环伤 + tornado 全局 6 上限 + quake JsRound shake + explode 级联 + carveRiver 参化 + OOB ignite 负索引 + units dump 位级 + events/toasts 事件流)');
+  } catch (e) {
+    tool2VerifyFail++;
+    console.error('tool2 黄金回放: FAIL');
+    console.error(String(e.stdout ?? '').split('\n').slice(-8).join('\n'));
+  }
+  try {
+    const goldenPath = new URL('./golden/tool2.json', import.meta.url).pathname;
+    const { readFile } = await import('node:fs/promises');
+    const h0 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    execFileSync('bun', [new URL('./gen-tool2.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
+    const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
+    console.log('tool2 gen det 复跑 (gen-tool2 · bun): PASS (12 场景 sanity + GameEngine 真实现 + det 字节级)');
+  } catch (e) {
+    tool2VerifyFail++;
+    console.error('tool2 gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+  try {
+    const g = JSON.parse(readFileSync(new URL('./golden/tool2.json', import.meta.url), 'utf8'));
+    const fails = [];
+    const fail = (m) => fails.push(m);
+    if (!Array.isArray(g.scenarios) || g.scenarios.length !== 12) fail('场景数 ≠ 12');
+    const keys = g.scenarios.map((s) => s.key);
+    for (const want of ['lightning-single', 'lightning-multi', 'lightning-clamp', 'lightning-edge', 'tornado-single', 'tornado-multi', 'tornado-cap', 'quake-default', 'quake-clamp-double', 'nuke-hit', 'river-walk', 'river-lake-earlyreturn'])
+      if (!keys.includes(want)) fail(`场景 ${want} 缺失`);
+    const s1 = g.scenarios.find((s) => s.key === 'lightning-single');
+    if (!s1 || s1.totalDraws !== 10 || s1.shake !== 4 || s1.units[0].hp !== '0000000000405a40' || s1.stepsSnap[0].fireSet.length < 1) fail('lightning-single 签名缺失（10 掷 + hp=105 位级 + shake=max 4 + 中心点燃）');
+    const s2 = g.scenarios.find((s) => s.key === 'lightning-multi');
+    if (!s2 || s2.totalDraws !== 53 || s2.fx.length !== 5 || s2.shake !== 4) fail('lightning-multi 连击散布签名缺失（53 掷 + 5 bolt fx）');
+    const s3 = g.scenarios.find((s) => s.key === 'lightning-clamp');
+    if (!s3 || s3.totalDraws !== 134 || s3.fx.length !== 13 || s3.units[0].hp !== '0000000000829e40') fail('lightning-clamp 双端钳位签名缺失（134 掷 + 13 bolt + hp=1952.5 散布脱靶位级）');
+    const s4 = g.scenarios.find((s) => s.key === 'lightning-edge');
+    if (!s4 || s4.totalDraws !== 88 || !s4.stepsSnap[0].fireSet.some((i) => i < 0)) fail('lightning-edge OOB 签名缺失（88 掷 + fireSet 负索引入集——idx 无钳 JS 语义钉）');
+    const s5 = g.scenarios.find((s) => s.key === 'tornado-single');
+    if (!s5 || s5.totalDraws !== 2 || s5.fx[0]?.kind !== 'tornado' || s5.fx[0]?.ttl !== '0000000000407540') fail('tornado-single 签名缺失（fx 2 掷 + ttl=340 位级）');
+    const s6 = g.scenarios.find((s) => s.key === 'tornado-multi');
+    if (!s6 || s6.totalDraws !== 14 || s6.fx.length !== 4) fail('tornado-multi 散布签名缺失（14 掷 = k0 fx2 + 3×(散布2+fx2)）');
+    const s7 = g.scenarios.find((s) => s.key === 'tornado-cap');
+    if (!s7 || s7.totalDraws !== 2 || s7.fx.length !== 6) fail('tornado-cap 全局 6 上限签名缺失（cur=5 快照 + k=1 break + fx 2 掷）');
+    const s8 = g.scenarios.find((s) => s.key === 'quake-default');
+    if (!s8 || s8.totalDraws !== 2 || s8.fx[0]?.r !== 9 || s8.shake !== 8) fail('quake-default 签名缺失（rP??9 + ttl=90 + shake=JsRound(8)=8）');
+    const s9 = g.scenarios.find((s) => s.key === 'quake-clamp-double');
+    if (!s9 || s9.totalDraws !== 4 || s9.fx[0]?.r !== 3 || s9.fx[1]?.r !== 24 || s9.shake !== 4) fail('quake-clamp-double 双端钳位签名缺失（rr=3/24 + ttl=270/45 + shake=12 封顶→4）');
+    const s10 = g.scenarios.find((s) => s.key === 'nuke-hit');
+    if (!s10 || s10.totalDraws !== 460 || s10.statNukes !== 1 || s10.events.length !== 1 || s10.fx.length !== 10) fail('nuke-hit 签名缺失（460 掷 explode 级联 + statNukes 成就计数 + 蘑菇云纪事 + fx 10 列）');
+    const s11 = g.scenarios.find((s) => s.key === 'river-walk');
+    if (!s11 || s11.totalDraws !== 1207 || (s11.riverTiles?.length ?? 0) < 1 || !s11.toasts.some((t) => t.text === '一条大河蜿蜒入海')) fail('river-walk 签名缺失（1207 掷加权随机走 + riverTiles 插入序 + 入海 toast）');
+    const s12 = g.scenarios.find((s) => s.key === 'river-lake-earlyreturn');
+    if (!s12 || s12.totalDraws !== 2 || !s12.toasts.some((t) => t.text === '群山环抱的洼地积水成湖')) fail('river-lake-earlyreturn 签名缺失（内流湖 carveLake max(2,5) 参化 + 早退零掷 + 群山 toast）');
+    const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/tool2.json', import.meta.url));
+    const gl = readFileSync(new URL('./golden/tool2.json', import.meta.url));
+    const md5a = createHash('md5').update(sa).digest('hex');
+    const md5b = createHash('md5').update(gl).digest('hex');
+    if (md5a !== md5b) fail(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
+    if (fails.length > 0) throw new Error(fails.join(' | '));
+    console.log(`tool2 台账完备 (12 场景 + lightning 散布/钳位/OOB 负索引 + tornado 上限 + quake JsRound + nuke statNukes/explode + river 参化/内流湖/早退 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  } catch (e) {
+    tool2VerifyFail++;
+    console.error('tool2 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0 && fireVerifyFail === 0 && powerVerifyFail === 0 && rainfloodVerifyFail === 0 && ecoVerifyFail === 0 && brushVerifyFail === 0 && toolVerifyFail === 0 && tool2VerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);
