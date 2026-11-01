@@ -86,7 +86,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   { key: 'ollama', label: 'Ollama 本地', config: { kind: 'openai', label: 'Ollama 本地', baseUrl: 'http://localhost:11434/v1', model: 'llama3.1' } },
   { key: 'anthropic', label: 'Anthropic', config: { kind: 'anthropic', label: 'Anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-20250514' } },
   { key: 'custom', label: '自定义', config: { kind: 'openai', label: '自定义（OpenAI 兼容）', baseUrl: '', model: '' } },
-  { key: 'local-qwen05b', label: '本地 Qwen-0.5B', config: { kind: 'local', label: '本地 Qwen-0.5B', model: 'XENova/qwen2.5-0.5b-instruct', temperature: 0.7 } },
+  { key: 'local-qwen05b', label: '本地 Qwen-0.5B ⚠️', config: { kind: 'local', label: '本地 Qwen-0.5B（实验性）', model: 'XENova/qwen2.5-0.5b-instruct', temperature: 0.7 } },
 ];
 
 const PROVIDER_STORE_KEY = 'oracle-provider-v1';
@@ -688,7 +688,7 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
             </span>
           </label>
           <p className="rounded-sm border border-amber-400/30 bg-amber-400/5 px-1.5 py-1 text-[9px] leading-relaxed text-amber-300/80">
-            推荐模型：Qwen2.5-0.5B-Instruct（0.5B 参数，4 位量化 ~350MB）。移动端首次加载需下载模型，建议 Wi-Fi 下进行；后续浏览器会缓存，离线可用。
+            ⚠️ 实验性功能：本地模型在 iOS Safari 等移动端浏览器可能因 WebGPU 不支持而失败。如加载/推理报错，请在上方勾选「强制 CPU」，或切换「内置 Z.ai」/「DeepSeek」等云端厂商（无需下载，即点即用）。
           </p>
         </div>
       )}

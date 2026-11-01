@@ -20,19 +20,50 @@ async function callLocalModelStub(): Promise<{ content: string; reasoning: strin
 /** 已加载的本地生成管线缓存（按模型标识符键） */
 const pipelineCache = new Map<string, Awaited<ReturnType<typeof import('@xenova/transformers').pipeline>>>();
 
-/** 加载或复用本地生成管线（text-generation） */
+/** 检测是否为 iOS Safari（iOS 上 WebGPU 不可用，需回退到 WASM/CPU） */
+function isIOS(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent);
+}
+
+/** 加载或复用本地生成管线（text-generation），带设备 fallback */
 async function getLocalPipeline(
   modelId: string,
   opts: { forceCpu?: boolean },
 ): Promise<Awaited<ReturnType<typeof import('@xenova/transformers').pipeline>>> {
-  const { pipeline } = await loadTransformers();
+  const { pipeline, env } = await loadTransformers();
+
+  // 允许从远程 CDN 下载模型（移动端必需）
+  env.allowRemoteModels = true;
+  env.allowLocalModels = false;
+
   const key = `${modelId}:${opts.forceCpu ? 'cpu' : 'auto'}`;
   if (pipelineCache.has(key)) return pipelineCache.get(key)!;
 
-  // quantized: true 启用 4 位量化，显著减小体积并加速推理
-  const pipe = await pipeline('text-generation', modelId, { quantized: true });
-  pipelineCache.set(key, pipe);
-  return pipe;
+  // 设备选择策略：
+  // - forceCpu=true：不传 device_type，让 transformers.js 用 CPU/WASM
+  // - iOS Safari：不传 device_type（WebGPU 不可用，会自动回退）
+  // - 其他：先尝试 WebGPU，失败则自动回退
+  const deviceOptions: Array<{ device_type?: string }> = [
+    opts.forceCpu || isIOS() ? {} : { device_type: 'webgpu' },
+    {}, // 让 transformers.js 自动选择（WASM/CPU）
+  ];
+
+  let lastErr: unknown = null;
+  for (const opt of deviceOptions) {
+    try {
+      const pipe = await pipeline('text-generation', modelId, {
+        quantized: true,
+        ...opt,
+      });
+      pipelineCache.set(key, pipe);
+      return pipe;
+    } catch (e) {
+      lastErr = e;
+      continue;
+    }
+  }
+  throw lastErr ?? new Error('无法加载本地模型管线');
 }
 
 /** 把 OpenAI 风格消息历史压成单段提示文本（本地 1B 模型不支持复杂 chat template，做简单拼接） */
@@ -55,8 +86,7 @@ export async function callLocalModel(
   if (typeof window === 'undefined') return callLocalModelStub();
 
   const { env } = await loadTransformers();
-  // transformers.js 从 Hugging Face CDN 下载模型；如需完全离线，可把模型文件放入 public/models/<name>
-  // 并把 model 字段设为相对路径（如 '/models/qwen2.5-0.5b-instruct'）
+  env.allowRemoteModels = true;
   env.allowLocalModels = false;
 
   const modelId = provider.model ?? 'XENova/qwen2.5-0.5b-instruct';
@@ -83,6 +113,14 @@ export async function callLocalModel(
     }
   } catch (e) {
     err = e instanceof Error ? e.message : String(e);
+    // 给移动端更友好的错误提示
+    if (err.includes('WebGPU') || err.includes('gpu')) {
+      err = '本地模型需 WebGPU 支持，当前浏览器/设备不兼容。建议：开启「强制 CPU」模式，或改用云端厂商（DeepSeek/OpenAI 等）。';
+    } else if (err.includes('fetch') || err.includes('download') || err.includes('network')) {
+      err = '模型下载失败（约 350MB）。请确保连接 Wi-Fi，并稍后重试。';
+    } else if (err.includes('undefined') || err.includes('null')) {
+      err = '模型加载失败：浏览器环境不兼容。建议：开启「强制 CPU」模式，或改用云端厂商。';
+    }
   }
 
   return { content: content.join(''), reasoning, err };
