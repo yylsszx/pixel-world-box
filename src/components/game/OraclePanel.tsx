@@ -571,8 +571,9 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
   return (
     <div className="flex flex-col gap-2">
       <p className="text-[10px] font-bold tracking-wider text-zinc-300 uppercase">厂商接入</p>
-      {/* 预设网格（单选） */}
-      <div className="grid grid-cols-2 gap-1">
+      {/* 预设网格（单选，可滚动 */}
+      <div className="max-h-[180px] overflow-y-auto pr-1 mb-0.5">
+      <div className="grid grid-cols-2 gap-0.5">
         {PROVIDER_PRESETS.map((pre) => {
           const active = activeKey === pre.key;
           return (
@@ -592,7 +593,7 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
                   temperature: provider.temperature,
                 });
               }}
-              className={`min-w-0 truncate rounded-sm border-2 px-1 py-1 text-[9px] font-bold transition-colors ${
+              className={`min-w-0 truncate rounded-sm border-2 px-1 py-0.5 text-[8px] font-bold transition-colors ${
                 active
                   ? 'border-amber-400/60 bg-amber-400/10 text-amber-200'
                   : 'border-zinc-700 bg-zinc-800/60 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
@@ -603,10 +604,11 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
           );
         })}
       </div>
+      </div>
 
       {/* 端点配置（内置 Z.ai 免密钥，仅温度） */}
       {isLocal ? (
-        <p className="rounded-sm border border-teal-400/30 bg-teal-400/5 px-1.5 py-1 text-[9px] leading-relaxed text-teal-300/80">
+        <p className="rounded-sm border border-teal-400/30 bg-teal-400/5 px-1.5 py-0.5 text-[8px] leading-relaxed text-teal-300/80">
           本地模型在浏览器端直接运行（transformers.js），无需服务端与密钥；首次使用会下载模型权重（约几百 MB），随后浏览器缓存离线可用。
         </p>
       ) : (
@@ -646,7 +648,7 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
               aria-label="API 密钥"
             />
           </label>
-          <p className="rounded-sm border border-amber-400/30 bg-amber-400/5 px-1.5 py-1 text-[9px] leading-relaxed text-amber-300/80">
+          <p className="rounded-sm border border-amber-400/30 bg-amber-400/5 px-1.5 py-0.5 text-[8px] leading-relaxed text-amber-300/80">
             内置 Z.ai 直连 z.ai 云平台，无需服务端代理。请从 https://platform.z.ai 获取 API Key 填入上方，即点即用。
           </p>
         </div>
@@ -697,7 +699,7 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
               强制 CPU（关闭 WebGPU，兼容性更好但更慢）
             </span>
           </label>
-          <p className="rounded-sm border border-amber-400/30 bg-amber-400/5 px-1.5 py-1 text-[9px] leading-relaxed text-amber-300/80">
+          <p className="rounded-sm border border-amber-400/30 bg-amber-400/5 px-1.5 py-0.5 text-[8px] leading-relaxed text-amber-300/80">
             ⚠️ 实验性功能：本地模型在 iOS Safari 等移动端浏览器可能因 WebGPU 不支持而失败。如加载/推理报错，请在上方勾选「强制 CPU」，或切换「内置 Z.ai」/「DeepSeek」等云端厂商（无需下载，即点即用）。
           </p>
         </div>
@@ -1260,7 +1262,7 @@ function OracleBody() {
 
       {/* 错误行 */}
       {error && (
-        <p className="border-t-2 border-red-500/20 bg-red-500/10 px-2 py-1 text-[9px] font-bold break-words text-red-300/90">
+        <p className="border-t-2 border-red-500/20 bg-red-500/10 px-2 py-0.5 text-[8px] font-bold break-words text-red-300/90">
           上次请求失败：{error}
         </p>
       )}
