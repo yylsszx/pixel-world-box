@@ -12,6 +12,9 @@
 //   applyTool case L13342-13455（meteor 内联抖动循环 + 22 委派）+ effectsTick
 //   消费端四支：volcano L9857-9882 / wrath L10029-10035 / holystorm
 //   L10036-10075 / typhoon L10097-10125 + lightning L10507-10531（M-U15 译件
+//   消费）+ phoenixAshTick L13018-13032（M-U23：灰烬倒数到点重生——a.t-=2 节拍 +
+//   spawnUnit silent 预算门 null 支〔S26 900 注入〕+ 重生体继承 rebirths + 双 fx +
+//   toast/addEvent 尾面；runner unitsTick 通道 L2606 门镜像，旧场景零效应）
 //   随件——wrath/typhoon 消费端复用）+ fx L13990（seed/dir 2 掷 + x0/y0 默认
 //   + opts 覆写——返回 e 供 meteor/meteorShower 消费端 m.x0/y0/quiet 写面）+
 //   addEvent L14032（unshift + cap 80 + colorHex 面）。
@@ -36,7 +39,12 @@
 //   S8 caps-composite FAIL（fx 57≠45）；TOOL3_RED=lava 禁 volcano 消费端岩浆
 //   外溢 setTerrain（L9875）→ S1 volcano-default terrain md5 FAIL；
 //   TOOL3_RED=mutate 禁 jumpGene 属性重算写面（L11097-11100）→ S13/S14
-//   mutate 双场景 units dump hp/maxHp/dmg/speed FAIL → 还原复绿 14/14。
+//   mutate 双场景 units dump hp/maxHp/dmg/speed FAIL → 还原复绿 14/14；
+//   TOOL3_RED=river 禁 setTerrain 级联（世界生成直写语义）→ S15 fireMd5 FAIL；
+//   TOOL3_RED=finger 禁 grabbedTick 全写面 → S16/S17 grab 场景 FAIL；
+//   TOOL3_RED=reap 禁全收尸面 → 六 reap 场景 FAIL；
+//   TOOL3_RED=phoenix 禁灰烬到点全写面（L13023-13029 splice/spawn/fx/toast/event）→
+//   S25/S26 phoenix-rebirth 双场景 step4 ashes/units/fx FAIL → 还原复绿（M-U23）。
 // 运行：bun scripts/unity-migration/tool3-transcript.mjs
 // ============================================================================
 import { createHash } from 'node:crypto';
@@ -48,6 +56,7 @@ const R = { HUMAN: 0, ZOMBIE: 5, SHEEP: 6, WOLF: 7, DRAGON: 9, DEER: 10, PENGUIN
 const W = 256, H = 160, N = W * H;
 const isWater = (t) => t === T.DEEP || t === T.WATER;
 const walkable = (t) => t !== T.DEEP && t !== T.WATER && t !== T.MOUNTAIN && t !== T.LAVA;   // constants.ts L73-75
+const MAX_UNITS = 2400, MAX_WILDLIFE = 900, MAX_WILDLIFE_AQUATIC = 520;   // constants.ts L10/L12/L18 预算三轨（M-U23 spawnUnitM 预算门——S26 900 注入 null 支）
 const idx = (x, y) => y * W + x;
 const FLAMMABLE = new Set([T.GRASS, T.FOREST]);          // constants.ts FLAMMABLE（ignite L1075 门）
 const TOOL3_RED = process.env.TOOL3_RED ?? '';
@@ -58,7 +67,7 @@ const RACES = {
   [R.DEMON]: { repro: 0, undead: false, hostile: true, flying: false, lavaImmune: true },          // L174 DEMON
   [R.HUMAN]: { repro: 0.006, undead: false, aquatic: false, hostile: false, flying: false, lavaImmune: false, hp: 60, dmg: 8, speed: 0.09, isCiv: true },    // L157 HUMAN（M-U19：jumpGene 属性重算消费面；M-U22：isCiv 肉门/掉落门 skip）
   [R.WOLF]:  { repro: 0.004, undead: false, aquatic: false, hostile: false, flying: false, lavaImmune: false, hp: 34, dmg: 10, speed: 0.093, isCiv: false, predator: true }, // L164 WOLF（M-U19：wild 捕食者重算消费面；M-U22：scav predator 面）
-  [R.PHOENIX]: { undead: false, aquatic: false, flying: true, isCiv: false },                       // L189 PHOENIX（M-U22：reap zombie 门 skip〔flying〕/凤凰涅槃支）
+  [R.PHOENIX]: { undead: false, aquatic: false, flying: true, isCiv: false, hp: 200, dmg: 18, speed: 0.12, maxAge: 9999 },   // L189 PHOENIX（M-U22：reap zombie 门 skip〔flying〕/凤凰涅槃支；M-U23：+hp/dmg/speed/maxAge spawnUnitM 消费面——重生体 maxHp=round(200)=200）
   [R.HYDRA]: { undead: false, aquatic: false, flying: false, isCiv: false, predator: true, hp: 500, dmg: 30, speed: 0.05, maxAge: 9999 },   // L192 HYDRA（M-U22：斩首分裂 spawn 幼蛇属性基）
   [R.TROLL]: { undead: false, aquatic: false, flying: false, isCiv: false, predator: false },       // L173 TROLL（M-U22：MONSTER_LOOT boss 面）
   [R.PIG]: { undead: false, aquatic: false, flying: false, isCiv: false, predator: false },         // L195 PIG（M-U22：肉 +1 面）
@@ -224,6 +233,8 @@ class BREng {
     this.families = new Map((sc.fixture.families0 ?? []).map((f) => [f.id, { ...f }]));   // M-U22：family 瘦夹具
     this.rel = new Map();                           // engine rel（商队降温面）
     this.wildCount = new Map();                     // engine L440 wildCount（bumpWild 账本——黄金不 dump 断言但掷流无关，账面对齐）
+    for (const [r, n] of (sc.fixture.wild0 ?? [])) this.wildCount.set(r, n);   // M-U23：wildCount 手术注入（wildAlive=Σvalues——spawnUnit L1300 预算门 null 支）
+    for (const a of (sc.fixture.ashes0 ?? [])) this.phoenixAshes.push({ ...a });   // M-U23：灰烬瘦夹具（倒数窗口——零掷纯写）
     this.natureSeason = 0;                          // nature.season 夹具（黄金非冬——ashTtl 240 面）
     this.laws = { zombieVirus: true };              // engine laws 子集（zombie 门——黄金默认 true）
   }
@@ -961,10 +972,38 @@ class BREng {
     }
     this.unitsReap();                        // L3215（M-U22 接线——收尸域全函数）
   }
+  // ---- M-U23 phoenixAshTick L13018-13032（凤凰涅槃引擎级通道：灰烬倒数到点重生机械转写——
+  //        调用面：runner unitsTick 步进通道 L2606 门〔len>0 蓝本门原样，旧场景 ashes 空门假零效应〕----
+  phoenixAshTick() {
+    for (let i = this.phoenixAshes.length - 1; i >= 0; i--) {   // L13019 逆序环
+      const a = this.phoenixAshes[i];        // L13020
+      a.t -= 2;                              // L13021（与 cd 同款节拍：1 tick = 2 单位）
+      if (a.t > 0) continue;                 // L13022
+      if (TOOL3_RED === 'phoenix') continue; // 红证旋钮：禁到点全写面（splice/spawn/fx/toast/event 全缺 → S25/S26 step4 ashes/units/fx FAIL）
+      this.phoenixAshes.splice(i, 1);        // L13023
+      const nu = this.spawnUnitM(R.PHOENIX, a.x, a.y, { silent: true });   // L13024（预算门 null 支——S26 实证）
+      if (nu) nu.rebirths = a.rebirths;      // L13025（重生体继承涅槃计数）
+      this.fx('spawn', a.x, a.y, 46);        // L13026
+      this.fx('fireball', a.x, a.y - 1, 30); // L13027
+      this.toast('凤凰在灰烬中重生了', 'info');   // L13028
+      this.addEvent('phoenix', '烈焰冲天而起——凤凰自灰烬中振翼重生', { x: a.x, y: a.y });   // L13029
+      // L13030 onSound?.('phoenix')——宿主音效 no-op（黄金窗口无消费面）
+    }
+  }
   // ---- M-U22 unitsReap L3321-3472（死亡收尸 Stage 2：逆序环五主支 + 常规收尸尾链机械转写） ----
   bumpWild(race, d) {                        // L1088-1092（Map 删后重插末尾枚举序——黄金无 dump 账面对齐）
     const n = (this.wildCount.get(race) ?? 0) + d;
     if (n > 0) this.wildCount.set(race, n); else this.wildCount.delete(race);
+  }
+  wildAliveM() {                             // L1572-1576（wildAlive = ΣwildCount.values——spawnUnit L1300 消费）
+    let n = 0;
+    for (const v of this.wildCount.values()) n += v;
+    return n;
+  }
+  wildAliveAquaticM() {                      // 水生配额（镜像窗口 race 面全非 aquatic——不可达防御面）
+    let n = 0;
+    for (const [race, v] of this.wildCount) if (RACES[race] && RACES[race].aquatic) n += v;
+    return n;
   }
   isHerbivoreRaceM(race) {                   // L2126-2134 子集（dynRaces 恒空——八静态族判定面）
     return race === R.SHEEP || race === R.DEER || race === R.PENGUIN || race === R.CAMEL
@@ -1018,8 +1057,14 @@ class BREng {
     this.families.set(f.id, f);
     return f;
   }
-  spawnUnitM(race, x, y, opts) {             // L1289+ 机械转写（silent + 无 civ/gear 面——hydra 幼蛇消费面；预算门夹具空世界远未满零早退）
+  spawnUnitM(race, x, y, opts) {             // L1289+ 机械转写（silent + 无 civ/gear 面——hydra 幼蛇/凤凰重生消费面）
     const def = RACES[race];
+    if (!def) return null;                   // L1290（RACES 缺键防御）
+    if (def.isCiv && this.units.length >= MAX_UNITS) return null;   // L1293（文明预算——镜像窗口无 civ spawn 不可达）
+    if (!def.isCiv) {                        // L1296-1298 预算三轨
+      if (def.aquatic) { if (this.wildAliveAquaticM() >= MAX_WILDLIFE_AQUATIC) return null; }   // L1297（水生独立配额）
+      else if (this.wildAliveM() >= MAX_WILDLIFE) return null;        // L1298（含僵尸——S26 900 注入 null 支：先于 trait 掷 L1322）
+    }
     x = Math.max(0.5, Math.min(W - 0.5, x));   // L1315
     y = Math.max(0.5, Math.min(H - 0.5, y));   // L1316
     // L1319 trait 门：opts.trait undefined → 0.15 门 1 掷（+rollTrait 命中再 1 掷——黄金双 MISS）
@@ -1336,7 +1381,7 @@ for (const sc of golden.scenarios) {
     else if (call.fn === 'beginGrab') eng.beginGrab(call.args[0], call.args[1]);             // M-U21：三 API 直调
     else if (call.fn === 'moveGrab') eng.moveGrab(call.args[0], call.args[1]);
     else if (call.fn === 'endGrab') eng.endGrab(call.args[0], call.args[1]);
-    else if (call.fn === 'unitsTick') { eng.tickCount++; eng.fireTickM(); eng.rebuildBucketsM(); eng.unitsTick(); eng.effectsTick(); }   // M-U21：主循环 L2523-2528 截断镜像
+    else if (call.fn === 'unitsTick') { eng.tickCount++; eng.fireTickM(); eng.rebuildBucketsM(); eng.unitsTick(); eng.effectsTick(); if (eng.phoenixAshes.length > 0) eng.phoenixAshTick(); }   // M-U21+M-U23：主循环 L2523-2528 + L2606 截断镜像（灰烬门旧场景零效应）
     else if (call.fn === 'effectsTick') { eng.tickCount++; eng.effectsTick(); }
     else throw new Error(`${sc.key}: 未知调用 ${call.fn}`);
     const m = {
@@ -1357,6 +1402,7 @@ for (const sc of golden.scenarios) {
       stats: [eng.statNukes, eng.statMeteorShowers, eng.statPlasmas, eng.statAnnihilations, eng.statBlackholes],
       unitsCount: eng.units.length,
       ...(call.grabId !== undefined ? { grabId: eng.grabId ?? null } : {}),   // M-U21：stepUnits 条件面
+      ...(call.ashes !== undefined ? { ashes: eng.phoenixAshes.map((a) => ({ x: f64hex(a.x), y: f64hex(a.y), t: a.t, rebirths: a.rebirths })) } : {}),   // M-U23：stepAsh 条件面（倒数每步位级）
     };
     for (const k of Object.keys(m)) cmp(m[k], call[k], `step${s}.${k}`);
     if (call.fn === 'effectsTick' || call.fn === 'unitsTick') {   // M-U21：unitsTick 步同列快照

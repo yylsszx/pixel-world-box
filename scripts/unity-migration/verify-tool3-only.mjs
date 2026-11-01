@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 let fail = 0;
 try {
   execFileSync('bun', [new URL('./tool3-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
-  console.log('tool3 黄金回放 (tool3-transcript 镜像 vs tool3.json): PASS (24 场景神力生成器/消费端每步快照逐位 + volcano 锥体/引燃圈/熔岩弹/外溢 + cap 门 13 族 + bless/curse/love/teleport 四瞬态 + M-U19 mutate 特质域 + M-U20 river runtime 级联 + M-U21 grab 三场景（三 API + unitsTick 壳 + grabbedTick 全链） + M-U22 reap 六场景（尸变/王权/凤凰/九头蛇/掉落链/scav/商队） + meteor/meteorShower x0/y0 偏移 + 超武双神力 + typhoon 推拽/间歇雷电/暴雨灭火 + holystorm 审判/缓愈/驱瘟 + units dump 位级含 trait/gene + events colorHex 流 + toasts 面)');
+  console.log('tool3 黄金回放 (tool3-transcript 镜像 vs tool3.json): PASS (26 场景神力生成器/消费端每步快照逐位 + volcano 锥体/引燃圈/熔岩弹/外溢 + cap 门 13 族 + bless/curse/love/teleport 四瞬态 + M-U19 mutate 特质域 + M-U20 river runtime 级联 + M-U21 grab 三场景（三 API + unitsTick 壳 + grabbedTick 全链） + M-U22 reap 六场景（尸变/王权/凤凰/九头蛇/掉落链/scav/商队） + M-U23 phoenix 双场景（灰烬倒数重生/null 支） + meteor/meteorShower x0/y0 偏移 + 超武双神力 + typhoon 推拽/间歇雷电/暴雨灭火 + holystorm 审判/缓愈/驱瘟 + units dump 位级含 trait/gene + events colorHex 流 + toasts 面)');
 } catch (e) {
   fail++;
   console.error('tool3 黄金回放: FAIL');
@@ -31,7 +31,7 @@ try {
   execFileSync('bun', [new URL('./gen-tool3.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
   const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
   if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
-  console.log('tool3 gen det 复跑 (gen-tool3 · bun): PASS (24 场景 sanity + GameEngine 真实现 + det 字节级)');
+  console.log('tool3 gen det 复跑 (gen-tool3 · bun): PASS (26 场景 sanity + GameEngine 真实现 + det 字节级)');
 } catch (e) {
   fail++;
   console.error('tool3 gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -40,7 +40,7 @@ try {
   const g = JSON.parse(readFileSync(new URL('./golden/tool3.json', import.meta.url), 'utf8'));
   const fails = [];
   const fail2 = (m) => fails.push(m);
-  if (!Array.isArray(g.scenarios) || g.scenarios.length !== 24) fail2('场景数 ≠ 24');
+  if (!Array.isArray(g.scenarios) || g.scenarios.length !== 26) fail2('场景数 ≠ 26');
   const keys = g.scenarios.map((s) => s.key);
   for (const want of ['volcano-default', 'volcano-power3', 'spawn-quartet', 'meteor-meteorshower', 'wrath-ticks', 'area-powers', 'static-quartet', 'caps-composite', 'typhoon-ticks', 'plasma-annihilate', 'volcano-edge', 'mutate-civ-reroll', 'mutate-wild-clamp', 'holystorm-ticks', 'river-runtime', 'grab-light', 'grab-throw', 'finger-tool'])
     if (!keys.includes(want)) fail2(`场景 ${want} 缺失`);
@@ -121,7 +121,7 @@ try {
   if (!s21 || s21.totalDraws !== 3 || s21.events?.[0]?.kind !== 'king' || s21.civs?.[0]?.kingId !== -1 || s21.civs?.[0]?.stability !== '0000000000004a40' || s21.civs?.[0]?.pop !== 9) fail2('reap-king 签名缺失（3 掷 = skull fx 2 + blood seed 1——civ 三连掉落门全 skip；kingId -1 + stability 52 位级 + pop 9）');
   if (s21 && s21.toasts?.[0]?.tone !== 'danger') fail2('reap-king toast danger 面缺失（onKingDeath L1682 宿主回调）');
   const s22 = g.scenarios.find((s) => s.key === 'reap-phoenix');
-  if (!s22 || s22.totalDraws !== 14 || s22.ashes?.length !== 1 || s22.ashes?.[0]?.t !== 240 || s22.ashes?.[0]?.rebirths !== 1) fail2('reap-phoenix 签名缺失（14 掷；ash push t=240 非冬/rebirths=1——u960 涅槃 continue 无 skull）');
+  if (!s22 || s22.totalDraws !== 14 || s22.ashes?.length !== 1 || s22.ashes?.[0]?.t !== 238 || s22.ashes?.[0]?.rebirths !== 1) fail2('reap-phoenix 签名缺失（14 掷；ash push t=240→238 步进通道 L2606 门首 tick 倒数〔M-U23 新语义——零掷〕/rebirths=1——u960 涅槃 continue 无 skull）');
   if (s22 && s22.events?.filter((e) => e.kind === 'phoenix').length !== 2) fail2('reap-phoenix 双纪事面缺失（涅槃 + 熄灭——u961 rebirths>=3 走常规收尸对照）');
   const s23 = g.scenarios.find((s) => s.key === 'reap-hydra');
   if (!s23 || s23.totalDraws !== 32 || s23.units?.length !== 2 || s23.shake !== 3 || s23.units?.[0]?.gen !== 1 || s23.units?.[0]?.maxHp !== '0000000000c07240') fail2('reap-hydra 签名缺失（32 掷 = 幼蛇×2〔trait 0.15+maxAge+flip+name+breath+家族 0.06 各 1 掷〕+ smoke/blood fx 4 + 肉链；幼蛇 maxHp=300 位级；shake 3）');
@@ -129,13 +129,24 @@ try {
   const s24 = g.scenarios.find((s) => s.key === 'reap-loot');
   if (!s24 || s24.totalDraws !== 40 || s24.items?.length !== 7 || s24.itemSeq !== 8) fail2('reap-loot 签名缺失（40 掷；items 7 = 5 meat + axe1 + chest2 rollItem 掉落）');
   if (s24 && (!s24.items?.some((i) => i.kind === 'lava_boots') || !s24.rel?.[0] || s24.rel[0].v !== '00000000000018c0' || s24.units?.[0]?.food !== 91 || s24.events?.filter((e) => e.kind === 'loot' || e.kind === 'trade').length !== 2)) fail2('reap-loot 掉落/scav/商队面缺失（lava_boots rarity3 池命中 + rel -6 位级 + u984 food 91 + loot/trade 双纪事）');
+  // —— M-U23 phoenix 双场景签名（phoenixAshTick L13018-13032：灰烬倒数到点重生 + spawnUnit 预算门 null 支）——
+  const s25 = g.scenarios.find((s) => s.key === 'phoenix-rebirth');
+  if (!s25 || s25.totalDraws !== 10 || s25.units?.length !== 1 || s25.units?.[0]?.id !== 620 || s25.units?.[0]?.race !== 29 || s25.units?.[0]?.maxHp !== '0000000000006940' || s25.units?.[0]?.rebirths !== 1 || s25.units?.[0]?.parity !== 1 || s25.units?.[0]?.name !== 'Jora') fail2('phoenix-rebirth 签名缺失（10 掷 = 三步零掷 + 重生 spawn 链 6〔trait 0.15 miss/maxAge/flip/name 1/breath/family 0.06 miss〕+ fx 4；重生体 id620/race29/maxHp200/parity1/name Jora 位级）');
+  if (s25 && (s25.ashes?.length !== 0 || s25.fx?.[0]?.seed !== 15588 || s25.fx?.[1]?.seed !== 11192 || s25.fx?.[1]?.y !== '0000000000804d40' || s25.stepsSnap.at(-1).rngA !== '43b2c4c2')) fail2('phoenix-rebirth 尾面缺失（ashes 空 + fx spawn 15588/fireball 11192 y=59 y-1 面位级 + 10 掷链终态）');
+  if (s25) {
+    const ashT = s25.stepsSnap.map((x) => (x.ashes ? x.ashes.map((a) => a.t) : null));
+    if (JSON.stringify(ashT) !== JSON.stringify([[6], [4], [2], []])) fail2('phoenix-rebirth 倒数节拍面缺失（每步 ashes t 6/4/2/[]——a.t-=2 节拍 tick4 到点 splice 位级）');
+    if (s25.stepsSnap[0].rngA !== s25.stepsSnap[1].rngA || s25.stepsSnap[1].rngA !== s25.stepsSnap[2].rngA) fail2('phoenix-rebirth 三步零掷面缺失（L2534-2606 间门位窗口全空零效应铁证——rngA 步 1-3 恒）');
+  }
+  const s26 = g.scenarios.find((s) => s.key === 'phoenix-rebirth-cap');
+  if (!s26 || s26.totalDraws !== 4 || s26.units?.length !== 0 || s26.ashes?.length !== 0 || s26.fx?.[0]?.seed !== 40874 || s26.fx?.[1]?.seed !== 19316 || s26.stepsSnap.at(-1).rngA !== 'b4ade905') fail2('phoenix-rebirth-cap 签名缺失（4 掷纯 fx；wild0 900 注入 → spawnUnit L1298-1300 预算门 null 先于 trait 掷——无重生体；fx spawn 40874/fireball 19316 照常〔if(nu) 外〕+ 4 掷链终态）');
   const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/tool3.json', import.meta.url));
   const gl = readFileSync(new URL('./golden/tool3.json', import.meta.url));
   const md5a = createHash('md5').update(sa).digest('hex');
   const md5b = createHash('md5').update(gl).digest('hex');
   if (md5a !== md5b) fail2(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
   if (fails.length > 0) throw new Error(fails.join(' | '));
-  console.log(`tool3 台账完备 (24 场景 + volcano 锥体/双烈度/边缘钳 + cap 13 族拒面 + 超武双神力 colorHex + 黑洞计数先于 cap + bless/curse/fert 三瞬态 + M-U19 mutate 双场景 + M-U20 river runtime 级联 + M-U21 grab 三场景 + M-U22 reap 六场景 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  console.log(`tool3 台账完备 (26 场景 + volcano 锥体/双烈度/边缘钳 + cap 13 族拒面 + 超武双神力 colorHex + 黑洞计数先于 cap + bless/curse/fert 三瞬态 + M-U19 mutate 双场景 + M-U20 river runtime 级联 + M-U21 grab 三场景 + M-U22 reap 六场景 + M-U23 phoenix 双场景 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
 } catch (e) {
   fail++;
   console.error('tool3 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -203,6 +214,22 @@ try {
 } catch (e) {
   fail++;
   console.error('tool3 reap 红证旋钮: FAIL —', String(e.message ?? e).slice(0, 200));
+}
+// —— M-U23 红证旋钮：TOOL3_RED=phoenix 禁灰烬到点全写面（缺陷面 = 灰烬永不重生/spawn/fx/toast/event 全缺）→ 双 phoenix 场景 FAIL → 复绿 ——
+try {
+  const env = { ...process.env, TOOL3_RED: 'phoenix' };
+  try {
+    execFileSync('bun', [new URL('./tool3-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, env });
+    throw new Error('红证未红：TOOL3_RED=phoenix 仍 ALL PASS（旋钮无效）');
+  } catch (e) {
+    if (String(e.message ?? '').includes('红证未红')) throw e;
+    const out = String(e.stdout ?? '');
+    if (!out.includes('phoenix-rebirth: FAIL') || !out.includes('phoenix-rebirth-cap: FAIL')) throw new Error('红证面不达：双 phoenix 场景未 FAIL');
+  }
+  console.log('tool3 红证旋钮 (TOOL3_RED=phoenix 禁灰烬到点全写面 → 双 phoenix 场景 FAIL): PASS');
+} catch (e) {
+  fail++;
+  console.error('tool3 phoenix 红证旋钮: FAIL —', String(e.message ?? e).slice(0, 200));
 }
 console.log(fail === 0 ? 'VERIFY-TOOL3: ALL PASS' : 'VERIFY-TOOL3: FAIL');
 process.exit(fail === 0 ? 0 : 1);
