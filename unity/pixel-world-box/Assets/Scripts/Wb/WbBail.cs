@@ -3402,7 +3402,19 @@ namespace PixelWorldBox.Wb
                     if (w.terrain[gi] == WbConstants.T_GRASS && w.building[gi] == 0)                        // L12144
                     {
                         SetTerrain(w, gi, WbConstants.T_BURNT);                                                     // L12145（setTerrain 全级联——regrow 出账 L979 级联先行）
-                        if (!w.regrow.ContainsKey(gi)) w.regrow[gi] = w.tickCount + (long)WbMath.JsRound((WbMath.JsRound(700 * 1.3) + System.Math.Floor(w.Rng() * 900.0)) / w.WorldsimSoilMulAt(gi));   // L12146（ep('eco.regrowBase') 内联 700——L28；has 门短路 900 域掷）
+                        if (!w.regrow.ContainsKey(gi))
+                        {   // L12146（ep('eco.regrowBase') 内联 700——L28；has 门短路 900 域掷）
+                            // JS Map 语义对齐（M-U12 黄金 S7 红证清偿）：L12145 级联已 delete(gi)，此处
+                            // Map.set(gi,·) 属「删后重插」→ JS 追加插入序末尾；C# Dictionary 索引器复用
+                            // freeList 槽位（原位）——枚举序漂移。重建字典按原序拷贝剩余 + gi 追加末尾，
+                            // 枚举序 ≡ JS Map（save 转录/regrowTick 快照迭代序位级一致）。纯增/纯删面
+                            // （M-U8b/M-U11 消费面）不受影响：无重插即无重建。
+                            long at = w.tickCount + (long)WbMath.JsRound((WbMath.JsRound(700 * 1.3) + System.Math.Floor(w.Rng() * 900.0)) / w.WorldsimSoilMulAt(gi));
+                            var reb = new System.Collections.Generic.Dictionary<int, long>(w.regrow.Count + 1);
+                            foreach (System.Collections.Generic.KeyValuePair<int, long> kv in w.regrow) reb[kv.Key] = kv.Value;
+                            reb[gi] = at;
+                            w.regrow = reb;
+                        }
                     }
                 }
             }
