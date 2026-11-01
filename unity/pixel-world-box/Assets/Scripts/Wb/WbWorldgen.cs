@@ -433,8 +433,10 @@ namespace PixelWorldBox.Wb
             });
         }
 
-        /// <summary>engine.ts L12394-12411 carveLake（内流湖/火山口湖；山区淹没山体 + 湖畔绿洲）</summary>
-        public static void CarveLake(WbWorld w, byte[] terrain, int cx, int cy, int r)
+        /// <summary>engine.ts L12394-12411 carveLake（内流湖/火山口湖；山区淹没山体 + 湖畔绿洲）
+        ///   M-U18：runtime 参——运行时调用面（hydroTick L12373 洼地成湖）走 SetTerrain 全级联（dirty/propsDirty/waterTier），
+        ///   默认 false 保世界生成面直写零回归（M-U7g 先例；JS 运行时 setTerrain L12390/L12400 位等价）</summary>
+        public static void CarveLake(WbWorld w, byte[] terrain, int cx, int cy, int r, bool runtime = false)
         {
             int W = WbConstants.W, H = WbConstants.H;
             for (int dy = -r - 1; dy <= r + 1; dy++)                                               // L12396
@@ -446,12 +448,18 @@ namespace PixelWorldBox.Wb
                     double d = WbNoise.V8Hypot(dx, dy);                                            // L12400（V8 hypot 语义——sqrt 72/289 整数格点分歧）
                     if (d <= r)
                     {
-                        terrain[yy * W + xx] = WbConstants.T_WATER;                                // L12403
+                        int wi = yy * W + xx;
+                        if (runtime) WbBailRelay.SetTerrain(w, wi, WbConstants.T_WATER);           // L12403（运行时 setTerrain 全级联）
+                        else terrain[wi] = WbConstants.T_WATER;                                    // L12403（世界生成直写）
                     }
                     else if (d <= r + 1)
                     {
                         int j = yy * W + xx;
-                        if (terrain[j] == WbConstants.T_SAND || terrain[j] == WbConstants.T_BURNT) terrain[j] = WbConstants.T_GRASS;   // L12406
+                        if (terrain[j] == WbConstants.T_SAND || terrain[j] == WbConstants.T_BURNT)
+                        {
+                            if (runtime) WbBailRelay.SetTerrain(w, j, WbConstants.T_GRASS);        // L12406（运行时）
+                            else terrain[j] = WbConstants.T_GRASS;                                  // L12406（世界生成直写）
+                        }
                     }
                 }
             }
@@ -459,8 +467,10 @@ namespace PixelWorldBox.Wb
         }
 
         /// <summary>engine.ts L12312-12415 carveRiver（BFS 距水场 + 加权随机下降游走 + 圆形刻蚀绕山 + 沿岸灌溉；
-        ///   M-U15 参化：brush 默认 3=世界生成期常量原值，玩家路径传 w.brush——moistMap 桩参体未消费保持）</summary>
-        public static bool CarveRiver(WbWorld w, byte[] terrain, byte[] moistMap, double wx, double wy, int? widthOverride, int brush = 3)
+        ///   M-U15 参化：brush 默认 3=世界生成期常量原值，玩家路径传 w.brush——moistMap 桩参体未消费保持）
+        ///   M-U18：runtime 参——JS 运行时 carveRiver 刻蚀/绿洲/成林走 setTerrain 全级联（L12362/L12377/L12378）；
+        ///   默认 false 保世界生成面直写零回归（M-U7g 先例——generate/seedRivers 面零变）</summary>
+        public static bool CarveRiver(WbWorld w, byte[] terrain, byte[] moistMap, double wx, double wy, int? widthOverride, int brush = 3, bool runtime = false)
         {
             int W = WbConstants.W, H = WbConstants.H, N = W * H;
             int sx = (int)Math.Max(0, Math.Min(W - 1, Math.Floor(wx)));                            // L12283
@@ -485,7 +495,7 @@ namespace PixelWorldBox.Wb
             }
             if (dist[start] == -1)                                                                 // L12305-12312（山脉环抱洼地 → 内流湖）
             {
-                CarveLake(w, terrain, sx, sy, Math.Max(2, brush));                                 // L12307（this.brush → 参化 brush）
+                CarveLake(w, terrain, sx, sy, Math.Max(2, brush), runtime);                            // L12307（this.brush → 参化 brush；runtime 透传）
                 w.Toast("群山环抱的洼地积水成湖", "info");                                          // L12308（toast 宿主回调——M-U15 补译：玩家路径黄金对账面，零 rng）
                 w.AddEvent("river", "群山之间诞生了一泓内流湖", null, sx + 0.5, sy + 0.5);           // L12309（坐标 sx+0.5——M-U15 补译：runtime addEvent 恒带 {x,y}，M-U7k 世界生成期省略面）
                 /* onSound?.('heal') —— 宿主回调（L12310——黄金受控 undefined no-op） */
@@ -516,7 +526,7 @@ namespace PixelWorldBox.Wb
                         wts.Add(1.0 / (1 + (curD - dist[j]) * 0.5));                               // L12338 快降权重高 → 蜿蜒
                     }
                 }
-                if (cands.Count == 0) { CarveLake(w, terrain, cx, cy, Math.Max(2, width + 1)); break; }   // L12341-12344 洼地成湖
+                if (cands.Count == 0) { CarveLake(w, terrain, cx, cy, Math.Max(2, width + 1), runtime); break; }   // L12341-12344 洼地成湖（runtime 透传）
                 double total = 0;
                 foreach (double wt in wts) total += wt;                                            // L12346-12347
                 double r = w.Rng() * total;                                                        // L12348（1 掷）
@@ -533,7 +543,12 @@ namespace PixelWorldBox.Wb
                         if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
                         int j = yy * W + xx;
                         if (terrain[j] == WbConstants.T_MOUNTAIN) continue;                        // L12361 河绕山不穿山
-                        if (terrain[j] != WbConstants.T_WATER) { terrain[j] = WbConstants.T_WATER; carved++; }   // L12362
+                        if (terrain[j] != WbConstants.T_WATER)
+                        {
+                            if (runtime) WbBailRelay.SetTerrain(w, j, WbConstants.T_WATER);        // L12362（运行时 setTerrain 全级联）
+                            else terrain[j] = WbConstants.T_WATER;                                  // L12362（世界生成直写）
+                            carved++;
+                        }
                         if (dirCode > 0)
                         {
                             w.riverDir[j] = (byte)dirCode;                                         // L12364
@@ -550,8 +565,16 @@ namespace PixelWorldBox.Wb
                         if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
                         int j = yy * W + xx;
                         int t = terrain[j];
-                        if (t == WbConstants.T_SAND || t == WbConstants.T_BURNT) terrain[j] = WbConstants.T_GRASS;            // L12377 绿洲
-                        else if (t == WbConstants.T_GRASS && w.Rng() < 0.05 * SoilMulAt(w, j)) terrain[j] = WbConstants.T_FOREST;   // L12378（&& 短路 1 掷/GRASS 格）
+                        if (t == WbConstants.T_SAND || t == WbConstants.T_BURNT)
+                        {
+                            if (runtime) WbBailRelay.SetTerrain(w, j, WbConstants.T_GRASS);        // L12377 绿洲（运行时 setTerrain）
+                            else terrain[j] = WbConstants.T_GRASS;                                  // L12377（世界生成直写）
+                        }
+                        else if (t == WbConstants.T_GRASS && w.Rng() < 0.05 * SoilMulAt(w, j))
+                        {
+                            if (runtime) WbBailRelay.SetTerrain(w, j, WbConstants.T_FOREST);       // L12378 成林（&& 短路 1 掷/GRASS 格）
+                            else terrain[j] = WbConstants.T_FOREST;                                 // L12378（世界生成直写）
+                        }
                     }
                 }
                 cx = nx; cy = ny;                                                                  // L12381-12382

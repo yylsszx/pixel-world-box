@@ -139,6 +139,9 @@ namespace PixelWorldBox.Host
             Orch.D[PixelWorldBox.Wb.WbTickOrch.NATURE_SEASON_CHECK] = () => PixelWorldBox.Wb.WbBailRelay.NatureSeasonCheck(World);   // M-U17：seasonCheck 已译域真调（lastSeason 初 -1 首调静默全图刷——蓝本 L2595 %40===0）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.NATURE_TECTONIC] = () => PixelWorldBox.Wb.WbBailRelay.NatureTectonicTick(World);       // M-U17：tectonicTick 已译域真调（boundary 空表安全：漂移+recompute 走，应力/释压零进——蓝本 L2597 %240===21）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.NATURE_GEOLOGY] = () => PixelWorldBox.Wb.WbBailRelay.NatureGeologyTick(World);         // M-U17：geologyTick 已译域真调（boundary 空表安全：造山/岛弧/裂谷 cand 空 break，热点/侵蚀掷面独立——蓝本 L2599 %600===31）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.NATURE_ATM] = () => PixelWorldBox.Wb.WbBailRelay.NatureAtmTick(World);                 // M-U18：atmTick 已译域真调（laws.atmosphere 门顶层早退——蓝本 L2583 %10===3）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.NATURE_STORM] = () => PixelWorldBox.Wb.WbBailRelay.NatureStormTick(World);             // M-U18：stormTick 已译域真调（laws.atmosphere 门顶层早退——蓝本 L2585 %40===5）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.NATURE_HYDRO] = () => PixelWorldBox.Wb.WbBailRelay.NatureHydroTick(World);             // M-U18：hydroTick 已译域真调（riverTiles>900 零掷早退——蓝本 L2587 %120===9）
         }
 
         /// <summary>applyTool 大分发器宿主门（M-U14 切片一——Unity 输入域后续接位；事件驱动非 tick 槽。

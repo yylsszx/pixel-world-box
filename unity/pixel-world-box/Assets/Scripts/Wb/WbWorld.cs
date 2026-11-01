@@ -547,7 +547,28 @@ namespace PixelWorldBox.Wb
         public byte[] rainCell = new byte[WbConstants.AW * WbConstants.AH];   // nature.ts L65 rainCell: Uint8Array（雨区格——fireMul 雨区难燃门 L316；atmTick 演绎未译注入态）
         public byte[] glacier = new byte[W * H];               // worldsim.ts L90 glacier: Uint8Array（冰川覆被——fireMul 冰上不燃门 L312；glacierTick 演绎未译注入态）
         public List<double[]> pSystems = new List<double[]>(); // nature.ts L74 气压中心 {x, y, kind, str, ttl}——windAt 科氏旋涡（x/y 像素域 f64；atmTick 生灭未译注入态）
-        public List<double[]> storms = new List<double[]>();   // nature.ts L70 风暴 {x, y, strength}——windAt 气旋环流（stormTick 生灭未译注入态）
+        public List<double[]> storms = new List<double[]>();   // nature.ts L70 风暴——windAt 气旋环流；M-U18 槽协议扩展（字段只加）：[0]=x [1]=y [2]=strength [3]=id [4]=ttl [5]=seed [6]=kind(0=cyclone,1=blizzard) [7]=landed(0/1)——windAt 只读 [0..2] 零触碰；name 可由 id 导出（STORM_NAME_AT(id) nature.ts L27）
+
+        // —— M-U18 大气风暴域字段（nature.ts L184-212 只加；全瞬态不入档面）——
+        public byte[] prevRain = new byte[WbConstants.AW * WbConstants.AH];   // nature.ts L197 prevRain: Uint8Array（上一大气步雨情快照——大雨骤停检测 L570）
+        public int boltCool = 0;                     // nature.ts L184 boltCool（自然雷暴闪电冷却 tick——atmTick L429 每 10 tick 一步）
+        public bool boltChronDone = false;           // nature.ts L185（首场雷暴纪事防重）
+        public bool tSnowChronDone = false;          // nature.ts L186（雷打雪纪事防重——冬夏各记一次）
+        public int lightningN = 0;                   // nature.ts L188 lightningN（自然闪电累计——QA 可观测）
+        public double rainbowX = -1, rainbowY = -1;  // nature.ts L190-191（彩虹弧心世界坐标）
+        public int rainbowTTL = 0;                   // nature.ts L192（全场至多一道）
+        public int rainbowCool = 0;                  // nature.ts L194（谢幕后 90s 节流——昼虹/月虹共享）
+        public bool rainbowMoon = false;             // nature.ts L195（月虹变体标记）
+        public bool rainbowChronDone = false;        // nature.ts L198（昼虹首见防重）
+        public bool moonChronDone = false;           // nature.ts L200（月虹首见防重）
+        public double meteorX = -1, meteorY = -1;    // nature.ts L202-203（流星起点世界坐标）
+        public double meteorDx = 0.7, meteorDy = 0.5; // nature.ts L204-205（单位方向向量——默认 0.7/0.5 蓝本面）
+        public int meteorTTL = 0;                    // nature.ts L206（划过约 1s）
+        public int meteorCool = 0;                   // nature.ts L208（60-150s 间隔冷却）
+        public int meteorsN = 0;                     // nature.ts L210（流星累计——QA 可观测）
+        public bool meteorChronDone = false;         // nature.ts L212（首颗流星防重）
+        public double camX = 128, camY = 80;         // engine.ts L683 cam {x: W/2, y: H/2}（流星锚定观测者 L613-614 消费——zoom 未消费挂账）
+        public float[] sstAnom = new float[WbConstants.AW * WbConstants.AH];   // worldsim.ts L66 sstAnom: Float32Array（暖流海温距平——atmTick L469 蒸发 ×1.15 消费；hydroTick 演绎未译注入态）
 
         // —— M-U10a effectsTick 游荡云族域（字段只加）——
         public Dictionary<int, int> radSet = new Dictionary<int, int>();   // engine L168 radSet Map<number, number>（辐射到期表：键 tile，值到期 tick——radTick L2843-2846 消费未译；rainstorm L10008 洗净 delete 写面）
@@ -711,7 +732,11 @@ namespace PixelWorldBox.Wb
 
         /// nature.ts L356-420 windAt——风矢量（ITCZ 三环 + exp 急流〔WbMath.FdExp 位精确件〕+ valueNoise 湍流
         /// 〔WbNoise.ValueNoise〕+ 气压旋涡/风暴环流〔Math.hypot → WbNoise.V8Hypot 位精确件〕）
-        public (double u, double v) NatureWindAt(int cx, int cy)
+        /// M-U18：参数升格 double——stormTick L710 风暴中心分数格采样消费（st.x/CELL 非整格）；
+        /// int 版委托实现（int→double 精确升格值恒等——旧消费面 FireTick 等零漂移，全 NUnit 复跑实证）
+        public (double u, double v) NatureWindAt(int cx, int cy) => NatureWindAtF64(cx, cy);
+
+        public (double u, double v) NatureWindAtF64(double cx, double cy)
         {
             double lat = cy / (double)(WbConstants.AH - 1);                                                              // L357
             double itcz = NatureItczLat();                                                                              // L358

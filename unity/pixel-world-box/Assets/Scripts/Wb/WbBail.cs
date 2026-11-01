@@ -3889,6 +3889,570 @@ namespace PixelWorldBox.Wb
         }
 
 
+        // ================= M-U18 nature 大气风暴域（nature.ts atmTick L423-625 / pressureTick L629-662 /
+        // stormTick L665-778 / hydroTick L1062-1091 + cellStats L404-420 + STORM_NAME_AT L25-27；
+        // engine.ts natureLightning L10546-10558 / stormRavage L10602-10642 / rainFireProbe L10645-10658；
+        // 挂账 M-U19+：snapshot L1111+ / tint / rhythmChips UI 面；
+        // ep('nature.stormRate') DIVERGENCE：engineParams L44 value:1 黄金驱动默认值内联 1.0——ep 参数域切片挂账（M-U7m 先例）；
+        // storms 槽协议（字段只加）：[0]=x [1]=y [2]=strength [3]=id [4]=ttl [5]=seed [6]=kind [7]=landed——windAt 只读 [0..2] 零触碰；
+        // pSystems 槽协议：[0]=x [1]=y [2]=kind [3]=str [4]=ttl——windAt 只读 [0..3] 零触碰） =================
+
+        /// nature.ts L24-27 STORM_NAMES 20 名池 + STORM_NAME_AT（风暴 id 确定性取名——存档恢复零成本重算）
+        static readonly string[] StormNames = { "海燕", "山竹", "天鸽", "榴莲", "白鹿", "烟花", "梅花", "轩岚", "玉兔", "木兰", "杜鹃", "海棠", "悟空", "电母", "海神", "冥河", "飓父", "霜牙", "凛冬", "雪龙" };   // L25
+        internal static string StormNameAt(long id) => StormNames[(int)System.Math.Min(StormNames.Length - 1, System.Math.Max(0L, id) % StormNames.Length)];   // L27（先取模后钳位——序敏感）
+
+        /// nature.ts cellStats L404-420（粗网格单格统计：水域占比/平均海拔 0 平原→3 山脉）
+        internal static (double waterFrac, double elev) NatureCellStats(WbWorld w, int cx, int cy)
+        {
+            int water = 0, elev = 0;                                                                                     // L406-407
+            int x0 = cx * WbConstants.NATURE_CELL, y0 = cy * WbConstants.NATURE_CELL;                                     // L408-409
+            for (int y = y0; y < y0 + WbConstants.NATURE_CELL && y < WbWorld.H; y++)                                       // L410
+            {
+                for (int x = x0; x < x0 + WbConstants.NATURE_CELL && x < WbWorld.W; x++)                                   // L411
+                {
+                    byte t = w.terrain[y * WbWorld.W + x];                                                                 // L412
+                    if (t == WbConstants.T_DEEP || t == WbConstants.T_WATER) water++;                                       // L413
+                    else if (t == WbConstants.T_MOUNTAIN) elev += 3;                                                        // L414
+                    else if (t == WbConstants.T_HILL) elev += 2;                                                            // L415
+                    else if (t == WbConstants.T_LAVA) elev += 3;                                                            // L416
+                    else elev += 1;                                                                                        // L417
+                }
+            }
+            int n = WbConstants.NATURE_CELL * WbConstants.NATURE_CELL;                                                     // L419
+            return (water / (double)n, elev / (double)n);                                                                   // L420
+        }
+
+        /// engine.ts rainFireProbe L10645-10658（雨区灭火探针——8×8 像素窗 5 采样找火点扑灭，返回 tile 或 -1；
+        /// 采样 2 掷/次、命中即返（掷数可变——黄金 totalDraws 记录对账））
+        internal static int RainFireProbe(WbWorld w, double x0, double y0)
+        {
+            for (int k = 0; k < 5; k++)                                                                                    // L10646
+            {
+                int xx = (int)(x0 + System.Math.Floor(w.Rng() * 8.0));                                                      // L10647（x0 整值 double + floor——int 截断同构）
+                int yy = (int)(y0 + System.Math.Floor(w.Rng() * 8.0));                                                      // L10648
+                if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                                       // L10649
+                int i = yy * WbWorld.W + xx;                                                                               // L10650
+                if (w.fire[i] > 0)                                                                                         // L10651
+                {
+                    w.fire[i] = 0;                                                                                         // L10652
+                    w.fireSet.Remove(i); w.fireSetList.Remove(i);                                                           // L10653（fireSet.delete——C# List 镜像同步删）
+                    return i;                                                                                              // L10654
+                }
+            }
+            return -1;                                                                                                     // L10657
+        }
+
+        /// engine.ts natureLightning L10546-10558（自然雷暴闪电——与神力天雷 L10507 弱伤不点燃域异构勿混）
+        internal static void NatureLightning(WbWorld w, double x, double y)
+        {
+            /* onSound?.('distantThunder') —— 宿主回调（黄金受控 undefined no-op 同 gen 端） */                              // L10547
+            FxOptHook(w, "bolt", x, y, 10, null, null, null, null, null);                                                    // L10548（fx('bolt',x,y,10)——fx 恒 2 掷 seed+dir）
+            for (int k = 0; k < w.units.Count; k++)                                                                          // L10549
+            {
+                WbU u = w.units[k];
+                if (u.dead != 0) continue;                                                                                   // L10550
+                double d = WbMath.FdHypot(u.x - x, u.y - y);                                                                  // L10551（Math.hypot fdlibm 位精确域）
+                if (d < 1.6)                                                                                                 // L10552
+                {
+                    // 冷血体质对剧烈环境冲击更脆弱（×1.4）；冬季在暴雨中僵直的爬虫首当其冲
+                    double mult = DefOf(u.race).coldBlood ? 1.4 : 1;                                                          // L10554（RACES[u.race].coldBlood）
+                    u.hp -= 26.0 * mult; u.hurtN = 22; if (u.hp <= 0) u.dead = 1;                                             // L10555（hurt 语义域 hurtN——NatureQuake L10592 单轨先例）
+                }
+            }
+        }
+
+        /// engine.ts stormRavage L10602-10642（风暴肆虐每 40 tick——狂风伤人毁屋拔树；冰暴型额外冻结大地）
+        internal static void StormRavage(WbWorld w, double[] st)
+        {
+            if (st[2] >= 1.1) { w.lastCatastropheX = st[0]; w.lastCatastropheY = st[1]; w.lastCatastropheTick = w.tickCount; }   // L10603（强风暴入大灾档案——外交/联盟消费）
+            double r = 3 + st[2] * 7;                                                                                        // L10604
+            // 生物：狂风卷击（飞行系除外）
+            for (int k = 0; k < w.units.Count; k++)                                                                          // L10606
+            {
+                WbU u = w.units[k];
+                if (u.dead != 0 || u.boat != 0) continue;                                                                     // L10607
+                if (DefOf(u.race).flying) continue;                                                                           // L10608（RACES[u.race].flying）
+                double d = WbMath.FdHypot(u.x - st[0], u.y - st[1]);                                                          // L10609
+                if (d < r)                                                                                                   // L10610
+                {
+                    double dmg = (st[2] - 0.55) * 7 * (1 - d / r);                                                            // L10611
+                    if (st[6] == 1)                                                                                           // L10612（kind==='blizzard'）
+                    {
+                        bool coldBorn = u.race == WbConstants.R_PENGUIN || u.race == WbConstants.R_SNOWWOLF || u.race == WbConstants.R_WHITEWALKER;   // L10613
+                        if (!coldBorn) { u.hp -= dmg * 0.6; u.chill = 30; u.chillN = 30; u.hurtN = 12; }                       // L10614（chill int 旧占位 + chillN 镜像同写——只加协议）
+                    }
+                    else
+                    {
+                        u.hp -= dmg;                                                                                          // L10616
+                        u.hurtN = 16;                                                                                         // L10617
+                    }
+                    if (u.hp <= 0) u.dead = 1;                                                                                // L10619
+                }
+            }
+            // 建筑：强风撕裂屋顶
+            int rr = (int)System.Math.Ceiling(r);                                                                            // L10623
+            for (int yy = (int)System.Math.Floor(st[1] - rr); yy <= st[1] + rr; yy++)                                         // L10624
+            {
+                for (int xx = (int)System.Math.Floor(st[0] - rr); xx <= st[0] + rr; xx++)                                     // L10625
+                {
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                                     // L10626
+                    double d = WbNoise.V8Hypot(xx + 0.5 - st[0], yy + 0.5 - st[1]);                                           // L10627（fdlibm 域位精确）
+                    if (d > r) continue;                                                                                     // L10628
+                    int i = yy * WbWorld.W + xx;                                                                             // L10629
+                    double p = 0.028 * (st[2] - 0.55) * (1 - d / r);                                                          // L10630
+                    if (w.building[i] > 0 && w.Rng() < p) AttackBuilding(w, i, 14 + st[2] * 22, -1);                          // L10631（塌毁 1 掷/建筑格——&& 短路）
+                    byte t = w.terrain[i];                                                                                   // L10632
+                    if (st[6] == 1)                                                                                           // L10633
+                    {
+                        // 冰暴冻结大地
+                        if ((t == WbConstants.T_GRASS || t == WbConstants.T_BURNT) && w.Rng() < 0.25) SetTerrain(w, i, WbConstants.T_SNOW);       // L10635
+                        else if (t == WbConstants.T_WATER && w.Rng() < 0.15) SetTerrain(w, i, WbConstants.T_ICE);                              // L10636
+                    }
+                    else if (t == WbConstants.T_FOREST && w.Rng() < 0.02 * st[2])                                             // L10637
+                    {
+                        SetTerrain(w, i, WbConstants.T_GRASS);                                                                 // L10638（拔树）
+                    }
+                }
+            }
+        }
+
+        /// nature.ts pressureTick L629-662（气压系统生命周期每大气步——低压生于 ITCZ/中纬锋面，高压生于副热带与极地；
+        /// 随盛行风漂移，低压暖洋增强陆地衰减——风场的「天气尺度发动机」）
+        internal static void NaturePressureTick(WbWorld w)
+        {
+            int cap = 5;                                                                                                     // L631
+            if (w.pSystems.Count < cap && w.Rng() < 0.06)                                                                     // L632（&& 短路——cap 满零掷）
+            {
+                bool isL = w.Rng() < 0.55;                                                                                   // L633
+                double lat;                                                                                                  // L634
+                if (isL)                                                                                                     // L635
+                {
+                    // 低压：ITCZ 辐合带或中纬锋面（气旋生成区）
+                    lat = w.Rng() < 0.5 ? w.NatureItczLat() + (w.Rng() - 0.5) * 0.16 : 0.5 + (w.Rng() < 0.5 ? 1 : -1) * (0.24 + w.Rng() * 0.1);   // L637
+                }
+                else
+                {
+                    // 高压：副热带（信风/西风分界）或极地反气旋
+                    lat = w.Rng() < 0.7 ? 0.5 + (w.Rng() < 0.5 ? 1 : -1) * (0.16 + w.Rng() * 0.07) : w.Rng() < 0.5 ? 0.06 + w.Rng() * 0.05 : 0.89 + w.Rng() * 0.05;   // L640
+                }
+                lat = System.Math.Max(0.03, System.Math.Min(0.97, lat));                                                      // L642
+                w.pSystems.Add(new double[] { 8 + w.Rng() * (WbWorld.W - 16), lat * WbWorld.H, isL ? 0 : 1, 0.3 + w.Rng() * 0.3, isL ? 90 + System.Math.Floor(w.Rng() * 160) : 150 + System.Math.Floor(w.Rng() * 200) });   // L643（5 槽：x/y/kind/str/ttl）
+            }
+            for (int k = w.pSystems.Count - 1; k >= 0; k--)                                                                   // L645（逆序环——splice 同构）
+            {
+                double[] ps = w.pSystems[k];
+                ps[4] -= 1;                                                                                                  // L647（ttl--）
+                // 引导气流：所在纬度的盛行风携带漂移（信风带向西/西风带向东）
+                int cyy = (int)System.Math.Min(WbConstants.AH - 1, System.Math.Max(0, (long)(ps[1] / WbConstants.NATURE_CELL)));   // L649（|0 截断——非负值域）
+                double latA = System.Math.Abs(cyy / (double)(WbConstants.AH - 1) - w.NatureItczLat()) * 2;                    // L650
+                double baseU = latA < 0.32 ? -0.5 : latA < 0.72 ? 0.6 : -0.35;                                                // L651（三带）
+                ps[0] = System.Math.Max(6, System.Math.Min(WbWorld.W - 6, ps[0] + baseU * 2.2 + (w.Rng() - 0.5) * 1.6));      // L652（1 掷）
+                // 低压向极漂移（北半球朝 y- / 南半球朝 y+ —— 锋面气旋的真实去向）
+                ps[1] = System.Math.Max(6, System.Math.Min(WbWorld.H - 6, ps[1] + (w.Rng() - 0.5) * 2.2 + (ps[2] == 0 ? (ps[1] < WbWorld.H / 2 ? -0.35 : 0.35) : 0)));   // L654（1 掷）
+                // 强度演化：低压暖洋增强/陆地衰减；高压洋面准常驻（副热带高压）/陆上冬季更盛
+                var stC = NatureCellStats(w, (int)System.Math.Min(WbConstants.AW - 1, System.Math.Max(0, (long)(ps[0] / WbConstants.NATURE_CELL))), cyy);   // L656
+                if (ps[2] == 0) ps[3] += stC.waterFrac > 0.6 && w.NatureSeason() != 3 ? 0.006 : -0.004;                        // L657
+                else ps[3] += stC.waterFrac > 0.5 || w.NatureSeason() == 3 ? 0.0018 : -0.0028;                                 // L658
+                ps[3] = System.Math.Max(0.15, System.Math.Min(1, ps[3]));                                                      // L659
+                if (ps[4] <= 0 || ps[3] <= 0.16) w.pSystems.RemoveAt(k);                                                       // L660（ttl/str 双亡支）
+            }
+        }
+
+        /// nature.ts atmTick L423-625（大气每 10 tick——槽 38 %10===3：灰烬平流/蒸发平流/降雨/雨效/天幕三族）
+        internal static void NatureAtmTick(WbWorld w)
+        {
+            if (!w.laws.atmosphere)                                                                                          // L425
+            {
+                System.Array.Clear(w.prevRain, 0, w.prevRain.Length);                                                         // L426（关停期清空快照——重启后首拍不得用残留旧雨情误判「骤停出彩虹」）
+                return;                                                                                                      // L427
+            }
+            if (w.boltCool > 0) w.boltCool -= 10;                                                                             // L429（闪电冷却每 10 tick 一步）
+            if (w.rainbowCool > 0) w.rainbowCool -= 10;                                                                       // L430
+            if (w.meteorCool > 0) w.meteorCool -= 10;                                                                         // L431
+            w.windPhase += 0.012;                                                                                            // L432
+            int s = w.NatureSeason();                                                                                        // L433
+            // —— 气压系统生命周期（风场的发动机：生成/引导气流漂移/衰减） ——
+            NaturePressureTick(w);                                                                                           // L435
+            // —— 灰烬平流场：随风漂移扩散 + 缓慢沉降（无夏之年先区域后全球） ——
+            {
+                float[] nextA = new float[WbConstants.AW * WbConstants.AH];                                                    // L438
+                double sum = 0;                                                                                              // L439
+                for (int cy = 0; cy < WbConstants.AH; cy++)                                                                   // L440
+                {
+                    for (int cx = 0; cx < WbConstants.AW; cx++)                                                               // L441
+                    {
+                        int i = cy * WbConstants.AW + cx;                                                                     // L442
+                        (double u, double v) = w.NatureWindAt(cx, cy);                                                         // L443
+                        int sx = (int)System.Math.Min(WbConstants.AW - 1, System.Math.Max(0, WbMath.JsRound(cx - u * 1.6)));    // L444
+                        int sy = (int)System.Math.Min(WbConstants.AH - 1, System.Math.Max(0, WbMath.JsRound(cy - v * 1.6)));    // L445
+                        double a = w.ashF[i] * 0.9 + w.ashF[sy * WbConstants.AW + sx] * 0.1;                                   // L446
+                        a = System.Math.Max(0, a * 0.996 - 0.00028);                                                          // L447（湍流扩散 + 干沉降）
+                        nextA[i] = (float)System.Math.Min(1, a);                                                               // L448（Float32Array 存储舍入同构）
+                        sum += nextA[i];                                                                                      // L449（f32→f64 累加同构）
+                    }
+                }
+                w.ashF = nextA;                                                                                              // L452
+                w.ash = sum / (WbConstants.AW * WbConstants.AH);                                                               // L453（全局平均——tint/滤镜/火山冬判定）
+            }
+            float[] next = new float[WbConstants.AW * WbConstants.AH];                                                        // L455
+            // 蒸发 + 平流（半拉格朗日：从上风处采样）
+            for (int cy = 0; cy < WbConstants.AH; cy++)                                                                       // L457
+            {
+                for (int cx = 0; cx < WbConstants.AW; cx++)                                                                   // L458
+                {
+                    int i = cy * WbConstants.AW + cx;                                                                         // L459
+                    (double u, double v) = w.NatureWindAt(cx, cy);                                                             // L460
+                    var st = NatureCellStats(w, cx, cy);                                                                       // L461
+                    double m = w.moist[i];                                                                                    // L462
+                    // 洋面蒸发（夏强冬弱；ITCZ 辐合带与副热带高压蒸发最旺）
+                    if (st.waterFrac > 0.5)                                                                                   // L464
+                    {
+                        double latA = System.Math.Abs(cy / (double)(WbConstants.AH - 1) - w.NatureItczLat()) * 2;              // L465
+                        double evap = (s == 1 ? 0.028 : s == 3 ? 0.012 : 0.02) * (1 + (latA > 0.28 && latA < 0.4 ? 0.3 : 0) + (latA < 0.08 ? 0.25 : 0));   // L466
+                        // 深时引擎：暖流海面蒸发加成（湾流式暖池向大气输送更多水汽）
+                        if (w.sstAnom[i] > 0) evap *= 1.15;                                                                    // L469（worldsim.sstAnom 消费）
+                        m = System.Math.Min(1, m + evap);                                                                     // L470
+                    }
+                    // 平流：上风取样 0.18，本格残留 0.82（云随风走）
+                    int sx = (int)System.Math.Min(WbConstants.AW - 1, System.Math.Max(0, WbMath.JsRound(cx - u * 1.6)));        // L473
+                    int sy = (int)System.Math.Min(WbConstants.AH - 1, System.Math.Max(0, WbMath.JsRound(cy - v * 1.6)));        // L474
+                    m = m * 0.82 + w.moist[sy * WbConstants.AW + sx] * 0.18;                                                   // L475
+                    next[i] = (float)m;                                                                                       // L476
+                }
+            }
+            w.moist = next;                                                                                                  // L479
+            // 降雨：陆地湿气过饱和 → 落雨；地形抬升（迎风坡）加强 → 背风坡雨影
+            System.Array.Clear(w.rainCell, 0, w.rainCell.Length);                                                             // L481
+            for (int cy = 0; cy < WbConstants.AH; cy++)                                                                       // L482
+            {
+                for (int cx = 0; cx < WbConstants.AW; cx++)                                                                   // L483
+                {
+                    int i = cy * WbConstants.AW + cx;                                                                         // L484
+                    var st = NatureCellStats(w, cx, cy);                                                                       // L485
+                    if (st.waterFrac > 0.5 || w.moist[i] <= 0.55) continue;                                                    // L486
+                    (double u, double v) = w.NatureWindAt(cx, cy);                                                             // L487
+                    // 下风格海拔 vs 本格：迎风坡抬升致雨
+                    int nx = (int)System.Math.Min(WbConstants.AW - 1, System.Math.Max(0, cx + (u > 0 ? 1 : -1)));              // L489
+                    int ny = (int)System.Math.Min(WbConstants.AH - 1, System.Math.Max(0, cy + (v > 0.15 ? 1 : v < -0.15 ? -1 : 0)));   // L490
+                    var stN = NatureCellStats(w, nx, ny);                                                                      // L491
+                    double orographic = stN.elev > st.elev + 0.5 ? 1.7 : stN.elev < st.elev - 0.5 ? 0.55 : 1;                  // L492
+                    double rain = (w.moist[i] - 0.55) * 0.5 * orographic;                                                       // L493
+                    if (s == 3) rain *= 0.7;                                                                                  // L494（冬季干燥大陆气团——先于 ITCZ 加成，序敏感黄金钉）
+                    // ITCZ 深对流带：辐合上升气流终年致雨（热带雨林的所在）
+                    if (System.Math.Abs(cy / (double)(WbConstants.AH - 1) - w.NatureItczLat()) < 0.07) rain += 0.045 + w.moist[i] * 0.05;       // L496
+                    // 气压调制：低压抬升致雨 / 高压下沉压制
+                    for (int pi = 0; pi < w.pSystems.Count; pi++)                                                              // L498
+                    {
+                        double[] ps = w.pSystems[pi];
+                        if (System.Math.Abs(cx - ps[0] / WbConstants.NATURE_CELL) < 4 && System.Math.Abs(cy - ps[1] / WbConstants.NATURE_CELL) < 4)   // L499
+                        {
+                            double d = WbNoise.V8Hypot(cx - ps[0] / WbConstants.NATURE_CELL, cy - ps[1] / WbConstants.NATURE_CELL);         // L500（fdlibm 域）
+                            if (d < 4) rain *= ps[2] == 0 ? 1 + ps[3] * (1 - d / 4) * 0.9 : 1 - ps[3] * (1 - d / 4) * 0.55;                 // L501（多低叠乘序=表序）
+                        }
+                    }
+                    if (rain > 0)                                                                                             // L504
+                    {
+                        w.moist[i] = (float)(w.moist[i] - rain * 0.6);                                                         // L505（float 存储舍入同构）
+                        w.rainCell[i] = (byte)System.Math.Min(255, WbMath.JsRound(rain * 420));                                 // L506
+                    }
+                }
+            }
+            // 降雨作用于世界（灭火 / 加速复苏 / 洪水累计 / 沙漠逆转）
+            bool winterBolt = s == 3;                                                                                        // L511（冬季降水为雪：雷暴即「雷打雪」罕见景观）
+            for (int cy = 0; cy < WbConstants.AH; cy++)                                                                       // L512
+            {
+                for (int cx = 0; cx < WbConstants.AW; cx++)                                                                   // L513
+                {
+                    int i = cy * WbConstants.AW + cx;                                                                         // L514
+                    int r = w.rainCell[i];                                                                                    // L515
+                    if (r < 45) { w.floodAcc[i] = (float)System.Math.Max(0, w.floodAcc[i] - 0.03); continue; }                 // L516（f32 存储舍入同构）
+                    // 灭火：雨区内火焰
+                    if (r > 70)                                                                                               // L518
+                    {
+                        double x0 = cx * WbConstants.NATURE_CELL;                                                              // L519
+                        double y0 = cy * WbConstants.NATURE_CELL;                                                              // L520
+                        for (int k = 0; k < 6; k++)                                                                           // L521
+                        {
+                            int fi = RainFireProbe(w, x0, y0);                                                                  // L522（每探针最多 5k×2 掷）
+                            if (fi < 0) break;                                                                                  // L523
+                        }
+                    }
+                    // 复苏：焦土提前返青（regrow 计时 -60 tick）
+                    if (w.Rng() < 0.3 && r > 80) RainRegrow(w, cx * WbConstants.NATURE_CELL, cy * WbConstants.NATURE_CELL);      // L527（1 掷/格 r≥45——&& 短路序敏感）
+                    // 洪水累计：低地暴雨持续 → 淹没
+                    w.floodAcc[i] = (float)(w.floodAcc[i] + (r - 60) / 4200.0);                                                // L529
+                    if (w.floodAcc[i] > 1 && w.laws.naturalDisasters)                                                          // L530（disasters 门短路）
+                    {
+                        w.floodAcc[i] = 0f;                                                                                    // L531
+                        NatureFlood(w, cx * WbConstants.NATURE_CELL + 4, cy * WbConstants.NATURE_CELL + 4);                     // L532（M-U11 译件消费）
+                    }
+                    // 雷暴：强对流暴雨云（r≥190）中的自然闪电——冷却门控稀疏化（3-7s 一道），
+                    // 弱伤害不点燃（natureLightning）；首道雷播报「雷暴降临」
+                    if (r >= 190 && w.boltCool <= 0 && w.laws.naturalDisasters && w.Rng() < (winterBolt ? 0.012 : 0.05))        // L538（四重合取短路面——S14 零掷钉）
+                    {
+                        w.boltCool = winterBolt ? 600 + (int)System.Math.Floor(w.Rng() * 600.0) : 180 + (int)System.Math.Floor(w.Rng() * 240.0);   // L539（冬 600-1200 / 夏 180-420 tick）
+                        w.lightningN++;                                                                                        // L540
+                        NatureLightning(w, cx * WbConstants.NATURE_CELL + 4, cy * WbConstants.NATURE_CELL + 4);                 // L541
+                        if (winterBolt)                                                                                        // L542
+                        {
+                            if (!w.tSnowChronDone)                                                                             // L543
+                            {
+                                w.tSnowChronDone = true;                                                                       // L544
+                                w.Toast("雷打雪——暴雪云中惊雷乍响，冬雷震震", "danger");                                                  // L545
+                                w.AddEvent("geo", "雷打雪：罕见的冬季雷暴在暴雪云中炸响，冬雷震震（雷击对暴露的单位有危险）", null, cx * WbConstants.NATURE_CELL + 4, cy * WbConstants.NATURE_CELL + 4);   // L546
+                            }
+                        }
+                        else if (!w.boltChronDone)                                                                              // L548
+                        {
+                            w.boltChronDone = true;                                                                            // L549
+                            w.Toast("雷暴降临——暴雨云中电光乍裂，惊雷滚过大地", "danger");                                              // L550
+                            w.AddEvent("geo", "雷暴降临：强对流暴雨中的闪电开始叩击大地（雷击对暴露的单位有危险）", null, cx * WbConstants.NATURE_CELL + 4, cy * WbConstants.NATURE_CELL + 4);       // L551
+                        }
+                    }
+                }
+            }
+            // —— 雨后彩虹/月虹：上一拍的大雨（≥120）本拍骤停 + 概率门 → 天幕挂一道渐隐虹；
+            //    昼夜分化：白昼骤停 → 七色彩虹（p 0.02）；深夜骤停 → 苍白月虹（p 0.008 更罕见）；
+            //    黄昏/破晓窗口不触发；全场至多一道 + 谢幕节流（rainbowCool 共享） ——
+            if (w.rainbowTTL > 0) w.rainbowTTL -= 10;                                                                         // L561-562
+            else if (w.rainbowCool <= 0)                                                                                      // L563
+            {
+                double dp = DayPhase(w);                                                                                     // L564（M-U7x 直调件）
+                bool day = dp < 0.42;                                                                                        // L565
+                bool deepNight = dp > 0.54 && dp < 0.86;                                                                      // L566
+                if (day || deepNight)                                                                                        // L567
+                {
+                    bool moon = deepNight;                                                                                   // L568（月虹：深夜骤停暴雨的罕见变体）
+                    for (int i = 0; i < WbConstants.AW * WbConstants.AH; i++)                                                  // L569
+                    {
+                        if (w.prevRain[i] >= 120 && w.rainCell[i] == 0 && w.Rng() < (moon ? 0.008 : 0.02))                     // L570（&& 短路——无候选零掷）
+                        {
+                            w.rainbowTTL = 2400;                                                                               // L571
+                            w.rainbowCool = 5400;                                                                              // L572（TTL 40s + 50s = 90s 一道上限）
+                            w.rainbowMoon = moon;                                                                              // L573
+                            w.rainbowX = (i % WbConstants.AW) * WbConstants.NATURE_CELL + WbConstants.NATURE_CELL / 2.0;        // L574
+                            w.rainbowY = (i / WbConstants.AW) * WbConstants.NATURE_CELL + WbConstants.NATURE_CELL / 2.0;        // L575（(i/AW)|0 → int 除同构）
+                            if (moon)                                                                                          // L576
+                            {
+                                if (!w.moonChronDone)                                                                          // L577
+                                {
+                                    w.moonChronDone = true;                                                                    // L578
+                                    w.Toast("月虹——雨歇的夜空挂起一道苍白的虹", "good");                                                  // L579
+                                    w.AddEvent("geo", "月虹：骤歇的暴雨在月色里留下一道苍白的虹，如梦似幻");                              // L580
+                                }
+                            }
+                            else if (!w.rainbowChronDone)                                                                       // L582
+                            {
+                                w.rainbowChronDone = true;                                                                     // L583
+                                w.Toast("雨过天青——一道彩虹横跨天际", "good");                                                          // L584
+                                w.AddEvent("geo", "雨过天青：骤歇的暴雨在天幕留下一道彩虹");                                              // L585
+                            }
+                            break;                                                                                             // L587（全场至多一道）
+                        }
+                    }
+                }
+            }
+            // —— 晴夜流星：深夜档 × 万里无云 × 概率门 × 间隔冷却（60-150s）→ 白金色流星；首见播报「星陨」 ——
+            if (w.meteorTTL > 0) w.meteorTTL -= 10;                                                                           // L596-597
+            else if (w.meteorCool <= 0)                                                                                       // L598
+            {
+                double p = DayPhase(w);                                                                                      // L599
+                if (p > 0.54 && p < 0.86)                                                                                     // L600
+                {
+                    bool rainy = false;                                                                                      // L601
+                    for (int i = 0; i < WbConstants.AW * WbConstants.AH; i += 4)                                               // L602（隔 4 采样）
+                    {
+                        if (w.rainCell[i] > 15) { rainy = true; break; }                                                       // L603
+                    }
+                    if (!rainy && w.Rng() < 0.045)                                                                            // L605（1 掷）
+                    {
+                        w.meteorCool = 600 + (int)System.Math.Floor(w.Rng() * 900.0);                                          // L606（60-150s 后才可能有下一道）
+                        w.meteorTTL = 60;                                                                                     // L607（划过约 1s——speed=0 冻结）
+                        double ang = 0.32 + w.Rng() * 0.6;                                                                     // L608（俯角 18°-53° 斜落）
+                        double dir = w.Rng() < 0.5 ? -1 : 1;                                                                   // L609
+                        w.meteorDx = WbMath.FdCos(ang) * dir;                                                                   // L610（Math.cos fdlibm 位精确件）
+                        w.meteorDy = WbMath.FdSin(ang);                                                                         // L611
+                        // 锚定观测者：相机邻域随机（天象在头顶——落在视口外则自然错过）
+                        w.meteorX = System.Math.Min(WbWorld.W - 24, System.Math.Max(24, w.camX + (w.Rng() - 0.5) * 180));       // L613
+                        w.meteorY = System.Math.Min(WbWorld.H - 56, System.Math.Max(14, w.camY - 44 + (w.Rng() - 0.5) * 70));    // L614
+                        w.meteorsN++;                                                                                          // L615
+                        if (!w.meteorChronDone)                                                                                // L616
+                        {
+                            w.meteorChronDone = true;                                                                          // L617
+                            w.Toast("星陨——一颗流星划过夜空", "good");                                                                  // L618
+                            w.AddEvent("geo", "星陨：晴朗的深夜里一颗流星倏然划过天幕，转瞬即逝");                                        // L619
+                        }
+                    }
+                }
+            }
+            System.Buffer.BlockCopy(w.rainCell, 0, w.prevRain, 0, w.rainCell.Length);                                          // L624（prevRain.set(rainCell)——快照供下一拍对比）
+        }
+
+        /// nature.ts stormTick L665-778（风暴生命周期每 40 tick——槽 39 %40===5：孕育/推进/肆虐/消散/气候骰）
+        internal static void NatureStormTick(WbWorld w)
+        {
+            if (!w.laws.atmosphere) return;                                                                                  // L667
+            int s = w.NatureSeason();                                                                                        // L668
+            // 孕育：暖洋高湿格 → 热带气旋；冬季极地高湿 → 冰暴；强低压中心助产
+            double spawnP = (s == 1 ? 0.1 : s == 0 || s == 2 ? 0.06 : 0.08) * 1.0;                                            // L670（ep('nature.stormRate') 内联 1.0——DIVERGENCE 注记）
+            for (int pi = 0; pi < w.pSystems.Count; pi++) if (w.pSystems[pi][2] == 0 && w.pSystems[pi][3] > 0.55) spawnP += 0.05;   // L671（强低压助产）
+            if (w.laws.naturalDisasters && w.storms.Count < 3 && w.Rng() < spawnP)                                            // L672（&& 短路——上限满/法则关零掷）
+            {
+                for (int tr = 0; tr < 6; tr++)                                                                               // L673（6 试选格）
+                {
+                    int cx = (int)System.Math.Floor(w.Rng() * WbConstants.AW);                                                // L674（2 掷/试）
+                    int cy = (int)System.Math.Floor(w.Rng() * WbConstants.AH);                                                // L675
+                    int i = cy * WbConstants.AW + cx;                                                                        // L676
+                    var st = NatureCellStats(w, cx, cy);                                                                      // L677
+                    double latA = System.Math.Abs(cy / (double)(WbConstants.AH - 1) - 0.5) * 2;                               // L678
+                    bool winterPolar = s == 3 && latA > 0.68 && st.waterFrac > 0.3 && w.moist[i] > 0.5;                        // L679（冬季极地冰暴支）
+                    bool nearL = false;                                                                                      // L680（some→扫描短路）
+                    for (int pi = 0; pi < w.pSystems.Count; pi++)
+                    {
+                        double[] ps = w.pSystems[pi];
+                        if (ps[2] == 0 && ps[3] > 0.6 && WbNoise.V8Hypot(cx - ps[0] / WbConstants.NATURE_CELL, cy - ps[1] / WbConstants.NATURE_CELL) < 3) { nearL = true; break; }
+                    }
+                    bool warmOcean = (st.waterFrac > 0.88 || (nearL && st.waterFrac > 0.55)) && w.moist[i] > 0.72 && System.Math.Abs(cy / (double)(WbConstants.AH - 1) - w.NatureItczLat()) < 0.2;   // L681（暖洋支）
+                    if (warmOcean || winterPolar)                                                                            // L682
+                    {
+                        double st0 = w.storms.Count >= 2 ? 0.3 : 0.38;                                                        // L683（三限强度递减）
+                        int id = w.stormSeq++;                                                                               // L685（id: stormSeq++）
+                        w.storms.Add(new double[] { cx * WbConstants.NATURE_CELL + 4, cy * WbConstants.NATURE_CELL + 4, st0, id, 320 + System.Math.Floor(w.Rng() * 420.0), System.Math.Floor(w.Rng() * 65536.0), winterPolar ? 1 : 0, 0 });   // L684-694（8 槽协议；ttl/seed 2 掷）
+                        w.natCounters[5]++;                                                                                  // L695（counters.cyclones）
+                        if (winterPolar)                                                                                     // L696
+                        {
+                            w.AddEvent("geo", $"极地冰暴「{StormNameAt(id)}」在寒洋上空成形，裹挟着暴雪逼近陆地", null, cx * WbConstants.NATURE_CELL + 4, cy * WbConstants.NATURE_CELL + 4);   // L697（name: STORM_NAME_AT(stormSeq-1)=AT(id)）
+                        }
+                        else
+                        {
+                            w.AddEvent("geo", $"热带气旋「{StormNameAt(id)}」在暖洋上空孕育成形，螺旋云带开始收紧", null, cx * WbConstants.NATURE_CELL + 4, cy * WbConstants.NATURE_CELL + 4);   // L699
+                            w.Toast($"气旋「{StormNameAt(id)}」成形", "info");                                                                  // L700（冰暴无 toast——叙事分化）
+                        }
+                        break;                                                                                               // L702（单步至多一生）
+                    }
+                }
+            }
+            // 推进每个风暴
+            for (int k = w.storms.Count - 1; k >= 0; k--)                                                                     // L707（逆序环——splice 同构）
+            {
+                double[] st = w.storms[k];
+                st[4] -= 40;                                                                                                 // L709（ttl -= 40）
+                (double u, double v) = w.NatureWindAtF64(st[0] / WbConstants.NATURE_CELL, st[1] / WbConstants.NATURE_CELL);    // L710（风暴中心分数格风采样——F64 重载）
+                // 自主漂移：顺引导气流 + Beta 效应（台风路径共性：向极转折 + 缓慢西移）
+                double pole = st[1] < WbWorld.H / 2 ? -0.22 : 0.22;                                                           // L713（向极 = 北半球朝 y-）
+                st[0] = System.Math.Max(3, System.Math.Min(WbWorld.W - 4, st[0] + u * 2.6 - 0.16 + (w.Rng() - 0.5) * 1.4));    // L714（1 掷——西移分量 -0.16）
+                st[1] = System.Math.Max(3, System.Math.Min(WbWorld.H - 4, st[1] + v * 2.6 + pole + (w.Rng() - 0.5) * 1.4));    // L715（1 掷）
+                var stC = NatureCellStats(w, (int)System.Math.Min(WbConstants.AW - 1, (long)(st[0] / WbConstants.NATURE_CELL)), (int)System.Math.Min(WbConstants.AH - 1, (long)(st[1] / WbConstants.NATURE_CELL)));   // L716（仅上钳——蓝本 |0 面非负值域）
+                double latA = System.Math.Abs(st[1] / WbWorld.H - 0.5) * 2;                                                    // L717
+                bool overWarmOcean = stC.waterFrac > 0.85 && w.NatureSeason() != 3;                                            // L718
+                bool overLand = stC.waterFrac < 0.4;                                                                           // L719
+                // 能量学：暖洋增益 / 登陆衰减 / 高山重衰减 / 寒流减弱
+                if (overWarmOcean) st[2] += 0.02 + (latA < 0.3 ? 0.012 : 0);                                                    // L721
+                else if (overLand) st[2] -= 0.028 + stC.elev * 0.012;                                                          // L722
+                else st[2] -= 0.008;                                                                                           // L723
+                st[2] = System.Math.Max(0.08, System.Math.Min(1.6, st[2]));                                                    // L724
+                // 登陆播报 + 肆虐
+                if (overLand && st[7] == 0 && st[2] > 0.55)                                                                     // L726（!st.landed）
+                {
+                    st[7] = 1;                                                                                                 // L727
+                    if (st[6] == 1)                                                                                            // L728
+                    {
+                        w.AddEvent("geo", $"冰暴「{StormNameAt((long)st[3])}」登陆！狂风裹雪横扫海岸，大地在白茫中噤声", null, st[0], st[1]);       // L729
+                        w.natCounters[8]++;                                                                                    // L730（counters.blizzards——登陆才计）
+                    }
+                    else
+                    {
+                        w.AddEvent("geo", $"气旋「{StormNameAt((long)st[3])}」登陆！狂风撕扯着沿岸的森林与屋舍", null, st[0], st[1]);               // L732
+                        w.Toast($"「{StormNameAt((long)st[3])}」登陆肆虐", "danger");                                                            // L733
+                    }
+                }
+                // 肆虐结算（每 40 tick 一次；强度 >0.7 才有破坏力）
+                if (st[2] > 0.7 && w.laws.naturalDisasters)                                                                     // L737
+                {
+                    StormRavage(w, st);                                                                                        // L738（engine 译件）
+                    // 遇山抬升 → 龙卷分离
+                    if (stC.elev > 1.6 && st[6] == 0 && w.Rng() < 0.12)                                                         // L740（cyclone 限定 + 1 掷）
+                    {
+                        SpawnTornado(w, st[0], st[1], 1);                                                                      // L741（M-U10c 译件消费）
+                        w.AddEvent("geo", $"「{StormNameAt((long)st[3])}」撞上山岳，气流剧烈抬升——龙卷风从雨幕中俯冲而下", null, st[0], st[1]);     // L742
+                    }
+                }
+                // 湿气倾泻：风暴所在格暴雨
+                int ci = w.NatureCellOf(st[0], st[1]);                                                                          // L746
+                w.moist[ci] = (float)System.Math.Min(1, w.moist[ci] + 0.3);                                                     // L747
+                w.rainCell[ci] = 255;                                                                                          // L748
+                // 消散
+                if (st[4] <= 0 || st[2] < 0.16)                                                                                 // L750
+                {
+                    if (st[7] == 1 || st[2] > 0.9) w.AddEvent("geo", $"风暴「{StormNameAt((long)st[3])}」终于耗尽了能量，云带散作细雨", null, st[0], st[1]);   // L751（landed/强旋才宣告）
+                    w.storms.RemoveAt(k);                                                                                      // L752
+                }
+            }
+            // 气候型天灾掷骰（干旱/沙暴）：雨影区与沙漠
+            if (w.laws.naturalDisasters && (s == 1 || s == 2) && w.Rng() < 0.05)                                                // L756（&& 短路——非夏秋/法则关零掷）
+            {
+                int cx = (int)System.Math.Floor(w.Rng() * WbConstants.AW);                                                      // L757（2 掷选格）
+                int cy = (int)System.Math.Floor(w.Rng() * WbConstants.AH);                                                      // L758
+                int i = cy * WbConstants.AW + cx;                                                                              // L759
+                var st = NatureCellStats(w, cx, cy);                                                                            // L760
+                if (st.waterFrac < 0.25 && w.moist[i] < 0.14)                                                                   // L761（旱格双门）
+                {
+                    (double u, double v) = w.NatureWindAt(cx, cy);                                                              // L762
+                    double windSpd = WbNoise.V8Hypot(u, v);                                                                     // L763
+                    // 沙地为主 + 大风 → 沙暴
+                    int sand = 0;                                                                                              // L765
+                    int x0 = cx * WbConstants.NATURE_CELL, y0 = cy * WbConstants.NATURE_CELL;                                    // L766-767
+                    for (int y = y0; y < y0 + WbConstants.NATURE_CELL && y < WbWorld.H; y++) for (int x = x0; x < x0 + WbConstants.NATURE_CELL && x < WbWorld.W; x++) if (w.terrain[y * WbWorld.W + x] == WbConstants.T_SAND) sand++;   // L768
+                    if (sand > 34 && windSpd > 0.5)                                                                             // L769
+                    {
+                        Sandstorm(w, x0 + 4, y0 + 4, 5.5, 240);                                                                  // L770（M-U13 译件消费——r 5.5/ttl 240）
+                        w.natCounters[9]++;                                                                                    // L771（沙暴计入气候事件）
+                    }
+                    else if (sand < 20)                                                                                        // L772
+                    {
+                        Drought(w, x0 + 4, y0 + 4, 6 + w.Rng() * 4, 220);                                                        // L773（1 掷 r——6-10 半径）
+                        w.natCounters[9]++;                                                                                    // L774
+                    }
+                }
+            }
+        }
+
+        /// nature.ts hydroTick L1062-1091（水文每 120 tick——槽 40 %120===9：降雨刻河）
+        internal static void NatureHydroTick(WbWorld w)
+        {
+            if (!w.laws.atmosphere) return;                                                                                  // L1064
+            if (w.riverTiles.Count > 900) return;                                                                            // L1065（河网密度上限 ≈2.2% 地表防泛滥——零掷早退）
+            if (w.Rng() > 0.05) return;                                                                                      // L1066（1 掷门）
+            for (int tr = 0; tr < 10; tr++)                                                                                  // L1067
+            {
+                int x = 4 + (int)System.Math.Floor(w.Rng() * (WbWorld.W - 8));                                                // L1068（2 掷/试）
+                int y = 4 + (int)System.Math.Floor(w.Rng() * (WbWorld.H - 8));                                                // L1069
+                int i = y * WbWorld.W + x;                                                                                    // L1070
+                byte t = w.terrain[i];                                                                                       // L1071
+                if (t != WbConstants.T_MOUNTAIN && t != WbConstants.T_HILL) continue;                                          // L1072（河源山地门）
+                int c = w.NatureCellOf(x, y);                                                                                  // L1073
+                if (w.moist[c] < 0.72 && w.rainCell[c] < 90) continue;                                                         // L1074（湿门）
+                // 已有河道近旁不再生河
+                bool nearRiver = false;                                                                                      // L1076
+                for (int dy = -3; dy <= 3 && !nearRiver; dy++)                                                                 // L1077（7×7 扫描短路）
+                {
+                    for (int dx = -3; dx <= 3 && !nearRiver; dx++)                                                             // L1078
+                    {
+                        int xx = x + dx;                                                                                       // L1079
+                        int yy = y + dy;                                                                                       // L1080
+                        if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                                   // L1081
+                        if (w.riverDir[yy * WbWorld.W + xx] > 0) nearRiver = true;                                              // L1082
+                    }
+                }
+                if (nearRiver) continue;                                                                                       // L1085
+                if (WbWorldgen.CarveRiver(w, w.terrain, null, x + 0.5, y + 0.5, 0, 3, true))                                    // L1086（widthOverride=0、brush=3、runtime=true——运行时 setTerrain 全级联面；M-U15 参化件消费）
+                {
+                    w.AddEvent("river", "丰沛的降雨在群山间汇流——一条新的河流开始向大海进发", null, x, y);                                  // L1087
+                    break;                                                                                                     // L1088（单步至多一河）
+                }
+            }
+        }
+
         // ================= M-U11 雨洪生产域（regrow 生产源之二 + flood 生产源两支——调用面 nature.ts L527/L532 暴雨云与 toolsTick L13370 未译，本体先行建库：M-U10h annihilate 本体先例同构） =================
 
         // rainRegrow L10660-10671（雨区复苏：8×8 窗 4 采样命中焦土 → regrow 计时提前——max(tick+60, at-160)；
