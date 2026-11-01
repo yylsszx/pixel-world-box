@@ -5508,7 +5508,7 @@ namespace PixelWorldBox.Wb
                     break;
                 }
                 case "nuke": Nuke(w, wx, wy, powerP ?? 1.0); break;                                                     // L13351-13353（powerP undefined → JS 默认参 1）
-                case "river": WbWorldgen.CarveRiver(w, w.terrain, null, wx, wy, null, w.brush); break;              // L13354-13356（runtime carveRiver=this.brush 参化——M-U7k 译件复用；moistMap 桩参不消费传 null；widthOverride undefined → null）
+                case "river": WbWorldgen.CarveRiver(w, w.terrain, null, wx, wy, null, w.brush, true); break;        // L13354-13356（M-U20：runtime=true 切换——JS 玩家路径 carveRiver 走 setTerrain 全级联 L12362/L12377/L12378 + carveLake 湖支透传；widthOverride undefined → null → 笔刷宽度；moistMap 桩参不消费传 null）
                 case "oasis": CreateOasis(w, wx, wy); break;                                                        // L13355-13356
                 case "smooth": SmoothTerrain(w, wx, wy, r); break;                                                  // L13357-13358
                 case "rough": RoughenTerrain(w, wx, wy, r); break;                                                  // L13359-13360

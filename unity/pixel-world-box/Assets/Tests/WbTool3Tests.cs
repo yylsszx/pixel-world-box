@@ -1,10 +1,10 @@
 // ============================================================
-// WbTool3Tests.cs — M-U16 切片四「神力生成器域」+ M-U19 特质域黄金对账（NUnit）
-// 黄金数据: Assets/StreamingAssets/WbGolden/tool3.json（14 场景）
+// WbTool3Tests.cs — M-U16 切片四「神力生成器域」+ M-U19 特质域 + M-U20 river runtime 黄金对账（NUnit）
+// 黄金数据: Assets/StreamingAssets/WbGolden/tool3.json（15 场景）
 //   由 scripts/unity-migration/gen-tool3.mjs 生成（真引擎 GameEngine 构造 +
 //   手术式夹具直写〔terrain/fire/radiate/units 瘦直写 + brush/五成就计数直写〕+
 //   rngA 尾置清零起流 + calls 直调 / ticks 步进（tickCount++ 头 + effectsTick——
-//   主循环 L2508 序）混合链；det 双跑字节级一致；M-U19 md5 154605cc）。
+//   主循环 L2508 序）混合链；det 双跑字节级一致；M-U20 md5 07ece0b7）。
 //   蓝本 engine.ts：22 神力生成器 acidRain L10737-10743 / volcano L10746-10777 /
 //   tsunami L10780-10785 / blizzard L10788-10795 / meteorShower L10798-10812 /
 //   locust L10815-10820 / drought L10823-10829 / rainCloud L10834-10842 /
@@ -19,13 +19,13 @@
 //   volcano L9857-9882 / wrath L10029-10035 / holystorm L10036-10073 / typhoon
 //   L10097-10125；M-U19 特质域 rerollTrait L11037-11057 / baseGene L11059-11066 /
 //   jumpGene L11085-11103 / rollTrait L1473-1476 + TRAITS types.ts L264-276 /
-//   JOBS L296-305。
-// 镜像: tool3-transcript.mjs 零引擎导入 14/14 ALL PASS（bun 口径——红证三旋钮
-//   TOOL3_RED=cap 禁 13 族 cap 门 → caps-composite FAIL；TOOL3_RED=lava 禁
-//   volcano 消费端岩浆外溢 → 双 volcano 场景 FAIL；TOOL3_RED=mutate 禁
-//   jumpGene 属性重算写面 → 双 mutate 场景 FAIL → 复绿 14/14）。
-// 验证链（纪律④）: 黄金向量(真引擎) → 零引擎镜像 14/14 → 本文件 NUnit C# 全链
-//   重放（22 生成器全译件 + ApplyTool 24 case + EffectsTick 消费端四支 +
+//   JOBS L296-305；M-U20 river runtime carveRiver L12312-12420 / carveLake
+//   L12425-12441 / setTerrain 级联 L975-1013 / soilMulAt worldsim.ts L168-170。
+// 镜像: tool3-transcript.mjs 零引擎导入 15/15 ALL PASS（bun 口径——红证四旋钮
+//   TOOL3_RED=cap / lava / mutate / river——river 禁 setTerrain 级联直写语义
+//   → river-runtime fireMd5 FAIL → 复绿 15/15）。
+// 验证链（纪律④）: 黄金向量(真引擎) → 零引擎镜像 15/15 → 本文件 NUnit C# 全链
+//   重放（22 生成器全译件 + ApplyTool 25 case + EffectsTick 消费端四支 +
 //   Lightning M-U15 复用 + SetTerrain 全级联 + FxHook 2 掷 + AddEvent colorHex
 //   + M-U19 MutateArea/RerollTrait/JumpGene）逐位对账。
 // 对账面: 每步 rngA/terrain/fire/radiate md5 + fireSet/frozen/regrow/flood/wet/
@@ -37,7 +37,8 @@
 // 直测面: volcano 锥体 21 格/引燃圈 8 点/灼烧环 + pw 三档 + bless/curse/love/
 //   teleport 四瞬态 + repro 门 + cap 门 13 族 + blackhole 计数先于 cap + iceAge
 //   笔刷联动缺省 + holystorm 审判/缓愈/驱瘟 + M-U19 rerollTrait 乘数卸除/上装
-//   + jumpGene 铛位 0.5/2 恰等 + baseGene 空表零掷 + dead/界外双 skip。
+//   + jumpGene 铛位 0.5/2 恰等 + baseGene 空表零掷 + dead/界外双 skip +
+//   M-U20 river runtime 级联（火墙全灭/regrow 删/owner 清/flood 删/绿洲成林）。
 // Unity 侧执行: Window > General > Test Runner（EditMode）。
 // ============================================================
 using System;
@@ -292,7 +293,7 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindTool3()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(14));
+            Assert.That(scens.Count, Is.EqualTo(15));
             foreach (var scTok in scens)
             {
                 var sc = (JObject)scTok;
@@ -635,6 +636,40 @@ namespace PixelWorldBox.Tests
             Assert.That(F64Hex(w.unitById[972].dmg), Is.EqualTo("8127636520882940"), "u972 dmg=10×1.276587=12.766 位级（wolf dmg10 基准）");
             Assert.That(w.effects.Count((f) => f.kind == "mutate"), Is.EqualTo(9), "3 单位 × 3 连发 fx=9");
             Assert.That(w.rngA.ToString("x8"), Is.EqualTo("b43a4d0f"), "72 掷 rng 链终态位级（S14 黄金同源）");
+        }
+
+        /// <summary>直测六（M-U20）：applyTool case "river" runtime 语义——carveRiver BFS 绕山 + 加权选路 + setTerrain 全级联（火墙灭/regrow 删/owner 清/flood 删）+ 绿洲成林 + fx/toast/event 尾面</summary>
+        [Test]
+        public void Test48_Tool3_RiverRuntime()
+        {
+            // —— S15 同源：ReplayScenario 全量手术（terrain0/soil0/fire0/regrow0/flood0/radSet0 + variant Hash2 重建）——
+            // soilF/variant 等派生面必须与黄金一致：soilMulAt 差异 → 成林门命中差异 → 掷流分配漂移 → 异路径（M-U20 机制发现）
+            var goldRiver = JObject.Parse(System.IO.File.ReadAllText(FindTool3()));
+            var riverSc = (JObject)goldRiver["scenarios"].First(t => t.Value<string>("key") == "river-runtime");
+            var w = ReplayScenario(riverSc);            // ReplayScenario 尾置 rngA = sc.seed（0x000000A0）
+            byte[] ownB = GunzipB64(riverSc["fixture"].Value<string>("owner0"));   // owner0 直装（ReplayScenario 不还原 owner——fixture (26,59)/(26,60)=3 拥有面，owner 清除支断言真实化；级联零 rng 纯簿记）
+            System.Buffer.BlockCopy(ownB, 0, w.owner, 0, ownB.Length);
+            WbBailRelay.ApplyTool(w, "river", 30, 60);
+            Assert.That(w.fireSet.Count, Is.EqualTo(0), "火墙 9 格全灭（setTerrain L997 级联——runtime 语义钉面）");
+            Assert.That(w.regrow.Count, Is.EqualTo(1), "regrow 删减 3/4（L985 级联——仅 (20,62) 幸存）");
+            Assert.That(w.regrow.ContainsKey(62 * WbWorld.W + 20), Is.True, "幸存格 (20,62) 位级（S15 黄金 15892）");
+            Assert.That(w.owner[60 * WbWorld.W + 26] == -1 || w.owner[59 * WbWorld.W + 26] == -1, Is.True, "owner 清除支（L1000-1003 级联）");
+            Assert.That(w.flood.Count, Is.EqualTo(0), "flood 删净（L990 灌溉 GRASS 支级联）");
+            Assert.That(w.effects.Count((f) => f.kind == "spawn"), Is.EqualTo(1), "fx spawn 尾面（L12385）");
+            Assert.That(w.effects[0].seed, Is.EqualTo(22436), "fx spawn seed 位级（S15 黄金同源）");
+            Assert.That(F64Hex(w.effects[0].x), Is.EqualTo("0000000000003e40"), "fx x=30.5 位级");
+            Assert.That(F64Hex(w.effects[0].y), Is.EqualTo("0000000000004e40"), "fx y=60.5 位级");
+            Assert.That(w.worldEvents[0].kind, Is.EqualTo("river"), "event kind");
+            Assert.That(w.worldEvents[0].text, Is.EqualTo("一条大河诞生了，蜿蜒流向大海"), "reached 入海支 event 文（L12387）");
+            Assert.That(w.worldEvents[0].x, Is.EqualTo(30.5), "event x=sx+0.5 位级");
+            Assert.That(w.toasts.Count, Is.EqualTo(1), "toast 宿主回调面（L12386）");
+            Assert.That(w.toasts[0].text, Is.EqualTo("一条大河蜿蜒入海"), "toast 文（reached 支）");
+            Assert.That(w.toasts[0].id, Is.EqualTo(1), "toastSeq L181 初值 1");
+            int forest = 0;
+            for (int y = 50; y <= 70; y++) for (int x = 5; x <= 30; x++) if (w.terrain[y * WbWorld.W + x] == WbWorld.T_FOREST) forest++;
+            Assert.That(forest, Is.GreaterThanOrEqualTo(1), "成林门 ≥1（L12378 rng<0.05×soilMulAt）");
+            Assert.That(w.riverTiles.Count, Is.GreaterThan(0), "riverTiles 流向场记录（L12365）");
+            Assert.That(w.rngA.ToString("x8"), Is.EqualTo("a6fce2f1"), "365 掷 rng 链终态位级（S15 黄金同源）");
         }
     }
 }
