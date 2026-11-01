@@ -88,6 +88,14 @@ namespace PixelWorldBox.Wb
         public double x, y;
     }
 
+    /// <summary>M-U22：engine L492 phoenixAshes 元素（unitsReap L3338 push；PhoenixAshTick L13018 消费挂账）</summary>
+    public class WbPhoenixAsh
+    {
+        public double x, y;
+        public int t;          // engine a.t（-2/tick 倒计时——消费面挂账）
+        public int rebirths;   // engine a.rebirths（重生体继承）
+    }
+
     /// WorldEvent —— engine.ts addEvent L13996
     public class WbEv
     {
@@ -119,6 +127,7 @@ namespace PixelWorldBox.Wb
         public double hp, maxHp, dmg = 1, speed = 1;
         public int age, maxAge = 9999, kills, cd, trait, job, king, infected, flip;
         public int gen;                     // hydra 世代（斩首递减：[3,2,1][gen] 头数/躯干半高；TS u.gen ?? 0 → 默认 0）
+        public int? rebirthsN;              // M-U22：engine u.rebirths（凤凰涅槃计数 ?? 0 门 → int? nullish 同构；字段只加）
         public string name;
         public int hurt, breath, parity, dead, boat, boatTTL, caravan, atk;
         // wep: civ 层镜像 TS Unit.wep 字符串 key（items.ts ItemKind）—— int 0 = 无装备占位；
@@ -458,7 +467,7 @@ namespace PixelWorldBox.Wb
         // —— M-U3h bail 宿主接力消费域（字段只加）——
         public List<WbItem> items = new List<WbItem>();   // engine this.items（postJS 拾取门 Count 消费；本体第五批 TryPickup L5225 消费 id/kind/x/y）
         public int grassTiles;                             // engine this.grassTiles（postJS 非文明繁衍增益）
-        public int itemSeq;                                // engine this.itemSeq（items.push L5388 id 序列器；M-U3h 第五批）
+        public int itemSeq = 1;                            // engine L508 this.itemSeq = 1（items.push L5388 id 序列器；M-U3h 第五批——M-U22 S24 黄金 item.id 1 起位级实证补初值）
         public Dictionary<int, int> wildCount = new Dictionary<int, int>(); // engine this.wildCount（种族 O(1) 计数）
         // —— M-U3h 第五批 tail 索敌/鱼群宿主结构（字段只加）——
         public int[] preyGrid = new int[32 * 20];          // engine L252 preyGrid: Uint16Array(32*20)（猎物密度场；生态核算写、索敌导航读）
@@ -634,7 +643,7 @@ namespace PixelWorldBox.Wb
         public double yearF;             // 黄金驱动不跑 tick() → 恒 0（夹具确认）
         public int statCivsFallen;
         public int panicNoteCd;          // engine panicNoteCd（tick L2525 递减；panicTick 域写入 —— M-U7c' 编排面；字段只加）
-        public List<object> phoenixAshes = new List<object>(); // engine phoenixAshes（tick L2600 空窗恒假实证；凤昮灰烬条目宿主域后续定形 —— M-U7c'；字段只加）
+        public List<WbPhoenixAsh> phoenixAshes = new List<WbPhoenixAsh>(); // engine phoenixAshes（M-U7c' 壳 List<object> 恒空零消费——M-U22 强类型定形 unitsReap L3338 push / PhoenixAshTick L2600 编排槽消费；字段只加不改语义）
 
         // ---------------- 基础工具（engine.ts 模块级函数） ----------------
         /// engine L34 pairKey

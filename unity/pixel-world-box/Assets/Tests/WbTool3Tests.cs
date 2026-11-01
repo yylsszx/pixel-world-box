@@ -112,6 +112,15 @@ namespace PixelWorldBox.Tests
                 geneC = uo["gene"] is JObject gj ? new WbGene { s = gj.Value<double>("s"), d = gj.Value<double>("d"), h = gj.Value<double>("h"), r = gj.Value<double>("r") } : null,   // M-U19：preset gene 直写面
                 famC = null, fgnC = null,
             };
+            // M-U22：reap 收尸域夹具条件直写面（gen units0 条件键同构——条件不进旧场景）
+            if (uo["civ"] != null) u.civ = uo.Value<int>("civ");                             // pop--/onKingDeath/caravan 消费
+            if (uo["wep"] != null) u.wep = uo.Value<string>("wep");                          // 武器槽（reap 0.35 掉落门）
+            if (uo["fam"] != null) u.famC = uo.Value<int>("fam");                            // 家族（members-- 面）
+            if (uo["king"] != null) u.king = uo.Value<int>("king");                          // 王位（onKingDeath 面）
+            if (uo["rebirths"] != null) u.rebirthsN = uo.Value<int>("rebirths");             // 凤凰涅槃计数（?? 0 门）
+            if (uo["gen"] != null) u.gen = uo.Value<int>("gen");                             // 九头蛇世代
+            if (uo["caravan"] != null) u.caravan = uo.Value<int>("caravan");                 // 商队（rel 降温面）
+            if (uo["food"] != null) u.foodN = uo.Value<double>("food");                      // 饥饿（scav 面——f64 镜像域）
             w.units.Add(u);
             w.unitById[u.id] = u;
         }
@@ -172,6 +181,7 @@ namespace PixelWorldBox.Tests
             w.statAnnihilations = 0;
             w.statBlackholes = 0;
             w.yearF = fx.Value<double>("yearF0");
+            w.unitSeq = fx.Value<int?>("unitSeq0") ?? 1;      // M-U22：unitSeq 起点快照（worldgen spawn 推进——幼蛇 id/parity 位级锚；旧黄金无键回退 1）
             w.tickCount = sc.Value<int>("tickCount");
             // —— 手术二：直写相（terrain/soil/regrow/flood/fire/radiate/units）——
             w.terrain = GunzipB64(fx.Value<string>("terrain0"));
@@ -185,6 +195,29 @@ namespace PixelWorldBox.Tests
             System.Buffer.BlockCopy(rb, 0, w.radiate, 0, rb.Length);
             foreach (var t in (JArray)fx["radSet0"]) w.radSet[t[0].Value<int>()] = t[1].Value<int>();
             foreach (var uo in (JArray)fx["units0"]) MkUnit(w, (JObject)uo);
+            // —— M-U22：civ/family 瘦夹具注入（gen fixture civs0/families0 条件键——pop--/onKingDeath/members--/rel 消费面）——
+            if (fx["civs0"] is JArray civsA)
+                foreach (var ct in civsA)
+                {
+                    var co = (JObject)ct;
+                    w.civs.Add(new WbCiv
+                    {
+                        id = co.Value<int>("id"),
+                        name = co.Value<string>("name"),
+                        colorHex = co.Value<string>("colorHex"),
+                        alive = co.Value<bool?>("alive") ?? true,
+                        stability = co.Value<double?>("stability") ?? 70.0,
+                        kingId = co["kingId"] != null && co["kingId"].Type != JTokenType.Null ? co.Value<int>("kingId") : (int?)null,
+                        kingName = co["kingName"] != null && co["kingName"].Type != JTokenType.Null ? co.Value<string>("kingName") : null,
+                        pop = co.Value<int?>("pop") ?? 0,
+                    });
+                }
+            if (fx["families0"] is JArray famsA)
+                foreach (var ft in famsA)
+                {
+                    var fo = (JObject)ft;
+                    w.families[fo.Value<int>("id")] = new WbFamily { id = fo.Value<int>("id"), members = fo.Value<int?>("members") ?? 1 };
+                }
             // variant 确定域重建（worldgen L65 hash2(x,y,baseSeed+999)——fixture 无 variant0 面协议，R3 红线）
             int baseSeed = sc.Value<int>("baseSeed");
             for (int yy = 0; yy < WbWorld.H; yy++)
@@ -283,6 +316,12 @@ namespace PixelWorldBox.Tests
                 Assert.That(u.traitName, Is.EqualTo(e["trait"] == null || e["trait"].Type == JTokenType.Null ? null : e.Value<string>("trait")), $"u.trait {key}#{k}");   // M-U19
                 Assert.That(F64Hex(u.dmg), Is.EqualTo(e.Value<string>("dmg")), $"u.dmg {key}#{k}");       // M-U19：jumpGene/rerollTrait dmg 写面
                 Assert.That(F64Hex(u.speed), Is.EqualTo(e.Value<string>("speed")), $"u.speed {key}#{k}");   // M-U19：speed 写面
+                // M-U22：reap 域条件键（条件不进旧场景）
+                if (e["rebirths"] != null) Assert.That(u.rebirthsN ?? 0, Is.EqualTo(e.Value<int>("rebirths")), $"u.rebirths {key}#{k}");   // 凤凰涅槃计数
+                if (e["gen"] != null) Assert.That(u.gen, Is.EqualTo(e.Value<int>("gen")), $"u.gen {key}#{k}");                             // 九头蛇世代
+                if (e["caravan"] != null) Assert.That(u.caravan, Is.EqualTo(e.Value<int>("caravan")), $"u.caravan {key}#{k}");             // 商队
+                if (e["food"] != null) Assert.That(u.foodN ?? 0.0, Is.EqualTo(e.Value<double>("food")), $"u.food {key}#{k}");       // scav 写面 f64 镜像域（dumpUnit food 数字语义）
+                if (e["wep"] != null) Assert.That((string)u.wep, Is.EqualTo(e.Value<string>("wep")), $"u.wep {key}#{k}");                   // 武器槽
                 if (e["gene"] == null || e["gene"].Type == JTokenType.Null) Assert.That(u.geneC, Is.Null, $"u.gene null {key}#{k}");   // M-U19：gene 四维位级
                 else
                 {
@@ -300,7 +339,7 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindTool3()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(18));   // M-U21：15→18（grab-light/grab-throw/finger-tool——parity 红证面
+            Assert.That(scens.Count, Is.EqualTo(24));   // M-U22：18→24（reap-basic/zombie/king/phoenix/hydra/loot——parity 红证面
             foreach (var scTok in scens)
             {
                 var sc = (JObject)scTok;
@@ -441,6 +480,99 @@ namespace PixelWorldBox.Tests
                     else Assert.That(ev.y, Is.EqualTo(e.Value<double?>("y")), $"ev y {key}#{k}");
                 }
                 AssertUnitsDump(w, (JArray)sc["units"], key);
+                // —— M-U22：reapDump 条件终态（items/ash/贴花/civ/family/rel 六域位级——条件键仅新场景携带）——
+                if (sc["items"] != null)
+                {
+                    var goldItems = (JArray)sc["items"];
+                    Assert.That(w.items.Count, Is.EqualTo(goldItems.Count), $"items count {key}");
+                    for (int q = 0; q < goldItems.Count; q++)
+                    {
+                        var gi = (JObject)goldItems[q];
+                        var it = w.items[q];
+                        Assert.That(it.id, Is.EqualTo(gi.Value<int>("id")), $"item.id {key}#{q}");
+                        Assert.That(it.kind, Is.EqualTo(gi.Value<string>("kind")), $"item.kind {key}#{q}");
+                        Assert.That(F64Hex(it.x), Is.EqualTo(gi.Value<string>("x")), $"item.x {key}#{q}");
+                        Assert.That(F64Hex(it.y), Is.EqualTo(gi.Value<string>("y")), $"item.y {key}#{q}");
+                    }
+                    Assert.That(w.itemSeq, Is.EqualTo(sc.Value<int>("itemSeq")), $"itemSeq {key}");
+                }
+                if (sc["ashes"] != null)
+                {
+                    var goldAsh = (JArray)sc["ashes"];
+                    Assert.That(w.phoenixAshes.Count, Is.EqualTo(goldAsh.Count), $"ashes count {key}");
+                    for (int q = 0; q < goldAsh.Count; q++)
+                    {
+                        var ga = (JObject)goldAsh[q];
+                        var a = w.phoenixAshes[q];
+                        Assert.That(F64Hex(a.x), Is.EqualTo(ga.Value<string>("x")), $"ash.x {key}#{q}");
+                        Assert.That(F64Hex(a.y), Is.EqualTo(ga.Value<string>("y")), $"ash.y {key}#{q}");
+                        Assert.That(a.t, Is.EqualTo(ga.Value<int>("t")), $"ash.t {key}#{q}");
+                        Assert.That(a.rebirths, Is.EqualTo(ga.Value<int>("rebirths")), $"ash.rebirths {key}#{q}");
+                    }
+                }
+                if (sc["corpses"] != null)
+                {
+                    var goldC = (JArray)sc["corpses"];
+                    Assert.That(w.corpses.Count, Is.EqualTo(goldC.Count), $"corpses count {key}");
+                    for (int q = 0; q < goldC.Count; q++)
+                    {
+                        var gc = (JObject)goldC[q];
+                        var c = w.corpses[q];
+                        Assert.That(F64Hex(c.x), Is.EqualTo(gc.Value<string>("x")), $"corpse.x {key}#{q}");
+                        Assert.That(F64Hex(c.y), Is.EqualTo(gc.Value<string>("y")), $"corpse.y {key}#{q}");
+                        Assert.That(c.age, Is.EqualTo(gc.Value<int>("age")), $"corpse.age {key}#{q}");
+                        Assert.That(c.stone ? 1 : 0, Is.EqualTo(gc.Value<int>("stone")), $"corpse.stone {key}#{q}");
+                        Assert.That(c.undead ? 1 : 0, Is.EqualTo(gc.Value<int>("undead")), $"corpse.undead {key}#{q}");
+                    }
+                }
+                if (sc["blood"] != null)
+                {
+                    var goldB = (JArray)sc["blood"];
+                    Assert.That(w.blood.Count, Is.EqualTo(goldB.Count), $"blood count {key}");
+                    for (int q = 0; q < goldB.Count; q++)
+                    {
+                        var gb = (JObject)goldB[q];
+                        var b = w.blood[q];
+                        Assert.That(F64Hex(b.x), Is.EqualTo(gb.Value<string>("x")), $"blood.x {key}#{q}");
+                        Assert.That(F64Hex(b.y), Is.EqualTo(gb.Value<string>("y")), $"blood.y {key}#{q}");
+                        Assert.That(b.age, Is.EqualTo(gb.Value<int>("age")), $"blood.age {key}#{q}");
+                        Assert.That(b.seed, Is.EqualTo(gb.Value<int>("seed")), $"blood.seed {key}#{q}");
+                        Assert.That(b.big ? 1 : 0, Is.EqualTo(gb.Value<int>("big")), $"blood.big {key}#{q}");
+                    }
+                }
+                if (sc["civs"] != null)
+                {
+                    var goldCivs = (JArray)sc["civs"];
+                    Assert.That(w.civs.Count, Is.EqualTo(goldCivs.Count), $"civs count {key}");
+                    for (int q = 0; q < goldCivs.Count; q++)
+                    {
+                        var gc = (JObject)goldCivs[q];
+                        var c = w.civs[q];
+                        Assert.That(c.pop, Is.EqualTo(gc.Value<int>("pop")), $"civ.pop {key}#{q}");
+                        Assert.That(F64Hex(c.stability), Is.EqualTo(gc.Value<string>("stability")), $"civ.stability {key}#{q}");
+                        int? gk = gc["kingId"].Type == JTokenType.Null ? (int?)null : gc.Value<int>("kingId");
+                        Assert.That(c.kingId, Is.EqualTo(gk), $"civ.kingId {key}#{q}");
+                    }
+                }
+                if (sc["families"] != null)
+                {
+                    var goldF = (JArray)sc["families"];
+                    var gotF = new List<string>();
+                    foreach (var kv in w.families) gotF.Add($"{kv.Key}:{kv.Value.members}");
+                    var expF = new List<string>();
+                    foreach (var t in goldF) expF.Add($"{t.Value<int>("id")}:{t.Value<int>("members")}");
+                    Assert.That(gotF, Is.EqualTo(expF), $"families 序 {key}");
+                }
+                if (sc["rel"] != null)
+                {
+                    var goldR = (JArray)sc["rel"];
+                    Assert.That(w.rel.Count, Is.EqualTo(goldR.Count), $"rel count {key}");
+                    for (int q = 0; q < goldR.Count; q++)
+                    {
+                        var gr = (JObject)goldR[q];
+                        Assert.That(F64Hex(w.rel[gr.Value<string>("k")]), Is.EqualTo(gr.Value<string>("v")), $"rel {key}#{q}");
+                    }
+                }
                 var goldToasts = (JArray)sc["toasts"];
                 Assert.That(w.toasts.Count, Is.EqualTo(goldToasts.Count), $"toasts count {key}");
                 for (int k = 0; k < goldToasts.Count; k++)

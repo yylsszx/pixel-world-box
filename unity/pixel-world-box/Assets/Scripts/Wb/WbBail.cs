@@ -1125,7 +1125,7 @@ namespace PixelWorldBox.Wb
             if (!RStats[u.race].isCiv) BumpWild(w, u.race, -1);                                                             // L4322 种族变化：旧种计数摘除
             u.race = WbConstants.R_ZOMBIE;                                                                                   // L4323
             u.civ = -1;                                                                                                       // L4324
-            u.hp = 40; u.maxHp = 46; u.dmg = 6; u.speedN = 0.05;                                                              // L4325-4328（speed 镜像写点——speed 旧占位不动）
+            u.hp = 40; u.maxHp = 46; u.dmg = 6; u.speedN = 0.05; u.speed = 0.05;                                              // L4325-4328（speed 双轨同步写——M-U22 S20 黄金 dump speed 0.05 位级实证修复，M-U21 grabbedTick hurt 双轨先例同构）
             u.ageF = 0;                                                                                                       // L4329（engine u.age f64 域镜像——age 旧占位不动）
             u.maxAgeF = 9999;                                                                                                 // L4330
             u.infected = 0;                                                                                                   // L4331
@@ -1322,7 +1322,268 @@ namespace PixelWorldBox.Wb
                     UpdateUnit(w, u);                                                                                      // L3207
                 }
             }
-            // L3215 挂账：unitsReap 收尸域（僵尸尸变/王权/凤凰/常规死亡反馈——全活零效应，死亡面未来切片）
+            UnitsReap(w);                                                                                                  // L3215 unitsReap 收尸域（M-U22 全译接线——僵尸尸变/王权/凤凰/九头蛇/常规死亡反馈）
+        }
+
+        // ================= unitsReap L3321-3472（M-U22 死亡收尸 Stage 2：批内核路径与 JS 路径共用——逆序环五主支 + 常规收尸尾链） =================
+        private const int PHOENIX_ASH_TTL = 240;                                                                           // engine L2867 static PHOENIX_ASH_TTL = 240（1 tick=2 单位 ≈ 4s@1x）
+        private const int R_PHOENIX = 29;                                                                                  // engine types.ts R 枚举序 29（RelayDef L76 注记同源）
+
+        private static void UnitsReap(WbWorld w)
+        {
+            for (int i = w.units.Count - 1; i >= 0; i--)                                                                    // L3322（逆序环——pop-swap 交互保序）
+            {
+                WbU u = w.units[i];                                                                                         // L3323
+                if (u.dead == 0) continue;                                                                                  // L3324
+                // —— 僵尸病毒（世界法则，旧档缺字段按 true）：瘟疫致死 35% 尸变（复用 zombify 原地转化）——
+                if (u.infected != 0 && w.laws.zombieVirus && !RStats[u.race].undead && !RStats[u.race].aquatic && !RStats[u.race].flying && w.Rng() < 0.35)   // L3326（&& 链短路——前四门全真才掷；laws.zombieVirus !== false ≡ C# bool true）
+                {
+                    u.infected = 0;                                                                                         // L3327
+                    ZombifyE(w, u);                                                                                         // L3328（L4323 原地转种——dead 置回 false）
+                    continue;                                                                                               // L3329（原地复生为僵尸：不走死亡结算）
+                }
+                // —— 王权：国王驾崩（纪事 + 稳定度下挫 + 继承加冕）——
+                if (u.king != 0 && u.civ >= 0) OnKingDeathE(w, u);                                                          // L3331
+                // —— 凤凰：浴火重生（灰烬涅槃倒数，至多三次；第四次死亡魂飞魄散走常规收尸）——
+                if (u.race == R_PHOENIX && (u.rebirthsN ?? 0) < 3)                                                          // L3335（rebirths ?? 0 门）
+                {
+                    // 季节节律（季节 × 万物）：寒冬涅槃迟缓 —— 霜冻延缓火种复燃（TTL ×1.5 ≈ 6s@1x）
+                    int ashTtl = w.NatureSeason() == 3 ? (int)WbMath.JsRound(PHOENIX_ASH_TTL * 1.5) : PHOENIX_ASH_TTL;            // L3337（Math.round .5 上取整——JsRound 禁银行家舍入）
+                    w.phoenixAshes.Add(new WbPhoenixAsh { x = u.x, y = u.y, t = ashTtl, rebirths = (u.rebirthsN ?? 0) + 1 });   // L3338（PhoenixAshTick L13018 消费面挂账凤凰重生切片）
+                    AddEventHook(w, "phoenix", $"凤凰陨落成灰——余烬仍在闪烁，传说它将自火中归来（第 {(u.rebirthsN ?? 0) + 1} 次涅槃）", null, u.x, u.y);   // L3339
+                    FxHook(w, "smoke", u.x, u.y, 30);                                                                       // L3340
+                    w.unitById.Remove(u.id);                                                                                // L3341
+                    BumpWild(w, u.race, -1);                                                                                // L3342（重生 spawn 时会 +1）
+                    WbU last = w.units[w.units.Count - 1]; w.units.RemoveAt(w.units.Count - 1);                             // L3344 pop()
+                    if (i < w.units.Count) { w.units[i] = last; /* WBB.touchRow(i) —— Stage 3+ 移位行级重灌，批内核域 C# 单源挂账 no-op */ }   // L3344
+                    continue;                                                                                               // L3345
+                }
+                if (u.race == R_PHOENIX)                                                                                    // L3347
+                {
+                    AddEventHook(w, "phoenix", "火种熄灭——这只凤凰耗尽了所有涅槃，化作永恒的灰烬", null, u.x, u.y);          // L3348
+                }
+                // —— 九头蛇：斩首分裂（被杀时断颈处萌发两条幼蛇；世代上限 2，第三世代死亡即真终焉）——
+                // 神话弱点：火焰烧灼断颈可阻止再生 —— 死亡位置燃着火 / 身陷岩浆 = 被烧灼，直接真死走常规收尸
+                if (u.race == R_HYDRA && u.gen < 2)                                                                          // L3352（gen ?? 0——int 旧占位恒有值同构）
+                {
+                    int ti = ((int)u.y * WbWorld.W) + (int)u.x;                                                             // L3353（(u.y|0)——JS ToInt32 截断 ≡ C# int 强转正域）
+                    bool seared = w.fire[ti] > 0 || w.terrain[ti] == WbConstants.T_LAVA;                                     // L3354
+                    if (!seared)                                                                                            // L3355
+                    {
+                        int g = u.gen + 1;                                                                                  // L3356
+                        int bornN = 0;                                                                                       // L3357 born[]——计数同构（只消费 length）
+                        for (int s = 0; s < 2; s++)                                                                          // L3358 [[-1.3,0.5],[1.3,-0.5]] 机械展开
+                        {
+                            double dx = s == 0 ? -1.3 : 1.3, dy = s == 0 ? 0.5 : -0.5;
+                            WbU nu = SpawnUnit(w, R_HYDRA, u.x + dx, u.y + dy, new WbSpawnOpts { silent = true });           // L3359（受 MAX_HYDRAS/MAX_WILDLIFE 上限约束——null = 头颅再也长不出来）
+                            if (nu != null)                                                                                  // L3360
+                            {
+                                nu.gen = g;                                                                                   // L3361
+                                nu.maxHp = WbMath.JsRound(nu.maxHp * 0.6);                                                    // L3362（幼蛇只继承了六成的伟力——round(500*0.6)=300）
+                                nu.hp = nu.maxHp;                                                                             // L3363
+                                bornN++;                                                                                      // L3364
+                            }
+                        }
+                        if (bornN > 0)                                                                                       // L3367
+                        {
+                            AddEventHook(w, "hydra", bornN > 1
+                                ? $"九头蛇被斩首——断颈处竟萌发出 {bornN} 条幼蛇，每一颗都在嘶鸣（第 {g} 世代）"
+                                : "九头蛇倒下了——仅剩的一颗断颈仍萌发出一条幼蛇（第 " + g + " 世代）", null, u.x, u.y);       // L3368-3370
+                            FxHook(w, "smoke", u.x, u.y, 36);                                                               // L3371
+                            FxHook(w, "blood", u.x, u.y, 20);                                                               // L3372
+                            w.shake = System.Math.Max(w.shake, 3);                                                           // L3373
+                            // L3374 onSound?.('hydra') —— 宿主音频回调，黄金受控 undefined 零效应 no-op
+                            w.unitById.Remove(u.id);                                                                        // L3375
+                            BumpWild(w, u.race, -1);                                                                        // L3376（母体计数 -1；幼蛇 spawn 各自 +1）
+                            WbU last2 = w.units[w.units.Count - 1]; w.units.RemoveAt(w.units.Count - 1);                     // L3377 pop()
+                            if (i < w.units.Count) { w.units[i] = last2; /* WBB.touchRow(i) 挂账 no-op */ }                   // L3378
+                            continue;                                                                                       // L3379
+                        }
+                        // 上限满 → 分裂失败，落入常规收尸（传说的尽头：头颅再也长不出来）
+                        AddEventHook(w, "hydra", "九头蛇倒下了——但世上九头蛇已经太多，断颈静寂，再无新生", null, u.x, u.y);   // L3383
+                    }
+                    else
+                    {
+                        AddEventHook(w, "hydra", "烈焰烧灼了断颈——被火焚灭的九头蛇再也无法萌生新的头颅", null, u.x, u.y);     // L3385
+                    }
+                }
+                if (u.race == R_HYDRA && u.gen >= 2)                                                                          // L3389
+                {
+                    AddEventHook(w, "hydra", "最后一颗头颅垂下了——这条熬过两次斩首的老蛇终于真正死去", null, u.x, u.y);       // L3390
+                }
+                // L3392 collectUnitDead(u.id, ...) —— Task 38 在线采集死亡结算（引擎遥测域，黄金无头 no-op 挂账）
+                if (u.civ >= 0 && u.civ < w.civs.Count && w.civs[u.civ] != null) w.civs[u.civ].pop--;                        // L3393
+                // 家族送葬：族人倒下（僵尸转化不触发此处 —— 血脉延续到亡者军团，家族成员数不减）
+                if (u.famC != null)                                                                                         // L3395（u.fam != null nullish 门）
+                {
+                    if (w.families.TryGetValue(u.famC.Value, out WbFamily df)) df.members--;                                 // L3396-3397（Map.get 缺键 undefined → TryGetValue false 同构）
+                }
+                FxHook(w, "skull", u.x, u.y, 46);                                                                           // L3398
+                // 深度打磨：商队遇袭 → 贸易中断 + 两国外交降温（劫掠后果链）
+                if (u.caravan > 0)                                                                                           // L3400（int 旧占位恒有值——?? 0 同构）
+                {
+                    WbCiv home = u.civ >= 0 && u.civ < w.civs.Count ? w.civs[u.civ] : null;                                  // L3401
+                    WbCiv partner = u.caravan >= 0 && u.caravan < w.civs.Count ? w.civs[u.caravan] : null;                    // L3402（this.civs[u.caravan!] 直索引——JS 界外 undefined）
+                    if (home != null && partner != null && home.alive && partner.alive)                                      // L3403
+                    {
+                        string key = home.id < partner.id ? $"{home.id}-{partner.id}" : $"{partner.id}-{home.id}";            // L3404 pairKey L34
+                        w.rel[key] = System.Math.Max(-100, (w.rel.TryGetValue(key, out double rv) ? rv : 0.0) - 6);           // L3405
+                        AddEventHook(w, "trade", $"「{home.name}」的商队在途中遇袭，贸易中断", home.colorHex, u.x, u.y);        // L3406
+                    }
+                }
+                // 尸骸残留 + 死亡血泊（原子级死亡反馈；亡者化为骨尘、无血可流）
+                bool undead = RStats[u.race].undead;                                                                        // L3410
+                if (u.race != R_SANDWORM)                                                                                    // L3411（被吞噬者无残骸——已在吞噬处单独处理）
+                {
+                    AddCorpseHook(w, u.x, u.y, false, undead);                                                               // L3412（fxPrefs.corpses 默认 true——C# 恒真同构，AddCorpse 内无门注记 L4125）
+                    if (!undead) AddBloodHook(w, u.x, u.y, true);                                                             // L3413（fxPrefs.blood 门——AddBloodE 内部 w.fxBlood 同 flag 双查幂等）
+                }
+                // —— 肉掉落：普通动物（非文明/非巨怪/非亡灵）死亡掉 1-3 块肉，拾食链的源头 ——
+                if (!RStats[u.race].isCiv && !MonsterLoot.Contains(u.race) && !RStats[u.race].undead && w.Rng() < 0.85)      // L3419
+                {
+                    DropMeatE(w, u.x, u.y, 1 + w.Rng() * 2 + (u.race == WbConstants.R_PIG ? 1 : 0));                          // L3420
+                }
+                // —— 腐食回充（引擎级通道，v0.49 内核生态修复）：猎物倒下的地方，r=6 内最饥饿的一只野生捕食者上前取食 ——
+                if (IsHerbivoreRace(w, u.race) && !RStats[u.race].isCiv)                                                    // L3427
+                {
+                    WbU best = null;                                                                                         // L3428
+                    double bestHunger = 0;                                                                                   // L3429
+                    for (int p = 0; p < w.units.Count; p++)                                                                   // L3430
+                    {
+                        WbU pu = w.units[p];
+                        if (pu.dead != 0) continue;                                                                           // L3431
+                        RaceStat pd = RStats[pu.race];                                                                         // L3432
+                        if (!pd.predator || pd.undead || pd.isCiv) continue;                                                  // L3433
+                        double dx = pu.x - u.x, dy = pu.y - u.y;                                                               // L3434
+                        if (dx * dx + dy * dy > 36) continue;                                                                  // L3435（r=6 取食半径——嗅到血腥味循迹而来）
+                        double hunger = 80 - (pu.foodN ?? 0);                                                                  // L3436（p.food ?? 0——f64 镜像域 M-U12 先例）
+                        if (hunger <= bestHunger) continue;                                                                    // L3437（只喂最饥饿者——食物 <80 才进食）
+                        bestHunger = hunger;                                                                                   // L3438
+                        best = pu;                                                                                             // L3439
+                    }
+                    if (best != null) best.foodN = System.Math.Min(400, (best.foodN ?? 0) + 55 + WbMath.JsRound(u.maxHp * 0.5));   // L3441（400：可携带一个鱼群的能量远航）
+                }
+                if (w.items.Count < 170)                                                                                     // L3444
+                {
+                    bool boss = MonsterLoot.Contains(u.race);                                                                 // L3445
+                    if (u.wep is string wepS && wepS.Length > 0 && w.Rng() < 0.35)                                            // L3446（u.wep truthy 门——falsy 短路零掷）
+                    {
+                        DropItemE(w, wepS, u.x, u.y);                                                                         // L3447（u.wep as ItemKind）
+                    }
+                    else if (boss && w.Rng() < 0.5)                                                                           // L3448
+                    {
+                        DropItemE(w, RollChestItemE(w, "chest2"), u.x, u.y);                                                   // L3449（巨怪宝藏——秘银级）
+                        AddEventHook(w, "loot", "巨怪倒下的地方散落着宝藏——静待有缘人", null, u.x, u.y);                        // L3450
+                    }
+                    else if (!RStats[u.race].isCiv && !boss && w.Rng() < 0.05)                                                // L3451
+                    {
+                        DropItemE(w, RollChestItemE(w, "chest"), u.x, u.y);                                                    // L3452（野兽偶尔叼着亮闪闪的东西）
+                    }
+                }
+                w.unitById.Remove(u.id);                                                                                     // L3454
+                if (!RStats[u.race].isCiv) BumpWild(w, u.race, -1);                                                           // L3455（野生动物计数同步 O(1)）
+                WbU last3 = w.units[w.units.Count - 1]; w.units.RemoveAt(w.units.Count - 1);                                   // L3456 pop()
+                if (i < w.units.Count) { w.units[i] = last3; /* WBB.touchRow(i) —— 末尾 pop 无需，挂账 no-op */ }               // L3457
+            }
+        }
+
+        // ================= dropItem L5190-5213（地面物品掉落：MAX_ITEMS 门 + 沉海找陆 + itemSeq 序列器 + fx spawn） =================
+        private static WbItem DropItemE(WbWorld w, string kind, double wx, double wy)
+        {
+            if (w.items.Count >= WbConstants.MAX_ITEMS)                                                                       // L5191
+            {
+                w.Toast("大地上的宝物太多了，等它们被拾取后再丢吧", "info");                                                    // L5192（op 缺省 null）
+                return null;                                                                                                   // L5193
+            }
+            double x = wx, y = wy;                                                                                             // L5194
+            if (WbWorld.IsWater(w.terrain[(int)System.Math.Floor(wy) * WbWorld.W + (int)System.Math.Floor(wx)]))                // L5195
+            {
+                (double x, double y)? land = FindLandNear(w, wx, wy, 5);                                                        // L5196
+                if (land == null)                                                                                              // L5197
+                {
+                    w.Toast("宝物沉入了大海——附近没有陆地", "danger", true);                                                     // L5198（op=true 第三参）
+                    return null;                                                                                               // L5199
+                }
+                x = land.Value.x; y = land.Value.y;                                                                             // L5200-5201
+            }
+            WbItem item = new WbItem { id = w.itemSeq++, kind = kind, x = x, y = y };                                           // L5202
+            w.items.Add(item);                                                                                                 // L5203
+            FxHook(w, "spawn", x, y, 30);                                                                                      // L5204
+            // L5205 onSound?.('place') —— 宿主音频回调，黄金受控 undefined 零效应 no-op
+            return item;                                                                                                       // L5206
+        }
+
+        // ================= dropMeat L5385-5402（肉掉落：cnt 钳 [1,3] + items cap-6 预算 + 2 掷/肉 + 沉海喂鱼） =================
+        private static void DropMeatE(WbWorld w, double wx, double wy, double n)
+        {
+            int cnt = (int)System.Math.Max(1, System.Math.Min(3, WbMath.JsRound(n)));                                           // L5386（Math.round .5 上取整——JsRound）
+            for (int k = 0; k < cnt; k++)                                                                                       // L5387
+            {
+                if (w.items.Count >= WbConstants.MAX_ITEMS - 6) return;                                                          // L5388（与宝物共享地面物品预算——留少量余量）
+                double px = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, wx + (w.Rng() - 0.5) * 1.6));                  // L5389
+                double py = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, wy + (w.Rng() - 0.5) * 1.6));                  // L5390
+                if (WbWorld.IsWater(w.terrain[(int)System.Math.Floor(py) * WbWorld.W + (int)System.Math.Floor(px)]))             // L5391
+                {
+                    (double x, double y)? land = FindLandNear(w, px, py, 3);                                                     // L5392
+                    if (land == null) continue;                                                                                   // L5393（沉海喂鱼）
+                    w.items.Add(new WbItem { id = w.itemSeq++, kind = "meat", x = land.Value.x, y = land.Value.y });               // L5394
+                }
+                else
+                {
+                    w.items.Add(new WbItem { id = w.itemSeq++, kind = "meat", x = px, y = py });                                   // L5396
+                }
+            }
+        }
+
+        // ================= rollChestItem constants.ts L797-800 + rollItem items.ts L226-240（加权随机掉落器——ALL_ITEMS rarity 窗口 + RARITY_META w 权重池） =================
+        // items.ts L216 ALL_ITEMS = TABLE.map(([key]) => ITEM_DEFS[key])——TABLE 序 = ItemDefs 初始化序（110 项同源快照；
+        //   Dictionary 实现序不保证，显式键列保序——机械翻译确定性纪律）。
+        internal static readonly string[] AllItemKeys =
+        {
+            "sword1","sword2","sword3","wood_club","iron_dagger","katana","elf_blade","flame_sword","ice_sword",
+            "excalibur","holy_sword","battle_axe","warhammer","berserker_axe","executioner_axe","thunder_hammer",
+            "storm_hammer","pickaxe","hunting_spear","dragon_fang","dual_blades","scythe","dragon_slayer","short_bow",
+            "long_bow","crossbow","elf_bow","eagle_bow","hunt_bow","musket","rifle","laser_rifle","plasma_caster",
+            "wood_staff","mage_staff","storm_staff","archmage_staff","armor1","armor2","cloth_robe","studded_leather",
+            "chain_mail","iron_plate","energy_shield","gold_armor","dragon_scale","mithril_mail","shadow_cloak",
+            "berserker_hide","elf_robe","bone_armor","obsidian_shell","holy_vestment","emperor_robe","leather_cap",
+            "archer_cap","iron_helm","horned_helm","wizard_hat","knight_helm","warlock_hood","viking_helm","skull_mask",
+            "gold_crown","dragon_skull","crown_kings","round_shield","wood_shield","kite_shield","spiked_shield",
+            "iron_shield","tower_shield","gold_shield","holy_aegis","mithril_shield","dragon_shield","worn_sandal",
+            "leather_boots","boots","mountain_boots","war_greaves","iron_boots","swift_greaves","lava_boots",
+            "winged_sandals","phantom_boots","copper_ring","silver_ring","ring","gold_ring","ruby_ring","sapphire_ring",
+            "ring_power","ring_fire","ring_ice","ring_sage","ring_void","ring_immortal","lucky_charm","wolf_fang",
+            "bear_claw","totem_stone","eagle_eye","vampire_fang","holy_symbol","moon_pendant","demon_heart",
+            "phoenix_feather","doom_amulet","god_shard",
+        };
+        private static readonly double[] RarityW = { 46, 26, 15, 9, 4 };                                                    // items.ts L48-54 RARITY_META.w（普通/精良/稀有/史诗/传说）
+
+        private static string RollItemE(WbWorld w, int minRarity, int maxRarity)
+        {
+            double total = 0;                                                                                               // L229
+            var pool = new System.Collections.Generic.List<(WbItemDef k, double w)>();                                       // L231
+            foreach (string kk in AllItemKeys)                                                                               // L230（for..of ALL_ITEMS）
+            {
+                WbItemDef def = ItemDefs[kk];
+                if (def.rarity < minRarity || def.rarity > maxRarity) continue;                                              // L232
+                double ww = RarityW[def.rarity];                                                                             // L233
+                pool.Add((def, ww));                                                                                         // L234
+                total += ww;                                                                                                 // L235
+            }
+            if (pool.Count == 0) return "sword1";                                                                             // L236-237（空池兜底）
+            double r = w.Rng() * total;                                                                                        // L238
+            for (int i = 0; i < pool.Count; i++) { r -= pool[i].w; if (r <= 0) return pool[i].k.key; }                          // L239
+            return pool[pool.Count - 1].k.key;                                                                                 // L240
+        }
+
+        private static string RollChestItemE(WbWorld w, string tier)                                                         // constants.ts L797-800
+        {
+            // CHEST_TIERS L790-794：chest {0,4} / chest2 {1,4} / chest3 {3,4}；未知 tier → rollItem(rng) 无 opts 默认 {0,4}
+            int mn, mx;
+            if (tier == "chest2") { mn = 1; mx = 4; }
+            else if (tier == "chest3") { mn = 3; mx = 4; }
+            else { mn = 0; mx = 4; }                                                                                           // "chest" 与缺档同支
+            return RollItemE(w, mn, mx);                                                                                       // L799（t ? rollItem(rng, {min,max}) : rollItem(rng)）
         }
 
         // ================= updateBoat L5608-5660（殖民船航海：贪心绕障/超时改向/靠岸登陆） =================

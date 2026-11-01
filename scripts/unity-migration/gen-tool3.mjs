@@ -112,10 +112,16 @@ function mkUnit(eng, o) {
   const u = {
     id: o.id, race: o.race ?? 0, civ: o.civ ?? -1, x: o.x, y: o.y, tx: o.tx ?? o.x, ty: o.ty ?? o.y,
     hp: o.hp ?? 10, maxHp: o.maxHp ?? o.hp ?? 10, dmg: 1, speed: o.speed ?? 1, age: o.age ?? 0, maxAge: o.maxAge ?? 9999, kills: 0,
-    cd: 0, trait: o.trait ?? 0, job: o.job ?? 0, king: 0, infected: o.infected ?? false, flip: 0,
+    cd: 0, trait: o.trait ?? 0, job: o.job ?? 0, king: o.king ? 1 : 0, infected: o.infected ?? false, flip: 0,
     name: `u${o.id}`, hurt: o.hurt ?? 0, breath: 0, parity: 0, dead: o.dead ?? 0,
     ...(o.grab !== undefined ? { grab: o.grab } : {}),   // M-U21：grab 直写面（999 常驻冻结——unitsTick 窗口内零 AI 触达，grabbedTick 零掷早退）
-    fam: null, fgn: null, gene: o.gene ? { s: o.gene.s, d: o.gene.d, h: o.gene.h, r: o.gene.r } : null, army: null,   // M-U19：gene 深拷贝（spec 对象复用 det 双跑——jumpGene 原地改写 u.gene，共享引用即 det 污染）
+    ...(o.wep !== undefined ? { wep: o.wep } : {}),           // M-U22：武器槽直写（reap 掉落 0.35 门消费——undefined ≡ 蓝本缺键）
+    ...(o.rebirths !== undefined ? { rebirths: o.rebirths } : {}),  // M-U22：凤凰涅槃计数（u.rebirths ?? 0 门——0 falsy 亦须直写）
+    ...(o.gen !== undefined ? { gen: o.gen } : {}),           // M-U22：九头蛇世代（u.gen ?? 0 门）
+    ...(o.caravan !== undefined ? { caravan: o.caravan } : {}),     // M-U22：商队直写（reap rel 降温面 (u.caravan ?? 0) > 0）
+    ...(o.food !== undefined ? { food: o.food } : {}),        // M-U22：饥饿直写（scav 80-(p.food ?? 0) 面）
+    fgn: null, gene: o.gene ? { s: o.gene.s, d: o.gene.d, h: o.gene.h, r: o.gene.r } : null, army: null,   // M-U19：gene 深拷贝（spec 对象复用 det 双跑——jumpGene 原地改写 u.gene，共享引用即 det 污染）
+    ...(o.fam !== undefined ? { fam: o.fam } : {}),           // M-U22：家族直写（reap members-- 面——置于固定键后防覆盖）
   };
   eng.units.push(u);
   eng.unitById.set(u.id, u);
@@ -137,6 +143,11 @@ function dumpUnit(u) {
     gene: u.gene ? { s: f64hex(u.gene.s), d: f64hex(u.gene.d), h: f64hex(u.gene.h), r: f64hex(u.gene.r) } : null,
     fam: u.fam ?? null, fgn: u.fgn ?? null,
     breath: u.breath ?? null, parity: u.parity ?? null, kills: u.kills ?? null,
+    ...(u.rebirths !== undefined ? { rebirths: u.rebirths } : {}),  // M-U22：凤凰涅槃计数（条件键——旧场景字节零变化）
+    ...(u.gen !== undefined ? { gen: u.gen } : {}),                 // M-U22：九头蛇世代
+    ...(u.caravan !== undefined ? { caravan: u.caravan } : {}),     // M-U22：商队
+    ...(u.food !== undefined ? { food: u.food } : {}),              // M-U22：饥饿（scav 写面对账）
+    ...(u.wep !== undefined ? { wep: u.wep } : {}),                 // M-U22：武器槽（掉落后清账对账）
   };
 }
 
@@ -170,6 +181,8 @@ function buildScenario(spec) {
   eng.regrow.clear();
   eng.units.length = 0;
   eng.unitById.clear();
+  eng.families.clear();                              // M-U22：家族谱系清零（worldgen newFamily 残留 27 项污染实证——reap members-- 面净化）
+  eng.civs.length = 0;                               // M-U22：civ 清零（同上——civ 夹具瘦注入）
   eng.effects.length = 0;
   eng.worldEvents.length = 0;
   eng.eventSeq = 1;
@@ -210,6 +223,10 @@ function buildScenario(spec) {
   for (const [x, y, v] of spec.variant ?? []) eng.variant[idx(x, y)] = v;
   for (const [x, y, v] of spec.radiate ?? []) { eng.radiate[idx(x, y)] = v; eng.radSet.set(idx(x, y), spec.tickCount + 500); }
   for (const uo of spec.units ?? []) mkUnit(eng, uo);
+  // M-U22：civ/family 瘦夹具直写（reap pop--/onKingDeath/members--/rel 降温面——零掷纯写；
+  //   civ 瘦对象仅给本切片消费字段，effectsTick 无 civ 消费面零漂移）
+  for (const c of spec.civs ?? []) eng.civs.push({ ...c });
+  for (const [fid, f] of spec.families ?? []) eng.families.set(fid, { ...f });
 
   // 手术二·快照：直写后/调用前的镜像输入面
   const fixture = {
@@ -228,8 +245,20 @@ function buildScenario(spec) {
       gene: uo.gene ?? null, dead: uo.dead ?? 0, infected: uo.infected ?? false, hurt: uo.hurt ?? 0, trait: uo.trait ?? 0,
       job: uo.job ?? 0,                                     // M-U19：jumpGene JOBS[job] 消费面（civ jd 乘数支）
       ...(uo.grab !== undefined ? { grab: uo.grab } : {}),  // M-U21：grab 直写面（999 常驻冻结）
+      ...(uo.wep !== undefined ? { wep: uo.wep } : {}),           // M-U22：武器槽（reap 掉落门——条件键旧场景零变化）
+      ...(uo.fam !== undefined ? { fam: uo.fam } : {}),           // M-U22：家族
+      ...(uo.king !== undefined ? { king: uo.king } : {}),        // M-U22：王位
+      ...(uo.rebirths !== undefined ? { rebirths: uo.rebirths } : {}),  // M-U22：凤凰涅槃
+      ...(uo.gen !== undefined ? { gen: uo.gen } : {}),           // M-U22：九头蛇世代
+      ...(uo.caravan !== undefined ? { caravan: uo.caravan } : {}),     // M-U22：商队
+      ...(uo.food !== undefined ? { food: uo.food } : {}),        // M-U22：饥饿
+      ...(uo.civ !== undefined ? { civ: uo.civ } : {}),           // M-U22：civ（pop-- 面——civ 夹具直写消费）
     })),
     yearF0: eng.yearF,
+    unitSeq0: eng.unitSeq,                             // M-U22：unitSeq 起点快照（worldgen 期野生动物 spawn 推进——reap-hydra 幼蛇 id 604/605 位级锚；C# ReplayScenario 裸构造 unitSeq=1 缺口）
+    // M-U22：civ/family 瘦夹具快照（reapDump 场景条件键——pop--/onKingDeath/members--/rel 消费面 C# 重放注入）
+    ...(spec.civs ? { civs0: spec.civs } : {}),
+    ...(spec.families ? { families0: spec.families.map(([id, f]) => ({ id, ...f })) } : {}),
   };
 
   // 步进快照（calls 与 ticks 统一面——applyTool 紧凑 / effectsTick 全列）
@@ -317,6 +346,18 @@ function buildScenario(spec) {
     events: eng.worldEvents.map(dumpEvent),
     units: eng.units.map(dumpUnit),
     toasts,
+    // M-U22：reapDump 条件扩展面（unitsReap 收尸域终态——items/ash/贴花/civ/family/rel 六域；
+    //   条件键不进旧 18 场景 JSON——字节零变化）
+    ...(spec.reapDump ? {
+      itemSeq: eng.itemSeq,
+      items: eng.items.map((it) => ({ id: it.id, kind: it.kind, x: f64hex(it.x), y: f64hex(it.y) })),
+      ashes: eng.phoenixAshes.map((a) => ({ x: f64hex(a.x), y: f64hex(a.y), t: a.t, rebirths: a.rebirths })),
+      corpses: eng.corpses.map((c) => ({ x: f64hex(c.x), y: f64hex(c.y), age: c.age, stone: c.stone ? 1 : 0, undead: c.undead ? 1 : 0 })),
+      blood: eng.blood.map((b) => ({ x: f64hex(b.x), y: f64hex(b.y), age: b.age, seed: b.seed, big: b.big ? 1 : 0 })),
+      civs: eng.civs.map((c) => ({ id: c.id, name: c.name, pop: c.pop, stability: f64hex(c.stability), kingId: c.kingId ?? null })),
+      families: [...eng.families.entries()].map(([fid, f]) => ({ id: fid, members: f.members })),
+      rel: [...eng.rel.entries()].map(([k, v]) => ({ k, v: f64hex(v) })),
+    } : {}),
   };
 }
 
@@ -668,11 +709,145 @@ const specs = [
     sanity: (eng) => eng.effects.some((e) => e.kind === 'spawn')
       && eng.unitById.get(920).grab > 0,
   },
+
+  // ---- S19 reap-basic（M-U22 unitsReap L3321-3472 常规收尸全链：skull fx + 血泊尸骸 +
+  //        肉掉落 0.85 门 + 武器缴获 0.35 门 + civ pop--/family members-- + bumpWild +
+  //        unitById.delete + pop-swap——三 dead 夹具逆序环）----
+  //   蓝本支序（每单位）：zombie 门短路零掷（infected false）→ king false → PHOENIX/HYDRA
+  //   skip → collectUnitDead 挂账 no-op → civ pop-- → family members-- → fx skull 46（2 掷）
+  //   → 商队 0 → 尸骸残留（SANDWORM 才 skip——corpse 零掷 + blood seed 1 掷）→ 肉门 0.85
+  //   （civ skip 零掷）→ 腐食门 isHerbivore（wolf/pig 均非 herbivore——SHEEP 才触发）→
+  //   items<170 三连掉落门（wep 0.35 / boss 0.5 / wild 0.05）→ delete+bumpWild+pop-swap。
+  {
+    key: 'reap-basic', baseSeed: BASE + 19, seed: 0x000000E5, tickCount: 1000, fill: 'grass',   // 种子标定 229（probe：wep 0.35 HIT + meat HIT + 三 blood）
+    units: [
+      { id: 930, race: R.HUMAN, x: 100, y: 60, hp: 50, maxHp: 50, civ: 0, wep: 'sword1', fam: 1 },
+      { id: 931, race: R.WOLF, x: 104, y: 60, hp: 34, maxHp: 34 },
+      { id: 932, race: R.PIG, x: 108, y: 60, hp: 12, maxHp: 12 },
+    ].map((u) => ({ ...u, dead: 1 })),
+    civs: [{ id: 0, name: '国A', colorHex: '#d9a066', alive: true, stability: 70, kingId: null, kingName: null, pop: 10 }],
+    families: [[1, { members: 3 }]],
+    ticks: 1, stepUnits: true, reapDump: true,
+    sanity: (eng) => eng.units.length === 0 && eng.civs[0].pop === 9
+      && eng.families.get(1).members === 2
+      && eng.items.some((it) => it.kind === 'sword1')
+      && eng.items.some((it) => it.kind === 'meat')
+      && eng.corpses.length === 3 && eng.blood.length === 3,
+  },
+
+  // ---- S20 reap-zombie（M-U22 僵尸病毒尸变 L3325-3329：infected + zombieVirus 法则 +
+  //        非 undead/aquatic/flying + rng<0.35 门 → zombify L4323 原地转种 continue——
+  //        MISS 支走常规收尸对照；种子标定 u941（逆序先掷）MISS ≥0.35 / u940 HIT <0.35）----
+  {
+    key: 'reap-zombie', baseSeed: BASE + 20, seed: 0x000000CB, tickCount: 1000, fill: 'grass',   // 种子标定 203（u941 逆序先摊 MISS ≥0.35 → 常规收尸；u940 HIT <0.35 → zombify）
+    units: [
+      { id: 940, race: R.HUMAN, x: 100, y: 60, hp: 50, maxHp: 50, dead: 1, infected: true },
+      { id: 941, race: R.SHEEP, x: 104, y: 60, hp: 16, maxHp: 16, dead: 1, infected: true },
+    ],
+    ticks: 1, stepUnits: true, reapDump: true,
+    sanity: (eng) => {
+      const z = eng.unitById.get(940);
+      return z && z.race === R.ZOMBIE && z.dead === false && z.maxHp === 46 && z.hp === 40
+        && z.infected === false && z.speed === 0.05 && !eng.unitById.get(941)
+        && eng.effects.some((e) => e.kind === 'spawn');
+    },
+  },
+
+  // ---- S21 reap-king（M-U22 王权驾崩 L3331-3332 → onKingDeath L1675-1686：kingId -1 +
+  //        stability 52 + 纪事 + toast danger——国王照常走常规收尸（pop-- 不 repeat））----
+  {
+    key: 'reap-king', baseSeed: BASE + 21, seed: 0x000000C8, tickCount: 1000, fill: 'grass',   // 种子标定 200（civ 三连掉落门全 skip——draws 3 = skull fx 2 + blood seed 1）
+    units: [{ id: 950, race: R.HUMAN, x: 100, y: 60, hp: 50, maxHp: 50, civ: 0, king: 1, dead: 1 }],
+    civs: [{ id: 0, name: '国A', colorHex: '#d9a066', alive: true, stability: 70, kingId: 950, kingName: '王甲', pop: 10 }],
+    ticks: 1, stepUnits: true, reapDump: true,
+    sanity: (eng, toasts) => eng.civs[0].kingId === -1 && eng.civs[0].stability === 52
+      && eng.civs[0].pop === 9 && eng.worldEvents.some((e) => e.kind === 'king')
+      && toasts.some((t) => t.tone === 'danger'),
+  },
+
+  // ---- S22 reap-phoenix（M-U22 凤凰涅槃 L3334-3348：rebirths<3 → ash push（ashTtl 240
+  //        非冬 / season 3 → round(240*1.5)=360）+ 纪事 + smoke fx + delete+bumpWild+pop-swap
+  //        continue（无 skull 无血泊）；rebirths>=3 火种熄灭纪事 → 落常规收尸对照。
+  //        PhoenixAshTick 消费面（L13018）挂账凤凰重生切片——push 面字段只加）----
+  {
+    key: 'reap-phoenix', baseSeed: BASE + 22, seed: 0x000000C8, tickCount: 1000, fill: 'grass',   // 种子标定 200（ash push 面 + 熙灭常规收尸对照——draws 14）
+    units: [
+      { id: 960, race: R.PHOENIX, x: 100, y: 60, hp: 200, maxHp: 200, dead: 1, rebirths: 0 },
+      { id: 961, race: R.PHOENIX, x: 106, y: 60, hp: 200, maxHp: 200, dead: 1, rebirths: 3 },
+    ],
+    ticks: 1, stepUnits: true, reapDump: true,
+    sanity: (eng) => eng.phoenixAshes.length === 1
+      && eng.phoenixAshes[0].t === 240 && eng.phoenixAshes[0].rebirths === 1
+      && eng.phoenixAshes[0].x === 100 && eng.phoenixAshes[0].y === 60
+      && !eng.unitById.get(960)
+      && eng.worldEvents.filter((e) => e.kind === 'phoenix').length === 2,
+  },
+
+  // ---- S23 reap-hydra（M-U22 九头蛇斩首分裂 L3352-3391：gen<2 + seared 门（fire>0 ||
+  //        terrain LAVA）→ 双幼蛇 spawnUnit silent（-1.3,0.5)/(1.3,-0.5) + gen+1 +
+  //        maxHp round(46*0.6)=28 + 纪事 born.length 文案 + smoke/blood fx + shake 3 +
+  //        delete+bumpWild+pop-swap continue；gen>=2 真终焉纪事；seared 烈焰烧灼纪事——
+  //        u972 站 LAVA（fire 夹具会被 fireTick 蔓延——LAVA 静态位面））----
+  {
+    key: 'reap-hydra', baseSeed: BASE + 23, seed: 0x00000120, tickCount: 1000, fill: 'grass',
+    terrain: [[112, 60, T.LAVA]],
+    units: [
+      { id: 970, race: R.HYDRA, x: 100, y: 60, hp: 46, maxHp: 46, dead: 1, gen: 0 },
+      { id: 971, race: R.HYDRA, x: 106, y: 60, hp: 46, maxHp: 46, dead: 1, gen: 2 },
+      { id: 972, race: R.HYDRA, x: 112, y: 60, hp: 46, maxHp: 46, dead: 1, gen: 0 },
+    ],
+    ticks: 1, stepUnits: true, reapDump: true,
+    sanity: (eng) => eng.worldEvents.some((e) => e.kind === 'hydra' && e.text.includes('萌发出 2 条'))
+      && eng.worldEvents.some((e) => e.kind === 'hydra' && e.text.includes('最后一颗头颅'))
+      && eng.worldEvents.some((e) => e.kind === 'hydra' && e.text.includes('烈焰烧灼'))
+      && eng.shake >= 3
+      && eng.unitById.get(970) === undefined && eng.unitById.get(971) === undefined && eng.unitById.get(972) === undefined
+      && eng.units.length === 2
+      && eng.units.every((u) => u.race === R.HYDRA && u.gen === 1 && u.maxHp === 300 && u.hp === 300),  // 幼蛇 maxHp=round(500*0.6)=300（RACES.HYDRA.hp=500 基数——L192）
+  },
+
+  // ---- S24 reap-loot（M-U22 掉落链 + 腐食回充 + 商队降温：TROLL boss 0.5 门 chest2
+  //        rollChestItem→rollItem（ALL_ITEMS rarity 1-4 权重池 1 掷）+ loot 纪事；
+  //        wolf wep 0.35 门 HIT → dropItem(wep)；SHEEP 0.05 门 MISS；scav L3427-3443
+  //        isHerbivore 死者 r=6 内最饿捕食者 food += 55+round(maxHp*0.5)（u983 maxHp12 →
+  //        u984 food 30+55+6=91）；caravan 支 L3400-3406 rel -6 + trade 纪事。
+  //        逆序环序：u985 先（rel）→ u984 活跳过 → u983 scav → u982 → u981 → u980）----
+  {
+    key: 'reap-loot', baseSeed: BASE + 24, seed: 0x000000CF, tickCount: 1000, fill: 'grass',   // 种子标定 207（boss 0.5 HIT + wep 0.35 HIT + 0.05 双 MISS + scav 91）
+    units: [
+      { id: 980, race: R.TROLL, x: 100, y: 60, hp: 120, maxHp: 120, dead: 1 },
+      { id: 981, race: R.WOLF, x: 106, y: 60, hp: 34, maxHp: 34, dead: 1, wep: 'axe1' },
+      { id: 982, race: R.SHEEP, x: 110, y: 60, hp: 12, maxHp: 12, dead: 1 },
+      { id: 983, race: R.SHEEP, x: 101.5, y: 60.5, hp: 12, maxHp: 12, dead: 1 },
+      { id: 984, race: R.WOLF, x: 102, y: 60, hp: 40, maxHp: 40, food: 30 },
+      { id: 985, race: R.HUMAN, x: 116, y: 60, hp: 50, maxHp: 50, civ: 0, dead: 1, caravan: 1 },
+    ],
+    civs: [
+      { id: 0, name: '国A', colorHex: '#d9a066', alive: true, stability: 70, kingId: null, kingName: null, pop: 10 },
+      { id: 1, name: '国B', colorHex: '#9ad06a', alive: true, stability: 70, kingId: null, kingName: null, pop: 8 },
+    ],
+    ticks: 1, stepUnits: true, reapDump: true,
+    sanity: (eng) => {
+      const dropped = eng.items.map((it) => it.kind);
+      return dropped.includes('axe1')
+        && dropped.some((k) => k !== 'meat' && k !== 'axe1')   // chest2 rollChestItem 掉落
+        && eng.worldEvents.some((e) => e.kind === 'loot')
+        && eng.worldEvents.some((e) => e.kind === 'trade')
+        && eng.rel.get('0-1') === -6
+        && eng.unitById.get(984).food === 91                    // scav：30+55+round(12*0.5)
+        && eng.civs[0].pop === 9
+        && eng.civs[1].pop === 8;
+    },
+  },
 ];
 
-// ---- det 双跑 + 双写 ----
+// ---- det 双跑 + 双写（M-U22：TOOL3_ONLY/TOOL3_SEED 单场景种子扫描钩子——scan-nature2-seed 先例） ----
+const ONLY = process.env.TOOL3_ONLY || '';
+const SEED_OV = process.env.TOOL3_SEED || '';
+const specsRun = ONLY ? specs.filter((s) => s.key === ONLY) : specs;
+if (SEED_OV) { const sv = parseInt(SEED_OV, 16) >>> 0; for (const s of specsRun) s.seed = sv; }
 function runAll() {
-  return specs.map((sp) => buildScenario(sp));
+  return specsRun.map((sp) => buildScenario(sp));
 }
 const det1 = runAll();
 const det2 = runAll();
@@ -684,9 +859,14 @@ for (let i = 0; i < det1.length; i++) {
     || JSON.stringify(a.fx) !== JSON.stringify(b.fx)
     || JSON.stringify(a.events) !== JSON.stringify(b.events)
     || JSON.stringify(a.toasts) !== JSON.stringify(b.toasts))
-    throw new Error(`det 失败 ${specs[i].key}`);
+    throw new Error(`det 失败 ${specsRun[i].key}`);
 }
-console.log('det 双跑字节级一致:', specs.map((s) => s.key).join(' '));
+console.log('det 双跑字节级一致:', specsRun.map((s) => s.key).join(' '));
+if (ONLY) {
+  const s0 = det1[0];
+  console.log('ONLY-DIAG', JSON.stringify({ key: s0.key, draws: s0.totalDraws, items: s0.items || null, corpsesN: s0.corpses ? s0.corpses.length : 'n/a', bloodN: s0.blood ? s0.blood.length : 'n/a', ev: s0.events.map((e) => e.kind), fx: s0.fx.map((f) => f.kind), units: s0.units.map((u) => ({ id: u.id, race: u.race, hp: u.hp, maxHp: u.maxHp, dead: u.dead, gen: u.gen ?? null, food: u.food ?? null })) }));
+  process.exit(0);   // 扫描模式不落盘
+}
 
 const scenarios = specs.map((sp, i) => det1[i]);
 const out = {
@@ -695,8 +875,8 @@ const out = {
     protocol: 'GameEngine 构造 + 手术式夹具直写（fill 面 grass + terrain/fire/radiate/units 瘦直写 + brush/五成就计数直写）+ rngA 尾置清零起流 + calls 直调 / ticks 步进（tickCount++ 头 + effectsTick——主循环 L2508 序）混合链，每步统一快照（applyTool 紧凑 / effectsTick 全列 fx+units+dirty）',
     rng: 'eng.rngA 单流；fx 恒 2 掷（seed+dir）；cap 门 filter 快照零掷；volcano 引燃圈 1 掷/点燃 + 消费端熔岩弹 age%14 双掷 + 外溢 age%6 双掷；wrath/typhoon 消费端 lightning（n=1：fx 2+中心点燃 1+四邻 4+邻格点燃支）；holystorm 恒真门 1.2 掷位保持 + 采样双掷 + 单位门掷（审判 0.2/缓愈 0.08）；bless/curse 0.4 门 + love 0.5 门 1 掷/单位 + fx 2 掷；teleport randomLandSpot 2 掷/尝试；mutate：civ 0.3 门 1 掷 + rerollTrait rollTrait 1 掷 + 0.25 门 1 掷 + jumpGene 4 门掷/命中维值掷；wild 直 jumpGene 4 门掷/命中维值掷〔baseGene 空表零掷〕；命中单位 fx 2 掷（门 miss 亦掷——L10901 fx 在 if/else 外）；mulberry 纯数学反解 total',
     math: 'Math.hypot（volcano 锥体整数极距 / area 神力单位环〔含 mutate L10891〕 / plasma dist=hypot(7,9) / annihilate dist=hypot(8,11)——bun 原生 fdlibm；C# FdHypot 位精确件对账）+ Math.round（plasma ttl=round(dist*1.5) + mutate rerollTrait/jumpGene maxHp round 域——JS .5 上取整；C# JsRound 禁银行家舍入）+ Math.max/min 铛位（mutate 基因 0.5/2 恰等面 + maxHp≥1）+ 纯算术域',
-    domains: ['carveRiver L12312-12420（M-U20：applyTool case river runtime 语义——BFS dist 场零掷 + 加权随机选路 1 掷/步 + 刻河/灌溉 setTerrain 级联 + carveLake 湖支 + fx spawn/toast/addEvent 尾面）', 'mutateArea L10888-10906（M-U19：civ 0.3 reroll/0.25 jumpGene 0.12 + wild baseGene/jumpGene 0.2 + fx 每命中单位 2 掷〔双门双 miss 亦掷——fx 在 if/else 外〕）', 'rerollTrait L11037-11057（旧乘数卸除/新乘数上装——maxHp round 域 + hp min/max 双钳不对称〔old 支 max(1,·) / nw 支无〕）', 'jumpGene L11085-11103（四维 0.6 门 + (rng-0.42)*2*amount 重铸 + 0.5/2 铛位 + RACES×TRAITS×JOBS 属性重算）', 'rollTrait L1467-1470（TRAITS keys 12 预设插入序随机抽）', 'baseGene L11029-11031（speciesBase 空表分支——零掷恒 {1,1,1,1}）', 'acidRain L10737-10745（cap 6 + fx acid）', 'volcano L10746-10777（锥体 hypot≤2.3 + 山口/十字/3x3 熔岩 + 引燃圈 3.5*pw + shake 6+2pw + event 双文本）', 'tsunami L10780-10785（r*2.5 钳 [6,30]）', 'blizzard L10788-10795（cap 4 + max(5,r) 钳 [5,15]）', 'meteorShower L10798-10813（clamp [1,24] + rng 散布 + x0/y0/quiet 衍生弹 + statMeteorShowers）', 'locust L10815-10822（cap 3 + r 钳 [3,10]）', 'drought L10823-10830（cap 4）', 'rainCloud L10834-10843（cap 6 + touchMeta 宿主挂点）', 'blessArea L10845-10859（hp+50%max + bless 600 + 驱瘟 + 0.4 fx 门）', 'curseArea L10861-10872（curse 500）', 'loveArea L10874-10886（repro 门 + fert 500）', 'teleportArea L10908-10924（randomLandSpot 40 试 + spark 双发）', 'wrathStorm L10926-10934（cap 3）', 'holyStorm L10936-10945（cap 3）', 'plasmaCannon L10947-10957（x0/y0 钳 + ttl round 域 + dmg + statPlasmas）', 'annihilationLight L10959-10969（colorHex #ff4d4d + statAnnihilations）', 'sandstorm L10972-10979（cap 3）', 'typhoon L10980-10987（cap 3）', 'sinkhole L10988-10996（shake 7）', 'iceAge L10999-11008（cap 2 + shake 4）', 'famineCloud L11030-11036（cap 3）', 'blackhole L11017-11023（cap 2 + statBlackholes）', 'meteor L12277-12282（x0=x+20/y0=y-34）', 'randomLandSpot L11033-11043（40 试六地形门）', 'applyTool case L13342-13455（meteor 内联抖动 + 22 委派）', 'effectsTick 消费端四支：volcano L9851-9876 / wrath L10023-10029 / holystorm L10030-10075 / typhoon L10091-10119'],
-    deferred: ['finger→beginGrab L5293（抓取交互域切片）', 'chest/ITEM_TOOL/cre:/RACE_TOOL 等其余 applyTool case（各域切片挂账不变）'],
+    domains: ['unitsReap L3321-3472（M-U22：僵尸尸变 0.35 门→zombify continue / 王权驾崩→onKingDeath / 凤凰涅槃 ash push ashTtl 240〔season3 round×1.5〕/ 九头蛇 gen<2 双幼蛇 spawnUnit silent maxHp round×0.6 + seared 门 fire>0||LAVA / scav r=6 最饿捕食者 food+=55+round(maxHp*0.5) / 商队 rel -6 + trade 纪事 / skull fx + 血泊尸骸〔SANDWORM skip〕/ 肉 0.85 + wep 0.35 / boss 0.5 / wild 0.05 三连掉落门 / delete+bumpWild+pop-swap 逆序环）', 'onKingDeath L1675-1686（kingId -1 + stability 52 + 纪事 + toast danger）', 'dropItem L5190-5213（MAX_ITEMS 门 + isWater→findLandNear(5) + itemSeq + fx spawn 2 掷 + onSound place）', 'dropMeat L5385-5402（cnt 钳 [1,3] + items cap-6 门 + 2 掷/肉 + isWater→findLandNear(3)）', 'rollChestItem constants.ts L797-800（CHEST_TIERS min/max → rollItem）', 'rollItem items.ts L226-240（ALL_ITEMS rarity 窗口过滤 + RARITY_META w 权重池 + r-=w 循环——1 掷）', 'carveRiver L12312-12420（M-U20：applyTool case river runtime 语义——BFS dist 场零掷 + 加权随机选路 1 掷/步 + 刻河/灌溉 setTerrain 级联 + carveLake 湖支 + fx spawn/toast/addEvent 尾面）', 'mutateArea L10888-10906（M-U19：civ 0.3 reroll/0.25 jumpGene 0.12 + wild baseGene/jumpGene 0.2 + fx 每命中单位 2 掷〔双门双 miss 亦掷——fx 在 if/else 外〕）', 'rerollTrait L11037-11057（旧乘数卸除/新乘数上装——maxHp round 域 + hp min/max 双钳不对称〔old 支 max(1,·) / nw 支无〕）', 'jumpGene L11085-11103（四维 0.6 门 + (rng-0.42)*2*amount 重铸 + 0.5/2 铛位 + RACES×TRAITS×JOBS 属性重算）', 'rollTrait L1467-1470（TRAITS keys 12 预设插入序随机抽）', 'baseGene L11029-11031（speciesBase 空表分支——零掷恒 {1,1,1,1}）', 'acidRain L10737-10745（cap 6 + fx acid）', 'volcano L10746-10777（锥体 hypot≤2.3 + 山口/十字/3x3 熔岩 + 引燃圈 3.5*pw + shake 6+2pw + event 双文本）', 'tsunami L10780-10785（r*2.5 钳 [6,30]）', 'blizzard L10788-10795（cap 4 + max(5,r) 钳 [5,15]）', 'meteorShower L10798-10813（clamp [1,24] + rng 散布 + x0/y0/quiet 衍生弹 + statMeteorShowers）', 'locust L10815-10822（cap 3 + r 钳 [3,10]）', 'drought L10823-10830（cap 4）', 'rainCloud L10834-10843（cap 6 + touchMeta 宿主挂点）', 'blessArea L10845-10859（hp+50%max + bless 600 + 驱瘟 + 0.4 fx 门）', 'curseArea L10861-10872（curse 500）', 'loveArea L10874-10886（repro 门 + fert 500）', 'teleportArea L10908-10924（randomLandSpot 40 试 + spark 双发）', 'wrathStorm L10926-10934（cap 3）', 'holyStorm L10936-10945（cap 3）', 'plasmaCannon L10947-10957（x0/y0 钳 + ttl round 域 + dmg + statPlasmas）', 'annihilationLight L10959-10969（colorHex #ff4d4d + statAnnihilations）', 'sandstorm L10972-10979（cap 3）', 'typhoon L10980-10987（cap 3）', 'sinkhole L10988-10996（shake 7）', 'iceAge L10999-11008（cap 2 + shake 4）', 'famineCloud L11030-11036（cap 3）', 'blackhole L11017-11023（cap 2 + statBlackholes）', 'meteor L12277-12282（x0=x+20/y0=y-34）', 'randomLandSpot L11033-11043（40 试六地形门）', 'applyTool case L13342-13455（meteor 内联抖动 + 22 委派）', 'effectsTick 消费端四支：volcano L9851-9876 / wrath L10023-10029 / holystorm L10030-10075 / typhoon L10091-10119'],
+    deferred: ['PhoenixAshTick L13018 消费面（凤凰重生 spawnUnit 链——ash push 已覆盖，重生倒计时挂账）', 'collectUnitDead Task 38 在线采集（引擎 no-op 挂账）', 'chest/ITEM_TOOL/cre:/RACE_TOOL 等其余 applyTool case（各域切片挂账不变）', 'SHEEP AI 游走链 units 域切片（L4213 恒掷门——M-U21 挂账沿用）'],
     scenarioCount: scenarios.length,
   },
   scenarios,
