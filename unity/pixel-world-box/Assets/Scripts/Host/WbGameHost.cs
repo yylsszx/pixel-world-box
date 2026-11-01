@@ -138,6 +138,11 @@ namespace PixelWorldBox.Host
             Orch.D[PixelWorldBox.Wb.WbTickOrch.ECO] = () => PixelWorldBox.Wb.WbBailRelay.EcoTick(World);         // M-U12：ecoTick 已译域真调（零场安全：空 units 时 grass 重算+播报仍走——蓝本 L12096 无早退门，机械保持）
         }
 
+        /// <summary>applyTool 大分发器宿主门（M-U14 切片一——Unity 输入域后续接位；事件驱动非 tick 槽。
+        ///   调后渲染面由 SyncTerrainDiffs 差分桥自动标脏——setTerrain 级联/variant/owner 面全消费）</summary>
+        public void ApplyTool(string toolId, double wx, double wy, System.Collections.Generic.Dictionary<string, double> parms = null)
+            => PixelWorldBox.Wb.WbBailRelay.ApplyTool(World, toolId, wx, wy, parms);   // engine.ts L13230（WbBail M-U14 全译件）
+
         void EnsureScene()
         {
             if (rig == null) rig = Camera.main != null

@@ -3698,6 +3698,166 @@ namespace PixelWorldBox.Wb
             }
         }
 
+        // ================= M-U14 applyTool 大分发器切片一（engine.ts L13230-13420 机械翻译） =================
+        // 切片边界（Task 170 台账推荐口径）：守卫 L13233 + 骨架 L13234-13251（pv 参数提取 + r/rP
+        //   radius-vs-brush 笔刷回退）+ 内联 case：raise L13298-13310 + 九地形笔刷 L13311-13327
+        //   （forest 双 continue 门）+ fire L13328-13336（ignite 逐格）+ 委派 case（callee 已译件）：
+        //   oasis L13355 / smooth L13357 / rough L13359 / plague L13361 / flood L13363（rP ?? 5）/ heal
+        //   L13385 / kill L13387 / boom L13389（rP → JS 默认参 2.4）。
+        // 挂账（switch 注记位保蓝本序，随域切片接入）：chest/chest2/chest3 L13253 + ITEM_TOOL L13259 +
+        //   cre: L13264 + RACE_TOOL L13278 四前置支（物品/造物/种族域）+ river L13353（callee
+        //   WbWorldgen.CarveRiver 在位但内联 const Brush=3 世界生成期常量——需 brush 参化后随 M-U15
+        //   切片二接入）+ nuke L13352（callee Nuke 在位——切片二）+ lightning/tornado/earthquake/
+        //   meteor/finger/acidrain/volcano/tsunami/blizzard/meteorshower/locust/drought/rain/bless/
+        //   curse/love/mutate/teleport/wrath/holystorm/plasmacannon/annihilate/sandstorm/typhoon/
+        //   sinkhole/iceage/famine/blackhole 28 case（callee 未译随各域）。
+        // 守卫数据面：TOOL_BY_ID 键集 210（constants.ts L757 TOOLS 86 + item_* 117 + legacy 别名 7——
+        //   bun dump 实测键序；ToolDef 本体挂账 UI/工具域切片）+ parseCreationTool creations.ts L243-245。
+        // 消费面：SetTerrain 全级联（L1959 译件）/ IgniteE（L1178 fire 域译件）/ FloodArea（L3280 M-U11）/
+        //   七函数（L3496-3700 M-U13）/ w.brush（WbWorld L499 M-U13 只加字段——r 回退消费面点亮）。
+        // 数学面：Math.hypot → FdHypot（raise/九笔刷/fire 格距——bun fdlibm 口径，无 +0.5 偏移）。
+        // 黄金: gen-tool.mjs 12 场景（tool.json 73.1KB md5 ec3ad980 双写）+ tool-transcript.mjs 12/12
+        //   （红证：TOOL_RED=forest-skip / ignite-gate → FAIL → 复绿）+ verify 段 37 + Test46 四直测。
+        // TOOL_BY_ID 存在性键集（constants.ts L757 + L785-786 legacy——逐值镜像，存在性查询专用）
+        static readonly System.Collections.Generic.HashSet<string> ToolExists = new System.Collections.Generic.HashSet<string>(new[]
+        {
+            "human","elf","dwarf","orc","bandit","skeleton","mage","demon","lizard","goblin","troll","ogre",
+            "whitewalker","vampire","kraken","sandworm","basilisk","angel","phoenix","ent","lich","hydra",
+            "sheep","wolf","bear","dragon","zombie","deer","penguin","camel","scorpion","snake","snowwolf",
+            "chicken","pig","rabbit","fox","fish","crab","turtle","shark",
+            "raise","water","sand","grass","forest","mountain","snow","ice","swamp","lava",
+            "river","oasis","smooth","rough","fire","lightning","tornado","earthquake","meteor","nuke",
+            "plague","acidrain","volcano","tsunami","blizzard","meteorshower","locust","drought",
+            "sandstorm","typhoon","sinkhole","iceage","famine","blackhole","flood","heal","kill","boom",
+            "rain","bless","curse","love","mutate","teleport","wrath","finger","holystorm","plasmacannon",
+            "annihilate","chest","chest2","chest3",
+            "item_sword1","item_sword2","item_sword3","item_wood_club","item_iron_dagger","item_katana",
+            "item_elf_blade","item_flame_sword","item_ice_sword","item_excalibur","item_holy_sword",
+            "item_battle_axe","item_warhammer","item_berserker_axe","item_executioner_axe","item_thunder_hammer",
+            "item_storm_hammer","item_pickaxe","item_hunting_spear","item_dragon_fang","item_dual_blades",
+            "item_scythe","item_dragon_slayer","item_short_bow","item_long_bow","item_crossbow","item_elf_bow",
+            "item_eagle_bow","item_hunt_bow","item_musket","item_rifle","item_laser_rifle","item_plasma_caster",
+            "item_wood_staff","item_mage_staff","item_storm_staff","item_archmage_staff","item_armor1",
+            "item_armor2","item_cloth_robe","item_studded_leather","item_chain_mail","item_iron_plate",
+            "item_energy_shield","item_gold_armor","item_dragon_scale","item_mithril_mail","item_shadow_cloak",
+            "item_berserker_hide","item_elf_robe","item_bone_armor","item_obsidian_shell","item_holy_vestment",
+            "item_emperor_robe","item_leather_cap","item_archer_cap","item_iron_helm","item_horned_helm",
+            "item_wizard_hat","item_knight_helm","item_warlock_hood","item_viking_helm","item_skull_mask",
+            "item_gold_crown","item_dragon_skull","item_crown_kings","item_round_shield","item_wood_shield",
+            "item_kite_shield","item_spiked_shield","item_iron_shield","item_tower_shield","item_gold_shield",
+            "item_holy_aegis","item_mithril_shield","item_dragon_shield","item_worn_sandal","item_leather_boots",
+            "item_boots","item_mountain_boots","item_war_greaves","item_iron_boots","item_swift_greaves",
+            "item_lava_boots","item_winged_sandals","item_phantom_boots","item_copper_ring","item_silver_ring",
+            "item_ring","item_gold_ring","item_ruby_ring","item_sapphire_ring","item_ring_power","item_ring_fire",
+            "item_ring_ice","item_ring_sage","item_ring_void","item_ring_immortal","item_lucky_charm",
+            "item_wolf_fang","item_bear_claw","item_totem_stone","item_eagle_eye","item_vampire_fang",
+            "item_holy_symbol","item_moon_pendant","item_demon_heart","item_phoenix_feather","item_doom_amulet",
+            "item_god_shard","sword1","sword2","sword3","armor1","armor2","boots","ring",
+        });
+
+        /// <summary>parseCreationTool（creations.ts L243-245 机械翻译）：cre: 前缀 → uid，否则 null</summary>
+        static string ParseCreationTool(string toolId)
+        {
+            return toolId.StartsWith("cre:", System.StringComparison.Ordinal) ? toolId.Substring(4) : null;        // L244
+        }
+
+        /// <summary>applyTool 大分发器切片一（L13230；parms=蓝本 params?: Record&lt;string,number&gt;——JSON 数字域 double）</summary>
+        public static void ApplyTool(WbWorld w, string toolId, double wx, double wy, System.Collections.Generic.Dictionary<string, double> parms = null)
+        {
+            if (!ToolExists.Contains(toolId) && ParseCreationTool(toolId) == null) return;                          // L13233（守卫：未知工具 early return——零掷零写）
+            double Pv(string k, double d)                                                                           // L13235-13238（pv 闭包——typeof number + isFinite 双门）
+            {
+                if (parms != null && parms.TryGetValue(k, out double v) && double.IsFinite(v)) return v;            // L13236-13237
+                return d;
+            }
+            double rRaw = Pv("radius", double.NaN);                                                                 // L13239
+            double r = double.IsFinite(rRaw) ? rRaw : w.brush;                                                      // L13240（radius 参数 → this.brush 笔刷回退——w.brush L499 消费面点亮）
+            double? rP = double.IsFinite(rRaw) ? rRaw : (double?)null;                                              // L13241（旧版无 brush 联动工具：未提供用方法默认值）
+            int count = (int)System.Math.Max(1.0, System.Math.Floor(Pv("count", 1.0)));                             // L13242
+            double? countP = parms != null && parms.ContainsKey("count") ? count : (double?)null;                   // L13243（typeof number 门——JSON 数字域恒真）
+            double power = Pv("power", 1.0);                                                                        // L13244
+            double? powerP = parms != null && parms.ContainsKey("power") ? power : (double?)null;                   // L13245
+            int duration = (int)System.Math.Max(20.0, System.Math.Floor(Pv("duration", 0.0)));                      // L13246
+            double? durationP = parms != null && parms.ContainsKey("duration") ? duration : (double?)null;          // L13247
+            // L13253-13257 挂账：chest/chest2/chest3 → dropScattered+dropRandomItem（物品域切片）
+            // L13259-13263 挂账：ITEM_TOOL → dropScattered+dropItem（物品域切片）
+            // L13264-13277 挂账：cre: → getCreation+placeCreation（造物图鉴域切片——ParseCreationTool 已译守卫面）
+            // L13278-13296 挂账：RACE_TOOL → placeRace 散布（种族域切片）
+            switch (toolId)                                                                                         // L13297
+            {
+                case "raise":                                                                                       // L13298-13310
+                {
+                    for (int yy = (int)System.Math.Floor(wy - r); yy <= wy + r; yy++)                                // L13299（双上界 wy+r number 语义——boom L12298 先例）
+                    {
+                        for (int xx = (int)System.Math.Floor(wx - r); xx <= wx + r; xx++)
+                        {
+                            if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                    // L13301
+                            if (WbMath.FdHypot(xx - wx, yy - wy) > r) continue;                                      // L13302（格距无 +0.5 偏移）
+                            int i = yy * WbWorld.W + xx;                                                             // L13303（idx 内联）
+                            byte t = w.terrain[i];                                                                   // L13304
+                            if (t == WbWorld.T_DEEP) SetTerrain(w, i, WbWorld.T_WATER);                              // L13305
+                            else if (t == WbWorld.T_WATER) SetTerrain(w, i, WbWorld.T_SAND);                         // L13306
+                            else if (t == WbWorld.T_SAND || t == WbWorld.T_BURNT) SetTerrain(w, i, WbWorld.T_GRASS); // L13307（SAND|BURNT→GRASS）
+                        }
+                    }
+                    break;
+                }
+                case "water": case "sand": case "grass": case "forest": case "mountain": case "snow": case "lava": case "ice": case "swamp":   // L13311-13327（九笔刷同体 case 标签组）
+                {
+                    var map = new System.Collections.Generic.Dictionary<string, byte>                                // L13312-13314（Record 查表——byte 域 T_*）
+                    {
+                        ["water"] = WbWorld.T_WATER, ["sand"] = WbWorld.T_SAND, ["grass"] = WbWorld.T_GRASS, ["forest"] = WbWorld.T_FOREST,
+                        ["mountain"] = WbWorld.T_MOUNTAIN, ["snow"] = WbWorld.T_SNOW, ["lava"] = WbWorld.T_LAVA, ["ice"] = WbWorld.T_ICE,
+                        ["swamp"] = WbWorld.T_SWAMP,
+                    };
+                    byte target = map[toolId];                                                                       // L13315
+                    for (int yy = (int)System.Math.Floor(wy - r); yy <= wy + r; yy++)                                // L13316
+                    {
+                        for (int xx = (int)System.Math.Floor(wx - r); xx <= wx + r; xx++)
+                        {
+                            if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                    // L13318
+                            if (WbMath.FdHypot(xx - wx, yy - wy) > r) continue;                                      // L13319
+                            int i = yy * WbWorld.W + xx;                                                             // L13320
+                            if (toolId == "forest" && WbWorld.IsWater(w.terrain[i])) continue;                       // L13321（forest water 门）
+                            if (toolId == "forest" && w.terrain[i] == WbWorld.T_MOUNTAIN) continue;                  // L13322（forest mountain 门）
+                            SetTerrain(w, i, target);                                                                // L13323
+                        }
+                    }
+                    break;
+                }
+                case "fire":                                                                                        // L13328-13336
+                {
+                    for (int yy = (int)System.Math.Floor(wy - r); yy <= wy + r; yy++)                                // L13329
+                    {
+                        for (int xx = (int)System.Math.Floor(wx - r); xx <= wx + r; xx++)
+                        {
+                            if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                    // L13331
+                            if (WbMath.FdHypot(xx - wx, yy - wy) > r) continue;                                      // L13332
+                            IgniteE(w, yy * WbWorld.W + xx);                                                         // L13333（ignite L1078 译件——flammable/building 门 + 1 掷/点燃）
+                        }
+                    }
+                    break;
+                }
+                // L13337-13351 挂账：lightning/tornado/earthquake/meteor（callee 未译——随天灾域切片）
+                // L13352 挂账：nuke（callee Nuke L2919 在位——M-U15 切片二随三神力创建函数接入）
+                // L13353 挂账：river（callee WbWorldgen.CarveRiver M-U7k 译件在位——内联 const Brush=3 世界
+                //   生成期常量，玩家路径须 w.brush 参化后接入）
+                case "oasis": CreateOasis(w, wx, wy); break;                                                        // L13355-13356
+                case "smooth": SmoothTerrain(w, wx, wy, r); break;                                                  // L13357-13358
+                case "rough": RoughenTerrain(w, wx, wy, r); break;                                                  // L13359-13360
+                case "plague": PlagueArea(w, wx, wy, System.Math.Max(3.0, r)); break;                               // L13361-13362（max(3,r) 下钳）
+                case "flood": FloodArea(w, wx, wy, rP ?? 5.0); break;                                               // L13363-13364（rP ?? 5）
+                // L13369 挂账：finger → beginGrab（抓取域切片）
+                // L13371-13383 挂账：acidrain/volcano/tsunami/blizzard/meteorshower/locust/drought（callee 未译）
+                case "heal": HealArea(w, wx, wy, r); break;                                                         // L13385-13386
+                case "kill": KillArea(w, wx, wy, r); break;                                                         // L13387-13388
+                case "boom": Boom(w, wx, wy, rP ?? 2.4); break;                                                     // L13389-13390（rP undefined → JS 默认参 2.4）
+                // L13393-13426 挂账：rain/bless/curse/love/mutate/teleport/wrath/holystorm/plasmacannon/
+                //   annihilate/sandstorm/typhoon/sinkhole/iceage/famine/blackhole（callee 未译随各域切片）
+                default: break;                                                                                     // L13427-13428
+            }
+        }
+
         // ================= 敌意判定域（isEnemyFast/isEnemy 机械翻译——M-U7m 扫描域批次二） =================
         // isEnemyFast L2070-2081（桶扫描专用快速通道）：野生 vs 野生命中 LUT（引擎私有缓存随 World 实例——
         // LUT 键仅 race 对，鲨鱼地形分支 L2113 依赖被扫者站位——跨格缓存污染为蓝本既有行为，机械保持）

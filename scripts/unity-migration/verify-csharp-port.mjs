@@ -2124,6 +2124,77 @@ var brushVerifyFail = 0;
   }
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0 && fireVerifyFail === 0 && powerVerifyFail === 0 && rainfloodVerifyFail === 0 && ecoVerifyFail === 0 && brushVerifyFail === 0;
+// 段 37：M-U14 applyTool 大分发器切片一（tool-transcript 镜像 12 场景逐位 + gen det 复跑〔bun——Math.hypot fdlibm 口径〕+ 双写 md5 + 台账）
+var toolVerifyFail = 0;
+{
+  const { execFileSync } = await import('node:child_process');
+  const { createHash } = await import('node:crypto');
+  const { readFileSync } = await import('node:fs');
+  try {
+    execFileSync('bun', [new URL('./tool-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
+    console.log('tool 黄金回放 (tool-transcript 镜像 vs tool.json): PASS (12 场景 applyTool 大分发器每调用步进快照逐位 + 守卫/骨架 r-rP 面 + fireSet/flood/regrow/wet/radSet 序 + variant/radiate md5 + units dump 位级 + events/toasts 事件流)');
+  } catch (e) {
+    toolVerifyFail++;
+    console.error('tool 黄金回放: FAIL');
+    console.error(String(e.stdout ?? '').split('\n').slice(-8).join('\n'));
+  }
+  try {
+    const goldenPath = new URL('./golden/tool.json', import.meta.url).pathname;
+    const { readFile } = await import('node:fs/promises');
+    const h0 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    execFileSync('bun', [new URL('./gen-tool.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
+    const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
+    console.log('tool gen det 复跑 (gen-tool · bun): PASS (12 场景 sanity + GameEngine 真实现 + det 字节级)');
+  } catch (e) {
+    toolVerifyFail++;
+    console.error('tool gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+  try {
+    const g = JSON.parse(readFileSync(new URL('./golden/tool.json', import.meta.url), 'utf8'));
+    const fails = [];
+    const fail = (m) => fails.push(m);
+    if (!Array.isArray(g.scenarios) || g.scenarios.length !== 12) fail('场景数 ≠ 12');
+    const keys = g.scenarios.map((s) => s.key);
+    for (const want of ['guard-unknown', 'raise-stages', 'forest-gates', 'brush-nine-rest', 'fire-ignite', 'smooth-radius', 'flood-rp', 'plague-floor', 'oasis-via-tool', 'heal-kill-via', 'boom-rp', 'mixed-sequence'])
+      if (!keys.includes(want)) fail(`场景 ${want} 缺失`);
+    const s1 = g.scenarios.find((s) => s.key === 'guard-unknown');
+    if (!s1 || s1.totalDraws !== 0 || s1.stepsSnap[0].rngA !== '0b600001' || s1.stepsSnap[0].terrainMd5 === undefined) fail('guard-unknown 守卫签名缺失（零掷 + rngA 起流位证 + 零写）');
+    const s2 = g.scenarios.find((s) => s.key === 'raise-stages');
+    if (!s2 || s2.totalDraws !== 0 || s2.fixture.brush0 !== 4) fail('raise-stages 三段抬升签名缺失（零掷 + brush=4 直写面）');
+    const s3 = g.scenarios.find((s) => s.key === 'forest-gates');
+    if (!s3 || s3.totalDraws !== 0) fail('forest-gates 双 continue 门签名缺失（water/mountain 门零掷）');
+    const s4 = g.scenarios.find((s) => s.key === 'brush-nine-rest');
+    if (!s4 || s4.stepsSnap.length !== 5) fail('brush-nine-rest 五支步进签名缺失（map 查表 + setTerrain 级联）');
+    const s5 = g.scenarios.find((s) => s.key === 'fire-ignite');
+    if (!s5 || s5.totalDraws !== 20 || s5.stepsSnap[0].fireSet.length !== 20) fail('fire-ignite 逐格点燃签名缺失（20 点燃 20 掷 + flammable/building 门）');
+    const s6 = g.scenarios.find((s) => s.key === 'smooth-radius');
+    if (!s6 || s6.totalDraws !== 0 || s6.stepsSnap.length !== 2) fail('smooth-radius radius-vs-brush 签名缺失（零掷双调用）');
+    const s7 = g.scenarios.find((s) => s.key === 'flood-rp');
+    if (!s7 || s7.totalDraws !== 83 || s7.stepsSnap[0].flood.length !== 81 || s7.stepsSnap[0].shake !== 3 || s7.toasts.length !== 1) fail('flood-rp rP??5 签名缺失（81 格 1 掷/格 + tsunami fx + shake=3 + 步二 flood.has 门零掷）');
+    const s8 = g.scenarios.find((s) => s.key === 'plague-floor');
+    if (!s8 || s8.totalDraws !== 0 || s8.units.filter((u) => u.infected === 1).length !== 1) fail('plague-floor max(3,r) 下钳签名缺失（brush=1→3 + immune/undead 豁免 1 染 3 免）');
+    const s9 = g.scenarios.find((s) => s.key === 'oasis-via-tool');
+    if (!s9 || s9.totalDraws !== 76 || s9.toasts.length !== 1 || s9.toasts[0].text !== '荒漠中涌出一泓清泉，绿意环绕' || s9.events.length !== 1) fail('oasis-via-tool 调用面签名缺失（76 掷 + barren 文本 + oasis 纪事）');
+    const s10 = g.scenarios.find((s) => s.key === 'heal-kill-via');
+    if (!s10 || s10.totalDraws !== 2 || s10.units.filter((u) => u.dead === 1).length !== 2 || !s10.units.some((u) => u.id === 812 && u.infected === 1)) fail('heal-kill-via 双委派签名缺失（heal fx 2 掷 + kill 2 处决 + 界外三态保留）');
+    const s11 = g.scenarios.find((s) => s.key === 'boom-rp');
+    if (!s11 || s11.totalDraws !== 6 || s11.shake !== 4 || s11.stepsSnap.length !== 2 || s11.units.filter((u) => u.dead === 1).length !== 2) fail('boom-rp 默认参签名缺失（rP undefined→2.4 + rr=1 下钳 + 恰等不含 + shake=4 + smoke 2 掷）');
+    const s12 = g.scenarios.find((s) => s.key === 'mixed-sequence');
+    if (!s12 || s12.stepsSnap.length !== 6 || s12.totalDraws !== 33) fail('mixed-sequence 六步分发签名缺失（raise→forest→fire→boom→heal→smooth 33 掷）');
+    const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/tool.json', import.meta.url));
+    const gl = readFileSync(new URL('./golden/tool.json', import.meta.url));
+    const md5a = createHash('md5').update(sa).digest('hex');
+    const md5b = createHash('md5').update(gl).digest('hex');
+    if (md5a !== md5b) fail(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
+    if (fails.length > 0) throw new Error(fails.join(' | '));
+    console.log(`tool 台账完备 (12 场景 + 守卫零掷零写 + raise 三段恰等内含 + forest 双门 + 九笔刷五支步进 + fire 20 掷点燃 + smooth radius-vs-brush + flood rP??5 81 格 + plague max(3,r) 豁免 + oasis 76 掷文本 + heal/kill 双委派 + boom rP 默认 2.4/钳位/恰等不含 + 混合六步 33 掷 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  } catch (e) {
+    toolVerifyFail++;
+    console.error('tool 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0 && fireVerifyFail === 0 && powerVerifyFail === 0 && rainfloodVerifyFail === 0 && ecoVerifyFail === 0 && brushVerifyFail === 0 && toolVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);
