@@ -1,10 +1,11 @@
 // ============================================================================
-// verify-tool3-only.mjs —— M-U16 段 39 独立验证（tool3 三件套全逻辑）
+// verify-tool3-only.mjs —— M-U16 段 39 独立验证（tool3 三件套全逻辑；M-U19 扩 14 场景）
 //   背景：完整 verify-csharp-port.mjs（39 段）在 sandbox 后台被进程收割
 //   （army→render 段两次阵亡实证）；旧 38 段由「本轮零引擎/C# 改动 +
 //   Task 172 M-U15 全段 ALL PASS 先例」背书，本脚本独立闭合段 39 逻辑：
-//   ① tool3-transcript 镜像 12/12 ② gen-tool3 det 复跑 md5 零漂移
-//   ③ 黄金签名完备断言 ④ 双写 md5 一致。
+//   ① tool3-transcript 镜像 14/14 ② gen-tool3 det 复跑 md5 零漂移
+//   ③ 黄金签名完备断言 ④ 双写 md5 一致。M-U19：mutate 双场景签名 +
+//   TOOL3_RED=mutate 红证旋钮（禁 jumpGene 属性重算写面 → 双场景 FAIL → 复绿）。
 // 运行：node scripts/unity-migration/verify-tool3-only.mjs
 // ============================================================================
 import { execFileSync } from 'node:child_process';
@@ -14,7 +15,7 @@ import { readFileSync } from 'node:fs';
 let fail = 0;
 try {
   execFileSync('bun', [new URL('./tool3-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
-  console.log('tool3 黄金回放 (tool3-transcript 镜像 vs tool3.json): PASS (12 场景神力生成器/消费端每步快照逐位 + volcano 锥体/引燃圈/熔岩弹/外溢 + cap 门 13 族 + bless/curse/love/teleport 四瞬态 + meteor/meteorShower x0/y0 偏移 + 超武双神力 + typhoon 推拽/间歇雷电/暴雨灭火 + holystorm 审判/缓愈/驱瘟 + units dump 位级 + events colorHex 流)');
+  console.log('tool3 黄金回放 (tool3-transcript 镜像 vs tool3.json): PASS (14 场景神力生成器/消费端每步快照逐位 + volcano 锥体/引燃圈/熔岩弹/外溢 + cap 门 13 族 + bless/curse/love/teleport 四瞬态 + M-U19 mutate 特质域 reroll/jumpGene/钳位 + meteor/meteorShower x0/y0 偏移 + 超武双神力 + typhoon 推拽/间歇雷电/暴雨灭火 + holystorm 审判/缓愈/驱瘟 + units dump 位级含 trait/gene + events colorHex 流)');
 } catch (e) {
   fail++;
   console.error('tool3 黄金回放: FAIL');
@@ -27,7 +28,7 @@ try {
   execFileSync('bun', [new URL('./gen-tool3.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
   const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
   if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
-  console.log('tool3 gen det 复跑 (gen-tool3 · bun): PASS (12 场景 sanity + GameEngine 真实现 + det 字节级)');
+  console.log('tool3 gen det 复跑 (gen-tool3 · bun): PASS (14 场景 sanity + GameEngine 真实现 + det 字节级)');
 } catch (e) {
   fail++;
   console.error('tool3 gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -36,9 +37,9 @@ try {
   const g = JSON.parse(readFileSync(new URL('./golden/tool3.json', import.meta.url), 'utf8'));
   const fails = [];
   const fail2 = (m) => fails.push(m);
-  if (!Array.isArray(g.scenarios) || g.scenarios.length !== 12) fail2('场景数 ≠ 12');
+  if (!Array.isArray(g.scenarios) || g.scenarios.length !== 14) fail2('场景数 ≠ 14');
   const keys = g.scenarios.map((s) => s.key);
-  for (const want of ['volcano-default', 'volcano-power3', 'spawn-quartet', 'meteor-meteorshower', 'wrath-ticks', 'area-powers', 'static-quartet', 'caps-composite', 'typhoon-ticks', 'plasma-annihilate', 'volcano-edge', 'holystorm-ticks'])
+  for (const want of ['volcano-default', 'volcano-power3', 'spawn-quartet', 'meteor-meteorshower', 'wrath-ticks', 'area-powers', 'static-quartet', 'caps-composite', 'typhoon-ticks', 'plasma-annihilate', 'volcano-edge', 'mutate-civ-reroll', 'mutate-wild-clamp', 'holystorm-ticks'])
     if (!keys.includes(want)) fail2(`场景 ${want} 缺失`);
   const s1 = g.scenarios.find((s) => s.key === 'volcano-default');
   if (!s1 || s1.totalDraws !== 28 || s1.fx.length !== 3 || s1.shake !== 8 || s1.units[0].dead !== 1 || s1.units[0].hurtN !== '0000000000002840' || s1.fx[0]?.seed !== 26084) fail2('volcano-default 签名缺失（28 掷 = 引燃 8 + fx 2 + 熔岩弹 2×4 + 外溢 5×2 + u900 灼烧环死 dead=1 hurtN=12 + shake=8）');
@@ -71,16 +72,38 @@ try {
   const s12 = g.scenarios.find((s) => s.key === 'holystorm-ticks');
   if (!s12 || s12.totalDraws !== 202 || s12.fx.length !== 7 || s12.units.length !== 3 || s12.units[0].hp !== 'f4ffffffffff5540' || s12.units[0].hurtN !== '0000000000002440') fail2('holystorm-ticks 签名缺失（恶魔审判 hp=88 hurtN=10 + 202 掷恒真门/采样/门掷全链）');
   if (s12 && s12.units[1] && (s12.units[1].infected !== 0 || s12.units[1].hp !== '0c00000000a05740')) fail2('holystorm-ticks 无辜缓愈/驱瘟面缺失（hp=94.5 + infected=0）');
+  const s13 = g.scenarios.find((s) => s.key === 'mutate-civ-reroll');
+  if (!s13 || s13.totalDraws !== 24 || s13.fx.length !== 2 || s13.fx[0]?.seed !== 37508 || s13.stepsSnap.at(-1).rngA !== '3c13703c') fail2('mutate-civ-reroll 签名缺失（24 掷 = civ 双门 4 + rollTrait 1 + jumpGene 门/值 11 + fx 4×2 + u960 reroll giant→strong）');
+  if (s13 && (s13.units[0].trait !== 'strong' || s13.units[0].maxHp !== '0000000000405240' || s13.units[1].gene?.s !== '000000000000f03f' || s13.units[2].gene !== null)) fail2('mutate-civ-reroll 特质/基因/ corpse skip 面缺失（u960 strong hp73 + u961 gene.s 恰 1 + u962 dead gene null）');
+  const s14 = g.scenarios.find((s) => s.key === 'mutate-wild-clamp');
+  if (!s14 || s14.totalDraws !== 72 || s14.fx.length !== 9 || s14.stepsSnap.at(-1).rngA !== 'b43a4d0f') fail2('mutate-wild-clamp 签名缺失（72 掷 = 3 单位×3 连发 jumpGene 门/值 + fx 18 + baseGene 空表零掷）');
+  if (s14 && (s14.units[0].gene?.s !== '0000000000000040' || s14.units[0].maxHp !== '0000000000003240' || s14.units[2].maxHp !== '0000000000003e40')) fail2('mutate-wild-clamp 铛位/重算面缺失（u970 gene.s 恰 2.0 maxHp=18 + u972 wolf maxHp=30）');
   const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/tool3.json', import.meta.url));
   const gl = readFileSync(new URL('./golden/tool3.json', import.meta.url));
   const md5a = createHash('md5').update(sa).digest('hex');
   const md5b = createHash('md5').update(gl).digest('hex');
   if (md5a !== md5b) fail2(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
   if (fails.length > 0) throw new Error(fails.join(' | '));
-  console.log(`tool3 台账完备 (12 场景 + volcano 锥体/双烈度/边缘钳 + cap 13 族拒面 + 超武双神力 colorHex + 黑洞计数先于 cap + bless/curse/fert 三瞬态 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  console.log(`tool3 台账完备 (14 场景 + volcano 锥体/双烈度/边缘钳 + cap 13 族拒面 + 超武双神力 colorHex + 黑洞计数先于 cap + bless/curse/fert 三瞬态 + M-U19 mutate 双场景 trait/gene/铛位 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
 } catch (e) {
   fail++;
   console.error('tool3 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
+}
+// —— M-U19 红证旋钮：TOOL3_RED=mutate 禁 jumpGene 属性重算写面 → 双 mutate 场景 FAIL → 复绿 ——
+try {
+  const env = { ...process.env, TOOL3_RED: 'mutate' };
+  try {
+    execFileSync('bun', [new URL('./tool3-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, env });
+    throw new Error('红证未红：TOOL3_RED=mutate 仍 ALL PASS（旋钮无效）');
+  } catch (e) {
+    if (String(e.message ?? '').includes('红证未红')) throw e;
+    const out = String(e.stdout ?? '');
+    if (!out.includes('mutate-civ-reroll: FAIL') || !out.includes('mutate-wild-clamp: FAIL')) throw new Error('红证面不达：双 mutate 场景未 FAIL');
+  }
+  console.log('tool3 红证旋钮 (TOOL3_RED=mutate 禁 jumpGene 重算写面 → 双 mutate 场景 FAIL): PASS');
+} catch (e) {
+  fail++;
+  console.error('tool3 红证旋钮: FAIL —', String(e.message ?? e).slice(0, 200));
 }
 console.log(fail === 0 ? 'VERIFY-TOOL3: ALL PASS' : 'VERIFY-TOOL3: FAIL');
 process.exit(fail === 0 ? 0 : 1);

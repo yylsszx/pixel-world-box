@@ -12,6 +12,12 @@
 //   applyTool case L13342-13455（meteor 内联抖动循环 + 22 委派）+ effectsTick
 //   消费端补缺四支：volcano L9851-9876 / wrath L10023-10029 / holystorm
 //   L10030-10075 / typhoon L10091-10119。
+// M-U19 追加：mutateArea L10888-10906（特质域：civ 0.3 reroll / 0.25 jumpGene
+//   0.12 + wild baseGene/jumpGene 0.2 + fx 每命中单位 2 掷）+ rerollTrait
+//   L11037-11057（旧乘数卸除/新乘数上装）+ jumpGene L11085-11103（四维 0.6 门
+//   重铸 + RACES×TRAITS×JOBS 属性重算）+ rollTrait L1467-1470 + baseGene
+//   L11029-11031（speciesBase 空表分支零掷恒 {1,1,1,1}——种子标定探针
+//   probe-mutate-seed.mjs：S13=0x00000144 / S14=0x00000027）。
 // 直接 import 现役 src/lib/game/engine.ts（真实现，非复制），手术式夹具直写 +
 // rngA 尾置清零起流 + calls 直调 / ticks 步进（tickCount++ + effectsTick——
 // gen-power M-U10a 主循环 L2508 序同构）混合链（gen-tool2 + gen-power 双亲）。
@@ -108,7 +114,7 @@ function mkUnit(eng, o) {
     hp: o.hp ?? 10, maxHp: o.maxHp ?? o.hp ?? 10, dmg: 1, speed: o.speed ?? 1, age: o.age ?? 0, maxAge: o.maxAge ?? 9999, kills: 0,
     cd: 0, trait: o.trait ?? 0, job: o.job ?? 0, king: 0, infected: o.infected ?? false, flip: 0,
     name: `u${o.id}`, hurt: o.hurt ?? 0, breath: 0, parity: 0, dead: o.dead ?? 0,
-    fam: null, fgn: null, gene: o.gene ?? null, army: null,
+    fam: null, fgn: null, gene: o.gene ? { s: o.gene.s, d: o.gene.d, h: o.gene.h, r: o.gene.r } : null, army: null,   // M-U19：gene 深拷贝（spec 对象复用 det 双跑——jumpGene 原地改写 u.gene，共享引用即 det 污染）
   };
   eng.units.push(u);
   eng.unitById.set(u.id, u);
@@ -126,6 +132,7 @@ function dumpUnit(u) {
     dead: u.dead ? 1 : 0, flip: u.flip ? 1 : 0, infected: u.infected ? 1 : 0,
     bless: u.bless ?? null, curse: u.curse ?? null, fert: u.fert ?? null,
     job: u.job === undefined ? null : u.job, name: u.name ?? null,
+    trait: u.trait ? u.trait : null,                       // M-U19：u.trait string 语义（0 falsy → null；rerollTrait 写面）
     gene: u.gene ? { s: f64hex(u.gene.s), d: f64hex(u.gene.d), h: f64hex(u.gene.h), r: f64hex(u.gene.r) } : null,
     fam: u.fam ?? null, fgn: u.fgn ?? null,
     breath: u.breath ?? null, parity: u.parity ?? null, kills: u.kills ?? null,
@@ -218,6 +225,7 @@ function buildScenario(spec) {
     units0: (spec.units ?? []).map((uo) => ({
       id: uo.id, race: uo.race, x: uo.x, y: uo.y, hp: uo.hp ?? 10, maxHp: uo.maxHp ?? uo.hp ?? 10,
       gene: uo.gene ?? null, dead: uo.dead ?? 0, infected: uo.infected ?? false, hurt: uo.hurt ?? 0, trait: uo.trait ?? 0,
+      job: uo.job ?? 0,                                     // M-U19：jumpGene JOBS[job] 消费面（civ jd 乘数支）
     })),
     yearF0: eng.yearF,
   };
@@ -474,6 +482,54 @@ const specs = [
       && [...eng.fireSet].every((i) => i >= 0 && i < W * H)
       && eng.effects[0].x === 2.5 && eng.effects[0].y === 2.5,
   },
+  // ---- S13：mutate civ 面（u960 giant 旧特质 reroll 0.3 HIT 旧乘数卸除/新乘数上装 +
+  //        0.25 jumpGene(0.12) HIT job2 战士乘数重算；u961 reroll MISS + jump HIT
+  //        且 ≥1 维门 MISS〔{1,1,1,1} 起步 miss 维恒等 1 钉面〕；u962 dead skip
+  //        零掷；u963 界外 skip）——种子标定 0x00000144（probe-mutate-seed.mjs）----
+  {
+    key: 'mutate-civ-reroll', baseSeed: BASE + 13, seed: 0x00000144, tickCount: 1000, fill: 'grass',
+    units: [
+      { id: 960, race: R.HUMAN, x: 99.5, y: 60, hp: 200, maxHp: 200, trait: 'giant', job: 2 },
+      { id: 961, race: R.HUMAN, x: 101, y: 60.5, hp: 60, maxHp: 60 },
+      { id: 962, race: R.SHEEP, x: 100, y: 59, hp: 16, maxHp: 16, dead: 1 },
+      { id: 963, race: R.HUMAN, x: 112, y: 60, hp: 60, maxHp: 60 },   // d=12 > r=3 界外
+    ],
+    calls: [{ fn: 'applyTool', args: ['mutate', 100, 60] }],
+    sanity: (eng) => {
+      const a = eng.unitById.get(960), b = eng.unitById.get(961), dd = eng.unitById.get(962), oor = eng.unitById.get(963);
+      return typeof a.trait === 'string' && a.trait !== 'giant' && a.gene
+        && (b.trait === 0 || b.trait === null) && b.gene
+        && [b.gene.s, b.gene.d, b.gene.h, b.gene.r].some((v) => v === 1)
+        && dd.gene === null && dd.hp === 16 && oor.gene === null && oor.hp === 60
+        && eng.effects.filter((e) => e.kind === 'mutate').length === 2;
+    },
+  },
+  // ---- S14：mutate wild 面 3 连发（u970 preset gene 直 jumpGene(0.2)；u971 空表
+  //        baseGene 零掷〔speciesBase 演化域未译恒空——蓝本 L11029-11031〕；u972
+  //        wolf 捕食者 RACES 重算；3 单位 × 3 连发后至少 1 维恰触铛位 0.5/2——
+  //        Math.max/min 恰等面）——种子标定 0x00000027----
+  {
+    key: 'mutate-wild-clamp', baseSeed: BASE + 14, seed: 0x00000027, tickCount: 1000, fill: 'grass',
+    units: [
+      { id: 970, race: R.SHEEP, x: 100, y: 60, hp: 16, maxHp: 16, gene: { s: 1.3, d: 0.8, h: 1.1, r: 0.9 } },
+      { id: 971, race: R.SHEEP, x: 101, y: 60, hp: 16, maxHp: 16 },
+      { id: 972, race: R.WOLF, x: 99, y: 60.5, hp: 34, maxHp: 34 },
+    ],
+    calls: [
+      { fn: 'applyTool', args: ['mutate', 100, 60] },
+      { fn: 'applyTool', args: ['mutate', 100, 60] },
+      { fn: 'applyTool', args: ['mutate', 100, 60] },
+    ],
+    sanity: (eng) => {
+      let clamped = 0;
+      for (const id of [970, 971, 972]) {
+        const u = eng.unitById.get(id);
+        if (!u.gene) return false;
+        for (const v of [u.gene.s, u.gene.d, u.gene.h, u.gene.r]) if (v === 0.5 || v === 2) clamped++;
+      }
+      return clamped >= 1 && eng.effects.filter((e) => e.kind === 'mutate').length === 9;
+    },
+  },
   // ---- S12：holystorm 消费端 30 tick（游荡 dir + 恒真门 1.2 掷位 + 浇火/洗辐射/
   //        焦土复苏 + 黑暗审判 0.4/tick + 无辜缓愈 0.15 + 驱瘟 fx）----
   {
@@ -520,10 +576,10 @@ const out = {
   meta: {
     gen: 'gen-tool3.mjs',
     protocol: 'GameEngine 构造 + 手术式夹具直写（fill 面 grass + terrain/fire/radiate/units 瘦直写 + brush/五成就计数直写）+ rngA 尾置清零起流 + calls 直调 / ticks 步进（tickCount++ 头 + effectsTick——主循环 L2508 序）混合链，每步统一快照（applyTool 紧凑 / effectsTick 全列 fx+units+dirty）',
-    rng: 'eng.rngA 单流；fx 恒 2 掷（seed+dir）；cap 门 filter 快照零掷；volcano 引燃圈 1 掷/点燃 + 消费端熔岩弹 age%14 双掷 + 外溢 age%6 双掷；wrath/typhoon 消费端 lightning（n=1：fx 2+中心点燃 1+四邻 4+邻格点燃支）；holystorm 恒真门 1.2 掷位保持 + 采样双掷 + 单位门掷（审判 0.2/缓愈 0.08）；bless/curse 0.4 门 + love 0.5 门 1 掷/单位 + fx 2 掷；teleport randomLandSpot 2 掷/尝试；mulberry 纯数学反解 total',
-    math: 'Math.hypot（volcano 锥体整数极距 / area 神力单位环 / plasma dist=hypot(7,9) / annihilate dist=hypot(8,11)——bun 原生 fdlibm；C# FdHypot 位精确件对账）+ Math.round（plasma ttl=round(dist*1.5)——JS .5 上取整；C# JsRound 禁银行家舍入）+ 纯算术域',
-    domains: ['acidRain L10737-10745（cap 6 + fx acid）', 'volcano L10746-10777（锥体 hypot≤2.3 + 山口/十字/3x3 熔岩 + 引燃圈 3.5*pw + shake 6+2pw + event 双文本）', 'tsunami L10780-10785（r*2.5 钳 [6,30]）', 'blizzard L10788-10795（cap 4 + max(5,r) 钳 [5,15]）', 'meteorShower L10798-10813（clamp [1,24] + rng 散布 + x0/y0/quiet 衍生弹 + statMeteorShowers）', 'locust L10815-10822（cap 3 + r 钳 [3,10]）', 'drought L10823-10830（cap 4）', 'rainCloud L10834-10843（cap 6 + touchMeta 宿主挂点）', 'blessArea L10845-10859（hp+50%max + bless 600 + 驱瘟 + 0.4 fx 门）', 'curseArea L10861-10872（curse 500）', 'loveArea L10874-10886（repro 门 + fert 500）', 'teleportArea L10908-10924（randomLandSpot 40 试 + spark 双发）', 'wrathStorm L10926-10934（cap 3）', 'holyStorm L10936-10945（cap 3）', 'plasmaCannon L10947-10957（x0/y0 钳 + ttl round 域 + dmg + statPlasmas）', 'annihilationLight L10959-10969（colorHex #ff4d4d + statAnnihilations）', 'sandstorm L10972-10979（cap 3）', 'typhoon L10980-10987（cap 3）', 'sinkhole L10988-10996（shake 7）', 'iceAge L10999-11008（cap 2 + shake 4）', 'famineCloud L11030-11036（cap 3）', 'blackhole L11017-11023（cap 2 + statBlackholes）', 'meteor L12277-12282（x0=x+20/y0=y-34）', 'randomLandSpot L11033-11043（40 试六地形门）', 'applyTool case L13342-13455（meteor 内联抖动 + 22 委派）', 'effectsTick 消费端四支：volcano L9851-9876 / wrath L10023-10029 / holystorm L10030-10075 / typhoon L10091-10119'],
-    deferred: ['finger→beginGrab L5293（抓取交互域切片）', 'mutateArea L10888-10906（rerollTrait/jumpGene/rollTrait 特质域切片）', 'chest/ITEM_TOOL/cre:/RACE_TOOL 等其余 applyTool case（各域切片挂账不变）'],
+    rng: 'eng.rngA 单流；fx 恒 2 掷（seed+dir）；cap 门 filter 快照零掷；volcano 引燃圈 1 掷/点燃 + 消费端熔岩弹 age%14 双掷 + 外溢 age%6 双掷；wrath/typhoon 消费端 lightning（n=1：fx 2+中心点燃 1+四邻 4+邻格点燃支）；holystorm 恒真门 1.2 掷位保持 + 采样双掷 + 单位门掷（审判 0.2/缓愈 0.08）；bless/curse 0.4 门 + love 0.5 门 1 掷/单位 + fx 2 掷；teleport randomLandSpot 2 掷/尝试；mutate：civ 0.3 门 1 掷 + rerollTrait rollTrait 1 掷 + 0.25 门 1 掷 + jumpGene 4 门掷/命中维值掷；wild 直 jumpGene 4 门掷/命中维值掷〔baseGene 空表零掷〕；命中单位 fx 2 掷（门 miss 亦掷——L10901 fx 在 if/else 外）；mulberry 纯数学反解 total',
+    math: 'Math.hypot（volcano 锥体整数极距 / area 神力单位环〔含 mutate L10891〕 / plasma dist=hypot(7,9) / annihilate dist=hypot(8,11)——bun 原生 fdlibm；C# FdHypot 位精确件对账）+ Math.round（plasma ttl=round(dist*1.5) + mutate rerollTrait/jumpGene maxHp round 域——JS .5 上取整；C# JsRound 禁银行家舍入）+ Math.max/min 铛位（mutate 基因 0.5/2 恰等面 + maxHp≥1）+ 纯算术域',
+    domains: ['mutateArea L10888-10906（M-U19：civ 0.3 reroll/0.25 jumpGene 0.12 + wild baseGene/jumpGene 0.2 + fx 每命中单位 2 掷〔双门双 miss 亦掷——fx 在 if/else 外〕）', 'rerollTrait L11037-11057（旧乘数卸除/新乘数上装——maxHp round 域 + hp min/max 双钳不对称〔old 支 max(1,·) / nw 支无〕）', 'jumpGene L11085-11103（四维 0.6 门 + (rng-0.42)*2*amount 重铸 + 0.5/2 铛位 + RACES×TRAITS×JOBS 属性重算）', 'rollTrait L1467-1470（TRAITS keys 12 预设插入序随机抽）', 'baseGene L11029-11031（speciesBase 空表分支——零掷恒 {1,1,1,1}）', 'acidRain L10737-10745（cap 6 + fx acid）', 'volcano L10746-10777（锥体 hypot≤2.3 + 山口/十字/3x3 熔岩 + 引燃圈 3.5*pw + shake 6+2pw + event 双文本）', 'tsunami L10780-10785（r*2.5 钳 [6,30]）', 'blizzard L10788-10795（cap 4 + max(5,r) 钳 [5,15]）', 'meteorShower L10798-10813（clamp [1,24] + rng 散布 + x0/y0/quiet 衍生弹 + statMeteorShowers）', 'locust L10815-10822（cap 3 + r 钳 [3,10]）', 'drought L10823-10830（cap 4）', 'rainCloud L10834-10843（cap 6 + touchMeta 宿主挂点）', 'blessArea L10845-10859（hp+50%max + bless 600 + 驱瘟 + 0.4 fx 门）', 'curseArea L10861-10872（curse 500）', 'loveArea L10874-10886（repro 门 + fert 500）', 'teleportArea L10908-10924（randomLandSpot 40 试 + spark 双发）', 'wrathStorm L10926-10934（cap 3）', 'holyStorm L10936-10945（cap 3）', 'plasmaCannon L10947-10957（x0/y0 钳 + ttl round 域 + dmg + statPlasmas）', 'annihilationLight L10959-10969（colorHex #ff4d4d + statAnnihilations）', 'sandstorm L10972-10979（cap 3）', 'typhoon L10980-10987（cap 3）', 'sinkhole L10988-10996（shake 7）', 'iceAge L10999-11008（cap 2 + shake 4）', 'famineCloud L11030-11036（cap 3）', 'blackhole L11017-11023（cap 2 + statBlackholes）', 'meteor L12277-12282（x0=x+20/y0=y-34）', 'randomLandSpot L11033-11043（40 试六地形门）', 'applyTool case L13342-13455（meteor 内联抖动 + 22 委派）', 'effectsTick 消费端四支：volcano L9851-9876 / wrath L10023-10029 / holystorm L10030-10075 / typhoon L10091-10119'],
+    deferred: ['finger→beginGrab L5293（抓取交互域切片）', 'chest/ITEM_TOOL/cre:/RACE_TOOL 等其余 applyTool case（各域切片挂账不变）'],
     scenarioCount: scenarios.length,
   },
   scenarios,

@@ -15,13 +15,21 @@
 //   随件——wrath/typhoon 消费端复用）+ fx L13990（seed/dir 2 掷 + x0/y0 默认
 //   + opts 覆写——返回 e 供 meteor/meteorShower 消费端 m.x0/y0/quiet 写面）+
 //   addEvent L14032（unshift + cap 80 + colorHex 面）。
+// M-U19 追加：mutateArea L10888-10906（特质域：civ 0.3 reroll / 0.25 jumpGene
+//   0.12 + wild baseGene/jumpGene 0.2 + fx 每命中单位 2 掷）+ rollTrait
+//   L1473-1476（TRAITS keys 插入序随机抽）+ rerollTrait L11037-11057（旧乘数
+//   卸除/新乘数上装）+ baseGene L11059-11066（speciesBase 空表分支零掷）+
+//   jumpGene L11085-11103（四维 0.6 门重铸 + RACES×TRAITS×JOBS 属性重算）+
+//   TRAITS 表 types.ts L264-276 / JOBS 表 L296-305 / RACES HUMAN L157 /
+//   WOLF L164 消费切片。
 // 纪律：零引擎 import（fixture 注入 + 镜像回放——typed 数组天然 OOB 语义：
 //   terrain[i] 越界读 undefined、fire[i]=x 越界写静默丢弃、fireSet.add 负索引
 //   容忍——S11 边缘钉面：volcano 引燃圈 (1,1) 负 x 混叠 j=511 与真负 j 双面）。
 // 红证（纪律②）: TOOL3_RED=cap 禁云数上限早退（acidRain L10740 等 13 族）→
 //   S8 caps-composite FAIL（fx 57≠45）；TOOL3_RED=lava 禁 volcano 消费端岩浆
-//   外溢 setTerrain（L9875）→ S1 volcano-default terrain md5 FAIL → 还原复绿
-//   12/12。
+//   外溢 setTerrain（L9875）→ S1 volcano-default terrain md5 FAIL；
+//   TOOL3_RED=mutate 禁 jumpGene 属性重算写面（L11097-11100）→ S13/S14
+//   mutate 双场景 units dump hp/maxHp/dmg/speed FAIL → 还原复绿 14/14。
 // 运行：bun scripts/unity-migration/tool3-transcript.mjs
 // ============================================================================
 import { createHash } from 'node:crypto';
@@ -29,7 +37,7 @@ import { readFileSync } from 'node:fs';
 import zlib from 'node:zlib';
 
 const T = { DEEP: 0, WATER: 1, SAND: 2, GRASS: 3, FOREST: 4, HILL: 5, MOUNTAIN: 6, SNOW: 7, LAVA: 8, BURNT: 9, ICE: 10, SWAMP: 11 };
-const R = { SHEEP: 6, DRAGON: 9, DEMON: 17 };
+const R = { HUMAN: 0, SHEEP: 6, WOLF: 7, DRAGON: 9, DEMON: 17 };   // M-U19：HUMAN/WOLF 入表（mutate 特质域消费面）
 const W = 256, H = 160, N = W * H;
 const isWater = (t) => t === T.DEEP || t === T.WATER;
 const walkable = (t) => t !== T.DEEP && t !== T.WATER && t !== T.MOUNTAIN && t !== T.LAVA;   // constants.ts L73-75
@@ -37,11 +45,43 @@ const idx = (x, y) => y * W + x;
 const FLAMMABLE = new Set([T.GRASS, T.FOREST]);          // constants.ts FLAMMABLE（ignite L1075 门）
 const TOOL3_RED = process.env.TOOL3_RED ?? '';
 
-// RACES 子集（types.ts L163/L174 逐值镜像——repro/undead/hostile/flying/lavaImmune 消费面）
+// RACES 子集（types.ts L163/L174/L157/L164 逐值镜像——repro/undead/hostile/flying/lavaImmune/hp/dmg/speed/isCiv 消费面）
 const RACES = {
-  [R.SHEEP]: { repro: 0.004, undead: false, hostile: false, flying: false, lavaImmune: false },   // L163 SHEEP
+  [R.SHEEP]: { repro: 0.004, undead: false, hostile: false, flying: false, lavaImmune: false, hp: 16, dmg: 1, speed: 0.038, isCiv: false },   // L163 SHEEP（M-U19：jumpGene 重算消费面）
   [R.DEMON]: { repro: 0, undead: false, hostile: true, flying: false, lavaImmune: true },          // L174 DEMON
+  [R.HUMAN]: { repro: 0.006, undead: false, hostile: false, flying: false, lavaImmune: false, hp: 60, dmg: 8, speed: 0.09, isCiv: true },    // L157 HUMAN（M-U19：jumpGene 属性重算消费面）
+  [R.WOLF]:  { repro: 0.004, undead: false, hostile: false, flying: false, lavaImmune: false, hp: 34, dmg: 10, speed: 0.093, isCiv: false }, // L164 WOLF（M-U19：wild 捕食者重算消费面）
 };
+
+// TRAITS 消费切片（types.ts L264-276 机械转写——rerollTrait/jumpGene hpMul/dmgMul/speedMul 消费面；
+// regen/giant/tiny/immune/good 非本切片消费面字段省略——随相应切片译件补全）
+const TRAITS = {
+  strong: { dmgMul: 1.4 },                                                       // L265
+  tough: { hpMul: 1.35 },                                                        // L266
+  swift: { speedMul: 1.3 },                                                      // L267
+  weak: { dmgMul: 0.8 },                                                         // L268
+  sickly: { hpMul: 0.75 },                                                       // L269
+  genius: {},                                                                    // L270
+  berserk: { dmgMul: 1.7, hpMul: 0.85 },                                         // L271
+  lucky: {},                                                                     // L272
+  regeneration: {},                                                              // L273（regen 非本切片消费面）
+  giant: { hpMul: 1.8, dmgMul: 1.5, speedMul: 0.75 },                            // L274
+  tiny: { hpMul: 0.55, dmgMul: 0.8, speedMul: 1.25 },                            // L275
+  immune: {},                                                                    // L276
+};
+const TRAITS_KEYS = Object.keys(TRAITS);                   // JS Object.keys 插入序 = 预设 12（rollTrait L1474 抽取序）
+
+// JOBS 消费切片（types.ts L296-305 机械转写——jumpGene jd 乘数支）
+const JOBS = [
+  { hpMul: 1, dmgMul: 1, speedMul: 1 },                     // L297 peasant
+  { hpMul: 0.95, dmgMul: 0.9, speedMul: 1 },                // L298 farmer
+  { hpMul: 1.3, dmgMul: 1.35, speedMul: 1.05 },             // L299 warrior
+  { hpMul: 1.05, dmgMul: 1.15, speedMul: 1 },               // L300 archer（ranged 5 非本切片消费面）
+  { hpMul: 1.15, dmgMul: 0.95, speedMul: 1.05 },            // L301 builder
+  { hpMul: 1, dmgMul: 0.9, speedMul: 1.2 },                 // L302 merchant
+  { hpMul: 1.25, dmgMul: 1.1, speedMul: 1 },                // L303 noble
+  { hpMul: 1.5, dmgMul: 1.5, speedMul: 1 },                 // L305 king（weight 0 非本切片消费面）
+];
 
 function mulberryStep(a) {
   a = (a + 0x6d2b79f5) | 0;
@@ -64,7 +104,7 @@ const f64hex = (v) => { F64[0] = v; return Buffer.from(U8).toString('hex'); };
 // TOOL_BY_ID 键集子集（本切片 23 键——守卫全 210 键面 tool.json 链已覆盖，对黄金场景行为等价）
 const TOOL_BY_ID_KEYS = new Set([
   'acidrain', 'volcano', 'tsunami', 'blizzard', 'meteorshower', 'locust', 'drought', 'rain',
-  'bless', 'curse', 'love', 'teleport', 'wrath', 'holystorm', 'plasmacannon', 'annihilate',
+  'bless', 'curse', 'love', 'mutate', 'teleport', 'wrath', 'holystorm', 'plasmacannon', 'annihilate',   // M-U19：mutate 键入集
   'sandstorm', 'typhoon', 'sinkhole', 'iceage', 'famine', 'blackhole', 'meteor',
 ]);
 const parseCreationTool = (toolId) => (toolId.startsWith('cre:') ? toolId.slice(4) : null);   // creations.ts L243-245
@@ -110,9 +150,9 @@ class BREng {
       this.units.push({
         id: uo.id, race: uo.race, civ: -1, x: uo.x, y: uo.y, tx: uo.x, ty: uo.y,
         hp: uo.hp ?? 10, maxHp: uo.maxHp ?? uo.hp ?? 10, dmg: 1, speed: 1, age: 0, maxAge: 9999, kills: 0,
-        cd: 0, trait: uo.trait ?? 0, job: 0, king: 0, infected: uo.infected ?? false, flip: 0,
+        cd: 0, trait: uo.trait ?? 0, job: uo.job ?? 0, king: 0, infected: uo.infected ?? false, flip: 0,   // M-U19：job 直写面（jumpGene JOBS[job] 消费）
         name: `u${uo.id}`, hurt: uo.hurt ?? 0, breath: 0, parity: 0, dead: uo.dead ?? 0,
-        fam: null, fgn: null, gene: uo.gene ?? null, army: null,
+        fam: null, fgn: null, gene: uo.gene ? { s: uo.gene.s, d: uo.gene.d, h: uo.gene.h, r: uo.gene.r } : null, army: null,   // gene 深拷贝（gen mkUnit 同构）
       });
     }
     this.unitById = new Map(this.units.map((u) => [u.id, u]));
@@ -350,6 +390,23 @@ class BREng {
     }
     return n;
   }
+  mutateArea(x, y, r) {                      // L10888-10906（M-U19）
+    let n = 0;                                                // L10889
+    for (const u of this.units) {                             // L10890
+      if (u.dead) continue;                                   // L10891
+      if (Math.hypot(u.x - x, u.y - y) > r) continue;         // L10892（fdlibm 单位环）
+      if (RACES[u.race].isCiv) {                              // L10893
+        if (this.rng() < 0.3) { this.rerollTrait(u); n++; }   // L10894（0.3 门 1 掷 + rerollTrait rollTrait 1 掷）
+        if (this.rng() < 0.25) { this.jumpGene(u, 0.12); n++; }   // L10896（0.25 门 1 掷——基因化选育·温和幅度）
+      } else {                                                // L10897
+        if (!u.gene) u.gene = this.baseGene(u.race);          // L10898（空表分支零掷恒 {1,1,1,1}）
+        this.jumpGene(u, 0.2);                                // L10899（野生动物全幅）
+        n++;                                                  // L10900
+      }
+      this.fx('mutate', u.x, u.y, 30);                        // L10901（fx 在 if/else 外——门双 miss 亦掷 2 掷）
+    }
+    return n;                                                 // L10905
+  }
   teleportArea(x, y, r) {                    // L10908-10924
     let n = 0;
     for (const u of this.units) {
@@ -455,6 +512,48 @@ class BREng {
       if (t === T.GRASS || t === T.SAND || t === T.SNOW || t === T.BURNT || t === T.FOREST || t === T.HILL) return { x: x + 0.5, y: y + 0.5 };   // L11038（六地形门）
     }
     return null;
+  }
+  rollTrait() {                              // L1473-1476（TRAITS keys 插入序随机抽）
+    const keys = TRAITS_KEYS;                                 // L1474（JS Object.keys 插入序 = 预设 12）
+    return keys[Math.floor(this.rng() * keys.length)];        // L1475（1 掷）
+  }
+  rerollTrait(u) {                           // L11037-11057（M-U19）
+    const old = u.trait ? TRAITS[u.trait] : null;             // L11038
+    const key = this.rollTrait();                             // L11039（1 掷）
+    const nw = key ? TRAITS[key] : null;                      // L11040
+    if (old) {                                                // L11041（旧乘数卸除）
+      u.maxHp = Math.max(1, Math.round(u.maxHp / (old.hpMul ?? 1)));   // L11042
+      u.hp = Math.min(u.maxHp, Math.max(1, Math.round(u.hp / (old.hpMul ?? 1))));   // L11043（双钳不对称——old 支 max(1,·)）
+      u.dmg /= old.dmgMul ?? 1;                               // L11044
+      u.speed /= old.speedMul ?? 1;                           // L11045
+    }
+    if (nw) {                                                 // L11046（新乘数上装）
+      u.maxHp = Math.max(1, Math.round(u.maxHp * (nw.hpMul ?? 1)));   // L11047
+      u.hp = Math.min(u.maxHp, Math.round(u.hp * (nw.hpMul ?? 1)));   // L11048（nw 支无 max(1,·)——不对称面）
+      u.dmg *= nw.dmgMul ?? 1;                                // L11049
+      u.speed *= nw.speedMul ?? 1;                            // L11050
+    }
+    u.trait = key ?? null;                                    // L11053
+  }
+  baseGene(race) {                           // L11059-11066（speciesBase 空表分支——gen 协议恒空表零掷；演化域 L11213+ 未译）
+    return { s: 1, d: 1, h: 1, r: 1 };                        // L11061（空表分支）
+  }
+  jumpGene(u, amount) {                      // L11085-11103（M-U19）
+    const g = u.gene ?? (u.gene = { s: 1, d: 1, h: 1, r: 1 });   // L11086
+    const dims = ['s', 'd', 'h', 'r'];                        // L11087（四维固定序）
+    for (const dim of dims) {                                 // L11088
+      if (this.rng() < 0.6) {                                 // L11089（门 1 掷/维）
+        g[dim] = Math.max(0.5, Math.min(2, g[dim] * (1 + (this.rng() - 0.42) * 2 * amount)));   // L11090（命中维值 1 掷 + 0.5/2 钳位）
+      }
+    }
+    if (TOOL3_RED === 'mutate') return;                       // 红证旋钮：禁属性重算写面（L11097-11100）
+    const def = RACES[u.race];                                // L11095
+    const td = u.trait ? TRAITS[u.trait] : null;              // L11096
+    const jd = def.isCiv ? JOBS[u.job ?? 0] : null;           // L11097
+    u.maxHp = Math.max(1, Math.round(def.hp * (td?.hpMul ?? 1) * (jd?.hpMul ?? 1) * g.h));   // L11098
+    u.hp = Math.min(u.maxHp, u.hp);                           // L11099
+    u.dmg = def.dmg * (td?.dmgMul ?? 1) * (jd?.dmgMul ?? 1) * g.d;   // L11100
+    u.speed = def.speed * (td?.speedMul ?? 1) * (jd?.speedMul ?? 1) * g.s;   // L11101
   }
   meteor(x, y) {                             // L12277-12282
     const e = this.fx('meteor', x, y, 34);                    // L12278（fx 2 掷）
@@ -600,6 +699,7 @@ class BREng {
       case 'bless': this.blessArea(wx, wy, r); break;                   // L13409-13411
       case 'curse': this.curseArea(wx, wy, r); break;                    // L13412-13414
       case 'love': this.loveArea(wx, wy, r); break;                      // L13415-13417
+      case 'mutate': this.mutateArea(wx, wy, r); break;                  // L13418-13420（M-U19：特质域接入）
       case 'teleport': this.teleportArea(wx, wy, r); break;              // L13421-13423
       case 'wrath': this.wrathStorm(wx, wy, Math.max(4, r), durationP); break;   // L13424-13426（max(4,r) 下钳）
       case 'holystorm': this.holyStorm(wx, wy, Math.max(4, r), durationP); break;   // L13427-13429（max(4,r) 下钳）
@@ -693,6 +793,7 @@ for (const sc of golden.scenarios) {
       dead: u.dead ? 1 : 0, flip: u.flip ? 1 : 0, infected: u.infected ? 1 : 0,
       bless: u.bless ?? null, curse: u.curse ?? null, fert: u.fert ?? null,
       job: u.job === undefined ? null : u.job, name: u.name ?? null,
+      trait: u.trait ? u.trait : null,   // M-U19：u.trait string 语义（0 falsy → null）
       gene: u.gene ? { s: f64hex(u.gene.s), d: f64hex(u.gene.d), h: f64hex(u.gene.h), r: f64hex(u.gene.r) } : null,
       fam: u.fam ?? null, fgn: u.fgn ?? null,
       breath: u.breath ?? null, parity: u.parity ?? null, kills: u.kills ?? null,
