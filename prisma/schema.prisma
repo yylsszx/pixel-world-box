@@ -1,32 +1,143 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// ============ 世界实例 ============
+model World {
+  id            String    @id @default(cuid())
+  name          String
+  seed          String
+  params        Json      // WorldGenParams
+  state         Json      // 完整世界状态 (增量同步用)
+  version       Int       @default(2)  // 存档版本
+  tick          Int       @default(0)
+  year          Int       @default(0)
+  season        Int       @default(0)
+  isPublic      Boolean   @default(false)
+  maxPlayers    Int       @default(8)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  ownerId       String
+  owner         Player    @relation(fields: [ownerId], references: [id])
+  players       WorldPlayer[]
+  saves         Save[]
+  sessions      Session[]
+
+  @@index([ownerId])
+  @@index([isPublic])
 }
 
-model Post {
+// ============ 玩家 ============
+model Player {
+  id            String    @id @default(cuid())
+  name          String    @unique
+  email         String?   @unique
+  avatarUrl     String?
+  provider      String    @default("local") // local, github, google, etc.
+  providerId    String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  ownedWorlds   World[]   @relation("WorldOwner")
+  worldPlayers  WorldPlayer[]
+  sessions      Session[]
+
+  @@index([email])
+  @@index([provider, providerId])
+}
+
+// ============ 世界-玩家关联 (权限控制) ============
+model WorldPlayer {
   id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
+  worldId   String
+  world     World    @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  playerId  String
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  role      Role     @default(VIEWER) // OWNER, ADMIN, PLAYER, VIEWER
+  joinedAt  DateTime @default(now())
+
+  @@unique([worldId, playerId])
+  @@index([worldId])
+  @@index([playerId])
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  PLAYER
+  VIEWER
+}
+
+// ============ 存档 ============
+model Save {
+  id          String   @id @default(cuid())
+  worldId     String
+  world       World    @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  data        Json     // 完整存档数据 (SaveDataV2)
+  tick        Int
+  year        Int
+  season      Int
+  isAuto      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  createdById String
+  createdBy   Player   @relation(fields: [createdById], references: [id])
+
+  @@index([worldId])
+  @@index([createdAt])
+}
+
+// ============ 会话 (WebSocket 连接追踪) ============
+model Session {
+  id             String   @id @default(cuid())
+  worldId        String
+  world          World    @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  playerId       String
+  player         Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  connectedAt    DateTime @default(now())
+  disconnectedAt DateTime?
+  lastHeartbeat  DateTime @default(now())
+  clientInfo     Json?    // userAgent, ip, etc.
+
+  @@index([worldId])
+  @@index([playerId])
+}
+
+// ============ 神谕对话历史 ============
+model OracleChat {
+  id        String   @id @default(cuid())
+  worldId   String
+  world     World    @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  playerId  String
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  messages  Json     // AgentChatMessage[]
+  provider  Json     // OracleProviderConfig (敏感字段已脱敏)
+  mode      String   // narrate, analyze, prophesy, create, ask
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([worldId])
+  @@index([playerId])
+}
+
+// ============ 事件日志 (审计/回放) ============
+model EventLog {
+  id        String   @id @default(cuid())
+  worldId   String
+  world     World    @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  playerId  String?
+  player    Player?  @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  type      String   // tool_call, directive, chat, system
+  payload   Json
+  tick      Int
+  createdAt DateTime @default(now())
+
+  @@index([worldId])
+  @@index([createdAt])
+  @@index([type])
 }
