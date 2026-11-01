@@ -1558,6 +1558,28 @@ namespace PixelWorldBox.Wb
         };
         private static readonly double[] RarityW = { 46, 26, 15, 9, 4 };                                                    // items.ts L48-54 RARITY_META.w（普通/精良/稀有/史诗/传说）
 
+        // ================= phoenixAshTick L13018-13032（M-U23 凤凰涅槃引擎级通道：灰烬倒数到点重生——
+        //   spawnUnit 走常规注册+打包，与批内核无冲突；重生体继承 rebirths 计数〔累计 3 次后死亡走常规收尸=真终焉〕；
+        //   瞬态不入档。调用面：主循环 L2606 len>0 门每 tick〔无取模——L2604 angelAura / L2608 entGrove 之间〕；
+        //   WbTickOrch 槽 46 PHOENIX_ASH 已预埋（L181 门镜像）+ WbGameHost M-U23 注册） =================
+        public static void PhoenixAshTick(WbWorld w)
+        {
+            for (int i = w.phoenixAshes.Count - 1; i >= 0; i--)                                                             // L13019（逆序环——与 unitsReap 同款保序）
+            {
+                WbPhoenixAsh a = w.phoenixAshes[i];                                                                          // L13020
+                a.t -= 2;                                                                                                    // L13021（与 cd 同款节拍：1 tick = 2 单位〔240 单位 ≈ 4s@1x〕）
+                if (a.t > 0) continue;                                                                                       // L13022
+                w.phoenixAshes.RemoveAt(i);                                                                                  // L13023（splice(i,1)——到点摘除）
+                WbU nu = SpawnUnit(w, R_PHOENIX, a.x, a.y, new WbSpawnOpts { silent = true });                               // L13024（silent 全 announce 支不触——L1385+ 门）
+                if (nu != null) nu.rebirthsN = a.rebirths;                                                                   // L13025（重生体继承涅槃计数——防御：spawnUnit 种族上限 null 分支〔S26 MAX_WILDLIFE 900 注入实证 null 先于 trait 掷 L1298-1300〕；rebirthsN int? ≡ JS number 字段只加）
+                FxHook(w, "spawn", a.x, a.y, 46);                                                                            // L13026（fx 恒 2 掷：seed+dir）
+                FxHook(w, "fireball", a.x, a.y - 1, 30);                                                                     // L13027（火球自灰烬冲天——y-1 面位级）
+                w.Toast("凤凰在灰烬中重生了", "info");                                                                        // L13028（宿主 toast 域——事件流收集）
+                AddEventHook(w, "phoenix", "烈焰冲天而起——凤凰自灰烬中振翼重生", null, a.x, a.y);                              // L13029（addEvent 第三参 {x,y} ≡ colorHex null + x/y 双尾参——unitsReap L3339 同构）
+                // L13030 this.onSound?.('phoenix')——宿主音效挂账 no-op（unitsReap onSound 先例同构）
+            }
+        }
+
         private static string RollItemE(WbWorld w, int minRarity, int maxRarity)
         {
             double total = 0;                                                                                               // L229

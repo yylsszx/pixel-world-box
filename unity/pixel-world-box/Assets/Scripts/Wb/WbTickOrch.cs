@@ -178,7 +178,7 @@ namespace PixelWorldBox.Wb
             if (w.tickCount % 600 == 31) Go(NATURE_GEOLOGY);           // L2593
             if (w.tickCount % 120 == 15) Go(WORLDSIM_OCEAN);           // L2595
             if (w.tickCount % 3 == 0) Go(ANGEL_AURA);                  // L2598
-            if (w.phoenixAshes.Count > 0) Go(PHOENIX_ASH);             // L2600
+            if (w.phoenixAshes.Count > 0) Go(PHOENIX_ASH);             // L2606（M-U23 行号校正——早期台账注 L2600 系 nature.ts 抽离偏移）
             if (w.tickCount % 10 == 0) Go(ENT_GROVE);                  // L2602
             // 巫妖复生节律（季节 × 万物）：寒冬死潮加速（12→8 tick）
             if (w.tickCount % (w.NatureSeason() == 3 ? 8 : 12) == 0) Go(LICH_RAISE); // L2605

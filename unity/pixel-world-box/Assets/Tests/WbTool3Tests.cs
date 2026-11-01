@@ -218,6 +218,15 @@ namespace PixelWorldBox.Tests
                     var fo = (JObject)ft;
                     w.families[fo.Value<int>("id")] = new WbFamily { id = fo.Value<int>("id"), members = fo.Value<int?>("members") ?? 1 };
                 }
+            // —— M-U23：灰烬/wildCount 瘦夹具注入（gen fixture ashes0/wild0 条件键——phoenixAshTick 倒数窗口 + spawnUnit L1300 预算门 null 支；零掷纯写）——
+            if (fx["ashes0"] is JArray ashA)
+                foreach (var at in ashA)
+                {
+                    var ao = (JObject)at;
+                    w.phoenixAshes.Add(new WbPhoenixAsh { x = ao.Value<double>("x"), y = ao.Value<double>("y"), t = ao.Value<int>("t"), rebirths = ao.Value<int>("rebirths") });
+                }
+            if (fx["wild0"] is JArray wildA)
+                foreach (var wt in wildA) w.wildCount[wt[0].Value<int>()] = wt[1].Value<int>();
             // variant 确定域重建（worldgen L65 hash2(x,y,baseSeed+999)——fixture 无 variant0 面协议，R3 红线）
             int baseSeed = sc.Value<int>("baseSeed");
             for (int yy = 0; yy < WbWorld.H; yy++)
@@ -339,7 +348,7 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindTool3()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(24));   // M-U22：18→24（reap-basic/zombie/king/phoenix/hydra/loot——parity 红证面
+            Assert.That(scens.Count, Is.EqualTo(26));   // M-U23：24→26（phoenix-rebirth 成功支/phoenix-rebirth-cap null 支——parity 红证面
             foreach (var scTok in scens)
             {
                 var sc = (JObject)scTok;
@@ -376,6 +385,9 @@ namespace PixelWorldBox.Tests
                         w.RebuildBuckets();
                         WbBailRelay.UnitsTick(w);
                         WbBailRelay.EffectsTick(w);
+                        // M-U23：主循环 L2606 引擎级通道（灰烬倒数到点重生——蓝本 len>0 门原样；旧场景
+                        // ashes 空门假零效应字节零变化；L2534-2606 间门位窗口全空零效应——S25 三步零掷黄金实证）
+                        if (w.phoenixAshes.Count > 0) WbBailRelay.PhoenixAshTick(w);
                     }
                     else
                     {
@@ -417,6 +429,21 @@ namespace PixelWorldBox.Tests
                             {
                                 Assert.That(u.grab ?? 0, Is.EqualTo(e.Value<int>("grab")), $"tick u.grab {key} S{k}#{q}");
                                 Assert.That(u.thrT ?? 0, Is.EqualTo(e.Value<int>("thrT")), $"tick u.thrT {key} S{k}#{q}");
+                            }
+                        }
+                        // M-U23：stepAsh 场景条件扩展面（灰烬倒数每步位级 t/x/y/rebirths——条件键仅新场景携带）
+                        if (g["ashes"] != null)
+                        {
+                            var goldAshS = (JArray)g["ashes"];
+                            Assert.That(w.phoenixAshes.Count, Is.EqualTo(goldAshS.Count), $"tick ashes count {key} S{k}");
+                            for (int q = 0; q < goldAshS.Count; q++)
+                            {
+                                var ao = (JObject)goldAshS[q];
+                                var a = w.phoenixAshes[q];
+                                Assert.That(F64Hex(a.x), Is.EqualTo(ao.Value<string>("x")), $"tick ash x {key} S{k}#{q}");
+                                Assert.That(F64Hex(a.y), Is.EqualTo(ao.Value<string>("y")), $"tick ash y {key} S{k}#{q}");
+                                Assert.That(a.t, Is.EqualTo(ao.Value<int>("t")), $"tick ash t {key} S{k}#{q}");
+                                Assert.That(a.rebirths, Is.EqualTo(ao.Value<int>("rebirths")), $"tick ash rebirths {key} S{k}#{q}");
                             }
                         }
                         // tick 步 dirty 排序列
@@ -834,6 +861,74 @@ namespace PixelWorldBox.Tests
             Assert.That(forest, Is.GreaterThanOrEqualTo(1), "成林门 ≥1（L12378 rng<0.05×soilMulAt）");
             Assert.That(w.riverTiles.Count, Is.GreaterThan(0), "riverTiles 流向场记录（L12365）");
             Assert.That(w.rngA.ToString("x8"), Is.EqualTo("a6fce2f1"), "365 掷 rng 链终态位级（S15 黄金同源）");
+        }
+
+        /// <summary>直测七（M-U23）：phoenixAshTick L13018-13032——灰烬倒数到点重生。S25 成功支同源：
+        ///   a.t-=2 节拍 6/4/2/0 + spawnUnit silent 重生体继承 rebirths（L13025）+ fx spawn 46/
+        ///   fireball y-1 30 双 fx + toast/addEvent 尾面（L13028-13029）；S26 null 支：wild0 900 注入
+        ///   → spawnUnit L1298-1300 预算门 null（先于 trait 掷）——仪式烟火照常（fx 在 if(nu) 外）。</summary>
+        [Test]
+        public void Test48_Tool3_PhoenixRebirth()
+        {
+            var gold = JObject.Parse(System.IO.File.ReadAllText(FindTool3()));
+            // —— S25 同源：ReplayScenario 全量手术（ashes0 注入 + unitSeq0=620 锚 + variant Hash2 重建）——
+            var sc25 = (JObject)gold["scenarios"].First(t => t.Value<string>("key") == "phoenix-rebirth");
+            var w = ReplayScenario(sc25);
+            for (int k = 0; k < 4; k++)
+            {
+                w.tickCount++;
+                WbBailRelay.FireTick(w);
+                w.RebuildBuckets();
+                WbBailRelay.UnitsTick(w);
+                WbBailRelay.EffectsTick(w);
+                if (w.phoenixAshes.Count > 0) WbBailRelay.PhoenixAshTick(w);   // L2606 门镜像（蓝本 len>0 原样）
+            }
+            Assert.That(w.phoenixAshes.Count, Is.EqualTo(0), "灰烬到点摘除（L13023 splice）");
+            Assert.That(w.units.Count, Is.EqualTo(1), "重生体唯一（S25 黄金同源）");
+            WbU nu = w.units[0];
+            Assert.That(nu.id, Is.EqualTo(620), "id=unitSeq0 620 消费位级（L1339 unitSeq++）");
+            Assert.That(nu.race, Is.EqualTo(29), "race=PHOENIX 29（R_PHOENIX——L13024）");
+            Assert.That(nu.rebirthsN, Is.EqualTo(1), "rebirths 继承（L13025——灰烬 a.rebirths=1）");
+            Assert.That(F64Hex(nu.maxHp), Is.EqualTo("0000000000006940"), "maxHp=round(200×1×1×1×1)=200 位级（RDEF hp200 + baseGene 空表 {1,1,1,1}）");
+            Assert.That(F64Hex(nu.hp), Is.EqualTo("0000000000006940"), "hp=maxHp 出生位级");
+            Assert.That(F64Hex(nu.dmg), Is.EqualTo("0000000000003240"), "dmg=18 位级（RDEF dmg18）");
+            Assert.That(F64Hex(nu.speed), Is.EqualTo("b81e85eb51b8be3f"), "speed=0.12 位级（RDEF speed0.12 × gene s=1）");
+            Assert.That(nu.parity, Is.EqualTo(1), "parity=unitSeq%2=1（L1364——id 自增后 621%2 出生钉面）");
+            Assert.That(nu.name, Is.EqualTo("Jora"), "uniqueName→unitName 名池掷位（'Jora'——L1361 名 1 掷）");
+            Assert.That(nu.traitName, Is.Null, "trait 0.15 门 MISS——trait null（L1322）");
+            Assert.That(nu.breath, Is.EqualTo(211), "breath=120+floor(rng×160) 位级（L1363）");
+            Assert.That(F64Hex(nu.maxAgeF), Is.EqualTo("343cdeef3560c240"), "maxAge=9999×(0.8+rng×0.4) 位级（L1353）");
+            Assert.That(nu.famN, Is.Null, "family 0.06 门 MISS——fam null（L1378）");
+            Assert.That(w.effects.Count, Is.EqualTo(2), "双 fx（spawn 46 + fireball 30——L13026-13027）");
+            Assert.That(w.effects[0].kind, Is.EqualTo("spawn"), "fx spawn kind");
+            Assert.That(w.effects[0].seed, Is.EqualTo(15588), "fx spawn seed 位级");
+            Assert.That(w.effects[1].kind, Is.EqualTo("fireball"), "fx fireball kind");
+            Assert.That(w.effects[1].seed, Is.EqualTo(11192), "fx fireball seed 位级");
+            Assert.That(F64Hex(w.effects[1].y), Is.EqualTo("0000000000804d40"), "fireball y=60-1=59 位级（L13027 y-1 面）");
+            Assert.That(w.worldEvents.Count, Is.EqualTo(1), "addEvent phoenix 纪事（L13029）");
+            Assert.That(w.worldEvents[0].kind, Is.EqualTo("phoenix"), "event kind");
+            Assert.That(w.worldEvents[0].text, Is.EqualTo("烈焰冲天而起——凤凰自灰烬中振翼重生"), "纪事文位级");
+            Assert.That(w.toasts.Count, Is.EqualTo(1), "toast info（L13028）");
+            Assert.That(w.toasts[0].text, Is.EqualTo("凤凰在灰烬中重生了"), "toast 文位级");
+            Assert.That(w.rngA.ToString("x8"), Is.EqualTo("43b2c4c2"), "10 掷 rng 链终态位级（S25 黄金同源——三步零掷 + 重生 10 掷）");
+            // —— S26 同源：null 支（wild0 900 注入 → spawnUnit L1300 预算门 null——先于 trait 掷；fx/toast/event 照常）——
+            var sc26 = (JObject)gold["scenarios"].First(t => t.Value<string>("key") == "phoenix-rebirth-cap");
+            var w2 = ReplayScenario(sc26);
+            for (int k = 0; k < 4; k++)
+            {
+                w2.tickCount++;
+                WbBailRelay.FireTick(w2);
+                w2.RebuildBuckets();
+                WbBailRelay.UnitsTick(w2);
+                WbBailRelay.EffectsTick(w2);
+                if (w2.phoenixAshes.Count > 0) WbBailRelay.PhoenixAshTick(w2);
+            }
+            Assert.That(w2.units.Count, Is.EqualTo(0), "spawnUnit null——无重生体（MAX_WILDLIFE 900 预算门 L1300）");
+            Assert.That(w2.phoenixAshes.Count, Is.EqualTo(0), "灰烬照常摘除");
+            Assert.That(w2.effects.Count, Is.EqualTo(2), "fx spawn+fireball 照常（L13026-13027 在 if(nu) 外）");
+            Assert.That(w2.effects[0].seed, Is.EqualTo(40874), "S26 fx spawn seed 位级");
+            Assert.That(w2.toasts.Count, Is.EqualTo(1), "toast 照常——涅槃折戟仪式依旧");
+            Assert.That(w2.rngA.ToString("x8"), Is.EqualTo("b4ade905"), "4 掷 rng 链终态位级（S26 黄金同源）");
         }
     }
 }

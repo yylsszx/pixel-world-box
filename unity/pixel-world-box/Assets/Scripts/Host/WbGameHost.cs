@@ -142,6 +142,7 @@ namespace PixelWorldBox.Host
             Orch.D[PixelWorldBox.Wb.WbTickOrch.NATURE_ATM] = () => PixelWorldBox.Wb.WbBailRelay.NatureAtmTick(World);                 // M-U18：atmTick 已译域真调（laws.atmosphere 门顶层早退——蓝本 L2583 %10===3）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.NATURE_STORM] = () => PixelWorldBox.Wb.WbBailRelay.NatureStormTick(World);             // M-U18：stormTick 已译域真调（laws.atmosphere 门顶层早退——蓝本 L2585 %40===5）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.NATURE_HYDRO] = () => PixelWorldBox.Wb.WbBailRelay.NatureHydroTick(World);             // M-U18：hydroTick 已译域真调（riverTiles>900 零掷早退——蓝本 L2587 %120===9）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.PHOENIX_ASH] = () => PixelWorldBox.Wb.WbBailRelay.PhoenixAshTick(World);               // M-U23：phoenixAshTick 已译域真调（空表安全：phoenixAshes.Count==0 蓝本 L2606 门假零效应——S19-S24 旧场景字节零漂移实证）
         }
 
         /// <summary>applyTool 大分发器宿主门（M-U14 切片一——Unity 输入域后续接位；事件驱动非 tick 槽。
