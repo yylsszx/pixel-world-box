@@ -1,36 +1,43 @@
 // ============================================================
-// WbTool3Tests.cs — M-U16 切片四「神力生成器域」黄金对账（NUnit）
-// 黄金数据: Assets/StreamingAssets/WbGolden/tool3.json（12 场景）
+// WbTool3Tests.cs — M-U16 切片四「神力生成器域」+ M-U19 特质域黄金对账（NUnit）
+// 黄金数据: Assets/StreamingAssets/WbGolden/tool3.json（14 场景）
 //   由 scripts/unity-migration/gen-tool3.mjs 生成（真引擎 GameEngine 构造 +
 //   手术式夹具直写〔terrain/fire/radiate/units 瘦直写 + brush/五成就计数直写〕+
 //   rngA 尾置清零起流 + calls 直调 / ticks 步进（tickCount++ 头 + effectsTick——
-//   主循环 L2508 序）混合链；det 双跑字节级一致；md5 9a94e473）。
+//   主循环 L2508 序）混合链；det 双跑字节级一致；M-U19 md5 154605cc）。
 //   蓝本 engine.ts：22 神力生成器 acidRain L10737-10743 / volcano L10746-10777 /
 //   tsunami L10780-10785 / blizzard L10788-10795 / meteorShower L10798-10812 /
 //   locust L10815-10820 / drought L10823-10829 / rainCloud L10834-10842 /
 //   blessArea L10845-10858 / curseArea L10861-10871 / loveArea L10874-10885 /
-//   teleportArea L10908-10923（randomLandSpot L11026-11034）/ wrathStorm
-//   L10926-10932 / holyStorm L10936-10943 / plasmaCannon L10947-10955 /
-//   annihilationLight L10959-10967 / sandstorm L10972-10977 / typhoon
-//   L10980-10985 / sinkhole L10988-10996 / iceAge L10999-11006 / famineCloud
-//   L11009-11014 / blackhole L11017-11023 + meteor L12277-12283 + applyTool
-//   case L13342-13455 + effectsTick 消费端四支 volcano L9857-9882 / wrath
-//   L10029-10035 / holystorm L10036-10073 / typhoon L10097-10125。
-// 镜像: tool3-transcript.mjs 零引擎导入 12/12 ALL PASS（bun 口径——红证双旋钮
+//   mutateArea L10888-10906（M-U19：civ 0.3 reroll/0.25 jumpGene 0.12 + wild
+//   baseGene/jumpGene 0.2 + fx 每命中单位 2 掷）/ teleportArea L10908-10923
+//   （randomLandSpot L11026-11036）/ wrathStorm L10926-10932 / holyStorm
+//   L10936-10943 / plasmaCannon L10947-10955 / annihilationLight L10959-10967 /
+//   sandstorm L10972-10977 / typhoon L10980-10985 / sinkhole L10988-10996 /
+//   iceAge L10999-11006 / famineCloud L11009-11014 / blackhole L11017-11023 +
+//   meteor L12277-12283 + applyTool case L13342-13455 + effectsTick 消费端四支
+//   volcano L9857-9882 / wrath L10029-10035 / holystorm L10036-10073 / typhoon
+//   L10097-10125；M-U19 特质域 rerollTrait L11037-11057 / baseGene L11059-11066 /
+//   jumpGene L11085-11103 / rollTrait L1473-1476 + TRAITS types.ts L264-276 /
+//   JOBS L296-305。
+// 镜像: tool3-transcript.mjs 零引擎导入 14/14 ALL PASS（bun 口径——红证三旋钮
 //   TOOL3_RED=cap 禁 13 族 cap 门 → caps-composite FAIL；TOOL3_RED=lava 禁
-//   volcano 消费端岩浆外溢 → 双 volcano 场景 FAIL → 复绿 12/12）。
-// 验证链（纪律④）: 黄金向量(真引擎) → 零引擎镜像 12/12 → 本文件 NUnit C# 全链
-//   重放（22 生成器全译件 + ApplyTool 23 case + EffectsTick 消费端四支 +
-//   Lightning M-U15 复用 + SetTerrain 全级联 + FxHook 2 掷 + AddEvent colorHex）
-//   逐位对账。
+//   volcano 消费端岩浆外溢 → 双 volcano 场景 FAIL；TOOL3_RED=mutate 禁
+//   jumpGene 属性重算写面 → 双 mutate 场景 FAIL → 复绿 14/14）。
+// 验证链（纪律④）: 黄金向量(真引擎) → 零引擎镜像 14/14 → 本文件 NUnit C# 全链
+//   重放（22 生成器全译件 + ApplyTool 24 case + EffectsTick 消费端四支 +
+//   Lightning M-U15 复用 + SetTerrain 全级联 + FxHook 2 掷 + AddEvent colorHex
+//   + M-U19 MutateArea/RerollTrait/JumpGene）逐位对账。
 // 对账面: 每步 rngA/terrain/fire/radiate md5 + fireSet/frozen/regrow/flood/wet/
 //   radSet 序 + fxCount/eventsCount/buildingsCount/shake/stats 五联/unitsCount +
 //   tick 步 fx(kind/age/x/y/dir)/units(id/hp/hurt/dead/x/y)/dirty 排序列 +
 //   终态 terrain/radiate gz 逐字节 + variantMd5 + fx 全列（x0/y0/age/quiet/dmg）
-//   + events 全列（colorHex）+ units dump 全字段位级 + toasts 全列。
+//   + events 全列（colorHex）+ units dump 全字段位级（M-U19：trait/gene 四维）
+//   + toasts 全列。
 // 直测面: volcano 锥体 21 格/引燃圈 8 点/灼烧环 + pw 三档 + bless/curse/love/
 //   teleport 四瞬态 + repro 门 + cap 门 13 族 + blackhole 计数先于 cap + iceAge
-//   笔刷联动缺省 + holystorm 审判/缓愈/驱瘟。
+//   笔刷联动缺省 + holystorm 审判/缓愈/驱瘟 + M-U19 rerollTrait 乘数卸除/上装
+//   + jumpGene 铛位 0.5/2 恰等 + baseGene 空表零掷 + dead/界外双 skip。
 // Unity 侧执行: Window > General > Test Runner（EditMode）。
 // ============================================================
 using System;
@@ -91,7 +98,6 @@ namespace PixelWorldBox.Tests
                 tx = uo.Value<double>("x"), ty = uo.Value<double>("y"),
                 hp = hp, maxHp = uo.Value<double?>("maxHp") ?? hp, dmg = 1, speed = 1,
                 ageF = 0, maxAgeF = 9999.0, kills = 0,
-                jobC = 0,
                 name = "u" + id,
                 hurtN = uo.Value<double?>("hurt") ?? 0.0,
                 breathN = 0,
@@ -100,7 +106,9 @@ namespace PixelWorldBox.Tests
                 infected = uo.Value<bool?>("infected") ?? false ? 1 : 0,
                 flip = 0,
                 traitName = uo["trait"] != null && uo["trait"].Type == JTokenType.String ? uo.Value<string>("trait") : null,
-                geneC = null, famC = null, fgnC = null,
+                jobC = uo["job"] != null ? uo.Value<int>("job") : 0,   // M-U19：jumpGene JOBS[job] 消费面（fixture units0 job 直写面）
+                geneC = uo["gene"] is JObject gj ? new WbGene { s = gj.Value<double>("s"), d = gj.Value<double>("d"), h = gj.Value<double>("h"), r = gj.Value<double>("r") } : null,   // M-U19：preset gene 直写面
+                famC = null, fgnC = null,
             };
             w.units.Add(u);
             w.unitById[u.id] = u;
@@ -263,6 +271,19 @@ namespace PixelWorldBox.Tests
                 Assert.That(u.curse, Is.EqualTo(e["curse"].Type == JTokenType.Null ? 0 : e.Value<int>("curse")), $"u.curse {key}#{k}");
                 Assert.That(u.fert, Is.EqualTo(e["fert"].Type == JTokenType.Null ? 0 : e.Value<int>("fert")), $"u.fert {key}#{k}");
                 Assert.That(u.name, Is.EqualTo(e.Value<string>("name")), $"u.name {key}#{k}");
+                Assert.That(u.jobC ?? 0, Is.EqualTo(e.Value<int?>("job") ?? 0), $"u.job {key}#{k}");   // M-U19：engine u.job 消费面
+                Assert.That(u.traitName, Is.EqualTo(e["trait"] == null || e["trait"].Type == JTokenType.Null ? null : e.Value<string>("trait")), $"u.trait {key}#{k}");   // M-U19
+                Assert.That(F64Hex(u.dmg), Is.EqualTo(e.Value<string>("dmg")), $"u.dmg {key}#{k}");       // M-U19：jumpGene/rerollTrait dmg 写面
+                Assert.That(F64Hex(u.speed), Is.EqualTo(e.Value<string>("speed")), $"u.speed {key}#{k}");   // M-U19：speed 写面
+                if (e["gene"] == null || e["gene"].Type == JTokenType.Null) Assert.That(u.geneC, Is.Null, $"u.gene null {key}#{k}");   // M-U19：gene 四维位级
+                else
+                {
+                    Assert.That(u.geneC, Is.Not.Null, $"u.gene nonnull {key}#{k}");
+                    Assert.That(F64Hex(u.geneC.s), Is.EqualTo(e["gene"].Value<string>("s")), $"u.gene.s {key}#{k}");
+                    Assert.That(F64Hex(u.geneC.d), Is.EqualTo(e["gene"].Value<string>("d")), $"u.gene.d {key}#{k}");
+                    Assert.That(F64Hex(u.geneC.h), Is.EqualTo(e["gene"].Value<string>("h")), $"u.gene.h {key}#{k}");
+                    Assert.That(F64Hex(u.geneC.r), Is.EqualTo(e["gene"].Value<string>("r")), $"u.gene.r {key}#{k}");
+                }
             }
         }
 
@@ -271,7 +292,7 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindTool3()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(12));
+            Assert.That(scens.Count, Is.EqualTo(14));
             foreach (var scTok in scens)
             {
                 var sc = (JObject)scTok;
@@ -566,6 +587,54 @@ namespace PixelWorldBox.Tests
             Assert.That(F64Hex(w.unitById[952].hp), Is.EqualTo("0000000000005940"), "满血单位不缓愈 hp=100 位级（L10066 门）");
             Assert.That(w.effects.Count((f) => f.kind == "holystorm"), Is.EqualTo(1), "holystorm 云存续（ttl=200 > 30 tick）");
             Assert.That(w.rngA.ToString("x8"), Is.EqualTo("30af3b5e"), "202 掷 rng 链终态位级（S12 黄金同源）");
+        }
+
+        /// <summary>直测五（M-U19）：mutateArea 特质域——rerollTrait 乘数卸除/上装 + jumpGene 钳位 0.5/2 恰等 + baseGene 空表零掷 + dead/界外双 skip 位级</summary>
+        [Test]
+        public void Test48_Tool3_MutateTrait()
+        {
+            // —— S13 同源：civ 面（u960 giant→reroll 0.3 HIT + jumpGene 0.25 HIT job2 战士乘数；u961 reroll MISS + jump HIT 且 gene.s 门 miss 恒 1 钉面；u962 dead skip；u963 界外 skip）——
+            var w = FreshWorld(0x00000144);
+            for (int yy = 0; yy < WbWorld.H; yy++) for (int xx = 0; xx < WbWorld.W; xx++) w.terrain[yy * WbWorld.W + xx] = WbWorld.T_GRASS;
+            MkUnit(w, new JObject { ["id"] = 960, ["race"] = 0, ["x"] = 99.5, ["y"] = 60.0, ["hp"] = 200.0, ["maxHp"] = 200.0, ["trait"] = "giant", ["job"] = 2 });
+            MkUnit(w, new JObject { ["id"] = 961, ["race"] = 0, ["x"] = 101.0, ["y"] = 60.5, ["hp"] = 60.0, ["maxHp"] = 60.0 });
+            MkUnit(w, new JObject { ["id"] = 962, ["race"] = WbConstants.R_SHEEP, ["x"] = 100.0, ["y"] = 59.0, ["hp"] = 16.0, ["maxHp"] = 16.0, ["dead"] = 1 });
+            MkUnit(w, new JObject { ["id"] = 963, ["race"] = 0, ["x"] = 112.0, ["y"] = 60.0, ["hp"] = 60.0, ["maxHp"] = 60.0 });
+            w.rngA = 0x00000144;
+            WbBailRelay.ApplyTool(w, "mutate", 100, 60);
+            Assert.That(w.unitById[960].traitName, Is.EqualTo("strong"), "u960 reroll 后 trait=strong（rollTrait 12 键集——S13 黄金同源）");
+            Assert.That(F64Hex(w.unitById[960].maxHp), Is.EqualTo("0000000000405240"), "u960 maxHp=round(60×1×1.3×0.931851)=73 位级（jumpGene 重算 L11098）");
+            Assert.That(F64Hex(w.unitById[960].hp), Is.EqualTo("0000000000405240"), "u960 hp=min(73,111)=73 位级（L11099）");
+            Assert.That(F64Hex(w.unitById[960].dmg), Is.EqualTo("3e93ed3d681d2d40"), "u960 dmg=8×1.4×1.35×0.962793=14.557 位级（L11100）");
+            Assert.That(F64Hex(w.unitById[960].speed), Is.EqualTo("ab51991ce7f0b63f"), "u960 speed=0.09×1×1.05×0.94829=0.0896 位级（L11101）");
+            Assert.That(F64Hex(w.unitById[960].geneC.s), Is.EqualTo("d1b3d9d16358ee3f"), "u960 gene.s 位级");
+            Assert.That(F64Hex(w.unitById[961].geneC.s), Is.EqualTo("000000000000f03f"), "u961 gene.s 恰等 1.0（0.6 门 miss 维恒等钉面——{1,1,1,1} 起步）");
+            Assert.That(F64Hex(w.unitById[961].maxHp), Is.EqualTo("0000000000004d40"), "u961 maxHp=round(60×0.962656)=58 位级（无特质无 job 乘数支）");
+            Assert.That(w.unitById[961].traitName, Is.Null, "u961 reroll 0.3 门 MISS——trait 未动");
+            Assert.That(w.unitById[962].geneC, Is.Null, "u962 dead skip——gene 未创建（L10891 先于 isCiv/分支）");
+            Assert.That(F64Hex(w.unitById[962].hp), Is.EqualTo("0000000000003040"), "u962 dead hp=16 不变");
+            Assert.That(w.unitById[963].geneC, Is.Null, "u963 d=12>r=3 界外 skip");
+            Assert.That(F64Hex(w.unitById[963].hp), Is.EqualTo("0000000000004e40"), "u963 界外 hp=60 不变");
+            Assert.That(w.effects.Count((f) => f.kind == "mutate"), Is.EqualTo(2), "fx mutate 每命中单位 2 掷（u960/u961——门 miss 亦掷 L10901）");
+            Assert.That(w.effects[0].seed, Is.EqualTo(37508), "fx seed 位级");
+            Assert.That(w.rngA.ToString("x8"), Is.EqualTo("3c13703c"), "24 掷 rng 链终态位级（S13 黄金同源）");
+            // —— S14 同源：wild 面 3 连发（u970 preset gene s 钳位 2.0 恰等；u971 baseGene 空表零掷 {1,1,1,1}；u972 wolf 捕食者重算）——
+            w = FreshWorld(0x00000027);
+            for (int yy = 0; yy < WbWorld.H; yy++) for (int xx = 0; xx < WbWorld.W; xx++) w.terrain[yy * WbWorld.W + xx] = WbWorld.T_GRASS;
+            MkUnit(w, new JObject { ["id"] = 970, ["race"] = WbConstants.R_SHEEP, ["x"] = 100.0, ["y"] = 60.0, ["hp"] = 16.0, ["maxHp"] = 16.0,
+                ["gene"] = new JObject { ["s"] = 1.3, ["d"] = 0.8, ["h"] = 1.1, ["r"] = 0.9 } });
+            MkUnit(w, new JObject { ["id"] = 971, ["race"] = WbConstants.R_SHEEP, ["x"] = 101.0, ["y"] = 60.0, ["hp"] = 16.0, ["maxHp"] = 16.0 });
+            MkUnit(w, new JObject { ["id"] = 972, ["race"] = WbConstants.R_WOLF, ["x"] = 99.0, ["y"] = 60.5, ["hp"] = 34.0, ["maxHp"] = 34.0 });
+            w.rngA = 0x00000027;
+            for (int k = 0; k < 3; k++) WbBailRelay.ApplyTool(w, "mutate", 100, 60);
+            Assert.That(F64Hex(w.unitById[970].geneC.s), Is.EqualTo("0000000000000040"), "u970 gene.s 恰触钳位 2.0（Math.min 恰等面——3 连发逼近）");
+            Assert.That(F64Hex(w.unitById[970].maxHp), Is.EqualTo("0000000000003240"), "u970 maxHp=round(16×1.1)=18 位级");
+            Assert.That(F64Hex(w.unitById[970].speed), Is.EqualTo("dbf97e6abc74b33f"), "u970 speed=0.038×2.0=0.076 位级（s 钳位传导重算）");
+            Assert.That(F64Hex(w.unitById[971].geneC.r), Is.EqualTo("000000000000f03f"), "u971 gene.r 恒等 1.0（baseGene {1,1,1,1} 起步 + r 维门 miss 钉面）");
+            Assert.That(F64Hex(w.unitById[972].maxHp), Is.EqualTo("0000000000003e40"), "u972 maxHp=round(34×0.876787)=30 位级（wolf hp34 基准）");
+            Assert.That(F64Hex(w.unitById[972].dmg), Is.EqualTo("8127636520882940"), "u972 dmg=10×1.276587=12.766 位级（wolf dmg10 基准）");
+            Assert.That(w.effects.Count((f) => f.kind == "mutate"), Is.EqualTo(9), "3 单位 × 3 连发 fx=9");
+            Assert.That(w.rngA.ToString("x8"), Is.EqualTo("b43a4d0f"), "72 掷 rng 链终态位级（S14 黄金同源）");
         }
     }
 }

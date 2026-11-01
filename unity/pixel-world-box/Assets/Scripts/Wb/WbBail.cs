@@ -1649,6 +1649,77 @@ namespace PixelWorldBox.Wb
             return keys[(int)System.Math.Floor(w.Rng() * keys.Count)];                      // L1469
         }
 
+        // ================= mutateArea 特质域（M-U19——applyTool case "mutate" L13418-13420 接线） =================
+
+        // mutateArea L10888-10906（基因突变：乱流改写基因——进化引擎联动：野生动物基因跳变 / 文明生物特质重塑 + 小概率基因化选育）
+        public static int MutateArea(WbWorld w, double x, double y, double r)
+        {
+            int n = 0;                                                                                              // L10889
+            foreach (WbU u in w.units)                                                                              // L10890
+            {
+                if (u.dead != 0) continue;                                                                          // L10891
+                if (WbMath.FdHypot(u.x - x, u.y - y) > r) continue;                                                 // L10892（hypot fdlibm 位精确域）
+                if (RStats[u.race].isCiv)                                                                           // L10893
+                {
+                    if (w.Rng() < 0.3) { RerollTrait(w, u); n++; }                                                  // L10894（0.3 门 1 掷 + rerollTrait rollTrait 1 掷）
+                    // 基因化选育：神力乱流同样改写文明生物体格（25% 概率·幅度较野生动物温和）                        // L10895
+                    if (w.Rng() < 0.25) { JumpGene(w, u, 0.12); n++; }                                              // L10896（0.25 门 1 掷）
+                }
+                else                                                                                                // L10897
+                {
+                    if (u.geneC == null) u.geneC = BaseGene(u.race);                                                // L10898（speciesBase 空表分支零掷恒 {1,1,1,1}——BaseGene M-U7k 译件）
+                    JumpGene(w, u, 0.2);                                                                            // L10899（野生动物全幅）
+                    n++;                                                                                            // L10900
+                }
+                FxHook(w, "mutate", u.x, u.y, 30);                                                                  // L10901（fx 在 if/else 外——门双 miss 亦掷 2 掷）
+            }
+            return n;                                                                                               // L10905
+        }
+
+        // rerollTrait L11037-11057（重塑特质：退旧乘数上新乘数——近似 setJob 的属性重算）
+        private static void RerollTrait(WbWorld w, WbU u)
+        {
+            WbTrait old = u.traitName != null && TraitsAll.TryGetValue(u.traitName, out var ot) ? ot : null;        // L11038（JS TRAITS[u.trait] 直接索引——缺键 undefined ≡ TryGetValue false）
+            string key = RollTrait(w);                                                                              // L11039（1 掷）
+            WbTrait nw = key != null && TraitsAll.TryGetValue(key, out var nt) ? nt : null;                         // L11040
+            if (old != null)                                                                                        // L11041（旧乘数卸除）
+            {
+                u.maxHp = System.Math.Max(1, WbMath.JsRound(u.maxHp / (old.hpMul ?? 1)));                           // L11042（JS Math.round .5 上取整——JsRound 禁银行家舍入）
+                u.hp = System.Math.Min(u.maxHp, System.Math.Max(1, WbMath.JsRound(u.hp / (old.hpMul ?? 1))));       // L11043（双钳不对称——old 支 max(1,·)）
+                u.dmg /= old.dmgMul ?? 1;                                                                           // L11044
+                u.speed /= old.speedMul ?? 1;                                                                       // L11045
+                u.speedN = u.speed;                                                                                 // M-U7t speedN 镜像写点（spawnUnit 先例）
+            }
+            if (nw != null)                                                                                         // L11046（新乘数上装）
+            {
+                u.maxHp = System.Math.Max(1, WbMath.JsRound(u.maxHp * (nw.hpMul ?? 1)));                            // L11047
+                u.hp = System.Math.Min(u.maxHp, WbMath.JsRound(u.hp * (nw.hpMul ?? 1)));                            // L11048（nw 支无 max(1,·)——不对称面机械保持）
+                u.dmg *= nw.dmgMul ?? 1;                                                                            // L11049
+                u.speed *= nw.speedMul ?? 1;                                                                        // L11050
+                u.speedN = u.speed;                                                                                 // M-U7t speedN 镜像写点
+            }
+            u.traitName = key;                                                                                      // L11053（key ?? null——RollTrait 恒返 12 键集内非空串）
+        }
+
+        // jumpGene L11085-11103（强制基因跳变：±amount 随机维度重铸 + 基因改变后属性立即重算）
+        private static void JumpGene(WbWorld w, WbU u, double amount)
+        {
+            WbGene g = u.geneC ?? (u.geneC = new WbGene { s = 1, d = 1, h = 1, r = 1 });                            // L11086
+            // dims=['s','d','h','r'] 固定序 for-of 机械展开（C# 无字符串索引 WbGene——四 if 序恒等）              // L11087-11088
+            if (w.Rng() < 0.6) g.s = System.Math.Max(0.5, System.Math.Min(2, g.s * (1 + (w.Rng() - 0.42) * 2 * amount)));   // L11089-11090（门 1 掷/维 + 命中维值 1 掷 + 0.5/2 钳位）
+            if (w.Rng() < 0.6) g.d = System.Math.Max(0.5, System.Math.Min(2, g.d * (1 + (w.Rng() - 0.42) * 2 * amount)));
+            if (w.Rng() < 0.6) g.h = System.Math.Max(0.5, System.Math.Min(2, g.h * (1 + (w.Rng() - 0.42) * 2 * amount)));
+            if (w.Rng() < 0.6) g.r = System.Math.Max(0.5, System.Math.Min(2, g.r * (1 + (w.Rng() - 0.42) * 2 * amount)));
+            RaceStat def = RStats[u.race];                                                                          // L11095（基因改变后属性立即重算——基于本种族基准 × 基因）
+            WbTrait td = u.traitName != null && TraitsAll.TryGetValue(u.traitName, out var tt) ? tt : null;         // L11096
+            JobCase2? jd = def.isCiv ? JobDefs[u.jobC ?? 0] : (JobCase2?)null;                                      // L11097（JOBS[u.job ?? 0]——非文明 null）
+            u.maxHp = System.Math.Max(1, WbMath.JsRound(def.hp * (td?.hpMul ?? 1) * (jd?.hpMul ?? 1) * g.h));       // L11098
+            u.hp = System.Math.Min(u.maxHp, u.hp);                                                                  // L11099
+            u.dmg = def.dmg * (td?.dmgMul ?? 1) * (jd?.dmgMul ?? 1) * g.d;                                          // L11100
+            u.speed = def.speed * (td?.speedMul ?? 1) * (jd?.speedMul ?? 1) * g.s;                                  // L11101
+            u.speedN = u.speed;                                                                                     // M-U7t speedN 镜像写点（CompareSnap 消费——zombify L4328 先例同构）
+        }
+
         // nature.ts reproMul L325-328（繁衍系数：春 1.14 / 冬 0.78 / 夏秋 1）
         private static double NatureReproMul(WbWorld w)
         {
@@ -5459,7 +5530,7 @@ namespace PixelWorldBox.Wb
                 case "bless": BlessArea(w, wx, wy, r); break;                                                       // L13409-13411
                 case "curse": CurseArea(w, wx, wy, r); break;                                                       // L13412-13414
                 case "love": LoveArea(w, wx, wy, r); break;                                                         // L13415-13417
-                // L13418-13420 挂账：mutate → mutateArea（特质域切片——rerollTrait/jumpGene/rollTrait 未译）
+                case "mutate": MutateArea(w, wx, wy, r); break;                                                     // L13418-13420（M-U19：特质域接入——mutateArea L10888-10906）
                 case "teleport": TeleportArea(w, wx, wy, r); break;                                                 // L13421-13423
                 case "wrath": WrathStorm(w, wx, wy, System.Math.Max(4.0, r), durationP); break;                     // L13424-13426（max(4,r) 下钳）
                 case "holystorm": HolyStorm(w, wx, wy, System.Math.Max(4.0, r), durationP); break;                  // L13427-13429（max(4,r) 下钳）
