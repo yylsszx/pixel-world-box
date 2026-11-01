@@ -512,6 +512,33 @@ namespace PixelWorldBox.Wb
         public bool iceChronDone = false;                      // nature.ts L178 封冻纪事旗（离冬复位 L218 seasonCheck 未译注记）
         public bool thawChronDone = false;                     // nature.ts L180 落冰湖纪事旗（离春复位 L220 seasonCheck 未译注记）
 
+        // —— M-U17 nature 板块地质域（字段只加；nature.ts L39-81）——
+        public byte[] plate = new byte[W * H];                 // nature.ts L39 plate: Uint8Array（每格板块 id 0..plateN-1——seed 抖动 Voronoi 确定性生成；initPlates/recomputePlates 写点）
+        public int plateN = 6;                                 // nature.ts L40 plateN（5-7 板块——initPlates 掷定）
+        public List<double[]> drift = new List<double[]>();    // nature.ts L42 drift {dx,dy}[]（板块漂移向量 ±0.6 格/地质期——pSystems List<double[]> 先例；[0]=dx [1]=dy）
+        public List<double> plateCx = new List<double>();      // nature.ts L44 plateCx[]（板块种子质心 x——tectonicTick 漂移迁移）
+        public List<double> plateCy = new List<double>();      // nature.ts L45 plateCy[]
+        public int plateEpoch = 0;                             // nature.ts L48 plateEpoch（构造期计数——每 4 期重算 Voronoi）
+        public List<int> boundaryList = new List<int>();       // nature.ts L50 boundary: Set<number>（边界格集——插入序=行主序扫描序镜像；枚举面 tectonicTick 应力/释压/造山 cand/裂谷取样/quakeRisk）
+        public HashSet<int> boundarySet = new HashSet<int>();  // boundary.has 查询面（releaseQuake L840/造山 L912——List+Set 双结构 frozenList 先例）
+        public float[] stress = new float[W * H];              // nature.ts L52 stress: Float32Array（边界应力场——f32 存储读升 double 运算写降 float 位同构）
+        public List<int> hotX = new List<int>();               // nature.ts L56 hotspots {x,y,heat}[] 三平行列（火山热点——地幔柱固定世界坐标，链状火山岛种子）
+        public List<int> hotY = new List<int>();
+        public List<double> hotHeat = new List<double>();
+        public float[] moist = new float[WbConstants.AW * WbConstants.AH];     // nature.ts L61 moist: Float32Array（湿度粗网格——initPlates fill 0.35；atmTick 生产面 M-U18 挂账）
+        public float[] ashF = new float[WbConstants.AW * WbConstants.AH];      // nature.ts L63 ashF: Float32Array（灰烬平流粗网格——geologyTick 喷发注入写点在位；atmTick 平流 M-U18）
+        public float[] floodAcc = new float[WbConstants.AW * WbConstants.AH];  // nature.ts L71 floodAcc: Float32Array（持续暴雨累计——atmTick 生产 M-U18 壳）
+        public int stormSeq = 1;                               // nature.ts L74 stormSeq（风暴 id 序——stormTick M-U18 消费壳）
+        public int[] natCounters = new int[10];                // nature.ts L80 counters 十键（quakes/quakesBig/eruptions/uplifts/erosions/cyclones/tsunamis/floods/blizzards/droughts——键序 dump 面）
+        public List<int> rqX = new List<int>();                // nature.ts L81 recentQuakes {x,y,m,year}[] 四平行列（unshift 头插/pop 尾删 6 上限）
+        public List<int> rqY = new List<int>();
+        public List<double> rqM = new List<double>();
+        public List<int> rqYear = new List<int>();
+        public int lastSeason = -1;                            // nature.ts L167 lastSeason（seasonCheck 换季检测——-1 开局/读档基线静默）
+        public bool snowmanChronDone = false;                  // nature.ts L184 雪人纪事旗（离冬复位——snowmanTick 挂账消费壳）
+        public double lastCatastropheX = -1;                   // engine L564 lastCatastrophe {x,y,tick}（大灾互连——外交「大灾不兴刀兵」消费；tick 已有 L554）
+        public double lastCatastropheY = -1;
+
         // —— M-U9b fire 域（字段只加）——
         public List<int> fireSetList = new List<int>();        // fireSet 插入序镜像（JS Set 迭代序——fireTick 活迭代逐位面；Ignite/SetTerrain L992/白行者 L3581/ExtinguishFire L4589 四写点同步）
         public List<int> fireDone = new List<int>();           // engine L667 fireDone（fireTick 熄灭列表复用——热路径零分配语义）

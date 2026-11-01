@@ -174,6 +174,66 @@ namespace PixelWorldBox.Wb
         private const double E_P4 = -1.65339022054652515390e-06;
         private const double E_P5 = 4.13813679705723846039e-08;
 
+        // ---------------- fdlibm log2（M-U17 nature 域震级公式；Sun e_log2.c 原版机械翻译——
+        //   bun/JSC glibc 同源对拍 135 点 1 点 1ULP 内；netstandard2.1 无 Math.Log2 API 自建） ----------------
+        private const double LN2_FDL = 0.69314718055994530942;
+        private const double TWO54_FDL = 1.80143985094819840000e+16;
+        private const double LG1 = 6.666666666666735130e-01;   /* 3FE55555 55555593 */
+        private const double LG2 = 3.999999999940941908e-01;   /* 3FD99999 9997FA04 */
+        private const double LG3 = 2.857142874366239149e-01;   /* 3FD24924 94229359 */
+        private const double LG4 = 2.222219843214978396e-01;   /* 3FCC71C5 1D8E78AF */
+        private const double LG5 = 1.818357216161805012e-01;   /* 3FC74664 96CB03DE */
+        private const double LG6 = 1.531383769920937332e-01;   /* 3FC39A09 D078C69F */
+        private const double LG7 = 1.479819860511658591e-01;   /* 3FC2F112 DF3E5244 */
+
+        /// fdlibm e_log2.c L68-124（log2——参数归约 + 14 阶 Reme 多项式；黄金 rq.m/r 位面依赖）
+        public static double FdLog2(double x)
+        {
+            long bits = System.BitConverter.DoubleToInt64Bits(x);
+            int hx = (int)(bits >> 32);
+            uint lx = (uint)bits;
+            int k = 0;
+            if (hx < 0x00100000)                                                                                   // L76（x < 2**-1022）
+            {
+                if (((hx & 0x7fffffff) | (int)lx) == 0) return -TWO54_FDL / System.Math.Abs(x);                    // L79（log(+-0)=-inf）
+                if (hx < 0) return (x - x) / (x - x);                                                              // L81（log(-#) = NaN）
+                k -= 54;                                                                                            // L82
+                x *= TWO54_FDL;                                                                                     // L83（subnormal scale up）
+                bits = System.BitConverter.DoubleToInt64Bits(x);
+                hx = (int)(bits >> 32);                                                                            // L84（GET_HIGH_WORD）
+            }
+            if (hx >= 0x7ff00000) return x + x;                                                                     // L86（inf/NaN 透传）
+            k += (hx >> 20) - 1023;                                                                                // L88
+            hx &= 0x000fffff;                                                                                      // L89
+            int i = (hx + 0x95f64) & 0x100000;                                                                      // L90（normalize 或 /2 分界）
+            bits = ((long)(uint)(hx | (i ^ 0x3ff00000)) << 32) | lx;                                                // L91（SET_HIGH_WORD——低位保留）
+            x = System.BitConverter.Int64BitsToDouble(bits);
+            k += i >> 20;                                                                                          // L92
+            double dk = k;                                                                                          // L93
+            double f = x - 1.0;                                                                                    // L94
+            if ((0x000fffff & (2 + hx)) < 3)                                                                        // L95（|f| < 2**-20）
+            {
+                if (f == 0.0) return dk;                                                                           // L101
+                double R = f * f * (0.5 - 0.33333333333333333 * f);                                                 // L103
+                return dk - (R - f) / LN2_FDL;                                                                      // L104
+            }
+            double s = f / (2.0 + f);                                                                              // L106
+            double z = s * s;                                                                                      // L107
+            i = hx - 0x6147a;                                                                                      // L108
+            double w = z * z;                                                                                      // L109
+            int j = 0x6b851 - hx;                                                                                  // L110
+            double t1 = w * (LG2 + w * (LG4 + w * LG6));                                                            // L111
+            double t2 = z * (LG1 + w * (LG3 + w * (LG5 + w * LG7)));                                                // L112
+            i |= j;                                                                                                // L113
+            double R2 = t2 + t1;                                                                                   // L114
+            if (i > 0)                                                                                             // L115
+            {
+                double hfsq = 0.5 * f * f;                                                                          // L117
+                return dk - ((hfsq - (s * (hfsq + R2))) - f) / LN2_FDL;                                             // L118
+            }
+            return dk - ((s * (f - R2)) - f) / LN2_FDL;                                                             // L122
+        }
+
         /// jsmath.rs L44-108（位精确 exp；C# (long)(double) 截断 = Rust as i32 语义）
         public static double FdExp(double x)
         {

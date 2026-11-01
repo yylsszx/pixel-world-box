@@ -3392,6 +3392,502 @@ namespace PixelWorldBox.Wb
             w.shake = System.Math.Min(12.0, WbMath.JsRound(8.0 * pw));                                                  // L10538（Math.round → JsRound——JS .5 上取整；C# Math.Round 银行家舍入禁止；直写非 max——M-U10b 云族 L10224 覆写语义同源）
         }
 
+        // ================= M-U17 nature 板块地质域（nature.ts L86-1061 六函数 + engine.ts natureQuake L10561-10590；
+        // 挂账 M-U18：atmTick/pressureTick/stormTick/hydroTick/seedRivers/snapshot/tint/rhythmChips；
+        // ep('nature.quakeStress') DIVERGENCE：engineParams L43 value:26 黄金驱动默认值内联 26——ep 参数域切片挂账） =================
+
+        /// engine.ts natureQuake L10561-10590（板块地震——里氏震级驱动：塌毁/伤亡/地裂随震级缩放）
+        internal static void NatureQuake(WbWorld w, double x, double y, double m)
+        {
+            /* onSound?.('quake') —— 宿主回调（黄金受控 undefined no-op 同 gen 端） */                                    // L10562
+            w.lastCatastropheX = x; w.lastCatastropheY = y; w.lastCatastropheTick = w.tickCount;                        // L10564（大灾互连记录——外交「大灾不兴刀兵」/联盟「同病相怜」消费）
+            double r = WbMath.JsRound(2.0 + (m - 4.4) * 4.2);                                                            // L10565（M4.5≈2格 … M8.8≈19格）
+            double dur = WbMath.JsRound(24.0 + (m - 4.4) * 34.0);                                                        // L10566
+            w.Fx("quake", x, y, dur, r);                                                                                // L10567（fx('quake',x,y,dur,{r})——fx 恒 2 掷 seed+dir）
+            w.shake = System.Math.Min(14.0, WbMath.JsRound(3.0 + (m - 4.4) * 4.5));                                      // L10568
+            double intensity = (m - 4.4) / 4.8;                                                                          // L10569（0-1 归一化破坏烈度）
+            int rr = (int)System.Math.Ceiling(r);                                                                        // L10571（Math.ceil 域）
+            for (int yy = (int)System.Math.Floor(y - rr); yy <= y + rr; yy++)                                            // L10572（yy 初 floor(y-rr)；界 y+rr double 比较——int 隐升同构）
+            {
+                for (int xx = (int)System.Math.Floor(x - rr); xx <= x + rr; xx++)                                        // L10573
+                {
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                                // L10574
+                    double d = WbNoise.V8Hypot(xx + 0.5 - x, yy + 0.5 - y);                                              // L10575（fdlibm 域位精确）
+                    if (d > r) continue;                                                                                // L10576
+                    int i = yy * WbWorld.W + xx;                                                                        // L10577（idx 宏）
+                    double falloff = 1.0 - d / (r + 0.5);                                                                // L10578
+                    if (w.building[i] > 0 && w.Rng() < 0.32 * intensity * falloff) AttackBuilding(w, i, 40.0 + 90.0 * intensity, -1);   // L10579（塌毁 1 掷/建筑格）
+                    if (m >= 7.0 && w.Rng() < 0.05 * intensity * falloff)                                                // L10580（强震地裂 1 掷/格——m>=7 才掷）
+                    {
+                        byte t = w.terrain[i];                                                                          // L10581
+                        if (t == WbConstants.T_GRASS || t == WbConstants.T_FOREST) SetTerrain(w, i, WbConstants.T_BURNT);   // L10582
+                    }
+                }
+            }
+            for (int k = 0; k < w.units.Count; k++)                                                                     // L10586（人员伤亡：单位按烈度受损）
+            {
+                WbU u = w.units[k];
+                if (u.dead != 0) continue;                                                                              // L10587
+                double d = WbNoise.V8Hypot(u.x - x, u.y - y);                                                            // L10588
+                if (d > r + 1.0) continue;                                                                              // L10589
+                double dmg = (12.0 + 70.0 * intensity) * System.Math.Max(0.2, 1.0 - d / (r + 1.0));                      // L10590
+                u.hp -= dmg;                                                                                            // L10591
+                u.hurtN = 20;                                                                                           // L10592（hurtN 单轨先例——fire L3543/Boom L12296/Lightning L3368 同源；legacy u.hurt 渲染轨不写）
+                if (u.hp <= 0) u.dead = 1;                                                                              // L10593
+            }
+            w.AddEvent("geo", $"里氏 {Fmt1(m)} 级强震撼动了大地{(m >= 7 ? "，山川易色，屋舍成墟" : m >= 6 ? "，墙垣迸裂" : "")}", null, x, y);   // L10595（m.toFixed(1) → Fmt1——文本位级黄金兜底）
+            if (m >= 7.0) w.Toast($"{Fmt1(m)} 级强震！", "danger");                                                      // L10596
+        }
+
+        /// toFixed(1) 局部辅助——JS 一位小数格式化（round-half 语义 .NET F1 黄金文本位级兜底）
+        private static string Fmt1(double v) => v.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+
+        /// nature.ts initPlates L93-131（seed 确定性初始化板块/漂移/热点——独立流 mulberry32(seed^0x51ab7)；
+        /// 读档同调用；质心可被存档覆盖后重算）
+        internal static void NatureInitPlates(WbWorld w)
+        {
+            uint rand = (uint)(w.natureSeed ^ 0x51ab7);                                                                 // L94（独立 mulberry 流——主 rngA 零消费）
+            w.plateN = 5 + (int)System.Math.Floor(WbNoise.Mulberry32Next(ref rand) * 3.0);                               // L95（5-7 板块）
+            w.drift.Clear(); w.plateCx.Clear(); w.plateCy.Clear();                                                       // L96-98
+            for (int p = 0; p < w.plateN; p++)                                                                          // L99
+            {
+                w.plateCx.Add(20.0 + WbNoise.Mulberry32Next(ref rand) * (WbWorld.W - 40));                               // L100
+                w.plateCy.Add(12.0 + WbNoise.Mulberry32Next(ref rand) * (WbWorld.H - 24));                               // L101
+                double ang = WbNoise.Mulberry32Next(ref rand) * System.Math.PI * 2.0;                                    // L102
+                double spd = 0.18 + WbNoise.Mulberry32Next(ref rand) * 0.42;                                             // L103
+                w.drift.Add(new double[] { WbMath.FdCos(ang) * spd, WbMath.FdSin(ang) * spd });                          // L103（Math.cos/sin → fdlibm 位精确件）
+            }
+            NatureRecomputePlates(w);                                                                                   // L105
+            // 火山热点：地幔柱固定于世界坐标（不随边界重算迁移——链状火山岛的种子）
+            w.hotX.Clear(); w.hotY.Clear(); w.hotHeat.Clear();                                                           // L107
+            System.Collections.Generic.List<int> bl = new System.Collections.Generic.List<int>(w.boundaryList);                                                               // L108（[...boundary] 插入序拷贝）
+            int nHot = 2 + (int)System.Math.Floor(WbNoise.Mulberry32Next(ref rand) * 3.0);                               // L109（2-4 个）
+            for (int k = 0; k < nHot && bl.Count > 0; k++)                                                              // L110
+            {
+                int gi = bl[(int)(WbNoise.Mulberry32Next(ref rand) * bl.Count)];                                         // L111
+                w.hotX.Add(gi % WbWorld.W); w.hotY.Add(gi / WbWorld.W); w.hotHeat.Add(0.0);                              // L111（{x: i%W, y:(i/W)|0, heat:0}）
+            }
+            System.Array.Clear(w.stress, 0, w.stress.Length);                                                                  // L114（stress.fill(0)）
+            for (int i = 0; i < w.moist.Length; i++) w.moist[i] = 0.35f;                                                 // L115（moist.fill(0.35)）
+            System.Array.Clear(w.rainCell, 0, w.rainCell.Length);                                                              // L116（rainCell.fill(0)）
+            System.Array.Clear(w.floodAcc, 0, w.floodAcc.Length);                                                              // L117（floodAcc.fill(0)）
+            System.Array.Clear(w.ashF, 0, w.ashF.Length);                                                                      // L118（ashF.fill(0)）
+            w.ash = 0.0;                                                                                                // L119
+            w.pSystems.Clear();                                                                                         // L120（pSystems=[]——atmTick M-U18 壳）
+            w.storms.Clear(); w.stormSeq = 1;                                                                            // L121-122（storms=[]——stormTick M-U18 壳）
+            w.plateEpoch = 0;                                                                                           // L123
+            for (int k = 0; k < 10; k++) w.natCounters[k] = 0;                                                           // L124（counters 十键清零）
+            w.rqX.Clear(); w.rqY.Clear(); w.rqM.Clear(); w.rqYear.Clear();                                               // L125（recentQuakes=[]）
+        }
+
+        /// nature.ts recomputePlates L132-166（重算 Voronoi 板块场与边界集合——种子漂移后调用；
+        /// 应力只保留仍在边界上的格；boundary 插入序=行主序扫描序——List+Set 双结构同构）
+        internal static void NatureRecomputePlates(WbWorld w)
+        {
+            for (int y = 0; y < WbWorld.H; y++)                                                                          // L133
+            {
+                for (int x = 0; x < WbWorld.W; x++)                                                                      // L134
+                {
+                    int best = 0; double bestD = double.PositiveInfinity;                                                // L136-137
+                    for (int p = 0; p < w.plateN; p++)                                                                   // L138
+                    {
+                        double jit = WbNoise.ValueNoise(x / 22.0, y / 22.0, w.natureSeed + 900 + p * 37) * 34.0 - 17.0;   // L140（抖动——valueNoise 非掷）
+                        double d = (x + jit - w.plateCx[p]) * (x + jit - w.plateCx[p]) + (y - w.plateCy[p]) * (y - w.plateCy[p]);   // L141（**2 → 平方同构）
+                        if (d < bestD) { bestD = d; best = p; }                                                          // L142（严格 <——tie 首现最小胜出）
+                    }
+                    w.plate[y * WbWorld.W + x] = (byte)best;                                                             // L144
+                }
+            }
+            w.boundaryList.Clear(); w.boundarySet.Clear();                                                              // L147（boundary.clear()）
+            for (int y = 0; y < WbWorld.H; y++)                                                                          // L148
+            {
+                for (int x = 0; x < WbWorld.W; x++)                                                                      // L149
+                {
+                    int i = y * WbWorld.W + x;                                                                          // L150
+                    int p = w.plate[i];                                                                                  // L151
+                    if ((x > 0 && w.plate[i - 1] != p) || (x < WbWorld.W - 1 && w.plate[i + 1] != p) || (y > 0 && w.plate[i - WbWorld.W] != p) || (y < WbWorld.H - 1 && w.plate[i + WbWorld.W] != p))   // L152-153
+                    {
+                        w.boundaryList.Add(i); w.boundarySet.Add(i);                                                     // L154（add——插入序=行主序）
+                    }
+                    else if (w.stress[i] > 0)                                                                             // L155
+                    {
+                        w.stress[i] = 0f;                                                                                // L156（离开边界的格应力归零——断层带随板块迁移）
+                    }
+                }
+            }
+        }
+
+        /// nature.ts seasonCheck L213-241（季节推进检测——%40===0 槽 41；变化时全图刷新色调；
+        /// 森林同步重绘树冠；换季宣告真实过渡时 toast+编年史，开局/读档静默）
+        internal static void NatureSeasonCheck(WbWorld w)
+        {
+            int s = w.NatureSeason();                                                                                   // L214
+            if (s != w.lastSeason)                                                                                      // L215
+            {
+                bool first = w.lastSeason < 0;                                                                          // L216
+                w.lastSeason = s;                                                                                       // L217
+                if (s != 3) w.iceChronDone = false;                                                                     // L218（离冬复位：下个冬季重新择机播报封冻）
+                if (s != 3) w.snowmanChronDone = false;                                                                 // L219（离冬复位：下个冬季重新播报堆雪人）
+                if (s != 0) w.thawChronDone = false;                                                                     // L220（离春复位：下个春季重新播报落冰湖）
+                for (int i = 0; i < WbWorld.W * WbWorld.H; i++)                                                          // L222（全图刷新）
+                {
+                    w.dirty.Add(i);                                                                                     // L223
+                    if (w.terrain[i] == WbConstants.T_FOREST) w.propsDirty.Add(i);                                       // L224（森林树冠重绘）
+                }
+                if (first) return;                                                                                      // L227（开局/读档基线：不宣告——HUD 已示当前季节）
+                if (s == 0)                                                                                             // L229
+                {
+                    w.Toast("春回大地——草木返青，万物复苏，树人开始了春播", "good");                                        // L230
+                    w.AddEvent("season", "春回大地：万物复苏，草木返青（生物节律 · 春播加成）", null, null);                   // L231
+                }
+                else if (s == 1)                                                                                        // L232
+                {
+                    w.Toast("盛夏来临——烈日当空，野火更易燎原", "info");                                                    // L233
+                    w.AddEvent("season", "盛夏来临：烈日当空，野火更易燎原（火险上升）", null, null);                          // L234
+                }
+                else if (s == 2)                                                                                        // L235
+                {
+                    w.Toast("秋色渐染——金风送爽，林梢染红，大地进入收获的季节", "info");                                    // L236
+                    w.AddEvent("season", "秋色渐染：金风送爽，林梢染红（草木生长放缓）", null, null);                         // L237
+                }
+                else                                                                                                    // L238
+                {
+                    w.Toast("寒冬降临——霜封大地，蛇虫蛰伏，亡灵在长夜中愈发活跃", "danger");                                // L239
+                    w.AddEvent("season", "寒冬降临：霜封大地，蛇虫蛰伏，死灵在长夜中愈发活跃", null, null);                   // L240
+                }
+            }
+        }
+
+        /// nature.ts tectonicTick L781-828（板块构造 %240===21 槽 42：质心漂移/期 4 recompute/
+        /// 应力积累/热点增压/释压检查≤2 次/灰烬兜底沉降）
+        internal static void NatureTectonicTick(WbWorld w)
+        {
+            if (!w.laws.tectonics) return;                                                                              // L783
+            // —— 板块真实漂移：种子质心缓慢位移（边界随之世纪尺度迁移——「轮」动名副其实）——
+            w.plateEpoch++;                                                                                             // L785
+            const double DK = 0.55;                                                                                     // L786（每构造期位移系数）
+            for (int p = 0; p < w.plateN; p++)                                                                          // L787
+            {
+                w.plateCx[p] = System.Math.Max(16.0, System.Math.Min(WbWorld.W - 16.0, w.plateCx[p] + w.drift[p][0] * DK));   // L788
+                w.plateCy[p] = System.Math.Max(10.0, System.Math.Min(WbWorld.H - 10.0, w.plateCy[p] + w.drift[p][1] * DK));   // L789
+            }
+            if (w.plateEpoch % 4 == 0) NatureRecomputePlates(w);                                                         // L791（每 4 期重算）
+            // 应力积累：按真实边界法线投影（会聚挤压为正 → 造山带与地震带；离散则松弛）
+            const double acc = 0.85;                                                                                    // L793
+            for (int bi = 0; bi < w.boundaryList.Count; bi++)                                                            // L794（boundary 插入序遍历）
+            {
+                int i = w.boundaryList[bi];
+                int x = i % WbWorld.W;                                                                                  // L795
+                int y = i / WbWorld.W;                                                                                  // L796
+                int p = w.plate[i];                                                                                     // L797
+                // 找一个异板块邻居及其真实方向（边界法线）
+                int np = p; int ndx = 0; int ndy = 0;                                                                    // L799-800
+                if (x > 0 && w.plate[i - 1] != p) { np = w.plate[i - 1]; ndx = -1; }                                     // L801
+                else if (x < WbWorld.W - 1 && w.plate[i + 1] != p) { np = w.plate[i + 1]; ndx = 1; }                     // L802
+                else if (y > 0 && w.plate[i - WbWorld.W] != p) { np = w.plate[i - WbWorld.W]; ndy = -1; }                // L803
+                else if (y < WbWorld.H - 1 && w.plate[i + WbWorld.W] != p) { np = w.plate[i + WbWorld.W]; ndy = 1; }     // L804
+                if (np == p) continue;                                                                                  // L806
+                double[] dA = w.drift[p];                                                                               // L807
+                double[] dB = w.drift[np];                                                                              // L808
+                // 相对速度在法线方向投影（正 = 会聚挤压）
+                double conv = (dB[0] - dA[0]) * ndx + (dB[1] - dA[1]) * ndy;                                             // L810
+                if (conv > 0) w.stress[i] = (float)(w.stress[i] + conv * acc * 1.6);                                     // L811（f32 读升 double 运算写降）
+                else w.stress[i] = (float)System.Math.Max(0.0, w.stress[i] + conv * 0.5);                                // L812
+            }
+            // 热点增压（火山带：缓慢积蓄，~130 年一次喷发周期）
+            for (int h = 0; h < w.hotX.Count; h++)                                                                      // L815
+            {
+                w.hotHeat[h] = System.Math.Min(3.0, w.hotHeat[h] + 0.09 + (double)w.stress[w.hotY[h] * WbWorld.W + w.hotX[h]] * 0.008);   // L815（stress||0——非负域 (double) 升恒等）
+            }
+            // 应力释放检查：高应力格成簇 → 地震（ep('nature.quakeStress')=26——DIVERGENCE：黄金驱动默认值内联）
+            int done = 0;                                                                                               // L817
+            for (int bi = 0; bi < w.boundaryList.Count; bi++)                                                            // L818
+            {
+                int i = w.boundaryList[bi];
+                if (w.stress[i] < 26.0) continue;                                                                       // L819（ep 默认 26）
+                NatureReleaseQuake(w, i);                                                                               // L820
+                if (++done >= 2) break;                                                                                 // L821（每构造期最多 2 次释压）
+            }
+            // 灰烬沉降兜底（大气法则关闭时；正常由 atmTick 平流场沉降）
+            if (!w.laws.atmosphere && w.ash > 0)                                                                        // L824
+            {
+                w.ash = System.Math.Max(0.0, w.ash * 0.9 - 0.006);                                                       // L825
+                for (int k = 0; k < w.ashF.Length; k++) w.ashF[k] = (float)w.ash;                                        // L826（ashF.fill(this.ash)）
+            }
+        }
+
+        /// nature.ts releaseQuake L831-881（集群释压：以 i 为震中，聚合邻近高应力 → 里氏震级 → 引擎地震）
+        internal static void NatureReleaseQuake(WbWorld w, int i)
+        {
+            int x = i % WbWorld.W;                                                                                      // L834
+            int y = i / WbWorld.W;                                                                                      // L835
+            double energy = 0.0;                                                                                        // L836
+            System.Collections.Generic.List<int> zapped = new System.Collections.Generic.List<int>();                                                                          // L837
+            for (int yy = System.Math.Max(0, y - 6); yy <= System.Math.Min(WbWorld.H - 1, y + 6); yy++)                   // L838
+            {
+                for (int xx = System.Math.Max(0, x - 6); xx <= System.Math.Min(WbWorld.W - 1, x + 6); xx++)               // L839
+                {
+                    int j = yy * WbWorld.W + xx;                                                                        // L840
+                    if (!w.boundarySet.Contains(j)) continue;                                                            // L841（boundary.has）
+                    if (WbNoise.V8Hypot(xx - x, yy - y) > 6.0) continue;                                                 // L842（整数域 hypot fdlibm 位精确）
+                    if (w.stress[j] > 26.0 * 0.7)                                                                        // L843（ep()*0.7=18.2）
+                    {
+                        energy += w.stress[j];                                                                          // L844（f32 升 double 累加）
+                        zapped.Add(j);                                                                                  // L845
+                    }
+                }
+            }
+            for (int z = 0; z < zapped.Count; z++) w.stress[zapped[z]] = 0f;                                             // L848（zapped 应力清零）
+            if (energy < 10.0) return;                                                                                  // L849
+            // 里氏震级（自然集群释放典型 M6-7；饱和应力+宽集群才逼近 8.5+）
+            double m = System.Math.Min(8.8, 4.2 + WbMath.FdLog2(1.0 + energy) * 0.42);                                // L852（log2 域——Math.Log 先例 L1002 背书；verify rq.m f64hex 位级兜底）
+            w.natCounters[0]++;                                                                                          // L853（quakes）
+            if (m >= 6.5) w.natCounters[1]++;                                                                            // L854（quakesBig）
+            w.rqX.Insert(0, x); w.rqY.Insert(0, y); w.rqM.Insert(0, WbMath.JsRound(m * 10.0) / 10.0); w.rqYear.Insert(0, (int)System.Math.Floor(w.yearF));   // L855（unshift 头插——m: round(m*10)/10, year: floor(yearF)）
+            if (w.rqX.Count > 6) { w.rqX.RemoveAt(w.rqX.Count - 1); w.rqY.RemoveAt(w.rqY.Count - 1); w.rqM.RemoveAt(w.rqM.Count - 1); w.rqYear.RemoveAt(w.rqYear.Count - 1); }   // L856（>6 pop 尾删）
+            NatureQuake(w, x + 0.5, y + 0.5, m);                                                                        // L857（引擎地震 x+0.5 恒带）
+            // 海震 → 海啸（浅水/近海）
+            int ti = y * WbWorld.W + x;                                                                                 // L860
+            byte t = w.terrain[ti];                                                                                      // L861
+            if ((t == WbConstants.T_WATER || t == WbConstants.T_DEEP) && m >= 6.8)                                        // L862
+            {
+                Tsunami(w, x, y, 4.0 + (m - 6.8) * 4.0);                                                                // L863（M-U16 译件消费面点亮）
+                w.natCounters[6]++;                                                                                      // L864（tsunamis）
+            }
+            else if (m >= 7.4 && w.Rng() < 0.35)                                                                         // L865（近岸强震也可能掀起局部海啸——1 掷门）
+            {
+                bool coast = false;                                                                                      // L866
+                for (int k = 0; k < 4 && !coast; k++)                                                                    // L867
+                {
+                    int xx = x + (k == 0 ? -4 : k == 1 ? 4 : 0);                                                          // L868
+                    int yy = y + (k == 2 ? -4 : k == 3 ? 4 : 0);                                                          // L869
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                                // L870
+                    byte nt = w.terrain[yy * WbWorld.W + xx];                                                            // L871
+                    if (nt == WbConstants.T_WATER || nt == WbConstants.T_DEEP) coast = true;                             // L871
+                }
+                if (coast) { Tsunami(w, x, y, 4.0); w.natCounters[6]++; }                                                // L873
+            }
+            // 余震：残留应力小幅释放
+            if (m >= 6.0 && w.Rng() < 0.4)                                                                              // L876（1 掷门）
+            {
+                for (int z = 0; z < zapped.Count; z++)                                                                  // L877
+                {
+                    if (w.Rng() < 0.3) w.stress[zapped[z]] = (float)(26.0 * 0.4 * w.Rng());                              // L878（ep()*0.4*rng——1 掷/格）
+                }
+            }
+        }
+
+        /// nature.ts geologyTick L882-1061（地质演变 %600===31 槽 43：造山链/岛弧/侵蚀沉积/
+        /// 热点喷发+灰烬注入/裂谷拉张——全 eng.rng 主链交织）
+        internal static void NatureGeologyTick(WbWorld w)
+        {
+            if (!w.laws.tectonics) return;                                                                              // L884
+            // 1. 造山带（v2）：沿会聚边界链行走抬升 → 山脉链而非孤立散点（缝合线的脊梁）
+            for (int tr = 0; tr < 2; tr++)                                                                              // L886
+            {
+                System.Collections.Generic.List<int> cand = new System.Collections.Generic.List<int>();                                                                       // L887
+                for (int bi = 0; bi < w.boundaryList.Count; bi++) { int bi2 = w.boundaryList[bi]; if (w.stress[bi2] > 9.0) cand.Add(bi2); }   // L888
+                if (cand.Count == 0) break;                                                                             // L889
+                int start = cand[(int)(w.Rng() * cand.Count)];                                                           // L891（start 1 掷）
+                int cur = start;                                                                                        // L892
+                int dirX = 0; int dirY = 0; int mount = 0;                                                              // L893-894
+                int steps = 5 + (int)(w.Rng() * 6.0);                                                                    // L895（steps 1 掷）
+                for (int s = 0; s < steps; s++)                                                                          // L896
+                {
+                    byte t = w.terrain[cur];                                                                            // L897
+                    if (t == WbConstants.T_HILL)                                                                        // L898
+                    {
+                        if (w.Rng() < 0.5) { SetTerrain(w, cur, WbConstants.T_MOUNTAIN); w.natCounters[3]++; mount++; }  // L899（uplifts）
+                    }
+                    else if (t == WbConstants.T_GRASS || t == WbConstants.T_FOREST)                                      // L900
+                    {
+                        if (w.Rng() < 0.35) { SetTerrain(w, cur, WbConstants.T_HILL); w.natCounters[3]++; }              // L901
+                    }
+                    // 下一格：边界邻居中保持行进方向者优先（沿断层链生长）
+                    int best = -1; double bestDot = -2.0;                                                                // L904-905
+                    int cx0 = cur % WbWorld.W;                                                                          // L906
+                    int cy0 = cur / WbWorld.W;                                                                          // L907
+                    for (int dy = -1; dy <= 1; dy++)                                                                     // L908
+                    {
+                        for (int dx = -1; dx <= 1; dx++)                                                                 // L909
+                        {
+                            if (dx == 0 && dy == 0) continue;                                                            // L910
+                            int xx = cx0 + dx;                                                                           // L911
+                            int yy = cy0 + dy;                                                                           // L912
+                            if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                        // L913
+                            int j = yy * WbWorld.W + xx;                                                                 // L914
+                            if (!w.boundarySet.Contains(j)) continue;                                                    // L915（boundary.has）
+                            if (dx == -dirX && dy == -dirY) continue;                                                    // L916（不回头）
+                            double dl = WbNoise.V8Hypot(dx, dy);                                                          // L917（整数域 1/√2 fdlibm）
+                            double hd = WbNoise.V8Hypot(dirX, dirY);                                                     // L918（hypot(dirX,dirY)）
+                            if (hd == 0.0) hd = 1.0;                                                                     // L918（|| 1——零向量语义）
+                            double dot = (dx * dirX + dy * dirY) / (dl * hd);                                            // L918
+                            if (dot > bestDot) { bestDot = dot; best = j; }                                              // L919
+                        }
+                    }
+                    if (best < 0) break;                                                                                 // L921
+                    dirX = best % WbWorld.W - cx0;                                                                       // L922
+                    dirY = best / WbWorld.W - cy0;                                                                       // L923
+                    cur = best;                                                                                          // L924
+                }
+                if (mount >= 4 && w.natCounters[3] % 10 < 2)                                                             // L927（纪事门）
+                {
+                    w.AddEvent("geo", "沿着会聚边界的缝合线，一条新的山脉链正缓缓隆起——未来它将截断信风制造荒漠", null, start % WbWorld.W, start / WbWorld.W);   // L928
+                }
+            }
+            // 1b. 岛弧（v2）：洋-洋会聚边界 → 俯冲带火山升出海面（火山岛链的种子）
+            if (w.Rng() < 0.12)                                                                                          // L943（1 掷门——cand 收集前）
+            {
+                System.Collections.Generic.List<int> cand = new System.Collections.Generic.List<int>();                                                                       // L944
+                for (int bi = 0; bi < w.boundaryList.Count; bi++)                                                        // L945
+                {
+                    int i = w.boundaryList[bi];
+                    if (w.stress[i] < 6.0) continue;                                                                     // L946
+                    byte t = w.terrain[i];                                                                              // L947
+                    if (t != WbConstants.T_WATER && t != WbConstants.T_DEEP) continue;                                   // L948
+                    cand.Add(i);                                                                                        // L949
+                }
+                if (cand.Count > 0)                                                                                      // L951
+                {
+                    int i = cand[(int)(w.Rng() * cand.Count)];                                                           // L952（1 掷）
+                    int x = i % WbWorld.W;                                                                              // L953
+                    int y = i / WbWorld.W;                                                                              // L954
+                    SetTerrain(w, i, WbConstants.T_MOUNTAIN);                                                            // L955
+                    for (int k = 0; k < 4; k++)                                                                         // L956
+                    {
+                        int xx = x + (k == 0 ? -1 : k == 1 ? 1 : 0);                                                    // L957
+                        int yy = y + (k == 2 ? -1 : k == 3 ? 1 : 0);                                                    // L958
+                        if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                            // L959
+                        byte nt = w.terrain[yy * WbWorld.W + xx];                                                        // L960
+                        if ((nt == WbConstants.T_WATER || nt == WbConstants.T_DEEP) && w.Rng() < 0.7) SetTerrain(w, yy * WbWorld.W + xx, WbConstants.T_SAND);   // L960（1 掷/水邻）
+                    }
+                    w.natCounters[3]++;                                                                                  // L962（uplifts）
+                    w.AddEvent("geo", "深海之下，俯冲带搓出的火山终于升出海面——一座新的火山岛在浪花中诞生", null, x, y);              // L963
+                }
+            }
+            // 2. 侵蚀与沉积：山体风化成丘 / 海岸沙滩外延
+            for (int tr = 0; tr < 4; tr++)                                                                              // L967
+            {
+                int x = 1 + (int)(w.Rng() * (WbWorld.W - 2));                                                            // L968（x 1 掷）
+                int y = 1 + (int)(w.Rng() * (WbWorld.H - 2));                                                            // L969（y 1 掷）
+                int i = y * WbWorld.W + x;                                                                              // L970
+                byte t = w.terrain[i];                                                                                  // L971
+                if (t == WbConstants.T_MOUNTAIN && w.Rng() < 0.22)                                                       // L972（风化 1 掷门）
+                {
+                    bool lower = false;                                                                                  // L974（山麓有低地邻居 → 风化）
+                    for (int k = 0; k < 4 && !lower; k++)                                                                // L975
+                    {
+                        int xx = x + (k == 0 ? -1 : k == 1 ? 1 : 0);                                                    // L976
+                        int yy = y + (k == 2 ? -1 : k == 3 ? 1 : 0);                                                    // L977
+                        if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                            // L978
+                        byte nt = w.terrain[yy * WbWorld.W + xx];                                                        // L979
+                        if (nt != WbConstants.T_MOUNTAIN && nt != WbConstants.T_LAVA) lower = true;                      // L980
+                    }
+                    if (lower) { SetTerrain(w, i, WbConstants.T_HILL); w.natCounters[4]++; }                             // L981（erosions）
+                }
+                else if (t == WbConstants.T_WATER)                                                                       // L983
+                {
+                    int landN = 0;                                                                                      // L985（浅海沉积：三面环陆 → 滩涂外延）
+                    for (int k = 0; k < 4; k++)                                                                         // L986
+                    {
+                        int xx = x + (k == 0 ? -1 : k == 1 ? 1 : 0);                                                    // L987
+                        int yy = y + (k == 2 ? -1 : k == 3 ? 1 : 0);                                                    // L988
+                        if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                            // L989
+                        byte nt = w.terrain[yy * WbWorld.W + xx];                                                        // L990
+                        if (nt != WbConstants.T_WATER && nt != WbConstants.T_DEEP) landN++;                              // L991
+                    }
+                    if (landN >= 3 && w.Rng() < 0.3) { SetTerrain(w, i, WbConstants.T_SAND); w.natCounters[4]++; }        // L993（1 掷门）
+                }
+                else if (t == WbConstants.T_LAVA && w.Rng() < 0.4)                                                        // L994（岩浆冷却 1 掷门）
+                {
+                    SetTerrain(w, i, WbConstants.T_BURNT);                                                              // L995
+                }
+            }
+            // 3. 火山热点喷发：热量满 → 大喷发 + 灰烬注入平流场（随风漂移扩散；饱和递减防失控）
+            for (int h = 0; h < w.hotX.Count; h++)                                                                       // L989
+            {
+                if (w.hotHeat[h] < 2.6 || w.Rng() > 0.3) continue;                                                       // L990（|| 短路——heat<2.6 零掷；heat>=2.6 才 1 掷）
+                w.hotHeat[h] = 0.4;                                                                                      // L991
+                double pw = ((double)w.stress[w.hotY[h] * WbWorld.W + w.hotX[h]] > 14.0) ? 3.0 : 2.0;                    // L992（stress||0 > 14 ? 3 : 2）
+                Volcano(w, w.hotX[h], w.hotY[h], pw);                                                                    // L993（M-U16 译件消费面点亮）
+                w.natCounters[2]++;                                                                                      // L994（eruptions）
+                // 大喷发 → 灰烬注入平流层场（先区域漂移，后全球平均遮蔽）
+                int cell = w.NatureCellOf(w.hotX[h], w.hotY[h]);                                                          // L996（cellOf WbWorld L633 译件）
+                double inject = (pw == 3.0 ? 0.55 : 0.3) * (1.0 - w.ashF[cell]);                                          // L997（f32 升 double）
+                w.ashF[cell] = (float)System.Math.Min(1.0, w.ashF[cell] + inject);                                        // L998
+                int cxx = cell % WbConstants.AW;                                                                        // L999
+                int cyy = cell / WbConstants.AW;                                                                        // L1000
+                int[] oxs = new int[] { 1, -1, 0, 0 }; int[] oys = new int[] { 0, 0, 1, -1 };                            // L1001（[[1,0],[-1,0],[0,1],[0,-1]]）
+                for (int q = 0; q < 4; q++)                                                                             // L1001
+                {
+                    int nx = cxx + oxs[q];                                                                              // L1002
+                    int ny = cyy + oys[q];                                                                              // L1003
+                    if (nx < 0 || ny < 0 || nx >= WbConstants.AW || ny >= WbConstants.AH) continue;                      // L1004
+                    w.ashF[ny * WbConstants.AW + nx] = (float)System.Math.Min(1.0, w.ashF[ny * WbConstants.AW + nx] + inject * 0.4);   // L1005（邻接 0.4 扩散）
+                }
+                double before = w.ash;                                                                                  // L1008
+                double sum = 0.0;                                                                                       // L1009
+                for (int k = 0; k < WbConstants.AW * WbConstants.AH; k++) sum += w.ashF[k];                              // L1010（f32 升 double 累加序 k=0..——浮点累加序敏感同构）
+                w.ash = sum / (WbConstants.AW * WbConstants.AH);                                                         // L1010（场均）
+                if (before < 0.3 && w.ash >= 0.3)                                                                        // L1012（无夏之年跨线——单期喷发 inject≤0.55 场均增量 1e-4 量级不可达；atmTick 扩散域 M-U18 挂账）
+                {
+                    w.AddEvent("geo", "「无夏之年」——火山灰遮蔽了天空，阳光变得苍白，霜线向赤道蔓延，田畴将歉收数年", null, null);   // L1013（{} opts——x/y null）
+                    w.Toast("火山冬降临：全球气候骤冷", "danger");                                                          // L1014
+                }
+                else if (pw == 3.0)                                                                                      // L1015
+                {
+                    w.AddEvent("geo", "剧烈的普林尼式喷发把火山灰送上高空，灰云开始随风漂散", null, w.hotX[h], w.hotY[h]);              // L1016
+                }
+                // 热点链（v2）：板块在移动而地幔柱固定 → 下一喷口逆漂移方向偏移（夏威夷式岛链）
+                int pHere = w.plate[System.Math.Min(WbWorld.W * WbWorld.H - 1, System.Math.Max(0, w.hotY[h] * WbWorld.W + w.hotX[h]))];   // L1019
+                w.hotX[h] = (int)System.Math.Max(4.0, System.Math.Min(WbWorld.W - 5.0, WbMath.JsRound(w.hotX[h] - w.drift[pHere][0] * 5.0)));   // L1020（Math.round → JsRound）
+                w.hotY[h] = (int)System.Math.Max(4.0, System.Math.Min(WbWorld.H - 5.0, WbMath.JsRound(w.hotY[h] - w.drift[pHere][1] * 5.0)));   // L1021
+            }
+            // 4. 裂谷拉张：离散边界缓慢沉降（罕见：陆缘开裂成海）
+            if (w.Rng() < 0.35)                                                                                          // L1024（1 掷门）
+            {
+                System.Collections.Generic.List<int> bl = new System.Collections.Generic.List<int>(w.boundaryList);                                                           // L1025（[...boundary] 插入序拷贝）
+                if (bl.Count > 0)                                                                                       // L1026（i != null 语义）
+                {
+                    int i = bl[(int)(w.Rng() * bl.Count)];                                                              // L1026（随机取样 1 掷）
+                    int p = w.plate[i];                                                                                  // L1027
+                    int x = i % WbWorld.W;                                                                              // L1028
+                    int y = i / WbWorld.W;                                                                              // L1029
+                    int np = p;                                                                                          // L1030
+                    if (x > 0 && w.plate[i - 1] != p) np = w.plate[i - 1];                                               // L1031
+                    else if (x < WbWorld.W - 1 && w.plate[i + 1] != p) np = w.plate[i + 1];                              // L1032
+                    else if (y > 0 && w.plate[i - WbWorld.W] != p) np = w.plate[i - WbWorld.W];                          // L1033
+                    else if (y < WbWorld.H - 1 && w.plate[i + WbWorld.W] != p) np = w.plate[i + WbWorld.W];              // L1034
+                    double conv = (w.drift[np][0] - w.drift[p][0]) + (w.drift[np][1] - w.drift[p][1]);                   // L1036（双轴差和——无法线投影）
+                    if (conv < -0.2)                                                                                     // L1037
+                    {
+                        byte t = w.terrain[i];                                                                          // L1038
+                        if (t == WbConstants.T_MOUNTAIN && w.Rng() < 0.3) { SetTerrain(w, i, WbConstants.T_HILL); w.natCounters[4]++; }   // L1039（1 掷门）
+                        else if (t == WbConstants.T_HILL && w.Rng() < 0.18) { SetTerrain(w, i, WbConstants.T_GRASS); w.natCounters[4]++; }   // L1040（1 掷门）
+                        else if (t == WbConstants.T_GRASS && w.Rng() < 0.1)                                              // L1041（1 掷门）
+                        {
+                            // 陆缘开裂：邻水则成浅海
+                            int waterAdj = 0;                                                                            // L1043
+                            for (int k = 0; k < 4; k++)                                                                  // L1044
+                            {
+                                int xx = x + (k == 0 ? -1 : k == 1 ? 1 : 0);                                            // L1045
+                                int yy = y + (k == 2 ? -1 : k == 3 ? 1 : 0);                                            // L1046
+                                if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                    // L1047
+                                byte nt = w.terrain[yy * WbWorld.W + xx];                                                // L1048
+                                if (nt == WbConstants.T_WATER || nt == WbConstants.T_DEEP) waterAdj++;                   // L1049
+                            }
+                            if (waterAdj > 0)                                                                            // L1052
+                            {
+                                SetTerrain(w, i, WbConstants.T_WATER);                                                    // L1053
+                                w.AddEvent("geo", "裂谷的拉张撕开了陆缘，海水涌入新的地堑", null, x, y);                              // L1054
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+
         // ================= M-U11 雨洪生产域（regrow 生产源之二 + flood 生产源两支——调用面 nature.ts L527/L532 暴雨云与 toolsTick L13370 未译，本体先行建库：M-U10h annihilate 本体先例同构） =================
 
         // rainRegrow L10660-10671（雨区复苏：8×8 窗 4 采样命中焦土 → regrow 计时提前——max(tick+60, at-160)；
