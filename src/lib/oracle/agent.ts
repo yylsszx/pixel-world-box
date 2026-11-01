@@ -15,7 +15,7 @@ import { executeOracleTool } from './bridge';
 import { AGENT_TOOLS, type ToolArgDef } from './tools';
 import { getEngine } from '@/store/gameStore';
 import { callLocalModel } from './local-provider';
-import { callZaiModel } from './zai-provider';
+import { callOpenAICompatibleModel } from './openai-compatible-provider';
 
 /** 单条消息里携带的工具事件（面板气泡渲染用） */
 export interface OracleToolEvent {
@@ -431,10 +431,25 @@ async function callModel(
     }
   }
 
-  // ── builtin（Z.ai 云平台）：前端直连 Z.ai REST API，无需服务端 ──
+  // ── builtin（Z.ai 云平台）：前端直连 OpenAI 兼容 REST API，无需服务端 ──
   if (provider.kind === 'builtin') {
     try {
-      const result = await callZaiModel(provider, messages, signal);
+      const result = await callOpenAICompatibleModel(provider, messages, signal);
+      onDelta?.({ text: result.content, reason: result.reasoning });
+      return {
+        content: result.content,
+        reasoning: result.reasoning,
+        err: result.err,
+      };
+    } catch (e) {
+      return { content: '', reasoning: '', err: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  // ── openai 兼容厂商（Z.ai / Agnes / Groq / GitHub Models 等）：前端直连云端 API，无需服务端 ──
+  if (provider.kind === 'openai') {
+    try {
+      const result = await callOpenAICompatibleModel(provider, messages, signal);
       onDelta?.({ text: result.content, reason: result.reasoning });
       return {
         content: result.content,
