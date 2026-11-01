@@ -2147,6 +2147,37 @@ namespace PixelWorldBox.Wb
                         }
                     }
                 }
+                else if (e.kind == "volcano")                                                                           // L9857-9882（M-U16 消费端补缺①：熔岩弹 age%14 双掷 + 岩浆外溢 age%6 双掷 + 山脚灼烧环 0.8/tick）
+                {
+                    w.shake = System.Math.Max(w.shake, 2);                                                              // L9859
+                    if (e.age % 14 == 0 && e.age < e.ttl - 20)                                                          // L9860（周期熔岩弹——临近熄火停喷）
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                      // L9861
+                        double rr = 2 + w.Rng() * 6;                                                                    // L9862（2 掷）
+                        double tx = e.x + System.Math.Cos(ang) * rr;                                                    // L9863
+                        double ty = e.y + System.Math.Sin(ang) * rr;                                                    // L9864
+                        if (tx > 1 && ty > 1 && tx < WbWorld.W - 2 && ty < WbWorld.H - 2)                               // L9865
+                        {
+                            WbFx m = w.Fx("meteor", tx, ty, 24);                                                        // L9866（fx 2 掷）
+                            if (m != null) { m.x0 = e.x + 8; m.y0 = e.y - 20; m.quiet = true; }                         // L9867（x0/y0 天顶偏移面 + 衍生弹抑纪事）
+                        }
+                    }
+                    if (e.age % 6 == 0)                                                                                 // L9870（岩浆外溢）
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                      // L9871
+                        double rr = w.Rng() * 2.5;                                                                      // L9872（2 掷）
+                        int j = (int)System.Math.Floor(e.y + System.Math.Sin(ang) * rr) * WbWorld.W + (int)System.Math.Floor(e.x + System.Math.Cos(ang) * rr);   // L9873（idx 列主序）
+                        // 采样点始终在锥体（r<2.5）内 → 允许侵蚀山体形成熔岩流坡面
+                        if (j >= 0 && j < WbWorld.W * WbWorld.H && w.terrain[j] != WbConstants.T_LAVA && !WbWorld.IsWater(w.terrain[j])) SetTerrain(w, j, WbConstants.T_LAVA);   // L9875
+                    }
+                    foreach (WbU u in w.units)                                                                          // L9877
+                    {
+                        if (u.dead != 0) continue;                                                                      // L9878
+                        double vdx = u.x - e.x;                                                                         // L9879
+                        double vdy = u.y - e.y;                                                                         // L9880
+                        if (vdx * vdx + vdy * vdy < 6.25 && !RStats[u.race].lavaImmune) { u.hp -= 0.8; u.hurtN = 12; if (u.hp <= 0) u.dead = 1; }   // L9881（2.5² 平方距离；恶魔 lavaImmune 豁免）
+                    }
+                }
                 else if (e.kind == "tsunami")                                                                            // L9877-9914（M-U10b 波前族：环形扩张没顶 + 溺水 + 震屏）
                 {
                     double t = e.age / e.ttl;                                                                            // L9879（WbFx age/ttl 双 double——无整除陷阱）
@@ -2315,6 +2346,60 @@ namespace PixelWorldBox.Wb
                         }
                     }
                 }
+                else if (e.kind == "wrath")                                                                             // L10029-10035（M-U16 消费端补缺②：age%10 雷击——M-U15 Lightning 译件复用）
+                {
+                    if (e.age % 10 == 0 && e.age < e.ttl - 12)                                                          // L10031
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                      // L10032
+                        double rr = w.Rng() * e.r;                                                                      // L10033
+                        Lightning(w, e.x + System.Math.Cos(ang) * rr, e.y + System.Math.Sin(ang) * rr);                 // L10034（2 掷选点 + Lightning 内掷流——count/power undefined → JS 默认参 1/1）
+                    }
+                }
+                else if (e.kind == "holystorm")                                                                         // L10036-10073（M-U16 消费端补缺③：圣光审判黑暗 + 治愈无辜 + 浇火/净辐/复苏——与唤雨同源善力采样）
+                {
+                    e.dir += (w.Rng() - 0.5) * 0.2;                                                                     // L10039（游荡 dir 1 掷）
+                    e.x = System.Math.Max(2, System.Math.Min(WbWorld.W - 3, e.x + System.Math.Cos(e.dir) * 0.1));       // L10040
+                    e.y = System.Math.Max(2, System.Math.Min(WbWorld.H - 3, e.y + System.Math.Sin(e.dir) * 0.1));       // L10041
+                    if (w.Rng() < 1.2)                                                                                  // L10042（恒真门——1.2 掷位保持）
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                      // L10043
+                        double rr = w.Rng() * e.r;                                                                      // L10044（2 掷采样）
+                        int j = (int)System.Math.Floor(e.y + System.Math.Sin(ang) * rr) * WbWorld.W + (int)System.Math.Floor(e.x + System.Math.Cos(ang) * rr);   // L10045（idx 列主序）
+                        if (j >= 0 && j < WbWorld.W * WbWorld.H)                                                        // L10046
+                        {
+                            if (w.fire[j] > 0) { w.fire[j] = 0; w.fireSet.Remove(j); w.fireSetList.Remove(j); FxHook(w, "water", (j % WbWorld.W) + 0.5, ((j / WbWorld.W) | 0) + 0.5, 14); }   // L10047（浇火）
+                            else if (w.radiate[j] > 0) { w.radiate[j] = 0; w.radSet.Remove(j); w.MarkDirty(j); }        // L10048（洗净辐射）
+                            else if (w.terrain[j] == WbConstants.T_BURNT && w.Rng() < 0.3) { SetTerrain(w, j, WbConstants.T_GRASS); FxHook(w, "spark", (j % WbWorld.W) + 0.5, ((j / WbWorld.W) | 0) + 0.5, 14); }   // L10049（复苏焦土——setTerrain L979 regrow 出账联动）
+                        }
+                    }
+                    double hr2 = e.r * e.r;                                                                             // L10052
+                    foreach (WbU u in w.units)                                                                          // L10053
+                    {
+                        if (u.dead != 0) continue;                                                                      // L10054
+                        double hdx = u.x - e.x;                                                                         // L10055
+                        double hdy = u.y - e.y;                                                                         // L10056
+                        if (hdx * hdx + hdy * hdy >= hr2) continue;                                                     // L10057
+                        var ud = RStats[u.race];                                                                        // L10058
+                        bool dark = ud.undead || u.race == WbConstants.R_DEMON || u.race == R_DRAGON;                    // L10059（圣光审判名单：与天使圣剑同构——不伤克拉肯/沙虫/蛇怪等自然巨兽）
+                        if (dark)                                                                                       // L10060
+                        {
+                            u.hp -= 0.4;                                                                                // L10061（圣炎灼烧：比酸雨 0.3 更痛——黑暗在圣光下无所遁形）
+                            u.hurtN = 10;                                                                               // L10062
+                            if (u.hp <= 0) u.dead = 1;                                                                  // L10063
+                            if (w.Rng() < 0.2) FxHook(w, "spark", u.x, u.y - 0.4, 16);                                  // L10064（审判火花 0.2 门 1 掷）
+                        }
+                        else if (!ud.hostile)                                                                           // L10065
+                        {
+                            if (u.hp < u.maxHp)                                                                         // L10066
+                            {
+                                u.hp = System.Math.Min(u.maxHp, u.hp + 0.15);                                           // L10067（微光甘霖：持续缓愈）
+                                if (w.Rng() < 0.08) FxHook(w, "bless", u.x, u.y - 0.4, 18);                             // L10068（缓愈浮标 0.08 门 1 掷）
+                            }
+                            if (u.infected != 0) { u.infected = 0; FxHook(w, "bless", u.x, u.y - 0.4, 22); }            // L10070（圣光驱瘟）
+                        }
+                        // 敌对自然巨兽（狼/熊/克拉肯等）：既不审判也不治愈——圣光只针对超自然黑暗
+                    }
+                }
                 else if (e.kind == "sandstorm")                                                                          // L10068
                 {
                     e.dir += (w.Rng() - 0.5) * 0.25;                                                                     // L10069
@@ -2341,6 +2426,41 @@ namespace PixelWorldBox.Wb
                             u.hp -= 0.1; u.hurt = 8;                                                                     // L10087
                             if (u.hp <= 0) u.dead = 1;                                                                   // L10088
                         }
+                    }
+                }
+                else if (e.kind == "typhoon")                                                                           // L10097-10125（M-U16 消费端补缺④：游荡 + 狂风推拽 + 环伤 0.18 + age%36 间歇雷电 + 暴雨灭火 0.4）
+                {
+                    e.dir += (w.Rng() - 0.5) * 0.3;                                                                     // L10099
+                    e.x = System.Math.Max(2, System.Math.Min(WbWorld.W - 3, e.x + System.Math.Cos(e.dir) * 0.22));      // L10100
+                    e.y = System.Math.Max(2, System.Math.Min(WbWorld.H - 3, e.y + System.Math.Sin(e.dir) * 0.22));      // L10101
+                    foreach (WbU u in w.units)                                                                          // L10102
+                    {
+                        if (u.dead != 0) continue;                                                                      // L10103
+                        double d = WbMath.FdHypot(u.x - e.x, u.y - e.y);                                                // L10104（Math.hypot fdlibm 位精确域）
+                        if (d < e.r + 1.5)                                                                              // L10105
+                        {
+                            double nx = u.x + ((u.x - e.x) / (d + 0.01)) * 0.5;                                         // L10106（狂风推拽）
+                            double ny = u.y + ((u.y - e.y) / (d + 0.01)) * 0.5;                                         // L10107
+                            if (WalkableT(w.terrain[(int)System.Math.Floor(ny) * WbWorld.W + (int)System.Math.Floor(nx)]) || RStats[u.race].flying)   // L10108（walkable L73-76 || flying）
+                            {
+                                u.x = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, nx));                       // L10109
+                                u.y = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, ny));                       // L10110
+                            }
+                            if (d < e.r) { u.hp -= 0.18; u.hurtN = 12; if (u.hp <= 0) u.dead = 1; }                     // L10112（环伤）
+                        }
+                    }
+                    if (e.age % 36 == 0 && e.age < e.ttl - 15)                                                          // L10115（间歇雷电——水龙卷）
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                      // L10116
+                        Lightning(w, e.x + System.Math.Cos(ang) * e.r * 0.7, e.y + System.Math.Sin(ang) * e.r * 0.7);   // L10117（1 掷选点 + Lightning 内掷流）
+                    }
+                    // 台风暴雨顺手浇熄路径上的火焰
+                    if (w.Rng() < 0.4)                                                                                  // L10120
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                      // L10121
+                        double rr = w.Rng() * e.r;                                                                      // L10122
+                        int j = (int)System.Math.Floor(e.y + System.Math.Sin(ang) * rr) * WbWorld.W + (int)System.Math.Floor(e.x + System.Math.Cos(ang) * rr);   // L10123（idx 列主序）
+                        if (j >= 0 && j < WbWorld.W * WbWorld.H && w.fire[j] > 0) { w.fire[j] = 0; w.fireSet.Remove(j); w.fireSetList.Remove(j); }   // L10124
                     }
                 }
                 else if (e.kind == "sinkhole")                                                                           // L10120-10147（M-U10b 波前族：环状渐进塌陷——hypot 域）
@@ -3827,6 +3947,344 @@ namespace PixelWorldBox.Wb
         }
 
         /// <summary>applyTool 大分发器切片一（L13230；parms=蓝本 params?: Record&lt;string,number&gt;——JSON 数字域 double）</summary>
+        // ================= M-U16 切片四「神力生成器域」22 生成器 + randomLandSpot + meteor（蓝本 engine.ts L10737-11043 / L12277-12283 机械翻译） =================
+        // 掷流协议（gen-tool3 协议要点对位）：fx 恒 2 掷（seed=floor(rng*65536)+dir=rng*2π——L9793-9797）；
+        // cap 门 filter 快照零掷零写；bless/curse 0.4 门 1 掷/单位；love 0.5 门 1 掷/单位；
+        // teleport randomLandSpot 2 掷/尝试（40 次上限）；onSound 全系宿主回调 no-op（黄金受控 undefined——零掷零写）。
+
+        /// <summary>acidRain L10737-10743（酸雨云：cap 6 + fx acid + 纪事）</summary>
+        public static void AcidRain(WbWorld w, double x, double y, double r, double? ttl = null)
+        {
+            double rr = System.Math.Max(4.0, System.Math.Min(16.0, r));                                             // L10738
+            int count = 0;                                                                                          // L10739（filter 快照——一次遍历计数）
+            for (int ei = 0; ei < w.effects.Count; ei++) if (w.effects[ei].kind == "acid") count++;
+            if (count >= 6) return;                                                                                 // L10740（云数上限防刷屏——零掷零写）
+            FxOptHook(w, "acid", x, y, ttl ?? 150.0, null, null, null, rr, null);                                   // L10741（opts {r:rr}——FxOptHook 参序 x0/y0/src/r/dmg）
+            w.AddEvent("acidrain", "一片酸雨云在天空凝聚，腐蚀着大地与生灵", null, x, y);                              // L10742
+        }
+
+        /// <summary>volcano L10746-10777（火山喷发：锥体 hypot≤2.3 + 山口/十字/3x3 熔岩 + 引燃圈 3.5pw + shake 6+2pw + 纪事双文本）</summary>
+        public static void Volcano(WbWorld w, double x, double y, double? power = null)
+        {
+            double pw = System.Math.Max(1.0, System.Math.Min(3.0, power ?? 1.0));                                   // L10747（power undefined → JS 默认参 1）
+            int cx = (int)System.Math.Max(2.0, System.Math.Min(WbWorld.W - 3.0, System.Math.Floor(x)));             // L10748
+            int cy = (int)System.Math.Max(2.0, System.Math.Min(WbWorld.H - 3.0, System.Math.Floor(y)));             // L10749
+            for (int dy = -2; dy <= 2; dy++)                                                                        // L10751（隆起火山锥——水面上喷发也先成陆基）
+            {
+                for (int dx = -2; dx <= 2; dx++)                                                                    // L10752
+                {
+                    int xx = cx + dx, yy = cy + dy;                                                                 // L10753
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                           // L10754
+                    if (WbMath.FdHypot(dx, dy) <= 2.3) SetTerrain(w, yy * WbWorld.W + xx, WbConstants.T_MOUNTAIN);  // L10755（整数极距 fdlibm 位精确域）
+                }
+            }
+            SetTerrain(w, cy * WbWorld.W + cx, WbConstants.T_LAVA);                                                 // L10759（山口岩浆湖）
+            if (pw >= 2)                                                                                            // L10760（烈度 2 → 十字熔岩）
+            {
+                SetTerrain(w, cy * WbWorld.W + cx + 1, WbConstants.T_LAVA);                                         // L10761
+                SetTerrain(w, cy * WbWorld.W + cx - 1, WbConstants.T_LAVA);
+                SetTerrain(w, (cy + 1) * WbWorld.W + cx, WbConstants.T_LAVA);
+                SetTerrain(w, (cy - 1) * WbWorld.W + cx, WbConstants.T_LAVA);
+            }
+            if (pw >= 3)                                                                                            // L10763（烈度 3 → 3x3 熔岩湖）
+            {
+                SetTerrain(w, (cy + 1) * WbWorld.W + cx + 1, WbConstants.T_LAVA);                                   // L10764
+                SetTerrain(w, (cy + 1) * WbWorld.W + cx - 1, WbConstants.T_LAVA);
+                SetTerrain(w, (cy - 1) * WbWorld.W + cx + 1, WbConstants.T_LAVA);
+                SetTerrain(w, (cy - 1) * WbWorld.W + cx - 1, WbConstants.T_LAVA);
+            }
+            double ring = 3.5 * pw;                                                                                 // L10767（山脚引燃圈——半径随烈度扩张）
+            for (int k = 0; k < 8; k++)                                                                             // L10768
+            {
+                double ang = (k / 8.0) * System.Math.PI * 2;                                                        // L10769（k/8 浮点除——蓝本 JS 无整除）
+                int j = ((int)System.Math.Floor(cy + System.Math.Sin(ang) * ring)) * WbWorld.W + (int)System.Math.Floor(cx + System.Math.Cos(ang) * ring);   // L10770（idx 列主序；j 可为换行回卷合法值）
+                if (j >= 0 && j < WbWorld.W * WbWorld.H) IgniteE(w, j);                                             // L10771（j>=0 显式卫门——负索引不入 fireSet；1 掷/实际点燃）
+            }
+            FxHook(w, "volcano", cx + 0.5, cy + 0.5, 110);                                                          // L10773（fx 2 掷）
+            w.shake = System.Math.Max(w.shake, 6 + pw * 2);                                                         // L10774
+            /* this.onSound?.('volcano') —— 宿主回调（黄金受控 undefined no-op 同 gen 端） */                          // L10775
+            w.AddEvent("volcano", pw > 1 ? $"大地震颤，一座火山拔地而起，熔岩以烈度 {pw} 喷薄而出" : "大地震颤，一座火山拔地而起，岩浆喷薄而出", null, cx, cy);   // L10776（pw>1 文本分叉）
+        }
+
+        /// <summary>tsunami L10780-10785（海啸：r*2.5 钳 [6,30] + fx + 纪事）</summary>
+        public static void Tsunami(WbWorld w, double x, double y, double r)
+        {
+            double rr = System.Math.Max(6.0, System.Math.Min(30.0, r * 2.5));                                       // L10781（笔刷即浪级）
+            FxOptHook(w, "tsunami", x, y, 42, null, null, null, rr, null);                                          // L10782（opts {r:rr}）
+            /* this.onSound?.('tsunami') —— 宿主回调 no-op */                                                        // L10783
+            w.AddEvent("tsunami", "滔天巨浪涌来，漫过了低地与海岸线", null, x, y);                                     // L10784
+        }
+
+        /// <summary>blizzard L10788-10795（暴风雪：cap 4 + max(5,r) 钳 [5,15] + fx + 纪事）</summary>
+        public static void Blizzard(WbWorld w, double x, double y, double r, double? ttl = null)
+        {
+            double rr = System.Math.Max(5.0, System.Math.Min(15.0, r));                                             // L10789
+            int count = 0;                                                                                          // L10790
+            for (int ei = 0; ei < w.effects.Count; ei++) if (w.effects[ei].kind == "blizzard") count++;
+            if (count >= 4) return;                                                                                 // L10791
+            FxOptHook(w, "blizzard", x, y, ttl ?? 190.0, null, null, null, rr, null);                               // L10792
+            /* this.onSound?.('blizzard') —— 宿主回调 no-op */                                                       // L10793
+            w.AddEvent("blizzard", "极寒的暴风雪降临，大地在冰霜下沉睡", null, x, y);                                  // L10794
+        }
+
+        /// <summary>meteorShower L10798-10812（陨石雨：clamp [1,24] + rng 散布 + x0/y0/quiet 衍生弹 + statMeteorShowers 成就计数）</summary>
+        public static void MeteorShower(WbWorld w, double x, double y, double r, double? count = null)
+        {
+            double rr = System.Math.Max(4.0, System.Math.Min(18.0, r));                                             // L10799
+            int n = count.HasValue && count.Value != 0                                                              // L10800（count truthy 门——JS 0 → 随机支；parms count 域 floor 后恒 ≥1）
+                ? (int)System.Math.Max(1.0, System.Math.Min(24.0, System.Math.Floor(count.Value)))
+                : 5 + (int)System.Math.Floor(w.Rng() * 4.0);
+            for (int k = 0; k < n; k++)                                                                             // L10801
+            {
+                double ang = w.Rng() * System.Math.PI * 2;                                                          // L10802
+                double dist = w.Rng() * rr;                                                                          // L10803（2 掷/颗）
+                double tx = System.Math.Max(1.0, System.Math.Min(WbWorld.W - 2.0, x + System.Math.Cos(ang) * dist)); // L10804
+                double ty = System.Math.Max(1.0, System.Math.Min(WbWorld.H - 2.0, y + System.Math.Sin(ang) * dist)); // L10805
+                WbFx m = w.Fx("meteor", tx, ty, 20 + k * 10);                                                       // L10806（fx 2 掷）
+                if (m != null) { m.x0 = tx + 18; m.y0 = ty - 30; m.quiet = true; }                                   // L10807（x0/y0 偏移面 + quiet 抑纪事）
+            }
+            w.AddEvent("meteorshower", $"一场陨石雨呼啸而降（{n} 颗）", null, x, y);                                   // L10809
+            w.statMeteorShowers++;                                                                                   // L10810（成就计数：流星如愿）
+            /* this.onSound?.('boom') —— 宿主回调 no-op */                                                           // L10811
+        }
+
+        /// <summary>locust L10815-10820（蝗灾：cap 3 + r 钳 [3,10]——rP undefined → JS 默认参 5）</summary>
+        public static void Locust(WbWorld w, double x, double y, double? r = null, double? ttl = null)
+        {
+            int count = 0;                                                                                          // L10816
+            for (int ei = 0; ei < w.effects.Count; ei++) if (w.effects[ei].kind == "locust") count++;
+            if (count >= 3) return;                                                                                 // L10817
+            FxOptHook(w, "locust", x, y, ttl ?? 240.0, null, null, null, System.Math.Max(3.0, System.Math.Min(10.0, r ?? 5.0)), null);   // L10818（opts {r:…}）
+            w.AddEvent("locust", "黑压压的蝗群遮天蔽日，吞噬着沿途的植被", null, x, y);                                // L10819
+        }
+
+        /// <summary>drought L10823-10829（干旱：cap 4 + max(5,r) 钳 [5,16]）</summary>
+        public static void Drought(WbWorld w, double x, double y, double r, double? ttl = null)
+        {
+            double rr = System.Math.Max(5.0, System.Math.Min(16.0, r));                                             // L10824
+            int count = 0;                                                                                          // L10825
+            for (int ei = 0; ei < w.effects.Count; ei++) if (w.effects[ei].kind == "drought") count++;
+            if (count >= 4) return;                                                                                 // L10826
+            FxOptHook(w, "drought", x, y, ttl ?? 200.0, null, null, null, rr, null);                                // L10827
+            w.AddEvent("drought", "灼热的旱魃笼罩大地，河流枯竭、草木焦黄", null, x, y);                               // L10828
+        }
+
+        /// <summary>rainCloud L10834-10842（唤雨云：cap 6 + fx rainstorm + 纪事）</summary>
+        public static void RainCloud(WbWorld w, double x, double y, double r, double? ttl = null)
+        {
+            /* WBB.touchMeta() L10835 —— Stage 3 宿主 UI 收口挂点（不进模拟对账面——gen 端协议④同源） */
+            double rr = System.Math.Max(4.0, System.Math.Min(14.0, r));                                             // L10836
+            int count = 0;                                                                                          // L10837
+            for (int ei = 0; ei < w.effects.Count; ei++) if (w.effects[ei].kind == "rainstorm") count++;
+            if (count >= 6) return;                                                                                 // L10838
+            FxOptHook(w, "rainstorm", x, y, ttl ?? 200.0, null, null, null, rr, null);                              // L10839
+            w.AddEvent("rain", "造物主唤来了甘霖，焦土将在雨水中重生", null, x, y);                                    // L10840
+            /* this.onSound?.('heal') —— 宿主回调 no-op */                                                           // L10841
+        }
+
+        /// <summary>blessArea L10845-10858（神恩祝福：hp+50%max + bless 600 + 驱瘟 + 0.4 fx 门）</summary>
+        public static int BlessArea(WbWorld w, double x, double y, double r)
+        {
+            int n = 0;                                                                                              // L10846
+            foreach (WbU u in w.units)                                                                              // L10847
+            {
+                if (u.dead != 0) continue;                                                                          // L10848
+                if (WbMath.FdHypot(u.x - x, u.y - y) > r) continue;                                                 // L10849（hypot fdlibm 位精确域）
+                u.hp = System.Math.Min(u.maxHp, u.hp + u.maxHp * 0.5);                                              // L10850
+                u.bless = 600;                                                                                       // L10851
+                u.infected = 0;                                                                                      // L10852（净疫病）
+                n++;                                                                                                 // L10853
+                if (w.Rng() < 0.4) FxHook(w, "bless", u.x, u.y - 0.4, 24);                                          // L10854（0.4 门 1 掷/fx）
+            }
+            /* if (n > 0) this.onSound?.('heal') —— 宿主回调 no-op */                                                // L10856
+            return n;                                                                                                // L10857
+        }
+
+        /// <summary>curseArea L10861-10871（神罚诅咒：curse 500 + 0.4 fx 门）</summary>
+        public static int CurseArea(WbWorld w, double x, double y, double r)
+        {
+            int n = 0;                                                                                              // L10862
+            foreach (WbU u in w.units)                                                                              // L10863
+            {
+                if (u.dead != 0) continue;                                                                          // L10864
+                if (WbMath.FdHypot(u.x - x, u.y - y) > r) continue;                                                 // L10865
+                u.curse = 500;                                                                                       // L10866
+                n++;                                                                                                 // L10867
+                if (w.Rng() < 0.4) FxHook(w, "curse", u.x, u.y - 0.4, 24);                                          // L10868
+            }
+            return n;                                                                                                // L10870
+        }
+
+        /// <summary>loveArea L10874-10885（爱之甘霖：repro 门 + fert 500 + 0.5 fx 门）</summary>
+        public static int LoveArea(WbWorld w, double x, double y, double r)
+        {
+            int n = 0;                                                                                              // L10875
+            foreach (WbU u in w.units)                                                                              // L10876
+            {
+                if (u.dead != 0) continue;                                                                          // L10877
+                if (RStats[u.race].repro <= 0.0) continue;                                                          // L10878（无繁衍力种族跳过——RaceStat.repro 消费切片）
+                if (WbMath.FdHypot(u.x - x, u.y - y) > r) continue;                                                 // L10879
+                u.fert = 500;                                                                                        // L10880
+                n++;                                                                                                 // L10881
+                if (w.Rng() < 0.5) FxHook(w, "heart", u.x, u.y - 1, 36);                                            // L10882（0.5 门 1 掷/fx）
+            }
+            return n;                                                                                                // L10884
+        }
+
+        /// <summary>teleportArea L10908-10923（空间传送：randomLandSpot 迁移 + 端点双色火花）</summary>
+        public static int TeleportArea(WbWorld w, double x, double y, double r)
+        {
+            int n = 0;                                                                                              // L10909
+            foreach (WbU u in w.units)                                                                              // L10910
+            {
+                if (u.dead != 0) continue;                                                                          // L10911
+                if (WbMath.FdHypot(u.x - x, u.y - y) > r) continue;                                                 // L10912
+                (double sx, double sy)? spot = RandomLandSpot(w);                                                    // L10913（2 掷/尝试——40 次上限）
+                if (spot == null) continue;                                                                          // L10914
+                FxHook(w, "spark", u.x, u.y, 18);                                                                    // L10915（起点火花）
+                u.x = spot.Value.sx; u.y = spot.Value.sy;                                                           // L10916
+                u.tx = spot.Value.sx; u.ty = spot.Value.sy;                                                         // L10917
+                u.lx = spot.Value.sx; u.ly = spot.Value.sy;                                                         // L10918（lx/ly 快照——double? 域）
+                FxHook(w, "spark", u.x, u.y, 22);                                                                    // L10919（终点火花）
+                n++;                                                                                                 // L10920
+            }
+            return n;                                                                                                // L10922
+        }
+
+        /// <summary>wrathStorm L10926-10932（天罚风暴：cap 3 + max(4,r) 钳 [4,14]）</summary>
+        public static void WrathStorm(WbWorld w, double x, double y, double r, double? ttl = null)
+        {
+            double rr = System.Math.Max(4.0, System.Math.Min(14.0, r));                                             // L10927
+            int count = 0;                                                                                          // L10928
+            for (int ei = 0; ei < w.effects.Count; ei++) if (w.effects[ei].kind == "wrath") count++;
+            if (count >= 3) return;                                                                                 // L10929
+            FxOptHook(w, "wrath", x, y, ttl ?? 180.0, null, null, null, rr, null);                                  // L10930
+            w.AddEvent("wrath", "神怒之云聚拢，雷霆将轮番轰击大地", null, x, y);                                       // L10931
+        }
+
+        /// <summary>holyStorm L10936-10943（圣光风暴：cap 3 + max(4,r) 钳 [4,14] + 纪事）</summary>
+        public static void HolyStorm(WbWorld w, double x, double y, double r, double? ttl = null)
+        {
+            double rr = System.Math.Max(4.0, System.Math.Min(14.0, r));                                             // L10937
+            int count = 0;                                                                                          // L10938
+            for (int ei = 0; ei < w.effects.Count; ei++) if (w.effects[ei].kind == "holystorm") count++;
+            if (count >= 3) return;                                                                                 // L10939（上限防刷屏——与天罚风暴同策）
+            FxOptHook(w, "holystorm", x, y, ttl ?? 200.0, null, null, null, rr, null);                              // L10940
+            w.AddEvent("holystorm", "金色的圣云自天际涌来，圣光将审判黑暗、治愈无辜", null, x, y);                     // L10941
+            /* this.onSound?.('shield') —— 宿主回调 no-op */                                                         // L10942
+        }
+
+        /// <summary>plasmaCannon L10947-10955（神力·等离子炮：x0/y0 钳 + ttl round 域 + dmg + statPlasmas 成就计数）</summary>
+        public static void PlasmaCannon(WbWorld w, double x, double y, double? dmg = null)
+        {
+            double x0 = System.Math.Max(2.0, System.Math.Min(WbWorld.W - 3.0, x - 7.0));                            // L10948
+            double y0 = System.Math.Max(2.0, System.Math.Min(WbWorld.H - 3.0, y - 9.0));                            // L10949
+            double dist = WbMath.FdHypot(x - x0, y - y0);                                                           // L10950（dist=hypot(7,9) fdlibm 位精确域）
+            double ttl = System.Math.Max(45.0, System.Math.Min(110.0, WbMath.JsRound(dist * 1.5)));                 // L10951（Math.round JS .5 上取整——JsRound 禁银行家舍入）
+            FxOptHook(w, "plasma", x, y, ttl, x0, y0, null, 3.2, dmg ?? 90.0);                                      // L10952（opts {x0,y0,r:3.2,dmg}——dmg undefined → JS 默认参 90）
+            w.statPlasmas++;                                                                                        // L10953（成就计数：电浆洗礼）
+            w.AddEvent("superweapon", "苍穹被一道电光撕开——等离子光球正携 EMP 之威坠向大地", null, x, y);              // L10954
+        }
+
+        /// <summary>annihilationLight L10959-10967（神力·湮灭之光：x0/y0 钳 + ttl round 域 + colorHex 纪事 + statAnnihilations）</summary>
+        public static void AnnihilationLight(WbWorld w, double x, double y)
+        {
+            double x0 = System.Math.Max(2.0, System.Math.Min(WbWorld.W - 3.0, x - 8.0));                            // L10960
+            double y0 = System.Math.Max(2.0, System.Math.Min(WbWorld.H - 3.0, y - 11.0));                           // L10961
+            double dist = WbMath.FdHypot(x - x0, y - y0);                                                           // L10962（dist=hypot(8,11) fdlibm 位精确域）
+            double ttl = System.Math.Max(50.0, System.Math.Min(130.0, WbMath.JsRound(dist * 1.4)));                 // L10963
+            FxOptHook(w, "antimatter", x, y, ttl, x0, y0, null, null, null);                                        // L10964（opts {x0,y0}）
+            w.statAnnihilations++;                                                                                  // L10965（成就计数：湮灭纪元）
+            w.AddEvent("superweapon", "造物主掌心凝起一粒反物质——湮灭之光即将吞没大地，物质归零", "#ff4d4d", x, y);     // L10966（colorHex 渲染面）
+        }
+
+        /// <summary>sandstorm L10972-10977（沙尘暴：cap 3 + r 钳 [3,12]——rP undefined → JS 默认参 5.5）</summary>
+        public static void Sandstorm(WbWorld w, double x, double y, double? r = null, double? ttl = null)
+        {
+            int count = 0;                                                                                          // L10973
+            for (int ei = 0; ei < w.effects.Count; ei++) if (w.effects[ei].kind == "sandstorm") count++;
+            if (count >= 3) return;                                                                                 // L10974
+            FxOptHook(w, "sandstorm", x, y, ttl ?? 280.0, null, null, null, System.Math.Max(3.0, System.Math.Min(12.0, r ?? 5.5)), null);   // L10975
+            w.AddEvent("sandstorm", "遮天蔽日的沙暴席卷而来，绿意将被黄沙掩埋", null, x, y);                           // L10976
+        }
+
+        /// <summary>typhoon L10980-10985（台风：cap 3 + r 钳 [4,14]——rP undefined → JS 默认参 6）</summary>
+        public static void Typhoon(WbWorld w, double x, double y, double? r = null, double? ttl = null)
+        {
+            int count = 0;                                                                                          // L10981
+            for (int ei = 0; ei < w.effects.Count; ei++) if (w.effects[ei].kind == "typhoon") count++;
+            if (count >= 3) return;                                                                                 // L10982
+            FxOptHook(w, "typhoon", x, y, ttl ?? 240.0, null, null, null, System.Math.Max(4.0, System.Math.Min(14.0, r ?? 6.0)), null);   // L10983
+            w.AddEvent("typhoon", "海上升起了狂暴的台风气旋，狂风暴雨将至", null, x, y);                               // L10984
+        }
+
+        /// <summary>sinkhole L10988-10996（深渊天坑：r 钳 [3,12] + cap 3 + shake 7）</summary>
+        public static void Sinkhole(WbWorld w, double x, double y, double r)
+        {
+            double rr = System.Math.Max(3.0, System.Math.Min(12.0, r));                                             // L10989
+            int count = 0;                                                                                          // L10990
+            for (int ei = 0; ei < w.effects.Count; ei++) if (w.effects[ei].kind == "sinkhole") count++;
+            if (count >= 3) return;                                                                                 // L10991
+            FxOptHook(w, "sinkhole", x, y, 80, null, null, null, rr, null);                                         // L10992（ttl 80 固定 + opts {r:rr}）
+            w.AddEvent("sinkhole", "大地震颤着塌陷下去，深渊的黑暗吞噬了一切", null, x, y);                            // L10993
+            w.shake = System.Math.Max(w.shake, 7);                                                                  // L10994
+            /* this.onSound?.('boom') —— 宿主回调 no-op */                                                           // L10995
+        }
+
+        /// <summary>iceAge L10999-11006（冰河寒潮：r 钳 [6,22] + cap 2 + shake 4）</summary>
+        public static void IceAge(WbWorld w, double x, double y, double r, double? ttl = null)
+        {
+            double rr = System.Math.Max(6.0, System.Math.Min(22.0, r));                                             // L11000
+            int count = 0;                                                                                          // L11001
+            for (int ei = 0; ei < w.effects.Count; ei++) if (w.effects[ei].kind == "iceage") count++;
+            if (count >= 2) return;                                                                                 // L11002
+            FxOptHook(w, "iceage", x, y, ttl ?? 420.0, null, null, null, rr, null);                                 // L11003
+            w.AddEvent("iceage", "极寒的冰河寒潮降临，冻上的一切将沉眠于冰封之下", null, x, y);                        // L11004
+            w.shake = System.Math.Max(w.shake, 4);                                                                  // L11005
+        }
+
+        /// <summary>famineCloud L11009-11014（饥荒：cap 3 + r 钳 [3,12]——rP undefined → JS 默认参 6）</summary>
+        public static void FamineCloud(WbWorld w, double x, double y, double? r = null, double? ttl = null)
+        {
+            int count = 0;                                                                                          // L11010
+            for (int ei = 0; ei < w.effects.Count; ei++) if (w.effects[ei].kind == "famine") count++;
+            if (count >= 3) return;                                                                                 // L11011
+            FxOptHook(w, "famine", x, y, ttl ?? 260.0, null, null, null, System.Math.Max(3.0, System.Math.Min(12.0, r ?? 6.0)), null);   // L11012
+            w.AddEvent("famine", "灰色的饥荒之云漂来，饿殍遍野的时世开始了", null, x, y);                              // L11013
+        }
+
+        /// <summary>blackhole L11017-11023（黑洞：statBlackholes++ 先于 cap 门——拒绝施放仍计数蓝本语义）</summary>
+        public static void Blackhole(WbWorld w, double x, double y, double? r = null, double? ttl = null)
+        {
+            w.statBlackholes++;                                                                                     // L11018（成就计数：事件视界——cap 门之前）
+            int count = 0;                                                                                          // L11019
+            for (int ei = 0; ei < w.effects.Count; ei++) if (w.effects[ei].kind == "blackhole") count++;
+            if (count >= 2) return;                                                                                 // L11020
+            FxOptHook(w, "blackhole", x, y, ttl ?? 130.0, null, null, null, System.Math.Max(4.0, System.Math.Min(16.0, r ?? 8.0)), null);   // L11021
+            w.AddEvent("blackhole", "时空被撕开了一个黑洞，万物正被拉向湮灭", null, x, y);                             // L11022
+        }
+
+        /// <summary>randomLandSpot L11026-11034（随机找一块可站立的陆地——传送/物种扩散用；40 次尝试六地形门）</summary>
+        public static (double, double)? RandomLandSpot(WbWorld w)
+        {
+            for (int k = 0; k < 40; k++)                                                                            // L11027
+            {
+                int x = (int)System.Math.Floor(w.Rng() * WbWorld.W);                                                // L11028（2 掷/尝试）
+                int y = (int)System.Math.Floor(w.Rng() * WbWorld.H);                                                // L11029
+                byte t = w.terrain[y * WbWorld.W + x];                                                              // L11030
+                if (t == WbWorld.T_GRASS || t == WbWorld.T_SAND || t == WbWorld.T_SNOW || t == WbWorld.T_BURNT || t == WbWorld.T_FOREST || t == WbWorld.T_HILL)   // L11031（六地形门）
+                    return (x + 0.5, y + 0.5);
+            }
+            return null;                                                                                             // L11033
+        }
+
+        /// <summary>meteor L12277-12283（单发陨石：ttl 34 + x0=x+20/y0=y-34 天顶偏移面）</summary>
+        public static void Meteor(WbWorld w, double x, double y)
+        {
+            WbFx e = w.Fx("meteor", x, y, 34);                                                                      // L12278（fx 2 掷）
+            if (e != null) { e.x0 = x + 20; e.y0 = y - 34; }                                                         // L12280-12282
+        }
+
         public static void ApplyTool(WbWorld w, string toolId, double wx, double wy, System.Collections.Generic.Dictionary<string, double> parms = null)
         {
             if (!ToolExists.Contains(toolId) && ParseCreationTool(toolId) == null) return;                          // L13233（守卫：未知工具 early return——零掷零写）
@@ -3906,8 +4364,18 @@ namespace PixelWorldBox.Wb
                 case "lightning": Lightning(w, wx, wy, countP, powerP); break;                                      // L13333-13335（countP/powerP undefined → 方法默认参 1——JS 默认参语义）
                 case "tornado": SpawnTornado(w, wx, wy, countP); break;                                             // L13336-13338
                 case "earthquake": Earthquake(w, wx, wy, rP ?? 9.0, powerP); break;                                 // L13339-13341（rP ?? 9）
-                // L13342-13350 挂账：meteor（callee 未译——随天灾域切片）
-                case "nuke": Nuke(w, wx, wy, powerP ?? 1.0); break;                                                 // L13351-13353（powerP undefined → JS 默认参 1）
+                case "meteor":                                                                                          // L13342-13350（内联抖动循环——n>1 门 2 掷/颗）
+                {
+                    int n = (int)(countP ?? 1.0);                                                                       // L13343（countP undefined → JS 默认参 1；parms count 域 floor 后恒整）
+                    for (int k = 0; k < n; k++)                                                                         // L13344
+                    {
+                        double ox = n > 1 ? (w.Rng() - 0.5) * System.Math.Max(3.0, (double)n) : 0.0;                    // L13345（n>1 门——单发零掷精确落点）
+                        double oy = n > 1 ? (w.Rng() - 0.5) * System.Math.Max(3.0, (double)n) : 0.0;                    // L13346
+                        Meteor(w, wx + ox, wy + oy);                                                                    // L13347
+                    }
+                    break;
+                }
+                case "nuke": Nuke(w, wx, wy, powerP ?? 1.0); break;                                                     // L13351-13353（powerP undefined → JS 默认参 1）
                 case "river": WbWorldgen.CarveRiver(w, w.terrain, null, wx, wy, null, w.brush); break;              // L13354-13356（runtime carveRiver=this.brush 参化——M-U7k 译件复用；moistMap 桩参不消费传 null；widthOverride undefined → null）
                 case "oasis": CreateOasis(w, wx, wy); break;                                                        // L13355-13356
                 case "smooth": SmoothTerrain(w, wx, wy, r); break;                                                  // L13357-13358
@@ -3915,13 +4383,36 @@ namespace PixelWorldBox.Wb
                 case "plague": PlagueArea(w, wx, wy, System.Math.Max(3.0, r)); break;                               // L13361-13362（max(3,r) 下钳）
                 case "flood": FloodArea(w, wx, wy, rP ?? 5.0); break;                                               // L13363-13364（rP ?? 5）
                 // L13369 挂账：finger → beginGrab（抓取域切片）
-                // L13371-13383 挂账：acidrain/volcano/tsunami/blizzard/meteorshower/locust/drought（callee 未译）
-                case "heal": HealArea(w, wx, wy, r); break;                                                         // L13385-13386
-                case "kill": KillArea(w, wx, wy, r); break;                                                         // L13387-13388
-                case "boom": Boom(w, wx, wy, rP ?? 2.4); break;                                                     // L13389-13390（rP undefined → JS 默认参 2.4）
-                // L13393-13426 挂账：rain/bless/curse/love/mutate/teleport/wrath/holystorm/plasmacannon/
-                //   annihilate/sandstorm/typhoon/sinkhole/iceage/famine/blackhole（callee 未译随各域切片）
-                default: break;                                                                                     // L13427-13428
+                case "acidrain": AcidRain(w, wx, wy, System.Math.Max(4.0, r), durationP); break;                    // L13375-13377（max(4,r) 下钳）
+                case "volcano": Volcano(w, wx, wy, powerP); break;                                                  // L13378-13380（powerP undefined → JS 默认参 1）
+                case "tsunami": Tsunami(w, wx, wy, r); break;                                                       // L13381-13383（笔刷即浪级）
+                case "blizzard": Blizzard(w, wx, wy, System.Math.Max(5.0, r), durationP); break;                    // L13384-13386（max(5,r) 下钳）
+                case "meteorshower": MeteorShower(w, wx, wy, System.Math.Max(4.0, r), countP); break;               // L13387-13389（max(4,r) 下钳 + count 直取面）
+                case "locust": Locust(w, wx, wy, rP, durationP); break;                                             // L13390-13392（rP undefined → JS 默认参 5）
+                case "drought": Drought(w, wx, wy, System.Math.Max(5.0, r), durationP); break;                      // L13393-13395（max(5,r) 下钳）
+                case "heal": HealArea(w, wx, wy, r); break;                                                         // L13396-13398
+                case "kill": KillArea(w, wx, wy, r); break;                                                         // L13399-13401
+                case "boom": Boom(w, wx, wy, rP ?? 2.4); break;                                                     // L13402-13404（rP undefined → JS 默认参 2.4）
+                // —— 神力扩充 ——                                                                                       // L13405
+                case "rain": RainCloud(w, wx, wy, System.Math.Max(4.0, r), durationP); break;                       // L13406-13408（max(4,r) 下钳）
+                case "bless": BlessArea(w, wx, wy, r); break;                                                       // L13409-13411
+                case "curse": CurseArea(w, wx, wy, r); break;                                                       // L13412-13414
+                case "love": LoveArea(w, wx, wy, r); break;                                                         // L13415-13417
+                // L13418-13420 挂账：mutate → mutateArea（特质域切片——rerollTrait/jumpGene/rollTrait 未译）
+                case "teleport": TeleportArea(w, wx, wy, r); break;                                                 // L13421-13423
+                case "wrath": WrathStorm(w, wx, wy, System.Math.Max(4.0, r), durationP); break;                     // L13424-13426（max(4,r) 下钳）
+                case "holystorm": HolyStorm(w, wx, wy, System.Math.Max(4.0, r), durationP); break;                  // L13427-13429（max(4,r) 下钳）
+                // —— 超级武器神力（玩家施放面：wwWeaponsTick 同源特效直达） ——                                          // L13430
+                case "plasmacannon": PlasmaCannon(w, wx, wy, powerP); break;                                        // L13431-13433（powerP undefined → JS 默认参 dmg 90）
+                case "annihilate": AnnihilationLight(w, wx, wy); break;                                             // L13434-13436
+                // —— 天灾扩充 ——                                                                                       // L13437
+                case "sandstorm": Sandstorm(w, wx, wy, rP, durationP); break;                                       // L13438-13440（rP undefined → JS 默认参 5.5）
+                case "typhoon": Typhoon(w, wx, wy, rP, durationP); break;                                           // L13441-13443（rP undefined → JS 默认参 6）
+                case "sinkhole": Sinkhole(w, wx, wy, System.Math.Max(3.0, r)); break;                               // L13444-13446（max(3,r) 下钳）
+                case "iceage": IceAge(w, wx, wy, rP ?? System.Math.Max(6.0, w.brush * 2.0 + 4.0), durationP); break;   // L13447-13449（rP ?? max(6,brush*2+4)——笔刷联动缺省面）
+                case "famine": FamineCloud(w, wx, wy, rP, durationP); break;                                        // L13450-13452（rP undefined → JS 默认参 6）
+                case "blackhole": Blackhole(w, wx, wy, rP, durationP); break;                                       // L13453-13455（rP undefined → JS 默认参 8）
+                default: break;                                                                                     // L13456-13457
             }
         }
 
@@ -4108,6 +4599,7 @@ namespace PixelWorldBox.Wb
             // —— M-U7n 批次三甲消费字段追加（字段只加）——
             public WbRangedDef ranged;   // types.ts L122 ranged?: RangedDef（仅 MAGE L175 {range 6.5, dmg 18, cd 26}——批次三乙远程域消费）
             public double? reach;        // types.ts L120 reach?（KRAKEN 2.4/SANDWORM 1.6/BASILISK 1.4/SHARK 1.3；undefined → ?? 0.9）
+            public double repro;         // types.ts L127 repro（reproduction chance per update——loveArea L10878 门消费；M-U16 字段只加）
         }
 
         /// <summary>RangedDef 消费切片（types.ts L115-119：range/dmg/cd——L3705 rd/L3744 castFireball 消费面）</summary>
@@ -4115,47 +4607,47 @@ namespace PixelWorldBox.Wb
 
         public static readonly RaceStat[] RStats = new RaceStat[41]
         {
-            new RaceStat{ name="人类",   hp=60,  dmg=8,   speed=0.09,  maxAge=55,   isCiv=true  },                     // L157 HUMAN
-            new RaceStat{ name="精灵",   hp=55,  dmg=9,   speed=0.1,   maxAge=90,   isCiv=true  },                     // L158 ELF
-            new RaceStat{ name="矮人",   hp=78,  dmg=10,  speed=0.072, maxAge=120,  isCiv=true  },                     // L159 DWARF
-            new RaceStat{ name="兽人",   hp=72,  dmg=12,  speed=0.084, maxAge=48,   isCiv=true, nightsight=true  },                     // L160 ORC
-            new RaceStat{ name="强盗",   hp=62,  dmg=11,  speed=0.093, maxAge=45,   hostile=true },                             // L161 BANDIT
-            new RaceStat{ name="僵尸",   hp=46,  dmg=6,   speed=0.05,  maxAge=9999, undead=true, hostile=true },                     // L162 ZOMBIE
-            new RaceStat{ name="绵羊",   hp=16,  dmg=1,   speed=0.038, maxAge=26 },                                    // L163 SHEEP
-            new RaceStat{ name="狼",     hp=34,  dmg=10,  speed=0.093, maxAge=22,   predator=true },                            // L164 WOLF
-            new RaceStat{ name="熊",     hp=95,  dmg=19,  speed=0.06,  maxAge=40,   predator=true },                            // L165 BEAR
-            new RaceStat{ name="巨龙",   hp=900, dmg=48,  speed=0.11,  maxAge=9999, hostile=true, predator=true, flying=true },    // L166 DRAGON
-            new RaceStat{ name="鹿",     hp=24,  dmg=1,   speed=0.115, maxAge=20 },                                    // L167 DEER
-            new RaceStat{ name="企鹅",   hp=22,  dmg=1,   speed=0.045, maxAge=18 },                                    // L168 PENGUIN
-            new RaceStat{ name="骆驼",   hp=30,  dmg=2,   speed=0.05,  maxAge=35 },                                    // L169 CAMEL
-            new RaceStat{ name="蝎子",   hp=14,  dmg=5,   speed=0.055, maxAge=16,   hostile=true },                             // L170 SCORPION
-            new RaceStat{ name="蛇",     hp=20,  dmg=6,   speed=0.08,  maxAge=20,   predator=true },                            // L171 SNAKE
-            new RaceStat{ name="雪狼",   hp=38,  dmg=11,  speed=0.088, maxAge=24,   predator=true },                            // L172 SNOWWOLF
-            new RaceStat{ name="骷髅",   hp=55,  dmg=14,  speed=0.075, maxAge=9999, undead=true, hostile=true },                     // L173 SKELETON
-            new RaceStat{ name="恶魔",   hp=600, dmg=30,  speed=0.085, maxAge=9999, hostile=true, predator=true, lavaImmune=true },  // L174 DEMON
-            new RaceStat{ name="法师",   hp=50,  dmg=6,   speed=0.07,  maxAge=200,  hostile=true, ranged=new WbRangedDef{ range=6.5, dmg=18, cd=26 } },   // L175 MAGE（ranged 随 M-U7n 转写——批次三乙远程域消费）
-            new RaceStat{ name="蜥蜴人", hp=66,  dmg=10,  speed=0.095, maxAge=70,   isCiv=true  },                     // L177 LIZARD
-            new RaceStat{ name="哥布林", hp=40,  dmg=6,   speed=0.108, maxAge=34,   isCiv=true, nightsight=true  },                     // L178 GOBLIN
-            new RaceStat{ name="巨魔",   hp=380, dmg=26,  speed=0.06,  maxAge=400,  hostile=true, predator=true },               // L179 TROLL
-            new RaceStat{ name="食人魔", hp=300, dmg=34,  speed=0.052, maxAge=120, hostile=true, predator=true },                                   // L180 OGRE
-            new RaceStat{ name="白行者", hp=240, dmg=20,  speed=0.075, maxAge=9999, undead=true, hostile=true },                     // L181 WHITEWALKER
-            new RaceStat{ name="吸血鬼", hp=140, dmg=16,  speed=0.118, maxAge=9999, undead=true, hostile=true },                     // L182 VAMPIRE
-            new RaceStat{ name="克拉肯", hp=520, dmg=30,  speed=0.07,  maxAge=9999, aquatic=true, hostile=true, predator=true, reach=2.4 },                                  // L184 KRAKEN
-            new RaceStat{ name="沙虫",   hp=420, dmg=40,  speed=0.14,  maxAge=9999, hostile=true, predator=true, reach=1.6 },                                  // L185 SANDWORM
-            new RaceStat{ name="蛇怪",   hp=90,  dmg=14,  speed=0.11,  maxAge=400, hostile=true, predator=true, reach=1.4 },                                   // L186 BASILISK
-            new RaceStat{ name="天使",   hp=240, dmg=22,  speed=0.105, maxAge=9999, flying=true, lavaImmune=true },                                  // L188 ANGEL
-            new RaceStat{ name="凤凰",   hp=200, dmg=18,  speed=0.12,  maxAge=9999, flying=true, lavaImmune=true },                                  // L189 PHOENIX
-            new RaceStat{ name="树人",   hp=320, dmg=26,  speed=0.055, maxAge=9999 },                                  // L190 ENT
-            new RaceStat{ name="巫妖",   hp=260, dmg=20,  speed=0.07,  maxAge=9999, undead=true, hostile=true, predator=true },                     // L191 LICH
-            new RaceStat{ name="九头蛇", hp=500, dmg=30,  speed=0.05,  maxAge=9999, hostile=true, predator=true },                                  // L192 HYDRA
-            new RaceStat{ name="鸡",     hp=10,  dmg=1,   speed=0.05,  maxAge=14 },                                    // L194 CHICKEN
-            new RaceStat{ name="猪",     hp=30,  dmg=2,   speed=0.055, maxAge=22 },                                    // L195 PIG
-            new RaceStat{ name="兔",     hp=12,  dmg=1,   speed=0.13,  maxAge=12 },                                    // L196 RABBIT
-            new RaceStat{ name="狐",     hp=28,  dmg=8,   speed=0.105, maxAge=18, predator=true },                                    // L197 FOX
-            new RaceStat{ name="鱼",     hp=6,   dmg=0.5, speed=0.075, maxAge=10,   aquatic=true },                                    // L198 FISH
-            new RaceStat{ name="蟹",     hp=16,  dmg=3,   speed=0.03,  maxAge=16,   aquatic=true },                                    // L199 CRAB
-            new RaceStat{ name="龟",     hp=40,  dmg=1,   speed=0.028, maxAge=120,  aquatic=true },                                   // L200 TURTLE
-            new RaceStat{ name="鲨鱼",   hp=85,  dmg=18,  speed=0.1,   maxAge=40,   aquatic=true, predator=true, reach=1.3 },                                   // L201 SHARK
+            new RaceStat{ name="人类",   hp=60,  dmg=8,   speed=0.09,  maxAge=55,   isCiv=true, repro = 0.006 },                     // L157 HUMAN
+            new RaceStat{ name="精灵",   hp=55,  dmg=9,   speed=0.1,   maxAge=90,   isCiv=true, repro = 0.005 },                     // L158 ELF
+            new RaceStat{ name="矮人",   hp=78,  dmg=10,  speed=0.072, maxAge=120,  isCiv=true, repro = 0.005 },                     // L159 DWARF
+            new RaceStat{ name="兽人",   hp=72,  dmg=12,  speed=0.084, maxAge=48,   isCiv=true, nightsight=true, repro = 0.006 },                     // L160 ORC
+            new RaceStat{ name="强盗",   hp=62,  dmg=11,  speed=0.093, maxAge=45,   hostile=true, repro = 0.0006 },                             // L161 BANDIT
+            new RaceStat{ name="僵尸",   hp=46,  dmg=6,   speed=0.05,  maxAge=9999, undead=true, hostile=true, repro = 0 },                     // L162 ZOMBIE
+            new RaceStat{ name="绵羊",   hp=16,  dmg=1,   speed=0.038, maxAge=26, repro = 0.004 },                                    // L163 SHEEP
+            new RaceStat{ name="狼",     hp=34,  dmg=10,  speed=0.093, maxAge=22,   predator=true, repro = 0.004 },                            // L164 WOLF
+            new RaceStat{ name="熊",     hp=95,  dmg=19,  speed=0.06,  maxAge=40,   predator=true, repro = 0.002 },                            // L165 BEAR
+            new RaceStat{ name="巨龙",   hp=900, dmg=48,  speed=0.11,  maxAge=9999, hostile=true, predator=true, flying=true, repro = 0 },    // L166 DRAGON
+            new RaceStat{ name="鹿",     hp=24,  dmg=1,   speed=0.115, maxAge=20, repro = 0.003 },                                    // L167 DEER
+            new RaceStat{ name="企鹅",   hp=22,  dmg=1,   speed=0.045, maxAge=18, repro = 0.004 },                                    // L168 PENGUIN
+            new RaceStat{ name="骆驼",   hp=30,  dmg=2,   speed=0.05,  maxAge=35, repro = 0.002 },                                    // L169 CAMEL
+            new RaceStat{ name="蝎子",   hp=14,  dmg=5,   speed=0.055, maxAge=16,   hostile=true, repro = 0.005 },                             // L170 SCORPION
+            new RaceStat{ name="蛇",     hp=20,  dmg=6,   speed=0.08,  maxAge=20,   predator=true, repro = 0.0035 },                            // L171 SNAKE
+            new RaceStat{ name="雪狼",   hp=38,  dmg=11,  speed=0.088, maxAge=24,   predator=true, repro = 0.004 },                            // L172 SNOWWOLF
+            new RaceStat{ name="骷髅",   hp=55,  dmg=14,  speed=0.075, maxAge=9999, undead=true, hostile=true, repro = 0 },                     // L173 SKELETON
+            new RaceStat{ name="恶魔",   hp=600, dmg=30,  speed=0.085, maxAge=9999, hostile=true, predator=true, lavaImmune=true, repro = 0 },  // L174 DEMON
+            new RaceStat{ name="法师",   hp=50,  dmg=6,   speed=0.07,  maxAge=200,  hostile=true, ranged=new WbRangedDef{ range=6.5, dmg=18, cd=26 }, repro = 0 },   // L175 MAGE（ranged 随 M-U7n 转写——批次三乙远程域消费）
+            new RaceStat{ name="蜥蜴人", hp=66,  dmg=10,  speed=0.095, maxAge=70,   isCiv=true, repro = 0.0058 },                     // L177 LIZARD
+            new RaceStat{ name="哥布林", hp=40,  dmg=6,   speed=0.108, maxAge=34,   isCiv=true, nightsight=true, repro = 0.0092 },                     // L178 GOBLIN
+            new RaceStat{ name="巨魔",   hp=380, dmg=26,  speed=0.06,  maxAge=400,  hostile=true, predator=true, repro = 0 },               // L179 TROLL
+            new RaceStat{ name="食人魔", hp=300, dmg=34,  speed=0.052, maxAge=120, hostile=true, predator=true, repro = 0 },                                   // L180 OGRE
+            new RaceStat{ name="白行者", hp=240, dmg=20,  speed=0.075, maxAge=9999, undead=true, hostile=true, repro = 0 },                     // L181 WHITEWALKER
+            new RaceStat{ name="吸血鬼", hp=140, dmg=16,  speed=0.118, maxAge=9999, undead=true, hostile=true, repro = 0 },                     // L182 VAMPIRE
+            new RaceStat{ name="克拉肯", hp=520, dmg=30,  speed=0.07,  maxAge=9999, aquatic=true, hostile=true, predator=true, reach=2.4, repro = 0 },                                  // L184 KRAKEN
+            new RaceStat{ name="沙虫",   hp=420, dmg=40,  speed=0.14,  maxAge=9999, hostile=true, predator=true, reach=1.6, repro = 0 },                                  // L185 SANDWORM
+            new RaceStat{ name="蛇怪",   hp=90,  dmg=14,  speed=0.11,  maxAge=400, hostile=true, predator=true, reach=1.4, repro = 0 },                                   // L186 BASILISK
+            new RaceStat{ name="天使",   hp=240, dmg=22,  speed=0.105, maxAge=9999, flying=true, lavaImmune=true, repro = 0 },                                  // L188 ANGEL
+            new RaceStat{ name="凤凰",   hp=200, dmg=18,  speed=0.12,  maxAge=9999, flying=true, lavaImmune=true, repro = 0 },                                  // L189 PHOENIX
+            new RaceStat{ name="树人",   hp=320, dmg=26,  speed=0.055, maxAge=9999, repro = 0 },                                  // L190 ENT
+            new RaceStat{ name="巫妖",   hp=260, dmg=20,  speed=0.07,  maxAge=9999, undead=true, hostile=true, predator=true, repro = 0 },                     // L191 LICH
+            new RaceStat{ name="九头蛇", hp=500, dmg=30,  speed=0.05,  maxAge=9999, hostile=true, predator=true, repro = 0 },                                  // L192 HYDRA
+            new RaceStat{ name="鸡",     hp=10,  dmg=1,   speed=0.05,  maxAge=14, repro = 0.011 },                                    // L194 CHICKEN
+            new RaceStat{ name="猪",     hp=30,  dmg=2,   speed=0.055, maxAge=22, repro = 0.008 },                                    // L195 PIG
+            new RaceStat{ name="兔",     hp=12,  dmg=1,   speed=0.13,  maxAge=12, repro = 0.014 },                                    // L196 RABBIT
+            new RaceStat{ name="狐",     hp=28,  dmg=8,   speed=0.105, maxAge=18, predator=true, repro = 0.004 },                                    // L197 FOX
+            new RaceStat{ name="鱼",     hp=6,   dmg=0.5, speed=0.075, maxAge=10,   aquatic=true, repro = 0.016 },                                    // L198 FISH
+            new RaceStat{ name="蟹",     hp=16,  dmg=3,   speed=0.03,  maxAge=16,   aquatic=true, repro = 0.007 },                                    // L199 CRAB
+            new RaceStat{ name="龟",     hp=40,  dmg=1,   speed=0.028, maxAge=120,  aquatic=true, repro = 0.003 },                                   // L200 TURTLE
+            new RaceStat{ name="鲨鱼",   hp=85,  dmg=18,  speed=0.1,   maxAge=40,   aquatic=true, predator=true, reach=1.3, repro = 0.002 },                                   // L201 SHARK
         };
 
         private static RaceStat StatOf(int race)

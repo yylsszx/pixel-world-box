@@ -409,6 +409,10 @@ namespace PixelWorldBox.Wb
         public int lastFireOutEventTick = -2400;   // engine L641 灭火播报节流阀（ctor 初值）
         public int lastRepairEventTick = -2400;    // engine L643 修复播报节流阀
         public int statNukes;                      // engine L230 statNukes（L12256 核打击成就计数——Nuke 入口写点；M-U10d 字段只加）
+        public int statMeteorShowers;              // engine L231 statMeteorShowers（L10810 陨石雨成就计数——M-U16 字段只加）
+        public int statPlasmas;                    // engine L232 statPlasmas（L10953 电浆洗礼成就计数——M-U16 字段只加）
+        public int statAnnihilations;              // engine L233 statAnnihilations（L10965 湮灭纪元成就计数——M-U16 字段只加）
+        public int statBlackholes;                 // engine L234 statBlackholes（L11018 事件视界成就计数——M-U16 字段只加）
 
         public const int T_DEEP = 0, T_WATER = 1, T_SAND = 2, T_GRASS = 3, T_FOREST = 4, T_HILL = 5,
                          T_MOUNTAIN = 6, T_SNOW = 7, T_LAVA = 8, T_BURNT = 9, T_ICE = 10, T_SWAMP = 11;
