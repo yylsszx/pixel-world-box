@@ -1,7 +1,7 @@
 // ============ 神谕 Agent 后端 · API 路由 ============
 // POST AgentRequestBody → 统一 SSE 事件流（{"r"}/{"t"}/{"err"}/[DONE]）。
-// 协议约定：messages[0] 为 role:'assistant' 的系统提示词（buildSystemPrompt(renderToolCatalog())，
-// 由客户端组装）——与 /api/oracle 一致以兼容 SDK 的 assistant 系统提示习惯。
+// builtin 走服务端代理，读取环境变量 Z_API_KEY，前端无需填 Key。
+// openai/anthropic 走客户端直连（保留原有 streamAgentChat）。
 import { NextRequest, NextResponse } from 'next/server';
 import { streamAgentChat } from '@/lib/oracle/providers';
 import type { AgentRequestBody, AgentChatMessage, ProviderKind } from '@/lib/oracle/types';
@@ -19,6 +19,10 @@ const SSE_HEADERS: Record<string, string> = {
   'X-Accel-Buffering': 'no',
 };
 
+const Z_API_KEY = process.env.Z_API_KEY ?? '';
+const ZAI_BASE_URL = 'https://api.z.ai';
+const ZAI_MODEL = 'GLM-4.7-Flash';
+
 /** openai/anthropic 必填字段校验（builtin 全忽略）；返回错误文案或 null */
 function validateProvider(p: AgentRequestBody['provider']): string | null {
   const label = p.label || p.model || p.kind;
@@ -28,6 +32,52 @@ function validateProvider(p: AgentRequestBody['provider']): string | null {
     if (!p.model?.trim()) return `[${label}] 缺少 model`;
   }
   return null;
+}
+
+/** 服务端代理 Z.ai：读取环境变量 Key，转发 SSE 给前端 */
+async function proxyZai(messages: AgentChatMessage[], deep: boolean): Promise<Response> {
+  if (!Z_API_KEY) {
+    return NextResponse.json(
+      { error: '服务端未配置 Z_API_KEY，请联系管理员在 Vercel 后台添加环境变量' },
+      { status: 500 },
+    );
+  }
+
+  const upstream = await fetch(`${ZAI_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${Z_API_KEY}`,
+      'X-Z-AI-From': 'Z',
+    },
+    body: JSON.stringify({
+      model: ZAI_MODEL,
+      messages: messages.map((m) => ({
+        role: m.role as 'system' | 'user' | 'assistant',
+        content: m.content,
+      })),
+      stream: true,
+      temperature: 0.7,
+      thinking: { type: 'disabled' },
+    }),
+  });
+
+  if (!upstream.ok || !upstream.body) {
+    let text = '';
+    try {
+      text = await upstream.text();
+    } catch {
+      /* ignore */
+    }
+    return NextResponse.json(
+      { error: `Z.ai 错误：${upstream.status}${text ? ` ${text}` : ''}` },
+      { status: 502 },
+    );
+  }
+
+  return new Response(upstream.body, {
+    headers: SSE_HEADERS,
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -81,7 +131,12 @@ export async function POST(req: NextRequest) {
             .map((m) => ({ role: m.role, content: m.content.slice(0, MAX_CONTENT_CHARS) })),
         ];
 
-  // —— 流式调用（provider 构造失败 → 预流式 502 JSON） ——
+  // —— builtin 走服务端代理 Z.ai ——
+  if (provider.kind === 'builtin') {
+    return proxyZai(messages, !!body.deep);
+  }
+
+  // —— openai/anthropic 走客户端直连（streamAgentChat） ——
   try {
     const stream = await streamAgentChat({ provider, messages, deep: !!body.deep });
     return new Response(stream, { headers: SSE_HEADERS });
