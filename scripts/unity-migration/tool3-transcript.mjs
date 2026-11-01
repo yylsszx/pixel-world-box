@@ -52,7 +52,7 @@ import { readFileSync } from 'node:fs';
 import zlib from 'node:zlib';
 
 const T = { DEEP: 0, WATER: 1, SAND: 2, GRASS: 3, FOREST: 4, HILL: 5, MOUNTAIN: 6, SNOW: 7, LAVA: 8, BURNT: 9, ICE: 10, SWAMP: 11 };
-const R = { HUMAN: 0, ZOMBIE: 5, SKELETON: 16, SHEEP: 6, WOLF: 7, DRAGON: 9, DEER: 10, PENGUIN: 11, CAMEL: 12, DEMON: 17, TROLL: 21, OGRE: 22, WHITEWALKER: 23, VAMPIRE: 24, KRAKEN: 25, SANDWORM: 26, BASILISK: 27, PHOENIX: 29, ENT: 30, LICH: 31, HYDRA: 32, CHICKEN: 33, PIG: 34, RABBIT: 35, FISH: 37 };   // M-U19：HUMAN/WOLF 入表；M-U22：reap 域八族 + isHerbivoreRace 八静态 + MONSTER_LOOT 九族（types.ts R 枚举序逐值）；M-U24：SKELETON/ENT/LICH 引擎级通道三族
+const R = { HUMAN: 0, ZOMBIE: 5, SKELETON: 16, SHEEP: 6, WOLF: 7, BEAR: 8, DRAGON: 9, DEER: 10, PENGUIN: 11, CAMEL: 12, SCORPION: 13, SNAKE: 14, SNOWWOLF: 15, DEMON: 17, TROLL: 21, OGRE: 22, WHITEWALKER: 23, VAMPIRE: 24, KRAKEN: 25, SANDWORM: 26, BASILISK: 27, PHOENIX: 29, ENT: 30, LICH: 31, HYDRA: 32, CHICKEN: 33, PIG: 34, RABBIT: 35, FOX: 36, FISH: 37, CRAB: 38, TURTLE: 39, SHARK: 40 };   // M-U19：HUMAN/WOLF 入表；M-U22：reap 域八族 + isHerbivoreRace 八静态 + MONSTER_LOOT 九族（types.ts R 枚举序逐值）；M-U24：SKELETON/ENT/LICH 引擎级通道三族；M-U25：BEAR/SCORPION/SNAKE/SNOWWOLF/FOX/CRAB/TURTLE/SHARK 迁徙域 SEED 十七族补全（types.ts L38/43/44/45/78/82/84/86 逐值）
 const W = 256, H = 160, N = W * H;
 const isWater = (t) => t === T.DEEP || t === T.WATER;
 const walkable = (t) => t !== T.DEEP && t !== T.WATER && t !== T.MOUNTAIN && t !== T.LAVA;   // constants.ts L73-75
@@ -63,17 +63,36 @@ const TOOL3_RED = process.env.TOOL3_RED ?? '';
 
 // RACES 子集（types.ts L163/L174/L157/L164 逐值镜像——repro/undead/hostile/flying/lavaImmune/hp/dmg/speed/isCiv 消费面）
 const RACES = {
-  [R.SHEEP]: { repro: 0.004, undead: false, aquatic: false, hostile: false, flying: false, lavaImmune: false, hp: 16, dmg: 1, speed: 0.038, isCiv: false, predator: false },   // L163 SHEEP（M-U19：jumpGene 重算消费面；M-U22：reap zombie/scav 消费面）
-  [R.DEMON]: { repro: 0, undead: false, hostile: true, flying: false, lavaImmune: true },          // L174 DEMON
-  [R.HUMAN]: { repro: 0.006, undead: false, aquatic: false, hostile: false, flying: false, lavaImmune: false, hp: 60, dmg: 8, speed: 0.09, isCiv: true },    // L157 HUMAN（M-U19：jumpGene 属性重算消费面；M-U22：isCiv 肉门/掉落门 skip）
-  [R.WOLF]:  { repro: 0.004, undead: false, aquatic: false, hostile: false, flying: false, lavaImmune: false, hp: 34, dmg: 10, speed: 0.093, isCiv: false, predator: true }, // L164 WOLF（M-U19：wild 捕食者重算消费面；M-U22：scav predator 面）
-  [R.PHOENIX]: { undead: false, aquatic: false, flying: true, isCiv: false, hp: 200, dmg: 18, speed: 0.12, maxAge: 9999 },   // L189 PHOENIX（M-U22：reap zombie 门 skip〔flying〕/凤凰涅槃支；M-U23：+hp/dmg/speed/maxAge spawnUnitM 消费面——重生体 maxHp=round(200)=200）
-  [R.HYDRA]: { undead: false, aquatic: false, flying: false, isCiv: false, predator: true, hp: 500, dmg: 30, speed: 0.05, maxAge: 9999 },   // L192 HYDRA（M-U22：斩首分裂 spawn 幼蛇属性基）
+  [R.SHEEP]: { name: '绵羊', repro: 0.004, undead: false, aquatic: false, hostile: false, flying: false, lavaImmune: false, hp: 16, dmg: 1, speed: 0.038, maxAge: 26, isCiv: false, predator: false },   // L163 SHEEP（M-U19：jumpGene 重算消费面；M-U22：reap zombie/scav 消费面；M-U25：+name〔S36 eco 纪事 `${def.name}` 消费〕+maxAge 26〔S36 迁徙羊 spawnUnitM L1352 maxAge 掷属性基〕）
+  [R.DEMON]: { name: '恶魔', repro: 0, undead: false, aquatic: false, hostile: true, flying: false, lavaImmune: true, isCiv: false, predator: true },          // L174 DEMON（M-U25：+predator true/isCiv false/aquatic false——predatorHuntTick L12801 主环旗消费〔S12 tick1007 普查窗口触面〕）
+  [R.HUMAN]: { name: '人类', repro: 0.006, undead: false, aquatic: false, hostile: false, flying: false, lavaImmune: false, hp: 60, dmg: 8, speed: 0.09, isCiv: true },    // L157 HUMAN（M-U19：jumpGene 属性重算消费面；M-U22：isCiv 肉门/掉落门 skip）
+  [R.WOLF]:  { name: '狼', repro: 0.004, undead: false, aquatic: false, hostile: false, flying: false, lavaImmune: false, hp: 34, dmg: 10, speed: 0.093, isCiv: false, predator: true }, // L164 WOLF（M-U19：wild 捕食者重算消费面；M-U22：scav predator 面；M-U25：S34 陆生扑杀出手面）
+  [R.PHOENIX]: { name: '凤凰', undead: false, aquatic: false, flying: true, isCiv: false, hp: 200, dmg: 18, speed: 0.12, maxAge: 9999 },   // L189 PHOENIX（M-U22：reap zombie 门 skip〔flying〕/凤凰涅槃支；M-U23：+hp/dmg/speed/maxAge spawnUnitM 消费面——重生体 maxHp=round(200)=200）
+  [R.HYDRA]: { name: '九头蛇', undead: false, aquatic: false, flying: false, isCiv: false, predator: true, hp: 500, dmg: 30, speed: 0.05, maxAge: 9999 },   // L192 HYDRA（M-U22：斩首分裂 spawn 幼蛇属性基）
   [R.TROLL]: { undead: false, aquatic: false, flying: false, isCiv: false, predator: false },       // L173 TROLL（M-U22：MONSTER_LOOT boss 面）
   [R.PIG]: { undead: false, aquatic: false, flying: false, isCiv: false, predator: false },         // L195 PIG（M-U22：肉 +1 面）
   [R.SANDWORM]: { undead: false, aquatic: false, flying: false, isCiv: false, predator: true },     // L191 SANDWORM（M-U22：尸骸残留 skip 面——防御）
   [R.ZOMBIE]: { undead: true, aquatic: false, flying: false, isCiv: false },                        // L158 ZOMBIE（M-U22：zombify 后 dump 面）
   [R.SKELETON]: { undead: true, hostile: true, aquatic: false, flying: false, lavaImmune: false, isCiv: false, predator: false, hp: 55, dmg: 14, speed: 0.075, maxAge: 9999 },   // L173 SKELETON（M-U24：lichRaise spawnUnitM 消费面——hp/dmg/speed/maxAge 属性基 + undead family 门 skip）
+  // M-U25：四 aquatic 族（beachedAquaticTick L12656-12657 aquatic/beach 旗 + predatorHuntTick L12785 普查旗 +
+  //   wildlifeReboundTick L12884 def.aquatic 分轨 + wildAliveAquaticM L1104 RACES[race]?.aquatic 分账 + SEED 纪事 def.name——
+  //   types.ts L195-198 属性基逐值机械转写）
+  [R.FISH]: { name: '鱼', undead: false, aquatic: true, hostile: false, flying: false, lavaImmune: false, isCiv: false, predator: false, hp: 6, dmg: 0.5, speed: 0.075, maxAge: 10 },   // L195 FISH（S32/S33/S35 beached 游走/搁浅主角 + S35 扑杀猎物 + S37 迁徙撒网 spawnUnitM 属性基 + isHerbivore 八静态族）
+  [R.CRAB]: { name: '蟹', undead: false, aquatic: true, beach: true, hostile: false, flying: false, lavaImmune: false, isCiv: false, predator: false, hp: 16, dmg: 3, speed: 0.03, maxAge: 16 },   // L196 CRAB（beach 两栖旗——beached L12657 skip 铁证 S32）
+  [R.TURTLE]: { name: '龟', undead: false, aquatic: true, hostile: false, flying: false, lavaImmune: false, isCiv: false, predator: false, hp: 40, dmg: 1, speed: 0.028, maxAge: 120 },   // L197 TURTLE（wildAliveAquatic 分账消费面——S37 wild17 注入 5）
+  [R.SHARK]: { name: '鲨鱼', undead: false, aquatic: true, hostile: false, flying: false, lavaImmune: false, isCiv: false, predator: true, hp: 85, dmg: 18, speed: 0.1, maxAge: 40 },   // L198 SHARK（S33 猎游/S35 扑杀出手/S38 breed spawnUnitM 属性基——predator+aquatic 复合旗）
+  // M-U25：旧场景触达面缺键族补全（beachedAquaticTickM L12656 RACES[u.race] 全量语义——蓝本 types.ts 旗面逐值；
+  //   hp/dmg/speed/maxAge 非四函数消费面省略——spawn 属性基随相应切片译件补全）
+  [R.DRAGON]: { name: '巨龙', undead: false, aquatic: false, hostile: true, flying: true, lavaImmune: false, isCiv: false, predator: true },   // L166（S19-S24 reap boss 面）
+  [R.OGRE]: { name: '食人魔', undead: false, aquatic: false, hostile: true, flying: false, lavaImmune: false, isCiv: false, predator: true },   // L182
+  [R.WHITEWALKER]: { name: '白行者', undead: true, aquatic: false, hostile: true, flying: false, lavaImmune: false, isCiv: false, predator: false },   // L183
+  [R.VAMPIRE]: { name: '吸血鬼', undead: true, aquatic: false, hostile: true, flying: false, lavaImmune: false, isCiv: false, predator: false },   // L184
+  [R.KRAKEN]: { name: '克拉肯', undead: false, aquatic: true, hostile: true, flying: false, lavaImmune: false, isCiv: false, predator: true },   // L187（aquatic true——beached 水中/搁浅支触达面）
+  [R.BASILISK]: { name: '蛇怪', undead: false, aquatic: false, hostile: true, flying: false, lavaImmune: false, isCiv: false, predator: true },   // L190
+  [R.ENT]: { name: '树人', undead: false, aquatic: false, hostile: false, flying: false, lavaImmune: false, isCiv: false, predator: false },   // L190'（S27/S28 播种主角）
+  [R.LICH]: { name: '巫妖', undead: true, aquatic: false, hostile: true, flying: false, lavaImmune: false, isCiv: false, predator: true },   // L191'（S29/S30 复生主角——predator 但 food 缺省 70>45 出手门 skip）
+  [R.DEER]: { name: '鹿', undead: false, aquatic: false, hostile: false, flying: false, lavaImmune: false, isCiv: false, predator: false },   // L167（isHerbivore 八静态族）
+  [R.PENGUIN]: { name: '企鹅', undead: false, aquatic: false, hostile: false, flying: false, lavaImmune: false, isCiv: false, predator: false },   // L168
 };
 
 // TRAITS 消费切片（types.ts L264-276 机械转写——rerollTrait/jumpGene hpMul/dmgMul/speedMul 消费面；
@@ -115,7 +134,18 @@ const RARITY_W = [46, 26, 15, 9, 4];                       // L48-54 RARITY_META
 const CHEST_TIERS = { chest: { min: 0, max: 4 }, chest2: { min: 1, max: 4 }, chest3: { min: 3, max: 4 } };   // L790-794
 const FIRST0 = ['Alric', 'Berta', 'Corin', 'Dahlia', 'Edwin', 'Faye', 'Gareth', 'Hilda', 'Ivan', 'Jora', 'Kelvin', 'Lyra', 'Marcus', 'Nora', 'Osric', 'Petra'];   // names.ts L? FIRST[0] 默认名池（HYDRA 无专池 → FIRST[0]——黄金幼蛇 Kelvin/Nora 实证）
 const FIRST16 = ['Bones', 'Rattle', 'Marrow', 'Creak', 'Skull', 'Grin', 'Clatter', 'Dust', 'Hollow', 'Grim'];   // names.ts FIRST[16] SKELETON 专池（M-U24：lichRaise 骷髅名掷消费面——race 键控池表）
-const FIRST_BY_RACE = { [R.SKELETON]: FIRST16 };   // names.ts FIRST 子集（本切片消费面——SKELETON 专池；HYDRA 走 FIRST0 缺省）
+const FIRST6 = ['Wooly', 'Fluff', 'Baaald', 'Shears', 'Cloud', 'Tumble'];   // names.ts FIRST[6] SHEEP 专池（M-U25：S36 迁徙奠基羊名掷消费面——黄金 Cloud/Baaald/Fluff/Shears/Fluff II 实证）
+const FIRST_BY_RACE = { [R.SKELETON]: FIRST16, [R.SHEEP]: FIRST6 };   // names.ts FIRST 子集（本切片消费面——SKELETON/SHEEP 专池；HYDRA/FISH/SHARK 走 FIRST0 缺省——FIRST 表键 0-27，FISH 37 无专池）
+function romanM(n) {                       // names.ts L81-94 机械转写（小写表 + toUpperCase 尾——大写罗马输出「Fluff II」黄金实证）
+  if (n < 1 || n > 40) return String(n);   // L82
+  const table = [[40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']];   // L83-84
+  let out = '';                            // L86
+  let v = n;                               // L87
+  for (const [val, sym] of table) {        // L88
+    while (v >= val) { out += sym; v -= val; }   // L89
+  }
+  return out.toUpperCase();                // L93
+}
 const AW = 32, AH = 20, CELL = 8;          // nature.ts L17-19 大气粗网格（Math.floor(256/8)=32 / 160/8=20）
 function hash2N(x, y, seed) {              // noise.ts L12-18（机械转写——windAtM 湍流噪声基元）
   let h = (x * 374761393 + y * 668265263 + seed * 1442695041) | 0;
@@ -244,6 +274,8 @@ class BREng {
         ...(uo.caravan !== undefined ? { caravan: uo.caravan } : {}),     // M-U22：商队（rel 降温面）
         ...(uo.food !== undefined ? { food: uo.food } : {}),        // M-U22：饥饿（scav 面）
         ...(uo.fam !== undefined ? { fam: uo.fam } : {}),           // M-U22：家族（members-- 面）
+        ...(uo.fleeT !== undefined ? { fleeT: uo.fleeT } : {}),     // M-U25：逃亡倒数（beachedAquaticTick L12661 让位门——S32 u984/S33 u994）
+        ...(uo.beachTid !== undefined ? { beachTargetId: uo.beachTid } : {}),   // M-U25：猎游粘性目标预设（L12675 tid>=0 支——夹具条件键同构）
         fgn: null, gene: uo.gene ? { s: uo.gene.s, d: uo.gene.d, h: uo.gene.h, r: uo.gene.r } : null, army: null,   // gene 深拷贝（gen mkUnit 同构；fam 条件键置前防固定键覆盖——gen mkUnit 同序）
       });
     }
@@ -264,7 +296,8 @@ class BREng {
     for (const c of (sc.fixture.corpses0 ?? [])) this.corpses.push({ ...c });   // M-U24：尸体瘦夹具（lichRaise r=4 最陈旧选择——零掷纯写）
     for (const [bx, by, bv] of (sc.fixture.building0 ?? [])) this.building[by * W + bx] = bv;   // M-U24：建筑瘦夹具（entGrove L13068 门——零掷纯写）
     this.natureSeason = sc.fixture.season0 ?? 0;    // M-U24：season 夹具（gen eng.nature.season 派生值快照——yearF/2%4 getter 同构消费面；lichRaise 冬 %8 门）
-    this.laws = { zombieVirus: true };              // engine laws 子集（zombie 门——黄金默认 true）
+    this.laws = { zombieVirus: true, reproduction: sc.fixture.repro0 ?? true };   // engine laws 子集（zombie 门——黄金默认 true；M-U25：reproduction 法则门〔wildlifeReboundTick L12841 / sharkBreedTick L12996——构造默认 true，repro0 夹具 S39 false〕）
+    this.reboundLast = new Map(sc.fixture.rebound0 ?? []);   // M-U25：迁徙权重表（engine L495 类字段原生空表——rebound0 夹具 ago 权重消费面 L12871）
   }
   rng() {
     const r = mulberryStep(this.rngA);
@@ -1080,6 +1113,335 @@ class BREng {
     }
     this.unitsReap();                        // L3215（M-U22 接线——收尸域全函数）
   }
+  // ---- M-U25 引擎级通道四件套镜像（蓝本 L12652-13014 机械转写——调用面：runner effectsTick/unitsTick
+  //        步进通道 L2614/L2616/L2618/L2620 门〔蓝本门原样〕。辅助：findWaterNearM L5552-5586 零掷纯扫描；
+  //        WB.syncDead 宿主桥接面无头 no-op——掷流零差异）----
+  findWaterNearM(x, y, r) {                  // L5552-5586 机械转写（零掷纯扫描——搁浅归海导向消费面）
+    const cx = Math.floor(x);                // L5553
+    const cy = Math.floor(y);                // L5554
+    for (let ring = 1; ring <= r; ring++) {  // L5555
+      for (let dy = -ring; dy <= ring; dy++) {   // L5556
+        for (let dx = -ring; dx <= ring; dx++) {   // L5557
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;   // L5558（只看当前环）
+          const xx = cx + dx;                  // L5559
+          const yy = cy + dy;                  // L5560
+          if (xx < 1 || yy < 1 || xx >= W - 1 || yy >= H - 1) continue;   // L5561
+          const i = idx(xx, yy);               // L5562
+          if (!isWater(this.terrain[i])) continue;   // L5563
+          let waterN = 0;                      // L5564
+          for (let ny = -1; ny <= 1; ny++) {   // L5565
+            for (let nx = -1; nx <= 1; nx++) {   // L5566
+              if (nx === 0 && ny === 0) continue;   // L5567（自身不计）
+              if (isWater(this.terrain[idx(xx + nx, yy + ny)])) waterN++;   // L5568
+            }
+          }
+          if (waterN >= 5) return { x: xx + 0.5, y: yy + 0.5 };   // L5570（≥5 邻水实心水体）
+        }
+      }
+    }
+    return null;                             // L5585
+  }
+  beachedAquaticTickM() {                    // L12652-12753 机械转写（M-U25：水生搁浅整治引擎级通道——逐 tick 无门）
+    if (TOOL3_RED === 'beached') return;     // 红证旋钮：禁全写面（游走 tx/ty 采样 + 搁浅 beachT/hurt/dead/归海 + 猎游目标全缺 → S32/S33 stepBeach 断言面 FAIL）
+    const retarget = this.tickCount % 20 === 0;   // L12653（目标采样每 20 tick 一次；断言逐 tick 廉价）
+    for (const u of this.units) {            // L12654
+      if (u.dead) continue;                  // L12655
+      const def = RACES[u.race];             // L12656
+      if (!def.aquatic || def.beach) continue;   // L12657（纯水生——蟹 beach 两栖 skip）
+      const ti = idx(Math.floor(u.x), Math.floor(u.y));   // L12658
+      if (isWater(this.terrain[ti])) {       // L12659（水中支）
+        u.beachT = 0;                        // L12660（窒息计数清零——键置 0：dumpUnit 条件键面）
+        if ((u.fleeT ?? 0) > 0) { u.beachTx = undefined; u.beachTy = undefined; continue; }   // L12661（逃亡交给内核 AI）
+        if (def.predator) {                  // L12662（捕食者猎游支）
+          if (retarget || u.beachTx == null || u.beachTy == null) {   // L12669
+            let tgt = null;                  // L12674
+            const tid = (u.beachTargetId ?? -1);   // L12675（粘性目标 id——缺省 -1）
+            if (tid >= 0) {                  // L12676
+              const cand = this.units.find((q) => q.id === tid && !q.dead);   // L12677
+              if (cand && !RACES[cand.race].isCiv) {   // L12678
+                const cj = Math.floor(cand.y) * W + Math.floor(cand.x);   // L12679
+                const dx = cand.x - u.x, dy = cand.y - u.y;   // L12680
+                if (isWater(this.terrain[cj]) && dx * dx + dy * dy <= 1600) tgt = cand;   // L12681（≤40 格粘住 + 实体水门）
+              }
+            }
+            if (!tgt) {                      // L12684（散签初选）
+              const cands = [];              // L12685
+              for (const q of this.units) {  // L12686
+                if (q.dead || q.race === u.race) continue;   // L12687
+                if (RACES[q.race].isCiv || !this.isHerbivoreRaceM(q.race)) continue;   // L12688（镜像方法名映射 isHerbivoreRace→isHerbivoreRaceM）
+                const qx = Math.floor(q.x), qy = Math.floor(q.y);   // L12689
+                const qj = qy * W + qx;      // L12690
+                if (!isWater(this.terrain[qj])) continue;   // L12691（只追水中猎物）
+                let wn = 0;                  // L12694（实体水过滤：≥5 邻水）
+                for (let ny = -1; ny <= 1; ny++) for (let nx = -1; nx <= 1; nx++) {   // L12695
+                  const xx = qx + nx, yy = qy + ny;   // L12696
+                  if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;   // L12697
+                  if (isWater(this.terrain[yy * W + xx])) wn++;   // L12698
+                }
+                if (wn < 6) continue;        // L12700（自身 3x3 含自身 ≥6——岸边浅洼排除）
+                const dx = q.x - u.x, dy = q.y - u.y;   // L12701
+                cands.push({ q, d2: dx * dx + dy * dy });   // L12702
+              }
+              if (cands.length > 0) {        // L12704
+                cands.sort((a, b) => a.d2 - b.d2);   // L12705（最近排序）
+                const top = cands.slice(0, Math.min(6, cands.length));   // L12706（top6）
+                const pick = top[Math.floor(this.rng() * top.length)];   // L12707（抽签 1 掷）
+                tgt = pick.q;                // L12708
+              }
+            }
+            u.beachTargetId = tgt ? tgt.id : undefined;   // L12711
+            if (tgt) { u.beachTx = tgt.x; u.beachTy = tgt.y; }   // L12712
+            else { u.beachTx = undefined; u.beachTy = undefined; }   // L12713
+          } else if (u.beachTargetId != null) {   // L12714（粘性目标的逐 tick 坐标刷新）
+            const tgt = this.units.find((q) => q.id === u.beachTargetId && !q.dead);   // L12716（死亡支 tgt null 不清 beachTx——陈旧保持蓝本语义 S35）
+            if (tgt) { u.beachTx = tgt.x; u.beachTy = tgt.y; }   // L12717
+          }
+          if (u.beachTx != null && u.beachTy != null) { u.tx = u.beachTx; u.ty = u.beachTy; }   // L12719（逐 tick 断言）
+          continue;                          // L12720
+        }
+        u.beachTx = undefined; u.beachTy = undefined;   // L12722（非捕食者逐 tick 清空——蓝本真相：L12723 门恒真逐 tick 重采样，与「每 20 tick 重采样」注释不符——C# 机械翻译按代码不按注释）
+        if (retarget || u.beachTx == null) {   // L12723（恒真）
+          const far = this.rng() < 0.25;     // L12726（25% 远散布 1 掷）
+          const spread = far ? 14 : 6;       // L12727
+          for (let k = 0; k < 8; k++) {      // L12728（8 试实体水）
+            const wx = Math.max(1, Math.min(W - 2, Math.floor(u.x + (this.rng() * 2 - 1) * spread)));   // L12729（2 掷/试）
+            const wy = Math.max(1, Math.min(H - 2, Math.floor(u.y + (this.rng() * 2 - 1) * spread)));   // L12730
+            const j = wy * W + wx;           // L12731
+            if (!isWater(this.terrain[j])) continue;   // L12732
+            let wn = 0;                      // L12733（邻水环扫——蓝本无界外检查：typed 数组 OOB undefined → isWater false 同构）
+            for (let ny = -1; ny <= 1; ny++) for (let nx = -1; nx <= 1; nx++) {   // L12734
+              if (isWater(this.terrain[j + ny * W + nx])) wn++;   // L12735
+            }
+            if (wn >= 6) { u.beachTx = wx + 0.5; u.beachTy = wy + 0.5; break; }   // L12737（含自身 ≥6 实体水）
+          }
+        }
+        if (u.beachTx != null && u.beachTy != null) { u.tx = u.beachTx; u.ty = u.beachTy; }   // L12740
+        continue;                            // L12741
+      }
+      // —— 搁浅：窒息 + 归海导向 ——     // L12743
+      u.beachT = (u.beachT ?? 0) + 1;        // L12744（窒息计数逐 tick）
+      u.hurt = Math.max(u.hurt, 2);          // L12745（挣扎受伤——int 轨）
+      if (retarget || u.beachTx == null) {   // L12746
+        const w = this.findWaterNearM(u.x, u.y, 16);   // L12747（r=16 环扫零掷）
+        if (w) { u.beachTx = w.x; u.beachTy = w.y; }   // L12748
+      }
+      if (u.beachTx != null && u.beachTy != null) { u.tx = u.beachTx; u.ty = u.beachTy; }   // L12750
+      if ((u.beachT ?? 0) >= 15) u.dead = true;   // L12751（窒息终局交常规收尸）
+    }
+  }
+  predatorHuntTickM() {                      // L12764-12833 机械转写（M-U25：猎手扑杀引擎级通道——%20===7 门在 runner）
+    if (TOOL3_RED === 'hunt') return;        // 红证旋钮：禁扑杀全写面（prey.dead/food/fx 全缺 → S34/S35 FAIL）
+    let preyAlive = 0;                       // L12769（猎物存量普查 O(n)）
+    let fishAlive = 0;                       // L12770
+    for (const q of this.units) {            // L12771
+      if (!q.dead && !RACES[q.race].isCiv && this.isHerbivoreRaceM(q.race)) {   // L12772
+        preyAlive++;                         // L12773
+        if (RACES[q.race].aquatic) fishAlive++;   // L12774
+      }
+    }
+    let hungryAqua = 0;                      // L12781（水生预算随饿鲨规模伸缩）
+    for (const p of this.units) {            // L12782
+      if (p.dead) continue;                  // L12783
+      const pd = RACES[p.race];              // L12784
+      if (pd.predator && pd.aquatic && !pd.undead && !pd.isCiv && (p.food ?? 70) <= 300) hungryAqua++;   // L12785
+    }
+    let capLand = 8;                         // L12788（分级预算：>150 满额）
+    let capAqua = Math.min(10, Math.max(4, Math.ceil(hungryAqua * 0.75)));   // L12789（4-10 弹性）
+    if (preyAlive <= 150) { capLand = 4; capAqua = Math.ceil(capAqua / 2); }   // L12790（减半）
+    if (preyAlive <= 60) { capLand = 2; capAqua = Math.max(1, Math.ceil(capAqua / 4)); }   // L12791（收缩）
+    if (preyAlive <= 25) { capLand = 0; capAqua = 0; }   // L12792（生态保护期禁猎）
+    capAqua = Math.min(capAqua, Math.max(1, Math.round(fishAlive / 28)));   // L12795（猎物存量平滑耦合）
+    let killsLand = 0;                       // L12796
+    let killsAqua = 0;                       // L12797
+    for (const p of this.units) {            // L12798
+      if (p.dead) continue;                  // L12799
+      const pd = RACES[p.race];              // L12800
+      if (!pd.predator || pd.undead || pd.isCiv) continue;   // L12801
+      if (pd.aquatic ? killsAqua >= capAqua : killsLand >= capLand) continue;   // L12802（弹性预算）
+      if ((p.food ?? 70) > (pd.aquatic ? 300 : 45)) continue;   // L12806（出手门双轨——?? 70 缺省）
+      let prey = null;                       // L12807
+      let bd = pd.aquatic ? 196 : 2.56;      // L12808（扑杀窗口：陆 r=1.6 / 水 r=14 深海突袭抽象）
+      for (const q of this.units) {          // L12811
+        if (q.dead || (q.grab ?? 0) > 0) continue;   // L12812（神明手中之物不捕）
+        if (RACES[q.race].isCiv || !this.isHerbivoreRaceM(q.race)) continue;   // L12813
+        const dx = q.x - p.x, dy = q.y - p.y;   // L12814
+        const d2 = dx * dx + dy * dy;        // L12815
+        if (d2 < bd) { bd = d2; prey = q; }  // L12816（最近严格 <）
+      }
+      if (!prey) continue;                   // L12818
+      prey.dead = true;                      // L12819
+      // L12820 WB.syncDead(prey)——WASM 镜像宿主桥接（无头 no-op——后续扫描 units 数组序消费同构）
+      this.fx('blood', prey.x, prey.y, 14);  // L12821（血泊 2 掷）
+      if (pd.aquatic) {                      // L12822
+        killsAqua++;                         // L12823
+        this.fx('water', prey.x, prey.y, 16);   // L12826（深海突袭水花 2 掷）
+      } else {
+        killsLand++;                         // L12828
+      }
+      p.food = Math.min(400, (p.food ?? 0) + 25);   // L12830（扑杀即刻进食）
+      if ((p.food ?? 0) >= 380) break;       // L12831（吃饱收手——前置 355>300 出手门不可达：防御死码注记）
+    }
+  }
+  wildlifeReboundTickM() {                   // L12840-12989 机械转写（M-U25：百兽迁徙引擎级通道——%600===61 门在 runner）
+    if (TOOL3_RED === 'rebound') return;     // 红证旋钮：禁迁徙全写面（spawn/wildCount/reboundLast/fx/event 全缺 → S36/S37 FAIL）
+    if (!this.laws.reproduction) return;     // L12841（神明关闭繁衍法则——世界静寂 S39）
+    const isW = (t) => t === T.DEEP || t === T.WATER;   // L12844
+    const SEED = [                        // L12845-12863（奠基者名单十七族——与 worldgen trySpawn 播撒对齐）
+      { race: R.SHEEP, n: [3, 5], habitat: (t) => t === T.GRASS },       // L12846
+      { race: R.WOLF, n: [2, 3], habitat: (t) => t === T.FOREST },       // L12847
+      { race: R.BEAR, n: [1, 2], habitat: (t) => t === T.FOREST },       // L12848
+      { race: R.DEER, n: [2, 4], habitat: (t) => t === T.GRASS },        // L12849
+      { race: R.PENGUIN, n: [2, 3], habitat: (t) => t === T.SNOW },      // L12850
+      { race: R.CAMEL, n: [2, 3], habitat: (t) => t === T.SAND },        // L12851
+      { race: R.SCORPION, n: [2, 3], habitat: (t) => t === T.SAND },     // L12852
+      { race: R.SNAKE, n: [2, 3], habitat: (t) => t === T.SAND },        // L12853
+      { race: R.SNOWWOLF, n: [2, 3], habitat: (t) => t === T.SNOW },     // L12854
+      { race: R.CHICKEN, n: [3, 5], habitat: (t) => t === T.GRASS },     // L12855
+      { race: R.PIG, n: [2, 4], habitat: (t) => t === T.GRASS },         // L12856
+      { race: R.RABBIT, n: [3, 5], habitat: (t) => t === T.GRASS || t === T.FOREST },   // L12857
+      { race: R.FOX, n: [1, 2], habitat: (t) => t === T.FOREST },        // L12858
+      { race: R.FISH, n: [4, 7], habitat: isW },                          // L12859
+      { race: R.CRAB, n: [2, 3], habitat: (t) => t === T.SAND },          // L12860
+      { race: R.TURTLE, n: [2, 3], habitat: isW },                        // L12861
+      { race: R.SHARK, n: [1, 2], habitat: isW },                         // L12862
+    ];
+    const extinct = SEED.filter((s) => (this.wildCount.get(s.race) ?? 0) === 0);   // L12865（灭绝名单 O(1) 分种族计数）
+    if (extinct.length === 0) return;        // L12866
+    if (this.rng() > 0.6) return;            // L12867（掷签门 1 掷——并非每轮都迁来 S40）
+    const weights = extinct.map((s) => {     // L12870（加权：灭绝越久权重越高 1→5 封顶）
+      const last = this.reboundLast.get(s.race);   // L12871
+      const ago = last === undefined ? Number.MAX_SAFE_INTEGER : this.tickCount - last;   // L12872
+      return 1 + Math.min(4, ago / 2400);    // L12873
+    });
+    const totalW = weights.reduce((a, b) => a + b, 0);   // L12875
+    let pick = this.rng() * totalW;          // L12876（加权掷签 1 掷）
+    let idx2 = extinct.length - 1;           // L12877（蓝本局部 let idx 遮蔽全局 idx 函数——镜像改名 idx2 防转写歧义，语义同构：尾元 fallback）
+    for (let i = 0; i < extinct.length; i++) {   // L12878
+      pick -= weights[i];                    // L12879
+      if (pick <= 0) { idx2 = i; break; }    // L12880
+    }
+    const seed = extinct[idx2];              // L12882
+    const def = RACES[seed.race];            // L12883
+    const aquatic = !!def.aquatic;           // L12884
+    if (aquatic ? this.wildAliveAquaticM() >= MAX_WILDLIFE_AQUATIC - 8 : this.wildAliveM() >= MAX_WILDLIFE - 8) return;   // L12886（预算分轨：水生掷签看海洋配额）
+    if (seed.race === R.SHARK) {             // L12889（鲨鱼特例：锚定一条活鱼落位）
+      const fishes = this.units.filter((q) => !q.dead && q.race === R.FISH);   // L12890
+      if (fishes.length > 0) {              // L12891
+        let placed = 0;                      // L12892
+        const n = seed.n[0] + Math.floor(this.rng() * (seed.n[1] - seed.n[0] + 1));   // L12893（1 掷群规模）
+        for (let k = 0; k < n; k++) {        // L12894
+          const f = fishes[Math.floor(this.rng() * fishes.length)];   // L12895（1 掷锚鱼）
+          for (let t2 = 0; t2 < 8; t2++) {   // L12896
+            const jx = Math.max(0.5, Math.min(W - 0.5, f.x + (this.rng() * 3 - 1.5)));   // L12897（1 掷抖动）
+            const jy = Math.max(0.5, Math.min(H - 0.5, f.y + (this.rng() * 3 - 1.5)));   // L12898（1 掷抖动）
+            const j = Math.floor(jy) * W + Math.floor(jx);   // L12899
+            if (!isWater(this.terrain[j])) continue;   // L12900（诞崽落水门同构）
+            if (this.spawnUnitM(R.SHARK, jx, jy, { silent: true })) placed++;   // L12901
+            break;                           // L12902
+          }
+        }
+        if (placed > 0) {                    // L12905
+          this.reboundLast.set(seed.race, this.tickCount);   // L12906
+          this.fx('spawn', fishes[0].x, fishes[0].y, 46);   // L12907（2 掷）
+          this.addEvent('eco', `洋流送来了远方的族群——${def.name}循着鱼群的踪迹重新游回了这片海域`, { x: fishes[0].x, y: fishes[0].y });   // L12908
+        }
+        return;                              // L12910
+      }
+      // 无鱼可锚（海洋真空）→ 落回通用随机采样   // L12912
+    }
+    if (seed.race === R.FISH) {              // L12917（鱼群补种撒网式落位特例）
+      const spots = [];                      // L12918
+      for (let tries = 0; tries < 260 && spots.length < 3; tries++) {   // L12919（260 试三锚）
+        const x = 2 + Math.floor(this.rng() * (W - 4));   // L12920（1 掷）
+        const y = 2 + Math.floor(this.rng() * (H - 4));   // L12921（1 掷）
+        const i = y * W + x;                 // L12922
+        if (!seed.habitat(this.terrain[i])) continue;   // L12923
+        let ok = true;                       // L12924
+        for (const s of spots) {             // L12925（锚间 ≥18 格）
+          const dx = s.x - x, dy = s.y - y;  // L12926
+          if (dx * dx + dy * dy < 324) { ok = false; break; }   // L12927
+        }
+        if (!ok) continue;                   // L12929
+        spots.push({ x, y });                // L12930
+      }
+      let placed = 0;                        // L12932
+      for (const s of spots) {               // L12933
+        const n = 2 + Math.floor(this.rng() * 2);   // L12934（每锚 2-3 尾 1 掷）
+        for (let k = 0; k < n; k++) {        // L12935
+          for (let t2 = 0; t2 < 8; t2++) {   // L12936
+            const jx = s.x + (this.rng() * 2.5 - 1.25), jy = s.y + (this.rng() * 2.5 - 1.25);   // L12937（±1.25 抖动 2 掷）
+            const j = Math.max(0, Math.min(W * H - 1, Math.floor(jy) * W + Math.floor(jx)));   // L12938（j 钳 [0, W*H-1]）
+            if (!seed.habitat(this.terrain[j])) continue;   // L12939
+            if (this.spawnUnitM(R.FISH, jx, jy, { silent: true })) placed++;   // L12940
+            break;                           // L12941
+          }
+        }
+      }
+      if (placed > 0) {                      // L12945
+        this.reboundLast.set(seed.race, this.tickCount);   // L12946
+        const s0 = spots[0];                 // L12947
+        this.fx('spawn', s0.x + 0.5, s0.y + 0.5, 46);   // L12948（2 掷）
+        this.addEvent('eco', `洋流送来了远方的族群——${def.name}重新出现在这片水域`, { x: s0.x + 0.5, y: s0.y + 0.5 });   // L12949
+      }
+      return;                                // L12951
+    }
+    for (let tries = 0; tries < 140; tries++) {   // L12953（通用支：140 试栖息地采样）
+      const x = 2 + Math.floor(this.rng() * (W - 4));   // L12954（1 掷）
+      const y = 2 + Math.floor(this.rng() * (H - 4));   // L12955（1 掷）
+      const i = y * W + x;                   // L12956
+      if (!seed.habitat(this.terrain[i])) continue;   // L12957
+      if (seed.race === R.CRAB) {            // L12958（蟹需 r=2 内有水）
+        let w = 0;                           // L12959
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {   // L12960
+          const nx = x + dx, ny = y + dy;    // L12961
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;   // L12962
+          if (isWater(this.terrain[ny * W + nx])) w++;   // L12963
+        }
+        if (w === 0) continue;               // L12965
+      }
+      const n = seed.n[0] + Math.floor(this.rng() * (seed.n[1] - seed.n[0] + 1));   // L12968（1 掷群规模）
+      let placed = 0;                        // L12969
+      for (let k = 0; k < n; k++) {          // L12970（奠基者逐只采样）
+        for (let t2 = 0; t2 < 10; t2++) {    // L12971
+          const jx = x + (this.rng() * 3 - 1.5), jy = y + (this.rng() * 3 - 1.5);   // L12972（±1.5 抖动 2 掷）
+          const j = Math.max(0, Math.min(W * H - 1, Math.floor(jy) * W + Math.floor(jx)));   // L12973
+          if (!seed.habitat(this.terrain[j])) continue;   // L12974
+          const nu = this.spawnUnitM(seed.race, jx, jy, { silent: true });   // L12975（spawnUnit silent 6 掷链）
+          if (nu) placed++;                  // L12976
+          break;                             // L12977
+        }
+      }
+      if (placed === 0) continue;            // L12980（落点全数失败 → 换个点再试）
+      this.reboundLast.set(seed.race, this.tickCount);   // L12981
+      this.fx('spawn', x + 0.5, y + 0.5, 46);   // L12982（2 掷）
+      const msg = aquatic                    // L12983（双文本）
+        ? `洋流送来了远方的族群——${def.name}重新出现在这片水域`
+        : `远方的兽群跋涉而来——${def.name}重新踏上了这片大地`;
+      this.addEvent('eco', msg, { x: x + 0.5, y: y + 0.5 });   // L12986
+      return;                                // L12987（每轮至多一支兽群迁入）
+    }
+  }
+  sharkBreedTickM() {                        // L12995-13014 机械转写（M-U25：鲨群繁衍辅助引擎级通道——%240===13 门在 runner）
+    if (TOOL3_RED === 'breed') return;       // 红证旋钮：禁繁衍全写面（pup/food/fx 全缺 → S38 FAIL）
+    if (!this.laws.reproduction) return;     // L12996（神明关闭繁衍法则时静默）
+    const sharks = this.units.filter((u) => !u.dead && u.race === R.SHARK);   // L12997
+    if (sharks.length === 0 || sharks.length >= 8) return;   // L12998（种群地板 0<len<8）
+    const mother = sharks.find((s) => (s.food ?? 0) > 220);   // L12999（肥鲨母体）
+    if (!mother) return;                     // L13000
+    for (let t = 0; t < 8; t++) {            // L13001（8 试落水门）
+      const jx = Math.max(0.5, Math.min(W - 0.5, mother.x + (this.rng() * 3 - 1.5)));   // L13002（1 掷抖动）
+      const jy = Math.max(0.5, Math.min(H - 0.5, mother.y + (this.rng() * 3 - 1.5)));   // L13003（1 掷抖动）
+      const j = Math.floor(jy) * W + Math.floor(jx);   // L13004
+      if (!isWater(this.terrain[j])) continue;   // L13005（诞崽必须落水）
+      const pup = this.spawnUnitM(R.SHARK, jx, jy, { silent: true });   // L13006（spawnUnit silent 6 掷链）
+      if (pup) {                             // L13007
+        mother.food = Math.max(0, (mother.food ?? 0) - 60);   // L13008（妊娠成本）
+        this.fx('spawn', jx, jy, 30);        // L13009（2 掷）
+        this.fx('water', jx, jy, 18);        // L13010（诞崽水花 2 掷）
+      }
+      break;                                 // L13012（至多一崽）
+    }
+  }
   // ---- M-U23 phoenixAshTick L13018-13032（凤凰涅槃引擎级通道：灰烬倒数到点重生机械转写——
   //        调用面：runner unitsTick 步进通道 L2606 门〔len>0 蓝本门原样，旧场景 ashes 空门假零效应〕----
   phoenixAshTick() {
@@ -1316,15 +1678,17 @@ class BREng {
     // L1390-1417 silent 跳宣告面（DRAGON/DEMON/ANGEL toast+event+fx——silent 短路零写零掷）
     return u;
   }
-  uniqueNameM(race) {                        // L1528-1538 子集（unitName 掷 + 重名扫描——夹具 u970 格式名不撞 FIRST 池）
-    const pool = FIRST_BY_RACE[race] ?? FIRST0;   // names.ts L76-78（pool = FIRST[race] ?? FIRST[0]——M-U24：SKELETON 专池 FIRST16；HYDRA 无专池 → FIRST0）
-    const base = pool[Math.floor(this.rng() * pool.length)];
-    let n = 0;
+  uniqueNameM(race) {                        // L1528-1538 全同构（M-U25：unitName 掷 + 重名扫描 startsWith 前缀面 + roman 尾——S36 五羊 Fluff/Fluff II 重名触达实证）
+    const pool = FIRST_BY_RACE[race] ?? FIRST0;   // names.ts L76-78（pool = FIRST[race] ?? FIRST[0]——SKELETON FIRST16 / SHEEP FIRST6；HYDRA/FISH/SHARK → FIRST0）
+    const base = pool[Math.floor(this.rng() * pool.length)];   // L1529 unitName（1 掷）
+    const bl = base.length;                  // L1531（长度+首字符判定免拼接——蓝本 Task 42-a 同构）
+    let n = 0;                               // L1532
     for (const p of this.units) {            // L1533-1536 重名扫描（dead skip）
-      if (p.dead) continue;
-      if (p.name === base) n++;              //（startsWith(base+' ') 面——夹具名无 FIRST 前缀恒零）
+      if (p.dead) continue;                  // L1534
+      const nm = p.name;                     // L1535
+      if (nm === base || (nm.length > bl && nm.charCodeAt(bl) === 32 && nm.startsWith(base))) n++;   // L1536（「Fluff II」≡ Fluff 重名——前缀+空格面）
     }
-    return n === 0 ? base : `${base} ${n + 1}`;   // L1537（roman 尾——零重名不触达）
+    return n === 0 ? base : `${base} ${romanM(n + 1)}`;   // L1537（大写罗马尾——romanM 同构）
   }
   dropItem(kind, wx, wy) {                   // L5190-5213 机械转写
     if (this.items.length >= 256) {          // L5191（MAX_ITEMS L2849）
@@ -1575,7 +1939,7 @@ for (const sc of golden.scenarios) {
   const cmp = (a, b, label) => {
     if (!stepOk) return;
     const ja = JSON.stringify(a), jb = JSON.stringify(b);
-    if (ja !== jb) { stepOk = false; firstErr = `${label}: mirror≠golden`; }
+    if (ja !== jb) { stepOk = false; firstErr = `${label}: mirror=${ja.length > 220 ? ja.slice(0, 220) + '…' : ja} golden=${jb.length > 220 ? jb.slice(0, 220) + '…' : jb}`; }   // M-U25：双值诊断输出
   };
   for (let s = 0; s < sc.stepsSnap.length; s++) {
     const call = sc.stepsSnap[s];
@@ -1583,8 +1947,8 @@ for (const sc of golden.scenarios) {
     else if (call.fn === 'beginGrab') eng.beginGrab(call.args[0], call.args[1]);             // M-U21：三 API 直调
     else if (call.fn === 'moveGrab') eng.moveGrab(call.args[0], call.args[1]);
     else if (call.fn === 'endGrab') eng.endGrab(call.args[0], call.args[1]);
-    else if (call.fn === 'unitsTick') { eng.tickCount++; eng.fireTickM(); eng.rebuildBucketsM(); eng.unitsTick(); eng.effectsTick(); if (eng.phoenixAshes.length > 0) eng.phoenixAshTick(); if (eng.tickCount % 10 === 0) eng.entGroveTick(); if (eng.tickCount % (eng.natureSeason === 3 ? 8 : 12) === 0) eng.lichRaiseTick(); if (eng.tickCount % 30 === 0) eng.hydraRegenTick(); }   // M-U21+M-U23+M-U24：主循环 L2523-2528 + L2606/L2608/L2611/L2612 截断镜像（灰烬门旧场景零效应；三新门旧窗口 %10/%12/%30 全不触零漂移）
-    else if (call.fn === 'effectsTick') { eng.tickCount++; eng.effectsTick(); }
+    else if (call.fn === 'unitsTick') { eng.tickCount++; eng.fireTickM(); eng.rebuildBucketsM(); eng.unitsTick(); eng.effectsTick(); if (eng.phoenixAshes.length > 0) eng.phoenixAshTick(); if (eng.tickCount % 10 === 0) eng.entGroveTick(); if (eng.tickCount % (eng.natureSeason === 3 ? 8 : 12) === 0) eng.lichRaiseTick(); if (eng.tickCount % 30 === 0) eng.hydraRegenTick(); eng.beachedAquaticTickM(); if (eng.tickCount % 600 === 61) eng.wildlifeReboundTickM(); if (eng.tickCount % 20 === 7) eng.predatorHuntTickM(); if (eng.tickCount % 240 === 13) eng.sharkBreedTickM(); }   // M-U21+M-U23+M-U24：主循环 L2523-2528 + L2606/L2608/L2611/L2612 截断镜像（灰烬门旧场景零效应；三新门旧窗口 %10/%12/%30 全不触零漂移）+ M-U25：L2614/L2616/L2618/L2620 四门接线（beached 逐 tick 无门 + 三条件门蓝本门原样——stepUnits 场景 gen 端同序跑四门零效应实证：旧 31 场景无 aquatic 族/唯一饿捕食者 S24 food:30 窗口 1001 不触/LICH-HYDRA predator 但 food 缺省 70>45 出手门 skip）
+    else if (call.fn === 'effectsTick') { eng.tickCount++; eng.effectsTick(); if (eng.phoenixAshes.length > 0) eng.phoenixAshTick(); if (eng.tickCount % 10 === 0) eng.entGroveTick(); if (eng.tickCount % (eng.natureSeason === 3 ? 8 : 12) === 0) eng.lichRaiseTick(); if (eng.tickCount % 30 === 0) eng.hydraRegenTick(); eng.beachedAquaticTickM(); if (eng.tickCount % 600 === 61) eng.wildlifeReboundTickM(); if (eng.tickCount % 20 === 7) eng.predatorHuntTickM(); if (eng.tickCount % 240 === 13) eng.sharkBreedTickM(); }   // M-U25：gen 步进循环 L340-381 全序同构（effectsTick → L2606 灰烬门 → L2608/L2611/L2612 三门 → L2614/L2616/L2618/L2620 四门——旧 31 场景八门零效应窗口实证：phoenix ashes 空/%10 entGrove 无 ENT/%12 lich corpses 空→零掷/%30 hydra 无 HYDRA/beached 无 aquatic 族/rebound %600===61 旧窗口 1001-1050 不触/hunt 普查零掷/breed 不触——镜像端不接门与接门掷流等价，本轮补齐严格同构防未来漂移）
     else throw new Error(`${sc.key}: 未知调用 ${call.fn}`);
     const m = {
       rngA: (eng.rngA >>> 0).toString(16).padStart(8, '0'),
@@ -1613,6 +1977,8 @@ for (const sc of golden.scenarios) {
       const mu = eng.units.map((u) => ({
         id: u.id, hp: f64hex(u.hp), hurt: f64hex(u.hurt ?? 0), dead: u.dead ? 1 : 0, x: f64hex(u.x), y: f64hex(u.y),
         ...(call.units[0]?.grab !== undefined ? { grab: u.grab ?? 0, thrT: u.thrT ?? 0 } : {}),   // M-U21：条件面
+        // M-U25：stepBeach 场景条件扩展面（S32/S33/S35——units[0] 可能是羊群无 beachT 键，some() 检测同构 gen 端 spec.stepBeach 全单位条件展开）
+        ...(call.units.some((q) => q.beachT !== undefined) ? { tx: f64hex(u.tx ?? u.x), ty: f64hex(u.ty ?? u.y), beachT: u.beachT ?? null, btx: u.beachTx ?? null, bty: u.beachTy ?? null, btid: u.beachTargetId ?? null } : {}),
       }));
       cmp(mu, call.units, `step${s}.units`);
       cmp([...eng.dirty].sort((a, b) => a - b), call.dirty, `step${s}.dirty`);
@@ -1660,6 +2026,11 @@ for (const sc of golden.scenarios) {
       ...(u.caravan !== undefined ? { caravan: u.caravan } : {}),       // M-U22：商队
       ...(u.food !== undefined ? { food: u.food } : {}),                // M-U22：饥饿（scav 写面）
       ...(u.wep !== undefined ? { wep: u.wep } : {}),                   // M-U22：武器槽
+      ...(u.fleeT !== undefined ? { fleeT: u.fleeT } : {}),             // M-U25：逃亡倒数（beached 让位门）
+      ...(u.beachT !== undefined ? { beachT: u.beachT } : {}),          // M-U25：搁浅窒息计数（水中支键置 0 / 搁浅支 ++——动态键条件面同构 gen dumpUnit）
+      ...(u.beachTx !== undefined ? { beachTx: u.beachTx } : {}),       // M-U25：归海/猎游目标 x（undefined 赋值 ≡ 无键——JSON 同构）
+      ...(u.beachTy !== undefined ? { beachTy: u.beachTy } : {}),       // M-U25：归海/猎游目标 y
+      ...(u.beachTargetId !== undefined ? { beachTid: u.beachTargetId } : {}),   // M-U25：猎游粘性目标
     });
     if (JSON.stringify(eng.units.map(dumpUnit)) !== JSON.stringify(sc.units)) { endOk = false; endErr = 'units dump 终态'; }
   }
@@ -1692,6 +2063,12 @@ for (const sc of golden.scenarios) {
   if (endOk && sc.rel != null) {
     const mr = [...eng.rel.entries()].map(([k, v]) => ({ k, v: f64hex(v) }));
     if (JSON.stringify(mr) !== JSON.stringify(sc.rel)) { endOk = false; endErr = 'rel 终态'; }
+  }
+  // M-U25：迁徙/繁衍域终态条件双键（wildCount 全量 + reboundLast 权重表——S36/S37/S38/S39/S40 wildAll 场景；
+  //   Map 枚举序 = 注入序/bumpWild 删后重插末尾——镜像端 bumpWild 已同构）
+  if (endOk && sc.wildAll != null) {
+    if (JSON.stringify([...eng.wildCount.entries()]) !== JSON.stringify(sc.wildAll)) { endOk = false; endErr = 'wildAll 终态'; }
+    else if (JSON.stringify([...eng.reboundLast.entries()]) !== JSON.stringify(sc.reboundLast)) { endOk = false; endErr = 'reboundLast 终态'; }
   }
   if (stepOk && endOk) { pass++; console.log(`${sc.key}: PASS (draws=${sc.totalDraws} fx=${eng.effects.length} ev=${eng.worldEvents.length} units=${eng.units.length} shake=${eng.shake} stats=${JSON.stringify([eng.statMeteorShowers, eng.statPlasmas, eng.statAnnihilations, eng.statBlackholes])})`); }
   else { fail++; console.log(`${sc.key}: FAIL (${!stepOk ? firstErr : endErr})`); }
