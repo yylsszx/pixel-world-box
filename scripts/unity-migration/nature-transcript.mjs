@@ -758,3 +758,4 @@ for (const sc of golden.scenarios) {
   else { console.log(`  ${sc.key}: FAIL\n    ${diffs.slice(0, 4).join('\n    ')}`); }
 }
 console.log(`nature transcript: ${pass}/${golden.scenarios.length} 场景逐位 ${pass === golden.scenarios.length ? 'ALL PASS' : 'FAIL'}`);
+if (pass !== golden.scenarios.length) process.exit(1);
