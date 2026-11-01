@@ -590,6 +590,7 @@ namespace PixelWorldBox.Wb
         public long lastVolleyEventTick = 0;                       // engine lastVolleyEventTick（L547）
         public int? killCredit = null;                             // engine killCredit（L615；涌现武器战绩归属——军团域恒 null）
         public double shake = 0;                                   // engine shake（L931；declareClash/rout 震屏）
+        public int? grabId = null;                                 // engine grabId L5290（神之手指当前抓取单位 id；null = 未抓取——M-U21 字段只加）
         public List<WbCorpse> corpses = new List<WbCorpse>();      // engine corpses（L2871 addCorpse）
         public List<WbBlood> blood = new List<WbBlood>();          // engine blood（L2865 addBlood——M-U7q 字段只加）
         public WbWorldWar worldWar = new WbWorldWar();

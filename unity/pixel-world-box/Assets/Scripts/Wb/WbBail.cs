@@ -1217,7 +1217,7 @@ namespace PixelWorldBox.Wb
                     double dist = WbMath.FdHypot(u.x - (u.thrX0 ?? u.x), u.y - (u.thrY0 ?? u.y));                          // L5359
                     double dmg = WbMath.JsRound(dist * 2.6);                                                               // L5360
                     u.hp -= dmg;                                                                                           // L5361
-                    u.hurt = 24;                                                                                           // L5362
+                    u.hurt = 24; u.hurtN = 24.0;                                                                            // L5362（JS 单字段 u.hurt=24——C# 双轨同步写：hurtN 主轨驱动前奏递减〔S17 黄金 hurt 递减链 24→3 位级实证〕，hurt 兼容轨镜像）
                     u.grab = System.Math.Max(u.grab ?? 0, 24);                                                              // L5363
                     u.thrT = 0;                                                                                            // L5364
                     for (int k = 0; k < 3; k++) w.Fx("dust", u.x + (w.Rng() - 0.5) * 1.6, u.y + (w.Rng() - 0.5) * 1.6, 20);   // L5365
@@ -1233,6 +1233,96 @@ namespace PixelWorldBox.Wb
                 u.thrVx = 0;                                                                                              // L5372
                 u.thrVy = 0;                                                                                              // L5373
             }
+        }
+
+        // ================= beginGrab L5293-5311（神之手指①按下：抓起半径 2.2 内最近单位） =================
+        // 蓝本 beginGrab(wx, wy): boolean——渲染层指针按下调用（M-U21 抓取交互域）。
+        // d² 比较零掷（无 hypot——蓝本平方距离门 2.2*2.2）；命中 fx('spawn', x, y-0.6, 22) 2 掷。
+        public static bool BeginGrab(WbWorld w, double wx, double wy)
+        {
+            WbU best = null;
+            double bestD = 2.2 * 2.2;                                                                                      // L5295
+            for (int i = 0; i < w.units.Count; i++)                                                                        // L5296 for (const u of this.units)
+            {
+                WbU u = w.units[i];
+                if (u.dead != 0 || u.boat != 0) continue;                                                                  // L5297（含飞行/水生——无地形门）
+                double dx = u.x - wx;                                                                                      // L5298
+                double dy = u.y - wy;                                                                                      // L5299
+                double d2 = dx * dx + dy * dy;                                                                             // L5300
+                if (d2 < bestD) { bestD = d2; best = u; }                                                                  // L5301
+            }
+            if (best == null) { w.grabId = null; return false; }                                                           // L5302-5303（未命中 grabId=null 返 false 零掷）
+            w.grabId = best.id;                                                                                            // L5304
+            best.grab = 6;                                                                                                 // L5305
+            w.Fx("spawn", best.x, best.y - 0.6, 22);                                                                       // L5306（2 掷：seed+dir）
+            return true;                                                                                                   // L5307
+        }
+
+        // ================= moveGrab L5315-5327（神之手指②拖动：被抓单位脱离地面跟随指针） =================
+        // 蓝本 moveGrab(wx, wy)——渲染层指针移动按帧调用；零掷（纯赋值面）。
+        // grabId null 早退 / !u||dead 早退清 grabId / thrT>0 已掷出飞行中不再跟随。
+        public static void MoveGrab(WbWorld w, double wx, double wy)
+        {
+            if (w.grabId == null) return;                                                                                  // L5316
+            WbU u = w.unitById.TryGetValue(w.grabId.Value, out var found) ? found : null;                                  // L5317 unitById.get（缺键 undefined 镜像）
+            if (u == null || u.dead != 0) { w.grabId = null; return; }                                                     // L5318
+            if ((u.thrT ?? 0) > 0) return;                                                                                 // L5319（已掷出飞行中不再跟随）
+            u.x = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, wx));                                              // L5320
+            u.y = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, wy));                                              // L5321
+            u.tx = u.x; u.ty = u.y;                                                                                        // L5322
+            u.lx = u.x; u.ly = u.y;                                                                                        // L5323（插值锚点同步——指针跟手不滑行）
+            u.rx = u.x; u.ry = u.y;                                                                                        // L5324
+            u.grab = 6;                                                                                                    // L5325（刷新抓取活性——AI 暂停窗口）
+        }
+
+        // ================= endGrab L5330-5347（神之手指③松手：按指针速度投掷） =================
+        // 蓝本 endGrab(vx, vy)——渲染层指针释放调用；先取 u 后清 grabId（无效单位也清账）。
+        // spd=Math.hypot（fdlibm——C# FdHypot 位精确件）；spd<0.35 轻放支（fx dust 2 掷）/
+        // 抛掷支零掷（thrVx/thrVy 速度分解 + thrT=8+min(22,round(spd*5)) 速度驱动 + grab=thrT+26 + atk=0）。
+        public static void EndGrab(WbWorld w, double vx, double vy)
+        {
+            if (w.grabId == null) return;                                                                                  // L5331
+            WbU u = w.unitById.TryGetValue(w.grabId.Value, out var found) ? found : null;                                  // L5332 unitById.get
+            w.grabId = null;                                                                                               // L5333（先清账——即使单位无效）
+            if (u == null || u.dead != 0) return;                                                                          // L5334
+            double spd = WbMath.FdHypot(vx, vy);                                                                           // L5335（fdlibm 位精确）
+            if (spd < 0.35)
+            {
+                // 轻放：原地缓降，短暂发懵
+                u.grab = 10;                                                                                               // L5338
+                u.thrT = 0;                                                                                                // L5339
+                w.Fx("dust", u.x, u.y + 0.4, 14);                                                                          // L5340（2 掷）
+                return;                                                                                                    // L5341
+            }
+            // 抛物线：初速越快飞得越久越远（水平速度衰减模拟空气阻力；tick 数 = 速度驱动）
+            u.thrVx = vx / spd * System.Math.Min(1.6, spd * 0.22);                                                         // L5343
+            u.thrVy = vy / spd * System.Math.Min(1.6, spd * 0.22);                                                         // L5344
+            u.thrT = 8 + (int)System.Math.Min(22, WbMath.JsRound(spd * 5));                                                // L5345（round .5 上取整——JsRound 禁银行家舍入）
+            u.thrX0 = u.x;                                                                                                 // L5346
+            u.thrY0 = u.y;                                                                                                 // L5346（同行 thrX0/thrY0 连写）
+            u.grab = u.thrT.Value + 26;                                                                                    // L5347（飞行 + 落地眩晕全程暂停 AI）
+            u.atk = 0;                                                                                                     // L5348
+        }
+
+        // ================= unitsTick L3117-3216 JS 路径壳（M-U21 单位主循环步进面——黄金 gen-tool3 stepUnits 通道） =================
+        // 蓝本 unitsTick：parity = tickCount%2 → WBB 批内核守卫（WBB.active() || retryDue——无头恒 false
+        // 双门实证 wbspatial.ts L126/L560；宿主性能域挂账不译——黄金协议恒走 JS 路径）→ JS 路径
+        // L3204-3216：for..of parity 门（u.parity===parity && !u.dead——parity 写面唯 spawnUnit L1364
+        // unitSeq%2）updateUnit → unitsReap 收尸（reap 域未译挂账——全活零效应：循环首 !u.dead continue；
+        // 死亡收尸全链为未来 M-U2x 切片，宿主装配槽位 no-op 同 WbTickOrch 先例）。
+        public static void UnitsTick(WbWorld w)
+        {
+            int parity = (int)(w.tickCount % 2);                                                                           // L3118
+            // L3120-3203 挂账：WBB 批内核（pack2/batch/replayActions/writeback）宿主性能域——黄金无头协议恒 JS 路径
+            for (int i = 0; i < w.units.Count; i++)                                                                        // L3204 for (const u of this.units)（JS 迭代器每步重查 length ≡ 索引 for 每步重查 Count——M-U7t spawn push 同构先例）
+            {
+                WbU u = w.units[i];
+                if (u.parity == parity && u.dead == 0)                                                                     // L3205（parity 门 + !dead 门）
+                {
+                    UpdateUnit(w, u);                                                                                      // L3207
+                }
+            }
+            // L3215 挂账：unitsReap 收尸域（僵尸尸变/王权/凤凰/常规死亡反馈——全活零效应，死亡面未来切片）
         }
 
         // ================= updateBoat L5608-5660（殖民船航海：贪心绕障/超时改向/靠岸登陆） =================
@@ -5514,7 +5604,7 @@ namespace PixelWorldBox.Wb
                 case "rough": RoughenTerrain(w, wx, wy, r); break;                                                  // L13359-13360
                 case "plague": PlagueArea(w, wx, wy, System.Math.Max(3.0, r)); break;                               // L13361-13362（max(3,r) 下钳）
                 case "flood": FloodArea(w, wx, wy, rP ?? 5.0); break;                                               // L13363-13364（rP ?? 5）
-                // L13369 挂账：finger → beginGrab（抓取域切片）
+                case "finger": BeginGrab(w, wx, wy); break;                                                                // L13373-13375（M-U21：抓取域接入——beginGrab 返回值丢弃，case 无消费）
                 case "acidrain": AcidRain(w, wx, wy, System.Math.Max(4.0, r), durationP); break;                    // L13375-13377（max(4,r) 下钳）
                 case "volcano": Volcano(w, wx, wy, powerP); break;                                                  // L13378-13380（powerP undefined → JS 默认参 1）
                 case "tsunami": Tsunami(w, wx, wy, r); break;                                                       // L13381-13383（笔刷即浪级）

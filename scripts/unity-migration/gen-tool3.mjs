@@ -114,6 +114,7 @@ function mkUnit(eng, o) {
     hp: o.hp ?? 10, maxHp: o.maxHp ?? o.hp ?? 10, dmg: 1, speed: o.speed ?? 1, age: o.age ?? 0, maxAge: o.maxAge ?? 9999, kills: 0,
     cd: 0, trait: o.trait ?? 0, job: o.job ?? 0, king: 0, infected: o.infected ?? false, flip: 0,
     name: `u${o.id}`, hurt: o.hurt ?? 0, breath: 0, parity: 0, dead: o.dead ?? 0,
+    ...(o.grab !== undefined ? { grab: o.grab } : {}),   // M-U21：grab 直写面（999 常驻冻结——unitsTick 窗口内零 AI 触达，grabbedTick 零掷早退）
     fam: null, fgn: null, gene: o.gene ? { s: o.gene.s, d: o.gene.d, h: o.gene.h, r: o.gene.r } : null, army: null,   // M-U19：gene 深拷贝（spec 对象复用 det 双跑——jumpGene 原地改写 u.gene，共享引用即 det 污染）
   };
   eng.units.push(u);
@@ -226,6 +227,7 @@ function buildScenario(spec) {
       id: uo.id, race: uo.race, x: uo.x, y: uo.y, hp: uo.hp ?? 10, maxHp: uo.maxHp ?? uo.hp ?? 10,
       gene: uo.gene ?? null, dead: uo.dead ?? 0, infected: uo.infected ?? false, hurt: uo.hurt ?? 0, trait: uo.trait ?? 0,
       job: uo.job ?? 0,                                     // M-U19：jumpGene JOBS[job] 消费面（civ jd 乘数支）
+      ...(uo.grab !== undefined ? { grab: uo.grab } : {}),  // M-U21：grab 直写面（999 常驻冻结）
     })),
     yearF0: eng.yearF,
   };
@@ -248,6 +250,8 @@ function buildScenario(spec) {
     shake: eng.shake,
     stats: [eng.statNukes, eng.statMeteorShowers, eng.statPlasmas, eng.statAnnihilations, eng.statBlackholes],
     unitsCount: eng.units.length,
+    // M-U21：stepUnits 场景条件扩展面（旧 15 场景字节零变化——条件键不进旧 JSON）
+    ...(spec.stepUnits ? { grabId: eng.grabId ?? null } : {}),
   });
 
   // 手术三（尾置）：rngA 清零起流 → calls 直调 + ticks 步进（tickCount++ 头 + effectsTick——主循环 L2508 序）
@@ -259,12 +263,25 @@ function buildScenario(spec) {
   }
   for (let k = 0; k < (spec.ticks ?? 0); k++) {
     eng.tickCount++;
+    if (spec.stepUnits) {
+      // M-U21 unitsTick 步进通道：主循环 L2523-2528 截断镜像（fireTick 夹具无火零效应保序 /
+      //   rebuildBuckets 零掷纯函数 / unitsTick JS 路径——无头 WBB.active()=false 且
+      //   retryDue()=false 双门实证〔wbspatial.ts L126/L560：failed=false → 恒 false〕——
+      //   L3204-3216 for..of parity 门 + unitsReap 全活零效应）
+      eng.fireTick();
+      eng.rebuildBuckets();
+      eng.unitsTick();
+    }
     eng.effectsTick();
     steps.push({
-      fn: 'effectsTick', tick: k + 1,
+      fn: spec.stepUnits ? 'unitsTick' : 'effectsTick', tick: k + 1,
       ...snapCommon(),
       fx: eng.effects.map((e) => ({ kind: e.kind, age: e.age, x: f64hex(e.x), y: f64hex(e.y), dir: f64hex(e.dir) })),
-      units: eng.units.map((u) => ({ id: u.id, hp: f64hex(u.hp), hurt: f64hex(u.hurt ?? 0), dead: u.dead ? 1 : 0, x: f64hex(u.x), y: f64hex(u.y) })),
+      units: eng.units.map((u) => ({
+        id: u.id, hp: f64hex(u.hp), hurt: f64hex(u.hurt ?? 0), dead: u.dead ? 1 : 0, x: f64hex(u.x), y: f64hex(u.y),
+        // M-U21：stepUnits 场景条件扩展面（grab/thrT 位级——旧场景字节零变化）
+        ...(spec.stepUnits ? { grab: u.grab ?? 0, thrT: u.thrT ?? 0 } : {}),
+      })),
       dirty: [...eng.dirty].sort((a, b) => a - b),
     });
   }
@@ -578,6 +595,78 @@ const specs = [
       && (eng.owner[idx(26, 60)] === -1 || eng.owner[idx(26, 59)] === -1)
       && eng.flood.size === 0
       && eng.effects.some((e) => e.kind === 'spawn'),
+  },
+
+  // ---- S16 grab-light（M-U21 神之手指：抓取/拖拽/钳位/轻放/未命中五面 + 眩晕衰减链） ----
+  //   蓝本 beginGrab L5293-5311（半径 2.2² 最近单位 + dead/boat 跳过 + fx spawn 2 掷 +
+  //   grab=6）/ moveGrab L5315-5327（grabId null 早退 + dead 早退 + thrT>0 飞行早退 +
+  //   钳位 [0.5,W-0.5]/[0.5,H-0.5] + tx/ty/lx/ly/rx/ry 六字段同步 + grab=6 刷新——零掷）/
+  //   endGrab L5330-5347（spd=hypot<0.35 轻放支：grab=10 + thrT=0 + fx dust 2 掷）/
+  //   beginGrab 未命中支（grabId=null 返 false 零掷）+ grabbedTick L5349-5390 眩晕递减
+  //   （grab-=2 真值门——parity=0 单位每 2 tick 一更：10→8→6→4→2→0 五更恰好清零；
+  //   清账支 L5370-5373 else grab<=0 在 unitsTick 主循环不可达〔L3209 门 grab>0 先挡〕——
+  //   蓝本防御面，C# 已译挂账）。旁观单位 u2/u3 grab=999 常驻冻结（grabbedTick 零掷早退零 AI
+  //   —— SHEEP 游走链 units 域切片挂账）。
+  {
+    key: 'grab-light', baseSeed: BASE + 16, seed: 0x000000B0, tickCount: 1000, fill: 'grass',
+    units: [
+      { id: 900, race: R.SHEEP, x: 99.4, y: 59.4, hp: 20, maxHp: 20 },   // 最近（d2=0.02）——链主角（完整眩晕链 10→0）
+      { id: 901, race: R.SHEEP, x: 100.2, y: 59.7, hp: 20, maxHp: 20, grab: 999 },  // 次近（d2=0.53——最近选择面）；grab=999 常驻冻结（零 AI 零掷——SHEEP 游走链 units 域切片挂账）
+      { id: 902, race: R.SHEEP, x: 101.5, y: 61.5, hp: 20, maxHp: 20, grab: 999 },  // 界外（d2=8 > 4.84=2.2²——半径门）；冻结同上
+    ],
+    calls: [
+      { fn: 'beginGrab', args: [99.5, 59.5] },    // 命中 u1（fx spawn 2 掷 + grabId=900 + grab=6）——u1 d2=0.02 < u2 d2=0.53 最近选择
+      { fn: 'moveGrab', args: [101.5, 60.5] },    // 拖拽（六字段同步零掷）
+      { fn: 'moveGrab', args: [0.2, 0.3] },       // 钳位支（→ (0.5,0.5) 角落）
+      { fn: 'endGrab', args: [0.1, 0.1] },        // 轻放支（spd=0.141<0.35：grab=10 + fx dust 2 掷）
+      { fn: 'beginGrab', args: [5, 5] },          // 未命中支（grabId=null 返 false 零掷）
+    ],
+    ticks: 10, stepUnits: true,                    // 10 tick：奇跳×5 + 偶更×5（眩晕 10→0；u2/u3 grab 999→989 冻结零 AI）
+    sanity: (eng, toasts) => eng.grabId == null
+      && eng.unitById.get(900).grab === 0
+      && eng.unitById.get(900).thrT === 0
+      && eng.effects.some((e) => e.kind === 'spawn')
+      && eng.effects.some((e) => e.kind === 'dust'),
+  },
+
+  // ---- S17 grab-throw（M-U21 神之手指：抛掷全链——thrVx/thrVy 速度分解 + thrT 速度驱动 + 飞行撞山 + 落地伤害/眩晕/尘土/震屏） ----
+  //   endGrab L5335-5347 抛掷支：thrVx=vx/spd×min(1.6,spd×0.22) + thrT=8+min(22,round(spd×5))
+  //   + grab=thrT+26 + atk=0（零掷）；grabbedTick L5345-5368 飞行：thrT-=2 + 钳位步进×2 +
+  //   撞山即坠（MOUNTAIN 门）+ ×0.94 空气阻力 + rng<0.3 dust 1 掷/tick + 落地：dist=hypot
+  //   （fdlibm）+ dmg=round(dist×2.6) + hurt=24 + grab=max(grab,24) + dust×3 各 1 掷 +
+  //   dmgNumbers fx + shake=max(shake,min(5,1+dist×0.3))。hp=30>dmg≈19 不致死
+  //   （unitsReap 未译域零触达——全活 reap 零效应挂账）。
+  {
+    key: 'grab-throw', baseSeed: BASE + 17, seed: 0x000000C0, tickCount: 1000, fill: 'grass',
+    terrain: [
+      [105, 62, T.MOUNTAIN], [105, 63, T.MOUNTAIN],   // 撞山墙（预演位——DIAG 校正落点路径）
+    ],
+    units: [
+      { id: 910, race: R.SHEEP, x: 100.5, y: 60.5, hp: 30, maxHp: 30 },
+    ],
+    calls: [
+      { fn: 'beginGrab', args: [100.5, 60.5] },   // d2=0 命中（fx spawn 2 掷）
+      { fn: 'moveGrab', args: [101, 60.2] },      // 拖一步（thrX0/Y0 基点同步）
+      { fn: 'endGrab', args: [1.4, 1.0] },        // 抛掷支（spd=1.72047 → thrVx≈0.308/thrT=17/grab=43 零掷）
+    ],
+    ticks: 42, stepUnits: true,                    // 42 tick：飞行 17 更（34 tick）+ 落地眩晕至 grab=3（probe 实证 tick44 清零 tick46 AI 起动——42 截断在 AI 触达前，SHEEP 游走链 units 域切片挂账）
+    sanity: (eng) => eng.unitById.get(910).thrT === 0
+      && eng.unitById.get(910).hp < 30
+      && eng.unitById.get(910).hp > 0
+      && eng.shake > 0,   // fx 到期面：60 tick > dust ttl——fx 链由 stepsSnap 每步快照对账（终态 effects 空）
+  },
+
+  // ---- S18 finger-tool（M-U21 applyTool case 'finger' 分发接线——蓝本 L13373-13375） ----
+  //   case 'finger' → beginGrab(wx,wy) 直调面（返回值丢弃——case 无消费）；命中 fx spawn 2 掷。
+  {
+    key: 'finger-tool', baseSeed: BASE + 18, seed: 0x000000D0, tickCount: 1000, fill: 'grass',
+    units: [
+      { id: 920, race: R.SHEEP, x: 100.5, y: 60.5, hp: 20, maxHp: 20 },
+    ],
+    calls: [{ fn: 'applyTool', args: ['finger', 100.5, 60.5] }],
+    ticks: 4, stepUnits: true,                     // 4 tick：奇跳 + 偶更×2（grab 6→4→2）+ 奇跳
+    sanity: (eng) => eng.effects.some((e) => e.kind === 'spawn')
+      && eng.unitById.get(920).grab > 0,
   },
 ];
 

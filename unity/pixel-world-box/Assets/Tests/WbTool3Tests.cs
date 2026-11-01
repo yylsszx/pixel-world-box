@@ -104,6 +104,7 @@ namespace PixelWorldBox.Tests
                 breathN = 0,
                 parity = 0,
                 dead = uo.Value<int?>("dead") ?? 0,
+                grab = uo["grab"] != null ? uo.Value<int>("grab") : (int?)null,   // M-U21：grab 直写面（999 常驻冻结——gen units0 条件键）
                 infected = uo.Value<bool?>("infected") ?? false ? 1 : 0,
                 flip = 0,
                 traitName = uo["trait"] != null && uo["trait"].Type == JTokenType.String ? uo.Value<string>("trait") : null,
@@ -246,6 +247,12 @@ namespace PixelWorldBox.Tests
             Assert.That(w.shake, Is.EqualTo(g.Value<double>("shake")), $"shake {key} S{s}");
             AssertStats(w, (JArray)g["stats"], $"{key} S{s}");
             Assert.That(w.units.Count, Is.EqualTo(g.Value<int>("unitsCount")), $"unitsCount {key} S{s}");
+            // M-U21：grabId 条件断言（stepUnits 场景条件键——gen snapCommon 扩展面）
+            if (g["grabId"] != null)
+            {
+                int? goldGrabId = g["grabId"].Type == JTokenType.Null ? (int?)null : g.Value<int>("grabId");
+                Assert.That(w.grabId, Is.EqualTo(goldGrabId), $"grabId {key} S{s}");
+            }
         }
 
         /// <summary>终态 units dump 全字段位级对账（gen-tool3 dumpUnit 协议同构——bless/curse/fert 三瞬态扩展）</summary>
@@ -293,7 +300,7 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindTool3()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(15));
+            Assert.That(scens.Count, Is.EqualTo(18));   // M-U21：15→18（grab-light/grab-throw/finger-tool——parity 红证面
             foreach (var scTok in scens)
             {
                 var sc = (JObject)scTok;
@@ -312,6 +319,25 @@ namespace PixelWorldBox.Tests
                         var parms = args.Count >= 4 ? ParseParms(args[3]) : null;
                         WbBailRelay.ApplyTool(w, toolId, wx, wy, parms);
                     }
+                    else if (fn == "beginGrab" || fn == "moveGrab" || fn == "endGrab")
+                    {
+                        // M-U21：神之手指三 API 直调（渲染层指针事件面——gen calls 直调同构）
+                        var args = (JArray)g["args"];
+                        double ax = args[0].Value<double>(), ay = args[1].Value<double>();
+                        if (fn == "beginGrab") WbBailRelay.BeginGrab(w, ax, ay);
+                        else if (fn == "moveGrab") WbBailRelay.MoveGrab(w, ax, ay);
+                        else WbBailRelay.EndGrab(w, ax, ay);
+                    }
+                    else if (fn == "unitsTick")
+                    {
+                        // M-U21：unitsTick 步进通道（主循环 L2523-2528 截断镜像——fireTick 夹具无火
+                        // 零效应保序 / rebuildBuckets 零掷纯函数 / unitsTick JS 路径壳 / effectsTick）
+                        w.tickCount++;
+                        WbBailRelay.FireTick(w);
+                        w.RebuildBuckets();
+                        WbBailRelay.UnitsTick(w);
+                        WbBailRelay.EffectsTick(w);
+                    }
                     else
                     {
                         Assert.That(fn, Is.EqualTo("effectsTick"), $"fn {key} S{k}");
@@ -319,7 +345,7 @@ namespace PixelWorldBox.Tests
                         WbBailRelay.EffectsTick(w);
                     }
                     AssertCommon(w, g, key, k);
-                    if (fn == "effectsTick")
+                    if (fn == "effectsTick" || fn == "unitsTick")   // M-U21：unitsTick 步同列 fx/units/dirty 快照
                     {
                         // tick 步 fx 列（kind/age/x/y/dir）
                         var goldFx = (JArray)g["fx"];
@@ -347,6 +373,12 @@ namespace PixelWorldBox.Tests
                             Assert.That(u.dead != 0 ? 1 : 0, Is.EqualTo(e.Value<int>("dead")), $"tick u.dead {key} S{k}#{q}");
                             Assert.That(F64Hex(u.x), Is.EqualTo(e.Value<string>("x")), $"tick u.x {key} S{k}#{q}");
                             Assert.That(F64Hex(u.y), Is.EqualTo(e.Value<string>("y")), $"tick u.y {key} S{k}#{q}");
+                            // M-U21：stepUnits 场景条件扩展面（grab/thrT 位级——条件键仅新场景携带）
+                            if (e["grab"] != null)
+                            {
+                                Assert.That(u.grab ?? 0, Is.EqualTo(e.Value<int>("grab")), $"tick u.grab {key} S{k}#{q}");
+                                Assert.That(u.thrT ?? 0, Is.EqualTo(e.Value<int>("thrT")), $"tick u.thrT {key} S{k}#{q}");
+                            }
                         }
                         // tick 步 dirty 排序列
                         var goldDirty = g["dirty"].ToObject<List<int>>();

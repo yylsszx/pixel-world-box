@@ -6,7 +6,9 @@
 //   ① tool3-transcript 镜像 15/15 ② gen-tool3 det 复跑 md5 零漂移
 //   ③ 黄金签名完备断言 ④ 双写 md5 一致。M-U19：mutate 双场景签名 +
 //   TOOL3_RED=mutate 红证旋钮；M-U20：river-runtime 签名 + TOOL3_RED=river
-//   旋钮（禁 setTerrain 级联直写语义 → fireMd5 FAIL → 复绿）。
+//   旋钮（禁 setTerrain 级联直写语义 → fireMd5 FAIL → 复绿）。M-U21：grab
+//   三场景签名（beginGrab/moveGrab/endGrab 三 API + unitsTick 步进壳 + grabbedTick
+//   全链）+ TOOL3_RED=finger 旋钮（禁 grabbedTick 全写面 → 三 grab 场景 FAIL）。
 // 运行：node scripts/unity-migration/verify-tool3-only.mjs
 // ============================================================================
 import { execFileSync } from 'node:child_process';
@@ -16,7 +18,7 @@ import { readFileSync } from 'node:fs';
 let fail = 0;
 try {
   execFileSync('bun', [new URL('./tool3-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
-  console.log('tool3 黄金回放 (tool3-transcript 镜像 vs tool3.json): PASS (15 场景神力生成器/消费端每步快照逐位 + volcano 锥体/引燃圈/熔岩弹/外溢 + cap 门 13 族 + bless/curse/love/teleport 四瞬态 + M-U19 mutate 特质域 + M-U20 river runtime 级联 + meteor/meteorShower x0/y0 偏移 + 超武双神力 + typhoon 推拽/间歇雷电/暴雨灭火 + holystorm 审判/缓愈/驱瘟 + units dump 位级含 trait/gene + events colorHex 流 + toasts 面)');
+  console.log('tool3 黄金回放 (tool3-transcript 镜像 vs tool3.json): PASS (18 场景神力生成器/消费端每步快照逐位 + volcano 锥体/引燃圈/熔岩弹/外溢 + cap 门 13 族 + bless/curse/love/teleport 四瞬态 + M-U19 mutate 特质域 + M-U20 river runtime 级联 + M-U21 grab 三场景（三 API + unitsTick 壳 + grabbedTick 全链） + meteor/meteorShower x0/y0 偏移 + 超武双神力 + typhoon 推拽/间歇雷电/暴雨灭火 + holystorm 审判/缓愈/驱瘟 + units dump 位级含 trait/gene + events colorHex 流 + toasts 面)');
 } catch (e) {
   fail++;
   console.error('tool3 黄金回放: FAIL');
@@ -29,7 +31,7 @@ try {
   execFileSync('bun', [new URL('./gen-tool3.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
   const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
   if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
-  console.log('tool3 gen det 复跑 (gen-tool3 · bun): PASS (15 场景 sanity + GameEngine 真实现 + det 字节级)');
+  console.log('tool3 gen det 复跑 (gen-tool3 · bun): PASS (18 场景 sanity + GameEngine 真实现 + det 字节级)');
 } catch (e) {
   fail++;
   console.error('tool3 gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -38,9 +40,9 @@ try {
   const g = JSON.parse(readFileSync(new URL('./golden/tool3.json', import.meta.url), 'utf8'));
   const fails = [];
   const fail2 = (m) => fails.push(m);
-  if (!Array.isArray(g.scenarios) || g.scenarios.length !== 15) fail2('场景数 ≠ 15');
+  if (!Array.isArray(g.scenarios) || g.scenarios.length !== 18) fail2('场景数 ≠ 18');
   const keys = g.scenarios.map((s) => s.key);
-  for (const want of ['volcano-default', 'volcano-power3', 'spawn-quartet', 'meteor-meteorshower', 'wrath-ticks', 'area-powers', 'static-quartet', 'caps-composite', 'typhoon-ticks', 'plasma-annihilate', 'volcano-edge', 'mutate-civ-reroll', 'mutate-wild-clamp', 'holystorm-ticks', 'river-runtime'])
+  for (const want of ['volcano-default', 'volcano-power3', 'spawn-quartet', 'meteor-meteorshower', 'wrath-ticks', 'area-powers', 'static-quartet', 'caps-composite', 'typhoon-ticks', 'plasma-annihilate', 'volcano-edge', 'mutate-civ-reroll', 'mutate-wild-clamp', 'holystorm-ticks', 'river-runtime', 'grab-light', 'grab-throw', 'finger-tool'])
     if (!keys.includes(want)) fail2(`场景 ${want} 缺失`);
   const s1 = g.scenarios.find((s) => s.key === 'volcano-default');
   if (!s1 || s1.totalDraws !== 28 || s1.fx.length !== 3 || s1.shake !== 8 || s1.units[0].dead !== 1 || s1.units[0].hurtN !== '0000000000002840' || s1.fx[0]?.seed !== 26084) fail2('volcano-default 签名缺失（28 掷 = 引燃 8 + fx 2 + 熔岩弹 2×4 + 外溢 5×2 + u900 灼烧环死 dead=1 hurtN=12 + shake=8）');
@@ -82,13 +84,39 @@ try {
   const s15 = g.scenarios.find((s) => s.key === 'river-runtime');
   if (!s15 || s15.totalDraws !== 365 || s15.fx.length !== 1 || s15.fx[0]?.seed !== 22436 || s15.stepsSnap.at(-1).rngA !== 'a6fce2f1') fail2('river-runtime 签名缺失（365 掷 = 加权选路 1 掷/步 + 灌溉成林门 1 掷/GRASS 格 + fx spawn 2 + carveRiver L12312-12420 全链）');
   if (s15 && (s15.toasts?.[0]?.text !== '一条大河蜿蜒入海' || s15.events?.[0]?.text !== '一条大河诞生了，蜿蜒流向大海' || JSON.stringify(s15.regrow) !== '[[15892,1500]]')) fail2('river-runtime toast/event/regrow 幸存面缺失（toast id=1 入海文 + event sx+0.5 + regrow 仅 (20,62) 幸存）');
+  // —— M-U21 grab 三场景签名（beginGrab/moveGrab/endGrab 三 API + unitsTick 步进壳 + grabbedTick 全链）——
+  const s16 = g.scenarios.find((s) => s.key === 'grab-light');
+  if (!s16 || s16.totalDraws !== 4 || s16.fx.length !== 2 || s16.stepsSnap.length !== 15 || s16.stepsSnap[0]?.fn !== 'beginGrab') fail2('grab-light 签名缺失（4 掷 = beginGrab fx spawn 2 + endGrab 轻放 fx dust 2；15 步 = 5 calls + 10 unitsTick）');
+  if (s16) {
+    const lastGrab = s16.stepsSnap.at(-1).units.find((u) => u.id === 900);
+    if (!lastGrab || lastGrab.grab !== 0 || lastGrab.thrT !== 0) fail2('grab-light 眩晕衰减链缺失（u900 grab 10→8→6→4→2→0 五更恰清零 + thrT=0）');
+    const midGrab = s16.stepsSnap[8].units.find((u) => u.id === 900);
+    if (!midGrab || midGrab.grab !== 6) fail2('grab-light 眩晕中点位缺失（步 8 grab=6——第三更）');
+    if (s16.stepsSnap.at(-1).grabId !== null || s16.stepsSnap[0].grabId !== 900) fail2('grabId 账面缺失（beginGrab 后 900 / 未命中支后 null）');
+    const frozen = s16.stepsSnap.at(-1).units.find((u) => u.id === 901);
+    if (!frozen || frozen.grab !== 989) fail2('grab=999 常驻冻结面缺失（u901 999→989 十更递减零 AI）');
+  }
+  const s17 = g.scenarios.find((s) => s.key === 'grab-throw');
+  if (!s17 || s17.totalDraws !== 29 || s17.stepsSnap.length !== 45 || s17.shake < 2 || s17.shake > 3) fail2('grab-throw 签名缺失（29 掷 = fx spawn 2 + 飞行 dust 掷 + 落地 dust×3；45 步 = 3 calls + 42 unitsTick；shake≈2.469）');
+  if (s17) {
+    const endU = s17.stepsSnap.at(-1).units.find((u) => u.id === 910);
+    if (!endU || endU.thrT !== 0 || endU.grab !== 1 || endU.hp !== '0000000000003140' || endU.hurt !== '0000000000002840' || endU.dead !== 0) fail2('grab-throw 落地眩晕面缺失（u910 grab=1/hurt=12.0 递减链/hp=17.0 不致死/thrT=0）');
+    // 撞山即坠：步 17/18/19 三步连续位置停滞（山格旁；奇偶停滞仅 2 步——三步连续为撞山特征）
+    const sA = s17.stepsSnap[17].units[0], sB = s17.stepsSnap[18].units[0], sC = s17.stepsSnap[19].units[0];
+    if (sA.x !== sB.x || sB.x !== sC.x || sA.y !== sB.y || sB.y !== sC.y) fail2('grab-throw 撞山即坠面缺失（步 17-19 三步连续停滞——L5358 tt!==MOUNTAIN 门）');
+    const dmgFx = s17.stepsSnap[20].fx.find((f) => f.kind === 'dmg');
+    if (!dmgFx) fail2('grab-throw dmgNumbers fx 缺失（fxPrefs.dmgNumbers 默认 true——落地 dmg fx 步 20 age1）');
+  }
+  const s18 = g.scenarios.find((s) => s.key === 'finger-tool');
+  if (!s18 || s18.totalDraws !== 2 || s18.fx.length !== 1 || s18.fx[0]?.kind !== 'spawn') fail2('finger-tool 签名缺失（2 掷 = applyTool case finger → beginGrab fx spawn；分发接线面）');
+  if (s18 && s18.stepsSnap[0]?.fn !== 'applyTool') fail2('finger-tool applyTool 分发面缺失（首步 applyTool）');
   const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/tool3.json', import.meta.url));
   const gl = readFileSync(new URL('./golden/tool3.json', import.meta.url));
   const md5a = createHash('md5').update(sa).digest('hex');
   const md5b = createHash('md5').update(gl).digest('hex');
   if (md5a !== md5b) fail2(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
   if (fails.length > 0) throw new Error(fails.join(' | '));
-  console.log(`tool3 台账完备 (15 场景 + volcano 锥体/双烈度/边缘钳 + cap 13 族拒面 + 超武双神力 colorHex + 黑洞计数先于 cap + bless/curse/fert 三瞬态 + M-U19 mutate 双场景 + M-U20 river runtime 级联 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  console.log(`tool3 台账完备 (18 场景 + volcano 锥体/双烈度/边缘钳 + cap 13 族拒面 + 超武双神力 colorHex + 黑洞计数先于 cap + bless/curse/fert 三瞬态 + M-U19 mutate 双场景 + M-U20 river runtime 级联 + M-U21 grab 三场景 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
 } catch (e) {
   fail++;
   console.error('tool3 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -124,6 +152,22 @@ try {
 } catch (e) {
   fail++;
   console.error('tool3 river 红证旋钮: FAIL —', String(e.message ?? e).slice(0, 200));
+}
+// —— M-U21 红证旋钮：TOOL3_RED=finger 禁 grabbedTick 全写面（缺陷面 = C# 硬译漏眩晕递减/飞行/落地链）→ 三 grab 场景 FAIL → 复绿 ——
+try {
+  const env = { ...process.env, TOOL3_RED: 'finger' };
+  try {
+    execFileSync('bun', [new URL('./tool3-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, env });
+    throw new Error('红证未红：TOOL3_RED=finger 仍 ALL PASS（旋钮无效）');
+  } catch (e) {
+    if (String(e.message ?? '').includes('红证未红')) throw e;
+    const out = String(e.stdout ?? '');
+    if (!out.includes('grab-light: FAIL') || !out.includes('grab-throw: FAIL') || !out.includes('finger-tool: FAIL')) throw new Error('红证面不达：三 grab 场景未全 FAIL');
+  }
+  console.log('tool3 红证旋钮 (TOOL3_RED=finger 禁 grabbedTick 全写面 → 三 grab 场景 FAIL): PASS');
+} catch (e) {
+  fail++;
+  console.error('tool3 finger 红证旋钮: FAIL —', String(e.message ?? e).slice(0, 200));
 }
 console.log(fail === 0 ? 'VERIFY-TOOL3: ALL PASS' : 'VERIFY-TOOL3: FAIL');
 process.exit(fail === 0 ? 0 : 1);

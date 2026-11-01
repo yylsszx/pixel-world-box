@@ -114,6 +114,7 @@ const TOOL_BY_ID_KEYS = new Set([
   'bless', 'curse', 'love', 'mutate', 'teleport', 'wrath', 'holystorm', 'plasmacannon', 'annihilate',   // M-U19：mutate 键入集
   'sandstorm', 'typhoon', 'sinkhole', 'iceage', 'famine', 'blackhole', 'meteor',
   'river',                                             // M-U20：river 键入集（runtime 语义切片）
+  'finger',                                            // M-U21：finger 键入集（抓取交互域切片）
 ]);
 const parseCreationTool = (toolId) => (toolId.startsWith('cre:') ? toolId.slice(4) : null);   // creations.ts L243-245
 
@@ -165,6 +166,8 @@ class BREng {
     this.worldEvents = [];
     this.toasts = [];
     this.toastSeq = 1;                     // engine L181 初值 1（generate L927 重置同值）
+    this.grabId = null;                    // engine grabId L5290（M-U21：null = 未抓取）
+    this.fxPrefs = { dmgNumbers: true, battleFlash: true, riverFlow: true, ambience: true, fxDensity: 1, blood: true, corpses: true, hpBars: true, dayNight: true };   // engine L273 默认值镜像（M-U21：grabbedTick dmgNumbers 消费面——gen 无头引擎同默认）
     this.units = [];
     for (const uo of sc.fixture.units0) {
       this.units.push({
@@ -172,6 +175,7 @@ class BREng {
         hp: uo.hp ?? 10, maxHp: uo.maxHp ?? uo.hp ?? 10, dmg: 1, speed: 1, age: 0, maxAge: 9999, kills: 0,
         cd: 0, trait: uo.trait ?? 0, job: uo.job ?? 0, king: 0, infected: uo.infected ?? false, flip: 0,   // M-U19：job 直写面（jumpGene JOBS[job] 消费）
         name: `u${uo.id}`, hurt: uo.hurt ?? 0, breath: 0, parity: 0, dead: uo.dead ?? 0,
+        ...(uo.grab !== undefined ? { grab: uo.grab } : {}),   // M-U21：grab 直写面（999 常驻冻结）
         fam: null, fgn: null, gene: uo.gene ? { s: uo.gene.s, d: uo.gene.d, h: uo.gene.h, r: uo.gene.r } : null, army: null,   // gene 深拷贝（gen mkUnit 同构）
       });
     }
@@ -815,6 +819,102 @@ class BREng {
       }
     }
   }
+  // ---- M-U21 神之手指三 API（beginGrab/moveGrab/endGrab 蓝本 L5293-5347 机械转写） +
+  //      unitsTick JS 路径壳（L3117-3216——WBB 批内核无头恒 JS 路径；parity 门 + 前奏精简链
+  //      + grab 早退 → grabbedTick 全链；AI 域零触达——黄金窗口截断保证：S16 u1 眙晕链
+  //      10→0 恰收尾 / u2/u3 grab=999 常驻冻结 / S17 42 tick 截在 grab=3 眙晕中 / S18 4 tick
+  //      眙晕中——违反即 throw（镜像覆盖域守卫））----
+  beginGrab(wx, wy) {                        // L5293-5311
+    let best = null;
+    let bestD = 2.2 * 2.2;                   // L5295
+    for (const u of this.units) {            // L5296
+      if (u.dead || u.boat) continue;        // L5297
+      const dx = u.x - wx;                   // L5298
+      const dy = u.y - wy;                   // L5299
+      const d2 = dx * dx + dy * dy;          // L5300
+      if (d2 < bestD) { bestD = d2; best = u; }   // L5301
+    }
+    if (!best) { this.grabId = null; return false; }   // L5302-5303
+    this.grabId = best.id;                   // L5304
+    best.grab = 6;                           // L5305
+    this.fx('spawn', best.x, best.y - 0.6, 22);   // L5306（2 掷）
+    return true;                             // L5307
+  }
+  moveGrab(wx, wy) {                         // L5315-5327
+    if (this.grabId == null) return;         // L5316
+    const u = this.unitById.get(this.grabId);   // L5317
+    if (!u || u.dead) { this.grabId = null; return; }   // L5318
+    if ((u.thrT ?? 0) > 0) return;           // L5319（已掷出飞行中不再跟随）
+    u.x = Math.max(0.5, Math.min(W - 0.5, wx));   // L5320
+    u.y = Math.max(0.5, Math.min(H - 0.5, wy));   // L5321
+    u.tx = u.x; u.ty = u.y;                  // L5322
+    u.lx = u.x; u.ly = u.y;                  // L5323
+    u.rx = u.x; u.ry = u.y;                  // L5324
+    u.grab = 6;                              // L5325
+  }
+  endGrab(vx, vy) {                          // L5330-5347
+    if (this.grabId == null) return;         // L5331
+    const u = this.unitById.get(this.grabId);   // L5332
+    this.grabId = null;                      // L5333（先清账——即使单位无效）
+    if (!u || u.dead) return;                // L5334
+    const spd = Math.hypot(vx, vy);          // L5335（fdlibm）
+    if (spd < 0.35) {
+      u.grab = 10;                           // L5338（轻放）
+      u.thrT = 0;                            // L5339
+      this.fx('dust', u.x, u.y + 0.4, 14);   // L5340（2 掷）
+      return;                                // L5341
+    }
+    u.thrVx = vx / spd * Math.min(1.6, spd * 0.22);   // L5343
+    u.thrVy = vy / spd * Math.min(1.6, spd * 0.22);   // L5344
+    u.thrT = 8 + Math.min(22, Math.round(spd * 5));   // L5345
+    u.thrX0 = u.x;                           // L5346
+    u.thrY0 = u.y;                           // L5346
+    u.grab = u.thrT + 26;                    // L5347
+    u.atk = 0;                               // L5348
+  }
+  grabbedTick(u) {                           // L5349-5390（M-U3h 已译域镜像补全——步进面全链）
+    if (TOOL3_RED === 'finger') return;      // 红证旋钮：TOOL3_RED=finger 禁 grabbedTick 全写面（缺陷面 = C# 硬译漏眙晕递减/飞行/落地链 → grab 恒值不衰减）
+    if (u.grab) u.grab -= 2;                 // L5350（真值门）
+    if ((u.thrT ?? 0) > 0) {                 // L5351
+      u.thrT = (u.thrT ?? 0) - 2;            // L5353
+      const nx = Math.max(0.5, Math.min(W - 0.5, u.x + (u.thrVx ?? 0) * 2));   // L5354
+      const ny = Math.max(0.5, Math.min(H - 0.5, u.y + (u.thrVy ?? 0) * 2));   // L5355
+      const tt = this.terrain[idx(Math.floor(nx), Math.floor(ny))];   // L5357
+      if (tt !== T.MOUNTAIN) { u.x = nx; u.y = ny; }   // L5358-5359（撞山即坠）
+      u.thrVx = (u.thrVx ?? 0) * 0.94;       // L5360
+      u.thrVy = (u.thrVy ?? 0) * 0.94;       // L5361
+      if (this.rng() < 0.3) this.fx('dust', u.x, u.y, 10);   // L5362（1 掷/tick）
+      if ((u.thrT ?? 0) <= 0) {              // L5363
+        const dist = Math.hypot(u.x - (u.thrX0 ?? u.x), u.y - (u.thrY0 ?? u.y));   // L5365（fdlibm）
+        const dmg = Math.round(dist * 2.6);  // L5366
+        u.hp -= dmg;                         // L5367
+        u.hurt = 24;                         // L5368
+        u.grab = Math.max(u.grab ?? 0, 24);  // L5369
+        u.thrT = 0;                          // L5370
+        for (let k = 0; k < 3; k++) this.fx('dust', u.x + (this.rng() - 0.5) * 1.6, u.y + (this.rng() - 0.5) * 1.6, 20);   // L5371（3 掷）
+        if (this.fxPrefs.dmgNumbers && dmg > 0) this.fx('dmg', u.x, u.y - 1, 30, { text: `${dmg}` });   // L5372（dmgNumbers 黄金 fxPrefs 默认 false——零写）
+        this.shake = Math.max(this.shake, Math.min(5, 1 + dist * 0.3));   // L5373
+      }
+      if (u.hp <= 0) u.dead = true;          // L5375
+    } else if ((u.grab ?? 0) <= 0) {         // L5376（蓝本防御面——主循环不可达）
+      u.grab = 0; u.thrVx = 0; u.thrVy = 0;  // L5377-5379
+    }
+  }
+  fireTickM() { }                            // L2523 截断镜像（夹具无火零效应——fireSet 空顶层早退零掷零写）
+  rebuildBucketsM() { }                      // L2525 零掷纯函数（桶面黄金快照不审计——C# RebuildBuckets 已位精确译件）
+  unitsTick() {                              // L3117-3216 JS 路径壳
+    const parity = this.tickCount % 2;       // L3118
+    for (const u of this.units) {            // L3204
+      if (u.parity === parity && !u.dead) {  // L3205
+        // updateUnit 前奏 L3455-3464（黄金窗口触达面：hurt 递减——grab 早退前）
+        if (u.hurtN !== undefined) { if (u.hurtN > 0) { u.hurtN -= 1; u.hurt = u.hurtN; } }   // L3457 hurtN 轨
+        else if (u.hurt > 0) u.hurt--;       // L3457 legacy int 轨
+        if ((u.grab ?? 0) > 0) { this.grabbedTick(u); continue; }   // L3465（AI 早退——黄金窗口内全部单位 grab>0）
+        throw new Error(`unitsTick 镜像窗口外 AI 域触达 u${u.id}（夹具违例——黄金窗口截断保证破坏）`);   // 镜像覆盖域守卫
+      }
+    }
+    // L3215 挂账：unitsReap 收尸域（全活零效应）
+  }
   // ---- applyTool 大分发器切片四（骨架 M-U14 译件 + 天灾族 case 点亮） ----
   applyTool(toolId, wx, wy, parms) {          // engine L13230-13420
     if (!TOOL_BY_ID_KEYS.has(toolId) && !parseCreationTool(toolId)) return;   // L13233（守卫）
@@ -850,6 +950,7 @@ class BREng {
       case 'curse': this.curseArea(wx, wy, r); break;                    // L13412-13414
       case 'love': this.loveArea(wx, wy, r); break;                      // L13415-13417
       case 'mutate': this.mutateArea(wx, wy, r); break;                  // L13418-13420（M-U19：特质域接入）
+      case 'finger': this.beginGrab(wx, wy); break;                      // L13373-13375（M-U21：抓取域接入——返回值丢弃）
       case 'teleport': this.teleportArea(wx, wy, r); break;              // L13421-13423
       case 'wrath': this.wrathStorm(wx, wy, Math.max(4, r), durationP); break;   // L13424-13426（max(4,r) 下钳）
       case 'holystorm': this.holyStorm(wx, wy, Math.max(4, r), durationP); break;   // L13427-13429（max(4,r) 下钳）
@@ -882,6 +983,10 @@ for (const sc of golden.scenarios) {
   for (let s = 0; s < sc.stepsSnap.length; s++) {
     const call = sc.stepsSnap[s];
     if (call.fn === 'applyTool') eng.applyTool(call.args[0], call.args[1], call.args[2], call.args[3]);
+    else if (call.fn === 'beginGrab') eng.beginGrab(call.args[0], call.args[1]);             // M-U21：三 API 直调
+    else if (call.fn === 'moveGrab') eng.moveGrab(call.args[0], call.args[1]);
+    else if (call.fn === 'endGrab') eng.endGrab(call.args[0], call.args[1]);
+    else if (call.fn === 'unitsTick') { eng.tickCount++; eng.fireTickM(); eng.rebuildBucketsM(); eng.unitsTick(); eng.effectsTick(); }   // M-U21：主循环 L2523-2528 截断镜像
     else if (call.fn === 'effectsTick') { eng.tickCount++; eng.effectsTick(); }
     else throw new Error(`${sc.key}: 未知调用 ${call.fn}`);
     const m = {
@@ -901,12 +1006,16 @@ for (const sc of golden.scenarios) {
       shake: eng.shake,
       stats: [eng.statNukes, eng.statMeteorShowers, eng.statPlasmas, eng.statAnnihilations, eng.statBlackholes],
       unitsCount: eng.units.length,
+      ...(call.grabId !== undefined ? { grabId: eng.grabId ?? null } : {}),   // M-U21：stepUnits 条件面
     };
     for (const k of Object.keys(m)) cmp(m[k], call[k], `step${s}.${k}`);
-    if (call.fn === 'effectsTick') {
+    if (call.fn === 'effectsTick' || call.fn === 'unitsTick') {   // M-U21：unitsTick 步同列快照
       const mf = eng.effects.map((e) => ({ kind: e.kind, age: e.age, x: f64hex(e.x), y: f64hex(e.y), dir: f64hex(e.dir) }));
       cmp(mf, call.fx, `step${s}.fx`);
-      const mu = eng.units.map((u) => ({ id: u.id, hp: f64hex(u.hp), hurt: f64hex(u.hurt ?? 0), dead: u.dead ? 1 : 0, x: f64hex(u.x), y: f64hex(u.y) }));
+      const mu = eng.units.map((u) => ({
+        id: u.id, hp: f64hex(u.hp), hurt: f64hex(u.hurt ?? 0), dead: u.dead ? 1 : 0, x: f64hex(u.x), y: f64hex(u.y),
+        ...(call.units[0]?.grab !== undefined ? { grab: u.grab ?? 0, thrT: u.thrT ?? 0 } : {}),   // M-U21：条件面
+      }));
       cmp(mu, call.units, `step${s}.units`);
       cmp([...eng.dirty].sort((a, b) => a - b), call.dirty, `step${s}.dirty`);
     }
