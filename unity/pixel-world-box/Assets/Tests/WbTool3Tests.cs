@@ -227,6 +227,15 @@ namespace PixelWorldBox.Tests
                 }
             if (fx["wild0"] is JArray wildA)
                 foreach (var wt in wildA) w.wildCount[wt[0].Value<int>()] = wt[1].Value<int>();
+            // —— M-U24：尸体/建筑瘦夹具注入（gen fixture corpses0/building0 条件键——lichRaise r=4 最陈旧选择 + entGrove L13068 建筑门；零掷纯写）——
+            if (fx["corpses0"] is JArray corpA)
+                foreach (var ct in corpA)
+                {
+                    var co = (JObject)ct;
+                    w.corpses.Add(new WbCorpse { x = co.Value<double>("x"), y = co.Value<double>("y"), age = co.Value<double>("age"), stone = co.Value<bool>("stone"), undead = co.Value<bool>("undead") });
+                }
+            if (fx["building0"] is JArray bldA)
+                foreach (var bt in bldA) w.building[bt[1].Value<int>() * WbWorld.W + bt[0].Value<int>()] = (byte)bt[2].Value<int>();
             // variant 确定域重建（worldgen L65 hash2(x,y,baseSeed+999)——fixture 无 variant0 面协议，R3 红线）
             int baseSeed = sc.Value<int>("baseSeed");
             for (int yy = 0; yy < WbWorld.H; yy++)
@@ -348,7 +357,7 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindTool3()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(26));   // M-U23：24→26（phoenix-rebirth 成功支/phoenix-rebirth-cap null 支——parity 红证面
+            Assert.That(scens.Count, Is.EqualTo(31));   // M-U24：26→31（ent-grove/grove-winter/lich-raise/lich-cap/hydra-regen 引擎级通道同构三件套——parity 红证面 Expected 26 But was 31 实证）
             foreach (var scTok in scens)
             {
                 var sc = (JObject)scTok;
@@ -388,6 +397,11 @@ namespace PixelWorldBox.Tests
                         // M-U23：主循环 L2606 引擎级通道（灰烬倒数到点重生——蓝本 len>0 门原样；旧场景
                         // ashes 空门假零效应字节零变化；L2534-2606 间门位窗口全空零效应——S25 三步零掷黄金实证）
                         if (w.phoenixAshes.Count > 0) WbBailRelay.PhoenixAshTick(w);
+                        // M-U24：主循环 L2608/L2611/L2612 引擎级通道（树人播种/巫妖复生/九头蛇回血——蓝本门原样；
+                        // 旧 26 场景窗口 %10/%12/%30 全不触零漂移——gen 侧逐场景字节零漂移实证背书）
+                        if (w.tickCount % 10 == 0) WbBailRelay.EntGroveTick(w);                                              // L2608
+                        if (w.tickCount % (w.NatureSeason() == 3 ? 8 : 12) == 0) WbBailRelay.LichRaiseTick(w);               // L2611（季节节律：寒冬死潮加速 12→8）
+                        if (w.tickCount % 30 == 0) WbBailRelay.HydraRegenTick(w);                                            // L2612
                     }
                     else
                     {
@@ -929,6 +943,92 @@ namespace PixelWorldBox.Tests
             Assert.That(w2.effects[0].seed, Is.EqualTo(40874), "S26 fx spawn seed 位级");
             Assert.That(w2.toasts.Count, Is.EqualTo(1), "toast 照常——涅槃折戟仪式依旧");
             Assert.That(w2.rngA.ToString("x8"), Is.EqualTo("b4ade905"), "4 掷 rng 链终态位级（S26 黄金同源）");
+        }
+
+        /// <summary>直测八（M-U24）：引擎级通道同构三件套——entGroveTick L13055（播种 2 采样/树人 + 界外/建筑/
+        ///  地形三重门 + 扑火 r=2.5 + 声门掷位）/ lichRaiseTick L13105（41 骷髅上限 + stone/界外 skip +
+        ///  最陈旧选择 + spawnUnit silent 5 掷 undead family 门 skip）/ hydraRegenTick L13038（回血 2% +
+        ///  冬眠 + 满血/非九头蛇 skip）。五场景黄金同源位级：S27 全分支 / S28 冬蛰 / S29 成功支 /
+        ///  S30 上限门 / S31 回血三面。</summary>
+        [Test]
+        public void Test48_Tool3_EngineChannels()
+        {
+            var gold = JObject.Parse(System.IO.File.ReadAllText(FindTool3()));
+            // —— S27 同源：ent-grove（春播 pm=1.3 + 火墙扑灭 + 建筑盘/界外 skip + 声门掷位）——
+            var w = ReplayScenario((JObject)gold["scenarios"].First(t => t.Value<string>("key") == "ent-grove"));
+            w.tickCount++; WbBailRelay.FireTick(w); w.RebuildBuckets(); WbBailRelay.UnitsTick(w); WbBailRelay.EffectsTick(w);
+            if (w.phoenixAshes.Count > 0) WbBailRelay.PhoenixAshTick(w);
+            if (w.tickCount % 10 == 0) WbBailRelay.EntGroveTick(w);                                                // L2608 门
+            if (w.tickCount % (w.NatureSeason() == 3 ? 8 : 12) == 0) WbBailRelay.LichRaiseTick(w);
+            if (w.tickCount % 30 == 0) WbBailRelay.HydraRegenTick(w);
+            Assert.That(w.fireSet.Count, Is.EqualTo(0), "火墙全灭（L13087-13089 扑火——3 燃烧格全 extinguish）");
+            Assert.That(w.fire[WbWorld.Idx(99, 59)], Is.EqualTo((byte)0), "火墙底格 fire=0");
+            Assert.That(w.terrain[WbWorld.Idx(99, 62)], Is.EqualTo(WbConstants.T_FOREST), "GRASS 门 HIT 成林（spark (99.5,62.5)——L13071 setTerrain 级联）");
+            Assert.That(w.terrain[WbWorld.Idx(98, 60)], Is.EqualTo(WbConstants.T_FOREST), "BURNT 门 HIT 成林（spark (98.5,60.5)——0.45×1.3=0.585 门）");
+            Assert.That(w.effects.Count(e => e.kind == "water"), Is.EqualTo(3), "扑火 water fx ×3（每灭格 1 fx——L13090；0x142 链无蔓延点燃）");
+            Assert.That(w.effects.Count(e => e.kind == "spark"), Is.EqualTo(2), "播种 spark fx ×2（planted=2 ≤6 门内——L13073）");
+            Assert.That(w.building[WbWorld.Idx(108, 65)], Is.EqualTo((byte)1), "建筑盘原样（u901 落 (108,65) L13068 skip——不种不改）");
+            Assert.That(w.rngA.ToString("x8"), Is.EqualTo("5a1d27b6"), "36 掷 rng 链终态位级（S27 黄金同源——fireTick 11 + 采样 12 + 地形门 4 + fx 8 + 声门 1）");
+            // —— S28 同源：grove-winter（冬蛰播种 skip + 扑火照常 + 九头蛇冬眠）——
+            var w2 = ReplayScenario((JObject)gold["scenarios"].First(t => t.Value<string>("key") == "grove-winter"));
+            w2.tickCount++; WbBailRelay.FireTick(w2); w2.RebuildBuckets(); WbBailRelay.UnitsTick(w2); WbBailRelay.EffectsTick(w2);
+            if (w2.phoenixAshes.Count > 0) WbBailRelay.PhoenixAshTick(w2);
+            if (w2.tickCount % 10 == 0) WbBailRelay.EntGroveTick(w2);
+            if (w2.tickCount % (w2.NatureSeason() == 3 ? 8 : 12) == 0) WbBailRelay.LichRaiseTick(w2);
+            if (w2.tickCount % 30 == 0) WbBailRelay.HydraRegenTick(w2);
+            WbU hy = w2.units.First(u => u.race == 32);                                                            // R_HYDRA 32（types.ts R 枚举序——WbConstants 无此键，WbBail 私有 R_HYDRA 同源）
+            Assert.That(hy.hp, Is.EqualTo(100.0), "冬眠：九头蛇回血零触（L13039 season===3 return——hp 恒 100）");
+            Assert.That(hy.hurtN, Is.EqualTo(4.0), "hurt 前奏递减照常（grab 冻结不挡 hurt--——5→4）");
+            Assert.That(w2.fireSet.Count, Is.EqualTo(0), "扑火照常（四季在岗不辍——火墙灭）");
+            Assert.That(w2.effects.Count(e => e.kind == "spark"), Is.EqualTo(0), "冬蛰零 spark（L13061 sn===3 整支 skip 零掷）");
+            Assert.That(w2.rngA.ToString("x8"), Is.EqualTo("3fe31a86"), "17 掷 rng 链终态位级（S28 黄金同源——全 fireTick 蔓延门掷，grove 零掷）");
+            // —— S29 同源：lich-raise（stone/界外 skip + 最陈旧选择 + spawnUnit silent 5 掷）——
+            var w3 = ReplayScenario((JObject)gold["scenarios"].First(t => t.Value<string>("key") == "lich-raise"));
+            w3.tickCount++; WbBailRelay.FireTick(w3); w3.RebuildBuckets(); WbBailRelay.UnitsTick(w3); WbBailRelay.EffectsTick(w3);
+            if (w3.phoenixAshes.Count > 0) WbBailRelay.PhoenixAshTick(w3);
+            if (w3.tickCount % 10 == 0) WbBailRelay.EntGroveTick(w3);
+            if (w3.tickCount % (w3.NatureSeason() == 3 ? 8 : 12) == 0) WbBailRelay.LichRaiseTick(w3);              // L2611 门（season 1 → %12）
+            if (w3.tickCount % 30 == 0) WbBailRelay.HydraRegenTick(w3);
+            WbU sk = w3.units.First(u => u.race == WbConstants.R_SKELETON);
+            Assert.That(sk.id, Is.EqualTo(594), "骷髅 id=unitSeq 消费位级（worldgen 推进锚——L1339）");
+            Assert.That(sk.name, Is.EqualTo("Skull"), "名 FIRST[16] 专池掷位（'Skull'——names.ts L76 pool[race] 消费）");
+            Assert.That(F64Hex(sk.maxHp), Is.EqualTo("0000000000804b40"), "maxHp=round(55×1)=55 位级（RDEF hp55 + baseGene 空表零掷）");
+            Assert.That(sk.parity, Is.EqualTo(1), "parity=unitSeq%2=1（L1364 出生钉面）");
+            Assert.That(F64Hex(sk.x), Is.EqualTo("0000000000805840"), "生于 c4 位 x=98（L13124 spawnUnit(c.x)）");
+            Assert.That(F64Hex(sk.y), Is.EqualTo("0000000000804e40"), "y=61 位级");
+            Assert.That(w3.corpses.Count, Is.EqualTo(3), "c4 splice 摘除（L13126）——石像/界外/age5 三尸保留");
+            Assert.That(w3.corpses.Any(c => c.stone) && w3.corpses.Any(c => c.age == 30), Is.True, "石像 skip（L13116）+ 界外 skip（L13119 d²=36>16）——最陈而不可达面");
+            Assert.That(w3.effects.Count(e => e.kind == "skull"), Is.EqualTo(1), "skull fx（L13127 y-1 面）");
+            Assert.That(w3.effects.Count(e => e.kind == "smoke"), Is.EqualTo(1), "smoke fx（L13128）");
+            Assert.That(w3.worldEvents.Count(e => e.kind == "lich"), Is.EqualTo(1), "addEvent lich 纪事（events<3 门首掷——L13129）");
+            Assert.That(w3.rngA.ToString("x8"), Is.EqualTo("d6874adf"), "9 掷 rng 链终态位级（S29 黄金同源——5 spawn 掷〔undead family 门 skip〕+ fx 4 掷）");
+            // —— S30 同源：lich-cap（41 骷髅 >40 顶层 return——尸体保留零掷）——
+            var w4 = ReplayScenario((JObject)gold["scenarios"].First(t => t.Value<string>("key") == "lich-cap"));
+            w4.tickCount++; WbBailRelay.FireTick(w4); w4.RebuildBuckets(); WbBailRelay.UnitsTick(w4); WbBailRelay.EffectsTick(w4);
+            if (w4.phoenixAshes.Count > 0) WbBailRelay.PhoenixAshTick(w4);
+            if (w4.tickCount % 10 == 0) WbBailRelay.EntGroveTick(w4);
+            if (w4.tickCount % (w4.NatureSeason() == 3 ? 8 : 12) == 0) WbBailRelay.LichRaiseTick(w4);
+            if (w4.tickCount % 30 == 0) WbBailRelay.HydraRegenTick(w4);
+            Assert.That(w4.corpses.Count, Is.EqualTo(1), "尸体保留（L13108 return——军团节制下轮再试）");
+            Assert.That(w4.units.Count, Is.EqualTo(42), "41 骷髅 + 巫妖原样（零 spawn）");
+            Assert.That(w4.effects.Count, Is.EqualTo(0), "零 fx（零掷零效应铁证）");
+            Assert.That(w4.rngA.ToString("x8"), Is.EqualTo("00000143"), "零掷铁证（rngA=seed 原值——S30 黄金同源）");
+            // —— S31 同源：hydra-regen（回血 2% + hurt 清创 + 满血/非九头蛇 skip）——
+            var w5 = ReplayScenario((JObject)gold["scenarios"].First(t => t.Value<string>("key") == "hydra-regen"));
+            w5.tickCount++; WbBailRelay.FireTick(w5); w5.RebuildBuckets(); WbBailRelay.UnitsTick(w5); WbBailRelay.EffectsTick(w5);
+            if (w5.phoenixAshes.Count > 0) WbBailRelay.PhoenixAshTick(w5);
+            if (w5.tickCount % 10 == 0) WbBailRelay.EntGroveTick(w5);
+            if (w5.tickCount % (w5.NatureSeason() == 3 ? 8 : 12) == 0) WbBailRelay.LichRaiseTick(w5);
+            if (w5.tickCount % 30 == 0) WbBailRelay.HydraRegenTick(w5);                                            // L2612 门
+            WbU h1 = w5.units.First(u => u.id == 975);
+            Assert.That(F64Hex(h1.hp), Is.EqualTo("0000000000805a40"), "回血 100→106 位级（300×0.02=6.0 f64 精确——L13043）");
+            Assert.That(h1.hurtN, Is.EqualTo(0.0), "再生清创（L13044 hurt=0 双轨——前奏递减 5→4 后清零）");
+            WbU h2 = w5.units.First(u => u.id == 976);
+            Assert.That(F64Hex(h2.hp), Is.EqualTo("0000000000c07240"), "满血不触（hp>=maxHp 门假——300 恒）");
+            WbU sh = w5.units.First(u => u.id == 977);
+            Assert.That(F64Hex(sh.hp), Is.EqualTo("0000000000001840"), "非九头蛇不回血（SHEEP 6 恒——L13041 race 门）");
+            Assert.That(sh.hurtN, Is.EqualTo(2.0), "SHEEP hurt 前奏递减照常（3→2——非再生域不减）");
+            Assert.That(w5.rngA.ToString("x8"), Is.EqualTo("00000144"), "零掷铁证（rngA=seed 原值——S31 黄金同源）");
         }
     }
 }

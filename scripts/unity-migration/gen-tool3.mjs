@@ -230,6 +230,9 @@ function buildScenario(spec) {
   // M-U23：灰烬/wildCount 瘦夹具直写（零掷纯写——phoenixAshTick 重生倒计时窗口 + spawnUnit L1300 预算门 null 支）
   for (const a of spec.ashes0 ?? []) eng.phoenixAshes.push({ ...a });
   for (const [r, n] of spec.wild0 ?? []) eng.wildCount.set(r, n);       // wildAlive()=ΣwildCount.values（engine L1572-1576）——注入 900 ≥ MAX_WILDLIFE
+  // M-U24：尸体/建筑 瘦夹具直写（零掷纯写——lichRaiseTick r=4 最陈旧选择 + entGrove L13068 建筑门）
+  for (const c of spec.corpses0 ?? []) eng.corpses.push({ ...c });
+  for (const [x, y, v] of spec.building ?? []) eng.building[idx(x, y)] = v;
 
   // 手术二·快照：直写后/调用前的镜像输入面
   const fixture = {
@@ -265,6 +268,11 @@ function buildScenario(spec) {
     // M-U23：灰烬/wildCount 起点快照（C# 重放注入——条件键旧场景字节零变化）
     ...(spec.ashes0 ? { ashes0: spec.ashes0 } : {}),
     ...(spec.wild0 ? { wild0: spec.wild0 } : {}),
+    // M-U24：尸体/建筑/季节 起点快照（条件键旧场景字节零变化——season0 = eng.nature.season 派生值快照
+    //   〔yearF/SEASON_YEARS %4 getter——nature.ts L161-163；镜像端硬编码 0 消费此键，C# 端 yearF0 派生同构〕）
+    ...(spec.corpses0 ? { corpses0: spec.corpses0 } : {}),
+    ...(spec.building ? { building0: spec.building } : {}),
+    ...(spec.season0 !== undefined ? { season0: eng.nature.season } : {}),
   };
 
   // 步进快照（calls 与 ticks 统一面——applyTool 紧凑 / effectsTick 全列）
@@ -312,6 +320,39 @@ function buildScenario(spec) {
     //   旧场景 ashes 空门假零效应字节零变化；L2534-2606 间门位〔panic/civs/rad/front/economy/
     //   .../angelAura〕夹具窗口全空零效应——S25 三步零掷探针实证）
     if (eng.phoenixAshes.length > 0) eng.phoenixAshTick();
+    // M-U24：主循环 L2608/L2611/L2612 引擎级通道镜像（树人播种/巫妖复生/九头蛇回血——蓝本门原样；
+    //   旧场景窗口取值 %10/%12/%30 全不触（S16-S26 ticks 窗口 1001/1006-1009/1010 实证）字节零变化）
+    const prOn = process.env.TOOL3_PROBE === spec.key;                                              // 探针钩子（真环境掷流录制——平行复刻派生面漂移弃用）
+    if (prOn) { if (!eng.__prRec) { eng.__prRec = []; const orng = eng.rng.bind(eng); eng.rng = () => { const v = orng(); eng.__prRec.push(v); return v; }; } eng.__prRec.length = 0; }
+    const prFire0 = prOn ? eng.__prRec.length : 0;
+    if (eng.tickCount % 10 === 0) eng.entGroveTick();                                            // L2608
+    const prGrove0 = prOn ? eng.__prRec.length : 0;
+    if (eng.tickCount % (eng.nature.season === 3 ? 8 : 12) === 0) eng.lichRaiseTick();           // L2611（季节节律：寒冬死潮加速 12→8）
+    const prLich0 = prOn ? eng.__prRec.length : 0;
+    if (eng.tickCount % 30 === 0) eng.hydraRegenTick();                                          // L2612
+    if (prOn) {
+      // entGrove 落点离线重放（ang/rr 成对 + 地形门掷短路感知；grove 窗 = [prFire0, prGrove0)，
+      //   尾部 spark/water fx 掷与声门掷不进重放——di 停在最后一采样即全采样重放完）
+      const gd = eng.__prRec.slice(prFire0, prGrove0);
+      const lands = []; let di = 0; const sn = eng.nature.season;
+      const unitsSnap = eng.units.map((u) => ({ race: u.race, x: u.x, y: u.y }));
+      for (const u of unitsSnap) {
+        if (u.race !== 30) continue;                                   // R.ENT
+        if (sn !== 3) for (let k = 0; k < 2; k++) {
+          const ang = gd[di] * Math.PI * 2; di++;
+          const rr = 1 + gd[di] * 2.5; di++;
+          const lx = Math.floor(u.x + Math.cos(ang) * rr);
+          const ly = Math.floor(u.y + Math.sin(ang) * rr);
+          const j = ly * W + lx;
+          const oob = j < 0 || j >= W * H;
+          const bld = !oob && eng.building[j] > 0;
+          const t = oob ? -1 : eng.terrain[j];
+          if (!oob && !bld && (t === 3 || t === 9 || t === 2)) di++;   // 地形门掷消耗（T.GRASS/T.BURNT/T.SAND）
+          lands.push({ u: u.id ?? -1, lx, ly, oob, bld, t });
+        }
+      }
+      console.log(`PROBE ${spec.key} tick=${eng.tickCount} groveDraws=${gd.length} replayed=${di} lands=${JSON.stringify(lands)}`);
+    }
     steps.push({
       fn: spec.stepUnits ? 'unitsTick' : 'effectsTick', tick: k + 1,
       ...snapCommon(),
@@ -886,6 +927,133 @@ const specs = [
       && eng.worldEvents.filter((e) => e.kind === 'phoenix').length === 1
       && toasts.some((t) => t.text === '凤凰在灰烬中重生了'),
   },
+
+  // ---- S27 ent-grove（M-U24 树人播种 L13055-13097 成功支全分支：①播种 2 采样/树人——
+  //        ang/rr 2 掷 + 地形门掷〔GRASS 0.22pm/BURNT 0.45pm/SAND 0.06pm 短路 || 各一掷——
+  //        pm=1.3 春播 yearF0.5 season0〕+ 界外 j 门 skip（u902 边缘 MOUNTAIN 盘）+ 建筑
+  //        门 skip（u901 全建筑盘——任意落点必建筑格零掷 skip）+ setTerrain(FOREST) 级联 +
+  //        planted++ + spark fx ≤6；②扑火 r=2.5（dx²+dy²≤6.25 环——fireSet 删 + water fx）；
+  //        声门 planted>0 && rng<0.35 掷位保留（onSound 宿主 no-op——掷位不丢）。
+  //        fire 夹具 3 格在 r=2.5 内——fireTick 先行 1 掷/格（蔓延门）确定链。）----
+  {
+    key: 'ent-grove', baseSeed: BASE + 27, seed: 0x00000142, tickCount: 1009, fill: 'grass',   // 种子标定 0x00000142（TOOL3_PROBE 真环境钩子：oob=1 界外支〔u902 落 (-2,0)〕/ bldSkip=1 建筑门〔u901 落 (108,65)〕/ spark=2 / forests=2 / 扑火 waterFx=4 / 声门掷位——全判据 HIT）
+    yearF: 0.5, season0: 0,                                                                    // season 0 春播 pm=1.3（nature.season getter yearF/2 %4 派生）
+    terrain: [
+      [97, 59, T.BURNT], [98, 59, T.BURNT], [98, 60, T.BURNT],                                 // 焦土patch（0.45×1.3=0.585 高命中门）
+      [103, 60, T.SAND], [103, 61, T.SAND],                                                    // 沙地patch（0.06×1.3=0.078 低命中门）
+    ],
+    building: [
+      [108, 62, 1], [109, 62, 1], [110, 62, 1], [111, 62, 1], [112, 62, 1], [113, 62, 1],      // u901 (110,64) r=3.5 全建筑盘——任意采样落点必建筑格（skip 分支确定性覆盖）
+      [108, 63, 1], [109, 63, 1], [110, 63, 1], [111, 63, 1], [112, 63, 1], [113, 63, 1],
+      [108, 64, 1], [109, 64, 1], [111, 64, 1], [112, 64, 1], [113, 64, 1],
+      [108, 65, 1], [109, 65, 1], [110, 65, 1], [111, 65, 1], [112, 65, 1], [113, 65, 1],
+      [108, 66, 1], [109, 66, 1], [110, 66, 1], [111, 66, 1], [112, 66, 1], [113, 66, 1],
+    ],
+    fire: [[99, 59, 40], [100, 59, 40], [101, 59, 40]],                                        // 火墙 3 格（r=2.5 内——fireTick 1 掷/格先行 + 扑火 extinguish）
+    units: [
+      { id: 900, race: R.ENT, x: 100, y: 60, hp: 320, maxHp: 320, grab: 999 },                 // 主树人（播种+扑火）——grab 999 冻结零 AI
+      { id: 901, race: R.ENT, x: 110, y: 64, hp: 320, maxHp: 320, grab: 999 },                 // 建筑盘树人（L13068 skip 支）
+      { id: 902, race: R.ENT, x: 1, y: 1, hp: 320, maxHp: 320, grab: 999 },                    // 边缘树人（L13067 j<0 界外 skip 支——盘内 MOUNTAIN 走填充? 填充 grass——界外支 probe 标定）
+    ],
+    ticks: 1, stepUnits: true, reapDump: true,                                                 // tick 1010：%10===0 grove 门 / %12=2 lich 门不触 / %30=20 hydra 门不触
+    sanity: (eng) => {
+      const forests = [...eng.terrain.keys()].filter((i) => eng.terrain[i] === T.FOREST).length;
+      return eng.unitById.get(900).hp === 320
+        && eng.terrain[idx(100, 59)] === T.GRASS && eng.terrain[idx(101, 59)] === T.GRASS      // 火墙底格未成林（火格 skip——GRASS 门 0.286 可 HIT 但非判据……判据用 fx/fire 面）
+        && [...eng.fireSet].every((i) => ![[99, 59], [100, 59], [101, 59]].some(([x, y]) => idx(x, y) === i))   // 火墙 3 格全灭（扑火 L13087-13089）
+        && eng.effects.filter((e) => e.kind === 'water').length >= 3                           // 扑火 water fx ≥3（每灭格 1 fx）
+        && eng.effects.some((e) => e.kind === 'spark')                                         // 播种 spark fx（planted ≥1）
+        && forests >= 1                                                                        // 成林 ≥1（setTerrain FOREST 级联）
+        && eng.terrain[idx(1, 1)] === T.GRASS;                                                 // u902 盘内未整盘异变（界外/采样落点确定链——非判据仅哨兵）
+    },
+  },
+
+  // ---- S28 grove-winter（M-U24 冬蛰支 L13061 sn===3：播种整支 skip——采样 2 掷/树人零触
+  //        （掷流仅 fireTick 蔓延门），planted=0 → 声门零掷（L13096 planted>0 门假短路）；
+  //        ②扑火照常（四季在岗不辍）+ 九头蛇冬眠 L13039 season===3 return（hp 恒）。
+  //        yearF 6.5 → season 3（派生 getter floor(6.5/2)%4=3）——lichRaise 门 %8 面同窗
+  //        （tick 1010 %8=2 不触——%8 节律面 S29 同构挂账注记）。）----
+  {
+    key: 'grove-winter', baseSeed: BASE + 28, seed: 0x00000141, tickCount: 1009, fill: 'grass',
+    yearF: 6.5, season0: 3,                                                                    // 冬季（寒潮：树人蛰伏 + 九头蛇冬眠）
+    fire: [[99, 59, 40], [100, 59, 40], [101, 59, 40]],                                        // 火墙照常扑灭（扑火不识季节）
+    units: [
+      { id: 905, race: R.ENT, x: 100, y: 60, hp: 320, maxHp: 320, grab: 999 },
+      { id: 906, race: R.HYDRA, x: 106, y: 60, hp: 100, maxHp: 300, hurt: 5, grab: 999 },      // 冬眠支：hp 恒 100（L13039 return 早退）
+    ],
+    ticks: 1, stepUnits: true, reapDump: true,
+    sanity: (eng) => {
+      const forests = [...eng.terrain.keys()].filter((i) => eng.terrain[i] === T.FOREST).length;
+      return eng.unitById.get(906).hp === 100                                                  // 冬眠：九头蛇回血零触
+        && eng.unitById.get(906).hurt === 4                                                    // hurtN 递减照常（updateUnit 前奏——grab 冻结不挡 hurt--）
+        && [...eng.fireSet].every((i) => ![[99, 59], [100, 59], [101, 59]].some(([x, y]) => idx(x, y) === i))   // 扑火照常
+        && eng.effects.filter((e) => e.kind === 'water').length >= 3
+        && forests === 0;                                                                      // 冬蛰：零成林
+    },
+  },
+
+  // ---- S29 lich-raise（M-U24 巫妖复生 L13105-13131 成功支：骷髅计数 ≤40 门 + 尸体
+  //        r=4 最陈旧选择——stone skip（c2 d²=1 age9 石像封魂）/ 界外 d²>16 skip（c3 age30
+  //        最陈而不可达）/ best=c4（age12 eligible 最陈——d²=5）+ spawnUnit(SKELETON,silent)
+  //        6 掷链（trait MISS/maxAge/flip/breath/名 FIRST[16]/family MISS）+ splice 尸体 +
+  //        fx skull y-1 26 / smoke 16 + addEvent lich（events<3 门首掷）。yearF 2.5 season1
+  //        → %12 节律（非冬）——tick 1032 %12===0 / %10=2 grove 不触 / %30=12 hydra 不触。）----
+  {
+    key: 'lich-raise', baseSeed: BASE + 29, seed: 0x00000142, tickCount: 1031, fill: 'grass',
+    corpses0: [
+      { x: 101, y: 60, age: 5, stone: false, undead: false },    // c1 eligible d²=1 age5
+      { x: 99, y: 60, age: 9, stone: true, undead: false },      // c2 石像 skip（若无 stone 支将胜 c1——分支判据钉面）
+      { x: 106, y: 60, age: 30, stone: false, undead: false },   // c3 d²=36>16 界外（最陈而不可达）
+      { x: 98, y: 61, age: 12, stone: false, undead: true },     // c4 BEST（eligible 最陈——d²=4+1=5）
+    ],
+    units: [
+      { id: 910, race: R.LICH, x: 100, y: 60, hp: 260, maxHp: 260, grab: 999 },                  // 巫妖（grab 999 冻结零 AI）
+    ],
+    ticks: 1, stepUnits: true, reapDump: true,
+    sanity: (eng) => {
+      const sk = eng.units.find((u) => u.race === R.SKELETON);
+      return sk && sk.x === 98 && sk.y === 61 && sk.maxHp === 55                                 // 骷髅生于 c4 位（maxHp=round(55×1)=55——baseGene 空表零掷）
+        && eng.corpses.length === 3                                                              // c4 splice 摘除
+        && !eng.corpses.some((c) => c.age === 12)                                                // 摘除面：age12 尸体不在账
+        && eng.corpses.some((c) => c.stone) && eng.corpses.some((c) => c.age === 30)             // 石像/界外尸体保留
+        && eng.effects.some((e) => e.kind === 'skull') && eng.effects.some((e) => e.kind === 'smoke')
+        && eng.worldEvents.filter((e) => e.kind === 'lich').length === 1;
+    },
+  },
+
+  // ---- S30 lich-cap（M-U24 骷髅上限门 L13106-13108：41 骷髅 >40 → 顶层 return——
+  //        尸体保留零掷零效应（军团节制防刷穿）。零火零 fx——minDraws 0 纯零掷铁证。）----
+  {
+    key: 'lich-cap', baseSeed: BASE + 30, seed: 0x00000143, tickCount: 1031, fill: 'grass',
+    corpses0: [{ x: 100, y: 61, age: 3, stone: false, undead: false }],
+    units: [
+      ...Array.from({ length: 41 }, (_, i) => ({ id: 920 + i, race: R.SKELETON, x: 90 + (i % 9) * 2, y: 50 + ((i / 9) | 0) * 2, hp: 55, maxHp: 55, grab: 999 })),
+      { id: 970, race: R.LICH, x: 100, y: 60, hp: 260, maxHp: 260, grab: 999 },
+    ],
+    ticks: 1, stepUnits: true, reapDump: true,
+    sanity: (eng) => eng.corpses.length === 1                                                  // 尸体保留（L13108 return——下轮再试）
+      && eng.units.length === 42 && eng.units[41].race === R.LICH
+      && eng.effects.length === 0 && eng.worldEvents.length === 0,
+  },
+
+  // ---- S31 hydra-regen（M-U24 九头蛇回血 L13038-13047：季节门非冬通过 + hp<maxHp 支
+  //        hp=min(maxHp, hp+maxHp×0.02)=106（300×0.02=6.0 f64 精确）+ hurt=0 双写面 +
+  //        满血支 hp>=maxHp 跳过（hurt 递减照常）+ 非九头蛇 skip（SHEEP hp/hurt 不回）。
+  //        tick 1050 %30===0 hydra 门 / %10=0 grove 门触（无树人零效应零掷）/ %12=6 lich
+  //        门不触。u.dead 支通道不可达注记：unitsReap 先于门摘净死单位（同 tick 序）。）----
+  {
+    key: 'hydra-regen', baseSeed: BASE + 31, seed: 0x00000144, tickCount: 1049, fill: 'grass',
+    units: [
+      { id: 975, race: R.HYDRA, x: 100, y: 60, hp: 100, maxHp: 300, hurt: 5, grab: 999 },      // 伤蛇：回血 100→106 + hurt 5→4（前奏递减）→0（L13044）
+      { id: 976, race: R.HYDRA, x: 106, y: 60, hp: 300, maxHp: 300, hurt: 0, grab: 999 },      // 满血：hp>=maxHp 门假——hurt 恒 0
+      { id: 977, race: R.SHEEP, x: 110, y: 60, hp: 6, maxHp: 16, hurt: 3, grab: 999 },         // 非九头蛇：skip（hurt 3→2 前奏递减照常）
+    ],
+    ticks: 1, stepUnits: true, reapDump: true,
+    sanity: (eng) => eng.unitById.get(975).hp === 106 && eng.unitById.get(975).hurt === 0      // 回血位级（+6.0 f64 精确）+ 再生不残留受创
+      && eng.unitById.get(976).hp === 300                                                      // 满血不触
+      && eng.unitById.get(977).hp === 6 && eng.unitById.get(977).hurt === 2                    // 非九头蛇不回血（hurt 前奏递减照常）
+      && eng.effects.length === 0,
+  },
 ];
 
 // ---- det 双跑 + 双写（M-U22：TOOL3_ONLY/TOOL3_SEED 单场景种子扫描钩子——scan-nature2-seed 先例） ----
@@ -922,8 +1090,8 @@ const out = {
     protocol: 'GameEngine 构造 + 手术式夹具直写（fill 面 grass + terrain/fire/radiate/units 瘦直写 + brush/五成就计数直写）+ rngA 尾置清零起流 + calls 直调 / ticks 步进（tickCount++ 头 + effectsTick——主循环 L2508 序）混合链，每步统一快照（applyTool 紧凑 / effectsTick 全列 fx+units+dirty）',
     rng: 'eng.rngA 单流；fx 恒 2 掷（seed+dir）；cap 门 filter 快照零掷；volcano 引燃圈 1 掷/点燃 + 消费端熔岩弹 age%14 双掷 + 外溢 age%6 双掷；wrath/typhoon 消费端 lightning（n=1：fx 2+中心点燃 1+四邻 4+邻格点燃支）；holystorm 恒真门 1.2 掷位保持 + 采样双掷 + 单位门掷（审判 0.2/缓愈 0.08）；bless/curse 0.4 门 + love 0.5 门 1 掷/单位 + fx 2 掷；teleport randomLandSpot 2 掷/尝试；mutate：civ 0.3 门 1 掷 + rerollTrait rollTrait 1 掷 + 0.25 门 1 掷 + jumpGene 4 门掷/命中维值掷；wild 直 jumpGene 4 门掷/命中维值掷〔baseGene 空表零掷〕；命中单位 fx 2 掷（门 miss 亦掷——L10901 fx 在 if/else 外）；mulberry 纯数学反解 total',
     math: 'Math.hypot（volcano 锥体整数极距 / area 神力单位环〔含 mutate L10891〕 / plasma dist=hypot(7,9) / annihilate dist=hypot(8,11)——bun 原生 fdlibm；C# FdHypot 位精确件对账）+ Math.round（plasma ttl=round(dist*1.5) + mutate rerollTrait/jumpGene maxHp round 域——JS .5 上取整；C# JsRound 禁银行家舍入）+ Math.max/min 铛位（mutate 基因 0.5/2 恰等面 + maxHp≥1）+ 纯算术域',
-    domains: ['unitsReap L3321-3472（M-U22：僵尸尸变 0.35 门→zombify continue / 王权驾崩→onKingDeath / 凤凰涅槃 ash push ashTtl 240〔season3 round×1.5〕/ 九头蛇 gen<2 双幼蛇 spawnUnit silent maxHp round×0.6 + seared 门 fire>0||LAVA / scav r=6 最饿捕食者 food+=55+round(maxHp*0.5) / 商队 rel -6 + trade 纪事 / skull fx + 血泊尸骸〔SANDWORM skip〕/ 肉 0.85 + wep 0.35 / boss 0.5 / wild 0.05 三连掉落门 / delete+bumpWild+pop-swap 逆序环）', 'onKingDeath L1675-1686（kingId -1 + stability 52 + 纪事 + toast danger）', 'dropItem L5190-5213（MAX_ITEMS 门 + isWater→findLandNear(5) + itemSeq + fx spawn 2 掷 + onSound place）', 'dropMeat L5385-5402（cnt 钳 [1,3] + items cap-6 门 + 2 掷/肉 + isWater→findLandNear(3)）', 'rollChestItem constants.ts L797-800（CHEST_TIERS min/max → rollItem）', 'rollItem items.ts L226-240（ALL_ITEMS rarity 窗口过滤 + RARITY_META w 权重池 + r-=w 循环——1 掷）', 'carveRiver L12312-12420（M-U20：applyTool case river runtime 语义——BFS dist 场零掷 + 加权随机选路 1 掷/步 + 刻河/灌溉 setTerrain 级联 + carveLake 湖支 + fx spawn/toast/addEvent 尾面）', 'mutateArea L10888-10906（M-U19：civ 0.3 reroll/0.25 jumpGene 0.12 + wild baseGene/jumpGene 0.2 + fx 每命中单位 2 掷〔双门双 miss 亦掷——fx 在 if/else 外〕）', 'rerollTrait L11037-11057（旧乘数卸除/新乘数上装——maxHp round 域 + hp min/max 双钳不对称〔old 支 max(1,·) / nw 支无〕）', 'jumpGene L11085-11103（四维 0.6 门 + (rng-0.42)*2*amount 重铸 + 0.5/2 铛位 + RACES×TRAITS×JOBS 属性重算）', 'rollTrait L1467-1470（TRAITS keys 12 预设插入序随机抽）', 'baseGene L11029-11031（speciesBase 空表分支——零掷恒 {1,1,1,1}）', 'acidRain L10737-10745（cap 6 + fx acid）', 'volcano L10746-10777（锥体 hypot≤2.3 + 山口/十字/3x3 熔岩 + 引燃圈 3.5*pw + shake 6+2pw + event 双文本）', 'tsunami L10780-10785（r*2.5 钳 [6,30]）', 'blizzard L10788-10795（cap 4 + max(5,r) 钳 [5,15]）', 'meteorShower L10798-10813（clamp [1,24] + rng 散布 + x0/y0/quiet 衍生弹 + statMeteorShowers）', 'locust L10815-10822（cap 3 + r 钳 [3,10]）', 'drought L10823-10830（cap 4）', 'rainCloud L10834-10843（cap 6 + touchMeta 宿主挂点）', 'blessArea L10845-10859（hp+50%max + bless 600 + 驱瘟 + 0.4 fx 门）', 'curseArea L10861-10872（curse 500）', 'loveArea L10874-10886（repro 门 + fert 500）', 'teleportArea L10908-10924（randomLandSpot 40 试 + spark 双发）', 'wrathStorm L10926-10934（cap 3）', 'holyStorm L10936-10945（cap 3）', 'plasmaCannon L10947-10957（x0/y0 钳 + ttl round 域 + dmg + statPlasmas）', 'annihilationLight L10959-10969（colorHex #ff4d4d + statAnnihilations）', 'sandstorm L10972-10979（cap 3）', 'typhoon L10980-10987（cap 3）', 'sinkhole L10988-10996（shake 7）', 'iceAge L10999-11008（cap 2 + shake 4）', 'famineCloud L11030-11036（cap 3）', 'blackhole L11017-11023（cap 2 + statBlackholes）', 'meteor L12277-12282（x0=x+20/y0=y-34）', 'randomLandSpot L11033-11043（40 试六地形门）', 'applyTool case L13342-13455（meteor 内联抖动 + 22 委派）', 'effectsTick 消费端四支：volcano L9851-9876 / wrath L10023-10029 / holystorm L10030-10075 / typhoon L10091-10119', 'phoenixAshTick L13018-13032（M-U23：灰烬倒数 a.t-=2 节拍 len>0 门每 tick——到点 splice + spawnUnit(PHOENIX,silent) 重生体继承 rebirths + fx spawn 46/fireball y-1 30 双 fx + toast info + addEvent phoenix 纪事；S25 成功支 / S26 MAX_WILDLIFE 900 注入 null 支〔先于 trait 掷〕——L2606 主循环门镜像步进通道，L2534-2606 间门位窗口全空零效应）'],
-    deferred: ['collectUnitDead Task 38 在线采集（引擎 no-op 挂账）', 'chest/ITEM_TOOL/cre:/RACE_TOOL 等其余 applyTool case（各域切片挂账不变）', 'SHEEP AI 游走链 units 域切片（L4213 恒掷门——M-U21 挂账沿用）'],
+    domains: ['unitsReap L3321-3472（M-U22：僵尸尸变 0.35 门→zombify continue / 王权驾崩→onKingDeath / 凤凰涅槃 ash push ashTtl 240〔season3 round×1.5〕/ 九头蛇 gen<2 双幼蛇 spawnUnit silent maxHp round×0.6 + seared 门 fire>0||LAVA / scav r=6 最饿捕食者 food+=55+round(maxHp*0.5) / 商队 rel -6 + trade 纪事 / skull fx + 血泊尸骸〔SANDWORM skip〕/ 肉 0.85 + wep 0.35 / boss 0.5 / wild 0.05 三连掉落门 / delete+bumpWild+pop-swap 逆序环）', 'onKingDeath L1675-1686（kingId -1 + stability 52 + 纪事 + toast danger）', 'dropItem L5190-5213（MAX_ITEMS 门 + isWater→findLandNear(5) + itemSeq + fx spawn 2 掷 + onSound place）', 'dropMeat L5385-5402（cnt 钳 [1,3] + items cap-6 门 + 2 掷/肉 + isWater→findLandNear(3)）', 'rollChestItem constants.ts L797-800（CHEST_TIERS min/max → rollItem）', 'rollItem items.ts L226-240（ALL_ITEMS rarity 窗口过滤 + RARITY_META w 权重池 + r-=w 循环——1 掷）', 'carveRiver L12312-12420（M-U20：applyTool case river runtime 语义——BFS dist 场零掷 + 加权随机选路 1 掷/步 + 刻河/灌溉 setTerrain 级联 + carveLake 湖支 + fx spawn/toast/addEvent 尾面）', 'mutateArea L10888-10906（M-U19：civ 0.3 reroll/0.25 jumpGene 0.12 + wild baseGene/jumpGene 0.2 + fx 每命中单位 2 掷〔双门双 miss 亦掷——fx 在 if/else 外〕）', 'rerollTrait L11037-11057（旧乘数卸除/新乘数上装——maxHp round 域 + hp min/max 双钳不对称〔old 支 max(1,·) / nw 支无〕）', 'jumpGene L11085-11103（四维 0.6 门 + (rng-0.42)*2*amount 重铸 + 0.5/2 铛位 + RACES×TRAITS×JOBS 属性重算）', 'rollTrait L1467-1470（TRAITS keys 12 预设插入序随机抽）', 'baseGene L11029-11031（speciesBase 空表分支——零掷恒 {1,1,1,1}）', 'acidRain L10737-10745（cap 6 + fx acid）', 'volcano L10746-10777（锥体 hypot≤2.3 + 山口/十字/3x3 熔岩 + 引燃圈 3.5*pw + shake 6+2pw + event 双文本）', 'tsunami L10780-10785（r*2.5 钳 [6,30]）', 'blizzard L10788-10795（cap 4 + max(5,r) 钳 [5,15]）', 'meteorShower L10798-10813（clamp [1,24] + rng 散布 + x0/y0/quiet 衍生弹 + statMeteorShowers）', 'locust L10815-10822（cap 3 + r 钳 [3,10]）', 'drought L10823-10830（cap 4）', 'rainCloud L10834-10843（cap 6 + touchMeta 宿主挂点）', 'blessArea L10845-10859（hp+50%max + bless 600 + 驱瘟 + 0.4 fx 门）', 'curseArea L10861-10872（curse 500）', 'loveArea L10874-10886（repro 门 + fert 500）', 'teleportArea L10908-10924（randomLandSpot 40 试 + spark 双发）', 'wrathStorm L10926-10934（cap 3）', 'holyStorm L10936-10945（cap 3）', 'plasmaCannon L10947-10957（x0/y0 钳 + ttl round 域 + dmg + statPlasmas）', 'annihilationLight L10959-10969（colorHex #ff4d4d + statAnnihilations）', 'sandstorm L10972-10979（cap 3）', 'typhoon L10980-10987（cap 3）', 'sinkhole L10988-10996（shake 7）', 'iceAge L10999-11008（cap 2 + shake 4）', 'famineCloud L11030-11036（cap 3）', 'blackhole L11017-11023（cap 2 + statBlackholes）', 'meteor L12277-12282（x0=x+20/y0=y-34）', 'randomLandSpot L11033-11043（40 试六地形门）', 'applyTool case L13342-13455（meteor 内联抖动 + 22 委派）', 'effectsTick 消费端四支：volcano L9851-9876 / wrath L10023-10029 / holystorm L10030-10075 / typhoon L10091-10119', 'phoenixAshTick L13018-13032（M-U23：灰烬倒数 a.t-=2 节拍 len>0 门每 tick——到点 splice + spawnUnit(PHOENIX,silent) 重生体继承 rebirths + fx spawn 46/fireball y-1 30 双 fx + toast info + addEvent phoenix 纪事；S25 成功支 / S26 MAX_WILDLIFE 900 注入 null 支〔先于 trait 掷〕——L2606 主循环门镜像步进通道，L2534-2606 间门位窗口全空零效应）', 'entGroveTick L13055-13097（M-U24：树人播种引擎级通道 %10 门——①播种 2 采样/树人 ang/rr 2 掷 + building 门 skip + 界外 j 门 skip + 地形门 GRASS 0.22pm/BURNT 0.45pm/SAND 0.06pm 短路掷〔pm=春 1.3/余 1；sn===3 冬蛰整支 skip 零掷〕+ setTerrain(FOREST) 级联 + spark fx ≤6；②扑火 r=2.5 dx²+dy²≤6.25 fire=0+fireSet 删+water fx 零掷；声门 planted>0&&rng<0.35 掷位保留〔onSound 宿主 no-op——掷位不丢〕；S27 成功支全分支 / S28 冬蛰+扑火+九头蛇冬眠）', 'lichRaiseTick L13105-13131（M-U24：巫妖复生引擎级通道 %12〔冬 %8〕门——骷髅计数 >40 顶层 return + 尸体 r=4 dx²+dy²≤16 stone skip + 最陈旧 c.age>bestAge 选择 + spawnUnit(SKELETON,silent) 6 掷链 + corpses.splice + fx skull y-1 26/smoke 16 + addEvent lich events<3 门；!nu null 支〔种族上限——S26 同构语义挂账〕；S29 成功支 / S30 41 骷髅上限门）', 'hydraRegenTick L13038-13047（M-U24：九头蛇回血引擎级通道 %30 门——season===3 冬眠 return + hp<maxHp 支 hp=min(maxHp,hp+maxHp×0.02) + hurt=0 再生清创；u.dead 支通道不可达〔unitsReap 先于门摘净死单位〕；S31 回血/满血/非九头蛇三面 + S28 冬眠面）'],
+    deferred: ['collectUnitDead Task 38 在线采集（引擎 no-op 挂账）', 'chest/ITEM_TOOL/cre:/RACE_TOOL 等其余 applyTool case（各域切片挂账不变）', 'SHEEP AI 游走链 units 域切片（L4213 恒掷门——M-U21 挂账沿用）', 'lichRaiseTick !nu null 支（spawnUnit 种族上限——S26 MAX_WILDLIFE 同构语义；SKELETON 2400 注入不经济——防御分支挂账）', 'entGrove/lich/hydra u.dead 支 tick 通道不可达（unitsReap 同 tick 先于门摘净死单位——防御分支注记）', 'lichRaise 冬 %8 节律面（gate 三元式非冬 12 支 S29 已证；冬支 S28 窗口 %8=2 不触——节律算术面挂账）'],
     scenarioCount: scenarios.length,
   },
   scenarios,

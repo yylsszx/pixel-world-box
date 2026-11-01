@@ -143,6 +143,9 @@ namespace PixelWorldBox.Host
             Orch.D[PixelWorldBox.Wb.WbTickOrch.NATURE_STORM] = () => PixelWorldBox.Wb.WbBailRelay.NatureStormTick(World);             // M-U18：stormTick 已译域真调（laws.atmosphere 门顶层早退——蓝本 L2585 %40===5）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.NATURE_HYDRO] = () => PixelWorldBox.Wb.WbBailRelay.NatureHydroTick(World);             // M-U18：hydroTick 已译域真调（riverTiles>900 零掷早退——蓝本 L2587 %120===9）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.PHOENIX_ASH] = () => PixelWorldBox.Wb.WbBailRelay.PhoenixAshTick(World);               // M-U23：phoenixAshTick 已译域真调（空表安全：phoenixAshes.Count==0 蓝本 L2606 门假零效应——S19-S24 旧场景字节零漂移实证）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.ENT_GROVE] = () => PixelWorldBox.Wb.WbBailRelay.EntGroveTick(World);                   // M-U24：entGroveTick 已译域真调（空 units 安全：无树人零效应零掷——蓝本 L2608 %10 门机械保持）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.LICH_RAISE] = () => PixelWorldBox.Wb.WbBailRelay.LichRaiseTick(World);                 // M-U24：lichRaiseTick 已译域真调（骷髅>40 顶层 return + 无巫妖/尸体零效应——蓝本 L2611 %12〔冬%8〕门机械保持）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.HYDRA_REGEN] = () => PixelWorldBox.Wb.WbBailRelay.HydraRegenTick(World);               // M-U24：hydraRegenTick 已译域真调（无九头蛇零效应——蓝本 L2612 %30 门机械保持）
         }
 
         /// <summary>applyTool 大分发器宿主门（M-U14 切片一——Unity 输入域后续接位；事件驱动非 tick 槽。

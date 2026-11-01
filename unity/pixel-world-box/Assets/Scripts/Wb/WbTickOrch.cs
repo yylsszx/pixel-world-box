@@ -80,9 +80,9 @@ namespace PixelWorldBox.Wb
         public const int WORLDSIM_OCEAN = 44;         // worldsim.oceanTick L2595 %120===15
         public const int ANGEL_AURA = 45;             // angelAuraTick     L2598 %3===0
         public const int PHOENIX_ASH = 46;            // phoenixAshTick    L2600 len>0（黄金窗口恒假）
-        public const int ENT_GROVE = 47;              // entGroveTick      L2602 %10===0
-        public const int LICH_RAISE = 48;             // lichRaiseTick     L2605 %(season===3?8:12)===0
-        public const int HYDRA_REGEN = 49;            // hydraRegenTick    L2606 %30===0
+        public const int ENT_GROVE = 47;              // entGroveTick      L2608 %10===0（M-U24 实测行号校正 L2602→L2608——nature.ts 抽离偏移先例）
+        public const int LICH_RAISE = 48;             // lichRaiseTick     L2611 %(season===3?8:12)===0（M-U24 实测行号校正 L2605→L2611）
+        public const int HYDRA_REGEN = 49;            // hydraRegenTick    L2612 %30===0（M-U24 实测行号校正 L2606→L2612）
         public const int BEACHED_AQUATIC = 50;        // beachedAquaticTick L2608 每 tick
         public const int WILDLIFE_REBOUND = 51;       // wildlifeReboundTick L2610 %600===61
         public const int PREDATOR_HUNT = 52;          // predatorHuntTick  L2612 %20===7

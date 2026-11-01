@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 let fail = 0;
 try {
   execFileSync('bun', [new URL('./tool3-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
-  console.log('tool3 黄金回放 (tool3-transcript 镜像 vs tool3.json): PASS (26 场景神力生成器/消费端每步快照逐位 + volcano 锥体/引燃圈/熔岩弹/外溢 + cap 门 13 族 + bless/curse/love/teleport 四瞬态 + M-U19 mutate 特质域 + M-U20 river runtime 级联 + M-U21 grab 三场景（三 API + unitsTick 壳 + grabbedTick 全链） + M-U22 reap 六场景（尸变/王权/凤凰/九头蛇/掉落链/scav/商队） + M-U23 phoenix 双场景（灰烬倒数重生/null 支） + meteor/meteorShower x0/y0 偏移 + 超武双神力 + typhoon 推拽/间歇雷电/暴雨灭火 + holystorm 审判/缓愈/驱瘟 + units dump 位级含 trait/gene + events colorHex 流 + toasts 面)');
+  console.log('tool3 黄金回放 (tool3-transcript 镜像 vs tool3.json): PASS (31 场景神力生成器/消费端每步快照逐位 + volcano 锥体/引燃圈/熔岩弹/外溢 + cap 门 13 族 + bless/curse/love/teleport 四瞬态 + M-U19 mutate 特质域 + M-U20 river runtime 级联 + M-U21 grab 三场景（三 API + unitsTick 壳 + grabbedTick 全链） + M-U22 reap 六场景（尸变/王权/凤凰/九头蛇/掉落链/scav/商队） + M-U23 phoenix 双场景（灰烬倒数重生/null 支） + M-U24 引擎级通道三件套（entGrove 播种扑火/lichRaise 复生/hydraRegen 回血 + fireTick 风驱蔓延全译 + windAt 环流面） + meteor/meteorShower x0/y0 偏移 + 超武双神力 + typhoon 推拽/间歇雷电/暴雨灭火 + holystorm 审判/缓愈/驱瘟 + units dump 位级含 trait/gene + events colorHex 流 + toasts 面)');
 } catch (e) {
   fail++;
   console.error('tool3 黄金回放: FAIL');
@@ -31,7 +31,7 @@ try {
   execFileSync('bun', [new URL('./gen-tool3.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
   const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
   if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
-  console.log('tool3 gen det 复跑 (gen-tool3 · bun): PASS (26 场景 sanity + GameEngine 真实现 + det 字节级)');
+  console.log('tool3 gen det 复跑 (gen-tool3 · bun): PASS (31 场景 sanity + GameEngine 真实现 + det 字节级)');
 } catch (e) {
   fail++;
   console.error('tool3 gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -40,9 +40,9 @@ try {
   const g = JSON.parse(readFileSync(new URL('./golden/tool3.json', import.meta.url), 'utf8'));
   const fails = [];
   const fail2 = (m) => fails.push(m);
-  if (!Array.isArray(g.scenarios) || g.scenarios.length !== 26) fail2('场景数 ≠ 26');
+  if (!Array.isArray(g.scenarios) || g.scenarios.length !== 31) fail2('场景数 ≠ 31');
   const keys = g.scenarios.map((s) => s.key);
-  for (const want of ['volcano-default', 'volcano-power3', 'spawn-quartet', 'meteor-meteorshower', 'wrath-ticks', 'area-powers', 'static-quartet', 'caps-composite', 'typhoon-ticks', 'plasma-annihilate', 'volcano-edge', 'mutate-civ-reroll', 'mutate-wild-clamp', 'holystorm-ticks', 'river-runtime', 'grab-light', 'grab-throw', 'finger-tool'])
+  for (const want of ['volcano-default', 'volcano-power3', 'spawn-quartet', 'meteor-meteorshower', 'wrath-ticks', 'area-powers', 'static-quartet', 'caps-composite', 'typhoon-ticks', 'plasma-annihilate', 'volcano-edge', 'mutate-civ-reroll', 'mutate-wild-clamp', 'holystorm-ticks', 'river-runtime', 'grab-light', 'grab-throw', 'finger-tool', 'ent-grove', 'grove-winter', 'lich-raise', 'lich-cap', 'hydra-regen'])
     if (!keys.includes(want)) fail2(`场景 ${want} 缺失`);
   const s1 = g.scenarios.find((s) => s.key === 'volcano-default');
   if (!s1 || s1.totalDraws !== 28 || s1.fx.length !== 3 || s1.shake !== 8 || s1.units[0].dead !== 1 || s1.units[0].hurtN !== '0000000000002840' || s1.fx[0]?.seed !== 26084) fail2('volcano-default 签名缺失（28 掷 = 引燃 8 + fx 2 + 熔岩弹 2×4 + 外溢 5×2 + u900 灼烧环死 dead=1 hurtN=12 + shake=8）');
@@ -140,13 +140,33 @@ try {
   }
   const s26 = g.scenarios.find((s) => s.key === 'phoenix-rebirth-cap');
   if (!s26 || s26.totalDraws !== 4 || s26.units?.length !== 0 || s26.ashes?.length !== 0 || s26.fx?.[0]?.seed !== 40874 || s26.fx?.[1]?.seed !== 19316 || s26.stepsSnap.at(-1).rngA !== 'b4ade905') fail2('phoenix-rebirth-cap 签名缺失（4 掷纯 fx；wild0 900 注入 → spawnUnit L1298-1300 预算门 null 先于 trait 掷——无重生体；fx spawn 40874/fireball 19316 照常〔if(nu) 外〕+ 4 掷链终态）');
+  // —— M-U24 引擎级通道三件套签名（entGroveTick L13055 播种扑火 / lichRaiseTick L13105 复生 / hydraRegenTick L13038 回血）——
+  const s27 = g.scenarios.find((s) => s.key === 'ent-grove');
+  if (!s27 || s27.totalDraws !== 36 || s27.fx.length !== 5 || s27.stepsSnap.length !== 1 || s27.stepsSnap.at(-1).fireSet.length !== 0 || s27.stepsSnap.at(-1).rngA !== '5a1d27b6') fail2('ent-grove 签名缺失（36 掷 = fireTick 蔓延门 11 + 采样 12 + 地形门 4 + fx 8 + 声门 1；火墙 3 格全灭 + spark 2/water 3）');
+  if (s27) {
+    const cnt = (k) => s27.fx.filter((f) => f.kind === k).length;
+    if (cnt('spark') !== 2 || cnt('water') !== 3) fail2('ent-grove fx 面缺失（spark ×2 播种 + water ×3 扑火——0x142 链无蔓延点燃）');
+    const regs = s27.regrow ?? [];
+    if (!Array.isArray(regs) || regs.length !== 0) fail2('ent-grove regrow 面缺失（成林格 setTerrain L985 级联 delete + 夹具无 regrow——终态空表）');
+  }
+  const s28 = g.scenarios.find((s) => s.key === 'grove-winter');
+  if (!s28 || s28.totalDraws !== 17 || s28.stepsSnap.at(-1).fireSet.length !== 0 || s28.stepsSnap.at(-1).rngA !== '3fe31a86') fail2('grove-winter 签名缺失（17 掷全 fireTick 蔓延门——冬蛰播种零掷；扑火照常火墙灭）');
+  if (s28 && (s28.units?.[1]?.hp !== '0000000000005940' || s28.units?.[1]?.hurtN !== '0000000000001040')) fail2('grove-winter 冬眠面缺失（u906 hp=100 恒 L13039 return + hurt 5→4 前奏递减位级）');
+  const s29 = g.scenarios.find((s) => s.key === 'lich-raise');
+  if (!s29 || s29.totalDraws !== 9 || s29.units?.length !== 2 || s29.units?.[1]?.id !== 594 || s29.units?.[1]?.race !== 16 || s29.units?.[1]?.name !== 'Skull' || s29.units?.[1]?.maxHp !== '0000000000804b40' || s29.units?.[1]?.parity !== 1) fail2('lich-raise 签名缺失（9 掷 = 5 spawn 掷〔undead family 门 skip〕+ fx 4；骷髅 id594/race16/FIRST[16] 专池 Skull/maxHp55/parity1 位级）');
+  if (s29 && (s29.corpses?.length !== 3 || !s29.corpses.some((c) => c.stone) || !s29.corpses.some((c) => c.age === 30) || s29.events?.filter((e) => e.kind === 'lich').length !== 1 || s29.stepsSnap.at(-1).rngA !== 'd6874adf')) fail2('lich-raise 尾面缺失（c4 splice 三尸保留〔石像+界外+age5〕+ lich 纪事 events<3 首掷 + 9 掷链终态）');
+  const s30 = g.scenarios.find((s) => s.key === 'lich-cap');
+  if (!s30 || s30.totalDraws !== 0 || s30.units?.length !== 42 || s30.corpses?.length !== 1 || s30.fx?.length !== 0 || s30.stepsSnap.at(-1).rngA !== '00000143') fail2('lich-cap 签名缺失（41 骷髅 >40 顶层 return——零掷零效应铁证 rngA=seed 原值 + 尸体保留）');
+  const s31 = g.scenarios.find((s) => s.key === 'hydra-regen');
+  if (!s31 || s31.totalDraws !== 0 || s31.fx?.length !== 0 || s31.stepsSnap.at(-1).rngA !== '00000144') fail2('hydra-regen 签名缺失（零掷铁证 rngA=seed 原值）');
+  if (s31 && (s31.units?.[0]?.hp !== '0000000000805a40' || s31.units?.[0]?.hurtN !== '0000000000000000' || s31.units?.[1]?.hp !== '0000000000c07240' || s31.units?.[2]?.hp !== '0000000000001840' || s31.units?.[2]?.hurtN !== '0000000000000040')) fail2('hydra-regen 回血面缺失（u975 100→106 + hurt 清创 + u976 满血 300 恒 + u977 SHEEP 6 恒/hurt 3→2 位级）');
   const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/tool3.json', import.meta.url));
   const gl = readFileSync(new URL('./golden/tool3.json', import.meta.url));
   const md5a = createHash('md5').update(sa).digest('hex');
   const md5b = createHash('md5').update(gl).digest('hex');
   if (md5a !== md5b) fail2(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
   if (fails.length > 0) throw new Error(fails.join(' | '));
-  console.log(`tool3 台账完备 (26 场景 + volcano 锥体/双烈度/边缘钳 + cap 13 族拒面 + 超武双神力 colorHex + 黑洞计数先于 cap + bless/curse/fert 三瞬态 + M-U19 mutate 双场景 + M-U20 river runtime 级联 + M-U21 grab 三场景 + M-U22 reap 六场景 + M-U23 phoenix 双场景 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  console.log(`tool3 台账完备 (31 场景 + volcano 锥体/双烈度/边缘钳 + cap 13 族拒面 + 超武双神力 colorHex + 黑洞计数先于 cap + bless/curse/fert 三瞬态 + M-U19 mutate 双场景 + M-U20 river runtime 级联 + M-U21 grab 三场景 + M-U22 reap 六场景 + M-U23 phoenix 双场景 + M-U24 引擎级通道五场景 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
 } catch (e) {
   fail++;
   console.error('tool3 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -230,6 +250,52 @@ try {
 } catch (e) {
   fail++;
   console.error('tool3 phoenix 红证旋钮: FAIL —', String(e.message ?? e).slice(0, 200));
+}
+// —— M-U24 红证三旋钮：TOOL3_RED=grove/lich/hydra 禁三通道全写面（缺陷面 = 播种/扑火/复生/回血全缺）→ 各自场景 FAIL → 复绿 ——
+try {
+  const env = { ...process.env, TOOL3_RED: 'grove' };
+  try {
+    execFileSync('bun', [new URL('./tool3-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, env });
+    throw new Error('红证未红：TOOL3_RED=grove 仍 ALL PASS（旋钮无效）');
+  } catch (e) {
+    if (String(e.message ?? '').includes('红证未红')) throw e;
+    const out = String(e.stdout ?? '');
+    if (!out.includes('ent-grove: FAIL') || !out.includes('grove-winter: FAIL')) throw new Error('红证面不达：双 grove 场景未 FAIL');
+  }
+  console.log('tool3 红证旋钮 (TOOL3_RED=grove 禁播种+扑火+声门掷全写面 → 双 grove 场景 FAIL): PASS');
+} catch (e) {
+  fail++;
+  console.error('tool3 grove 红证旋钮: FAIL —', String(e.message ?? e).slice(0, 200));
+}
+try {
+  const env = { ...process.env, TOOL3_RED: 'lich' };
+  try {
+    execFileSync('bun', [new URL('./tool3-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, env });
+    throw new Error('红证未红：TOOL3_RED=lich 仍 ALL PASS（旋钮无效）');
+  } catch (e) {
+    if (String(e.message ?? '').includes('红证未红')) throw e;
+    const out = String(e.stdout ?? '');
+    if (!out.includes('lich-raise: FAIL')) throw new Error('红证面不达：lich-raise 未 FAIL');
+  }
+  console.log('tool3 红证旋钮 (TOOL3_RED=lich 禁复生全写面 → lich-raise FAIL): PASS');
+} catch (e) {
+  fail++;
+  console.error('tool3 lich 红证旋钮: FAIL —', String(e.message ?? e).slice(0, 200));
+}
+try {
+  const env = { ...process.env, TOOL3_RED: 'hydra' };
+  try {
+    execFileSync('bun', [new URL('./tool3-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, env });
+    throw new Error('红证未红：TOOL3_RED=hydra 仍 ALL PASS（旋钮无效）');
+  } catch (e) {
+    if (String(e.message ?? '').includes('红证未红')) throw e;
+    const out = String(e.stdout ?? '');
+    if (!out.includes('hydra-regen: FAIL')) throw new Error('红证面不达：hydra-regen 未 FAIL');
+  }
+  console.log('tool3 红证旋钮 (TOOL3_RED=hydra 禁回血全写面 → hydra-regen FAIL): PASS');
+} catch (e) {
+  fail++;
+  console.error('tool3 hydra 红证旋钮: FAIL —', String(e.message ?? e).slice(0, 200));
 }
 console.log(fail === 0 ? 'VERIFY-TOOL3: ALL PASS' : 'VERIFY-TOOL3: FAIL');
 process.exit(fail === 0 ? 0 : 1);

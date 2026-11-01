@@ -1580,6 +1580,115 @@ namespace PixelWorldBox.Wb
             }
         }
 
+        // ================= M-U24 引擎级通道同构三件套（hydraRegenTick L13038 / entGroveTick L13055 / lichRaiseTick L13105） =================
+        private const int R_ENT = 30;                                                                                      // engine types.ts R 枚举序 30（R_PHOENIX L1330 注记同源）
+        private const int R_LICH = 31;                                                                                     // engine types.ts R 枚举序 31
+
+        /// <summary>九头蛇多头再生（引擎级通道）：每 30 tick 全场九头蛇回复 2% maxHp（多头的顽强生命力；幼蛇同样受益）；
+        ///  冬季冬眠——冷血蛇虫蛰伏，代谢停滞伤口不愈。hostile 巨兽被 rust 批内核接管，回血不在 TS updateUnit 里跑。</summary>
+        public static void HydraRegenTick(WbWorld w)
+        {
+            if (w.NatureSeason() == 3) return;                                                                             // L13039（冬眠：霜降之日，多头蛇的再生之泉一并封冻）
+            for (int i = 0; i < w.units.Count; i++)                                                                        // L13040（JS for..of——通道内无增删，索引环同构）
+            {
+                WbU u = w.units[i];
+                if (u.dead != 0 || u.race != R_HYDRA) continue;                                                            // L13041（u.dead 支 tick 通道不可达——unitsReap 同 tick 先于本门摘净死单位，防御分支机械保持）
+                if (u.hp < u.maxHp)                                                                                        // L13042
+                {
+                    u.hp = System.Math.Min(u.maxHp, u.hp + u.maxHp * 0.02);                                                // L13043（300×0.02=6.0 f64 精确——S31 位级）
+                    u.hurt = 0; u.hurtN = 0.0;                                                                             // L13044（再生中不残留受创闪红——C# 双轨同步写：hurtN 主轨驱动前奏递减 + hurt 兼容轨镜像，M-U21 grabbedTick L1220 先例同构）
+                }
+            }
+        }
+
+        /// <summary>树人播种（引擎级通道）：①播种——每 10 tick 每棵树人采样周围 r∈[1,3.5] 格 2 点，
+        ///  草地/沙地/焦土概率化为森林（春播热情 ×1.3，冬季蛰停）；②扑火——熄灭周围 r=2.5 的火焰（四季在岗）。</summary>
+        public static void EntGroveTick(WbWorld w)
+        {
+            int planted = 0;                                                                                               // L13056
+            int sn = w.NatureSeason();                                                                                     // L13057（季节节律：春播冬蛰——一次采样，循环内共用）
+            for (int ui = 0; ui < w.units.Count; ui++)                                                                     // L13058（JS for..of——通道内无增删，索引环同构）
+            {
+                WbU u = w.units[ui];
+                if (u.dead != 0 || u.race != R_ENT) continue;                                                              // L13059（u.dead 支 tick 通道不可达——同上防御分支机械保持）
+                // ① 播种：一次采样 2 个点（树人是慢节奏的园丁，不猛长；冬季蛰伏跳过）
+                if (sn != 3)                                                                                               // L13061
+                {
+                    double pm = sn == 0 ? 1.3 : 1;                                                                         // L13062（春播热情：种子在暖雨里更敢扎根）
+                    for (int k = 0; k < 2; k++)                                                                            // L13063
+                    {
+                        double ang = w.Rng() * System.Math.PI * 2;                                                         // L13064
+                        double rr = 1 + w.Rng() * 2.5;                                                                     // L13065
+                        int j = WbWorld.Idx((int)System.Math.Floor(u.x + System.Math.Cos(ang) * rr), (int)System.Math.Floor(u.y + System.Math.Sin(ang) * rr));   // L13066（(int) 截断 ≡ JS Math.floor 负半轴——S27 落 (-2,0) 界外支位级）
+                        if (j < 0 || j >= WbWorld.W * WbWorld.H) continue;                                                 // L13067（界外 skip）
+                        if (w.building[j] > 0) continue;                                                                   // L13068（有建筑的格子不种——屋顶下长树成何体统；S27 u901 建筑盘支）
+                        int t = w.terrain[j];                                                                              // L13069
+                        if ((t == WbConstants.T_GRASS && w.Rng() < 0.22 * pm) || (t == WbConstants.T_BURNT && w.Rng() < 0.45 * pm) || (t == WbConstants.T_SAND && w.Rng() < 0.06 * pm))   // L13070（|| 短路——各门至多一掷）
+                        {
+                            SetTerrain(w, j, WbConstants.T_FOREST);                                                        // L13071（级联——regrow.delete/fire 灭/owner 清/refreshWaterTierAround 全面）
+                            planted++;                                                                                     // L13072
+                            if (planted <= 6) FxHook(w, "spark", (j % WbWorld.W) + 0.5, (j / WbWorld.W) + 0.5, 14);        // L13073（JS (j/W)|0 ——j 界内恒非负，C# 整除同构）
+                        }
+                    }
+                } // 蛰伏：冬雪封地时树人收拢枝桠，静候春雷
+                // ② 扑火：熄灭周围 r=2.5 的火焰（不灭岩浆——那超出树人的能力）
+                int ex = (int)System.Math.Floor(u.x);                                                                      // L13078
+                int ey = (int)System.Math.Floor(u.y);                                                                      // L13079
+                for (int dy = -2; dy <= 2; dy++)                                                                           // L13080
+                {
+                    for (int dx = -2; dx <= 2; dx++)                                                                       // L13081
+                    {
+                        if (dx * dx + dy * dy > 6.25) continue;                                                            // L13082（r=2.5²）
+                        int xx = ex + dx;                                                                                  // L13083
+                        int yy = ey + dy;                                                                                  // L13084
+                        if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                              // L13085
+                        int j2 = WbWorld.Idx(xx, yy);                                                                      // L13086
+                        if (w.fire[j2] > 0)                                                                                // L13087
+                        {
+                            w.fire[j2] = 0;                                                                                // L13088
+                            w.fireSet.Remove(j2); w.fireSetList.Remove(j2);                                                // L13089（fireSetList 插入序镜像同步——M-U9b 四写点纪律）
+                            FxHook(w, "water", xx + 0.5, yy + 0.5, 12);                                                    // L13090
+                        }
+                    }
+                }
+            }
+            if (planted > 0 && w.Rng() < 0.35) { /* L13096 this.onSound?.('ent')——宿主音效挂账 no-op（声门掷位保留——&& 短路 planted==0 零掷，掷流不丢） */ }   // L13096
+        }
+
+        /// <summary>巫妖死灵复生（引擎级通道）：每 12 tick（寒冬 8）扫描，每只巫妖拾取 r=4 内最陈旧的一具尸体，
+        ///  以死灵术唤起为骷髅；尸体被消耗，新骷髅走 spawnUnit 常规注册。蛇怪石像跳过；全图骷髅 &gt; 40 时停手。</summary>
+        public static void LichRaiseTick(WbWorld w)
+        {
+            int skeletons = 0;                                                                                             // L13106
+            for (int si = 0; si < w.units.Count; si++) { WbU s = w.units[si]; if (s.dead == 0 && s.race == WbConstants.R_SKELETON) skeletons++; }   // L13107
+            if (skeletons > 40) return;                                                                                    // L13108（军团也需节制，防尸山血海战场被无限刷穿——S30 41 骷髅门）
+            int events = 0;                                                                                                // L13109
+            for (int li = 0; li < w.units.Count; li++)                                                                     // L13110（JS for..of 访问 spawn 追加尾元——C# Count 增长同构；骷髅 race≠LICH skip）
+            {
+                WbU l = w.units[li];
+                if (l.dead != 0 || l.race != R_LICH) continue;                                                             // L13111
+                int best = -1;                                                                                             // L13112
+                double bestAge = -1;                                                                                       // L13113
+                for (int ci = 0; ci < w.corpses.Count; ci++)                                                               // L13114
+                {
+                    WbCorpse c = w.corpses[ci];                                                                            // L13115
+                    if (c.stone) continue;                                                                                 // L13116（石像：灵魂被封在石壳里——S29 c2 支）
+                    double dx = c.x - l.x;                                                                                 // L13117
+                    double dy = c.y - l.y;                                                                                 // L13118
+                    if (dx * dx + dy * dy > 16) continue;                                                                  // L13119（4²——S29 c3 支）
+                    if (c.age > bestAge) { bestAge = c.age; best = ci; }                                                   // L13120（最陈旧选择）
+                }
+                if (best < 0) continue;                                                                                    // L13122
+                WbCorpse cb = w.corpses[best];                                                                             // L13123
+                WbU nu = SpawnUnit(w, WbConstants.R_SKELETON, cb.x, cb.y, new WbSpawnOpts { silent = true });              // L13124（silent 5 掷链——trait/maxAge/flip/名 FIRST[16]/breath；undead family 门 skip——S29 黄金 9 掷位级）
+                if (nu == null) continue;                                                                                  // L13125（种族上限等分支：尸体保留，下轮再试——挂账 S26 同构语义）
+                w.corpses.RemoveAt(best);                                                                                  // L13126（splice(best,1)）
+                FxHook(w, "skull", cb.x, cb.y - 1, 26);                                                                    // L13127
+                FxHook(w, "smoke", cb.x, cb.y, 16);                                                                        // L13128
+                if (events < 3) { AddEventHook(w, "lich", "骸骨应声而起——巫妖的死灵术将亡者重新编入军团", null, cb.x, cb.y); events++; }   // L13129
+            }
+        }
+
         private static string RollItemE(WbWorld w, int minRarity, int maxRarity)
         {
             double total = 0;                                                                                               // L229

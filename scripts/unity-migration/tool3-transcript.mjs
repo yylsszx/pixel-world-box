@@ -52,7 +52,7 @@ import { readFileSync } from 'node:fs';
 import zlib from 'node:zlib';
 
 const T = { DEEP: 0, WATER: 1, SAND: 2, GRASS: 3, FOREST: 4, HILL: 5, MOUNTAIN: 6, SNOW: 7, LAVA: 8, BURNT: 9, ICE: 10, SWAMP: 11 };
-const R = { HUMAN: 0, ZOMBIE: 5, SHEEP: 6, WOLF: 7, DRAGON: 9, DEER: 10, PENGUIN: 11, CAMEL: 12, DEMON: 17, TROLL: 21, OGRE: 22, WHITEWALKER: 23, VAMPIRE: 24, KRAKEN: 25, SANDWORM: 26, BASILISK: 27, PHOENIX: 29, HYDRA: 32, CHICKEN: 33, PIG: 34, RABBIT: 35, FISH: 37 };   // M-U19：HUMAN/WOLF 入表；M-U22：reap 域八族 + isHerbivoreRace 八静态 + MONSTER_LOOT 九族（types.ts R 枚举序逐值）
+const R = { HUMAN: 0, ZOMBIE: 5, SKELETON: 16, SHEEP: 6, WOLF: 7, DRAGON: 9, DEER: 10, PENGUIN: 11, CAMEL: 12, DEMON: 17, TROLL: 21, OGRE: 22, WHITEWALKER: 23, VAMPIRE: 24, KRAKEN: 25, SANDWORM: 26, BASILISK: 27, PHOENIX: 29, ENT: 30, LICH: 31, HYDRA: 32, CHICKEN: 33, PIG: 34, RABBIT: 35, FISH: 37 };   // M-U19：HUMAN/WOLF 入表；M-U22：reap 域八族 + isHerbivoreRace 八静态 + MONSTER_LOOT 九族（types.ts R 枚举序逐值）；M-U24：SKELETON/ENT/LICH 引擎级通道三族
 const W = 256, H = 160, N = W * H;
 const isWater = (t) => t === T.DEEP || t === T.WATER;
 const walkable = (t) => t !== T.DEEP && t !== T.WATER && t !== T.MOUNTAIN && t !== T.LAVA;   // constants.ts L73-75
@@ -73,6 +73,7 @@ const RACES = {
   [R.PIG]: { undead: false, aquatic: false, flying: false, isCiv: false, predator: false },         // L195 PIG（M-U22：肉 +1 面）
   [R.SANDWORM]: { undead: false, aquatic: false, flying: false, isCiv: false, predator: true },     // L191 SANDWORM（M-U22：尸骸残留 skip 面——防御）
   [R.ZOMBIE]: { undead: true, aquatic: false, flying: false, isCiv: false },                        // L158 ZOMBIE（M-U22：zombify 后 dump 面）
+  [R.SKELETON]: { undead: true, hostile: true, aquatic: false, flying: false, lavaImmune: false, isCiv: false, predator: false, hp: 55, dmg: 14, speed: 0.075, maxAge: 9999 },   // L173 SKELETON（M-U24：lichRaise spawnUnitM 消费面——hp/dmg/speed/maxAge 属性基 + undead family 门 skip）
 };
 
 // TRAITS 消费切片（types.ts L264-276 机械转写——rerollTrait/jumpGene hpMul/dmgMul/speedMul 消费面；
@@ -113,6 +114,30 @@ const ALL_ITEM_KEYS = Object.keys(ITEM_RARITY);            // L216 ALL_ITEMS 序
 const RARITY_W = [46, 26, 15, 9, 4];                       // L48-54 RARITY_META w
 const CHEST_TIERS = { chest: { min: 0, max: 4 }, chest2: { min: 1, max: 4 }, chest3: { min: 3, max: 4 } };   // L790-794
 const FIRST0 = ['Alric', 'Berta', 'Corin', 'Dahlia', 'Edwin', 'Faye', 'Gareth', 'Hilda', 'Ivan', 'Jora', 'Kelvin', 'Lyra', 'Marcus', 'Nora', 'Osric', 'Petra'];   // names.ts L? FIRST[0] 默认名池（HYDRA 无专池 → FIRST[0]——黄金幼蛇 Kelvin/Nora 实证）
+const FIRST16 = ['Bones', 'Rattle', 'Marrow', 'Creak', 'Skull', 'Grin', 'Clatter', 'Dust', 'Hollow', 'Grim'];   // names.ts FIRST[16] SKELETON 专池（M-U24：lichRaise 骷髅名掷消费面——race 键控池表）
+const FIRST_BY_RACE = { [R.SKELETON]: FIRST16 };   // names.ts FIRST 子集（本切片消费面——SKELETON 专池；HYDRA 走 FIRST0 缺省）
+const AW = 32, AH = 20, CELL = 8;          // nature.ts L17-19 大气粗网格（Math.floor(256/8)=32 / 160/8=20）
+function hash2N(x, y, seed) {              // noise.ts L12-18（机械转写——windAtM 湍流噪声基元）
+  let h = (x * 374761393 + y * 668265263 + seed * 1442695041) | 0;
+  h = (h ^ (h >>> 13)) * 1274126177;
+  h = h ^ (h >>> 16);
+  return (h >>> 0) / 4294967296;
+}
+const smoothN = (t) => t * t * (3 - 2 * t);   // noise.ts L20
+const lerpN = (a, b, t) => a + (b - a) * t;   // noise.ts L21
+function valueNoiseN(x, y, seed) {         // noise.ts L25-37（2D value noise [0,1]）
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  const xf = x - xi;
+  const yf = y - yi;
+  const v00 = hash2N(xi, yi, seed);
+  const v10 = hash2N(xi + 1, yi, seed);
+  const v01 = hash2N(xi, yi + 1, seed);
+  const v11 = hash2N(xi + 1, yi + 1, seed);
+  const sx = smoothN(xf);
+  const sy = smoothN(yf);
+  return lerpN(lerpN(v00, v10, sx), lerpN(v01, v11, sx), sy);
+}
 
 // JOBS 消费切片（types.ts L296-305 机械转写——jumpGene jd 乘数支）
 const JOBS = [
@@ -169,6 +194,7 @@ function encodeRiverDir(dx, dy) {          // L66-71
 class BREng {
   constructor(sc) {
     this.tickCount = sc.tickCount;
+    this.seed = sc.baseSeed;               // M-U24：windAtM 湍流噪声种子（nature.seed ≡ GameEngine 构造 seed ≡ baseSeed——noise.ts L371/372 seed+313/+727 消费）
     this.shake = 0;
     this.rngA = 0;
     this.brush = sc.fixture.brush0;        // L688 类字段默认 3（gen spec.brush ?? 3）
@@ -235,7 +261,9 @@ class BREng {
     this.wildCount = new Map();                     // engine L440 wildCount（bumpWild 账本——黄金不 dump 断言但掷流无关，账面对齐）
     for (const [r, n] of (sc.fixture.wild0 ?? [])) this.wildCount.set(r, n);   // M-U23：wildCount 手术注入（wildAlive=Σvalues——spawnUnit L1300 预算门 null 支）
     for (const a of (sc.fixture.ashes0 ?? [])) this.phoenixAshes.push({ ...a });   // M-U23：灰烬瘦夹具（倒数窗口——零掷纯写）
-    this.natureSeason = 0;                          // nature.season 夹具（黄金非冬——ashTtl 240 面）
+    for (const c of (sc.fixture.corpses0 ?? [])) this.corpses.push({ ...c });   // M-U24：尸体瘦夹具（lichRaise r=4 最陈旧选择——零掷纯写）
+    for (const [bx, by, bv] of (sc.fixture.building0 ?? [])) this.building[by * W + bx] = bv;   // M-U24：建筑瘦夹具（entGrove L13068 门——零掷纯写）
+    this.natureSeason = sc.fixture.season0 ?? 0;    // M-U24：season 夹具（gen eng.nature.season 派生值快照——yearF/2%4 getter 同构消费面；lichRaise 冬 %8 门）
     this.laws = { zombieVirus: true };              // engine laws 子集（zombie 门——黄金默认 true）
   }
   rng() {
@@ -957,7 +985,87 @@ class BREng {
       u.grab = 0; u.thrVx = 0; u.thrVy = 0;  // L5377-5379
     }
   }
-  fireTickM() { }                            // L2523 截断镜像（夹具无火零效应——fireSet 空顶层早退零掷零写）
+  fireTickM() {                              // L2778-2834 机械转写（M-U24：S27/S28 步进窗首触火夹具——空桩退役）
+    if (this.fireSet.size === 0) return;     // L2779
+    const done = [];                         // L2781（fireDone 复用列表——镜像一次一 tick 分配等价）
+    for (const i of this.fireSet) {          // L2783（Set 迭代——蔓延点燃格同 tick 续访，JS Set 语义与引擎同构）
+      if (this.terrain[i] === T.ICE) throw new Error('fireTickM 镜像窗口外 ICE 融冰域触达（夹具违例——覆盖域守卫）');   // L2785-2790
+      this.fire[i] -= 5;                     // L2791
+      if (this.fire[i] <= 0) { done.push(i); continue; }   // L2792
+      if (this.building[i] > 0 && this.fire[i] < 100) { this.destroyBuilding(i); done.push(i); continue; }   // L2793-2796
+      if (this.rng() < 0.4) {                // L2798（蔓延门 1 掷/燃烧格）
+        const x = i % W;                     // L2799
+        const y = (i / W) | 0;               // L2800
+        const wcell = this.cellOfM(x, y);    // L2802
+        const [wu, wv] = this.windAtM(wcell % AW, (wcell / AW) | 0);   // L2803
+        for (let dy = -1; dy <= 1; dy++) {   // L2804
+          for (let dx = -1; dx <= 1; dx++) { // L2805
+            if (dx === 0 && dy === 0) continue;   // L2806
+            const xx = x + dx;               // L2807
+            const yy = y + dy;               // L2808
+            if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;   // L2809
+            const j = idx(xx, yy);           // L2810
+            if (this.terrain[j] === T.ICE) throw new Error('fireTickM 镜像窗口外邻格融冰域触达（夹具违例——覆盖域守卫）');   // L2812
+            const t = this.terrain[j];       // L2813
+            let p = (this.building[j] > 0 ? 0.25 : t === T.FOREST ? 0.13 : t === T.GRASS ? 0.05 : t === T.SNOW ? 0.008 : 0) * this.fireMulM(j) * 1;   // L2814（ep fire.spreadMul=1 默认值内联——M-U7m 先例）
+            const dl = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1;   // L2816（查表替代 hypot）
+            const wproj = (wu * dx + wv * dy) / dl;   // L2817
+            p *= wproj > 0.35 ? 2.1 : wproj < -0.35 ? 0.4 : 1;   // L2818（顺风 ×2.1 / 逆风 ×0.4）
+            if (p > 0 && this.rng() < p) this.ignite(j);   // L2819（p>0 短路——非燃格零掷）
+          }
+        }
+      }
+    }
+    for (const i of done) {                  // L2824（burnout 尾链）
+      this.fireSet.delete(i);                // L2825
+      this.fire[i] = 0;                      // L2826
+      const t = this.terrain[i];             // L2827
+      if (t === T.FOREST || t === T.GRASS) { // L2828
+        this.setTerrain(i, T.BURNT);         // L2829
+        this.regrow.set(i, this.tickCount + Math.round((700 + Math.floor(this.rng() * 900)) / (this.regrowMulM() * this.soilMulAt(i))));   // L2831（ep eco.regrowBase=700 内联 + 1 掷）
+      }
+    }
+  }
+  cellOfM(x, y) {                            // nature.ts L350-354（大气粗格换算）
+    const cx = Math.min(AW - 1, Math.max(0, (x / CELL) | 0));
+    const cy = Math.min(AH - 1, Math.max(0, (y / CELL) | 0));
+    return cy * AW + cx;
+  }
+  itczLatM() {                               // nature.ts L338-342（ITCZ 季节摆动——laws.seasons 恒 true 窗口）
+    const s = this.natureSeason;
+    return 0.5 + (s === 1 ? 0.062 : s === 0 ? 0.034 : s === 2 ? -0.026 : -0.062);
+  }
+  jetMulM() {                                // nature.ts L344-347（急流强度季节调制）
+    const s = this.natureSeason;
+    return s === 3 ? 1.35 : s === 1 ? 0.85 : 1;
+  }
+  fireMulM(i) {                              // nature.ts L309-317（镜像窗口 glacier≡0〔gen 手术一 fill(0)〕/rainCell≡0〔initPlates fill(0) + atmTick 未跑实证〕——季节面机械保持）
+    const s = this.natureSeason;
+    return s === 3 ? 0.45 : s === 2 ? 0.8 : s === 0 ? 1.0 : 1.3;
+  }
+  regrowMulM() {                             // nature.ts L320-324（植被复苏系数——春 0.65/夏 0.9/秋 1.15/冬 2.0）
+    const s = this.natureSeason;
+    return s === 0 ? 0.65 : s === 1 ? 0.9 : s === 2 ? 1.15 : 2.0;
+  }
+  windAtM(cx, cy) {                          // nature.ts L356-401（风矢量——pSystems/storms 构造期空表 + windPhase≡0〔L63 初值，atmTick L432 未跑〕窗口实证）
+    const lat = cy / (AH - 1);               // L357（0 北极 → 1 南极）
+    const itcz = this.itczLatM();            // L358
+    const latA = Math.abs(lat - itcz) * 2;   // L359
+    let u;                                   // L361
+    if (latA < 0.32) u = -0.55 + latA * 0.9; // L362（信风带西向）
+    else if (latA < 0.72) u = 0.75 - (latA - 0.32) * 0.35;   // L363（西风带东向）
+    else u = -0.45 + (latA - 0.72) * 1.6;    // L364（极风带西向）
+    const jet = this.jetMulM();              // L366
+    const g1 = Math.exp(-((latA - 0.38) ** 2) / 0.005);   // L367
+    const g2 = Math.exp(-((latA - 0.62) ** 2) / 0.0098);  // L368
+    u += (g1 * 0.55 + g2 * 0.95) * jet;      // L369
+    const n = valueNoiseN(cx / 6, cy / 6, this.seed + 313) - 0.5;    // L371（windPhase≡0 化简——同名噪声明）
+    const n2 = valueNoiseN(cx / 9, cy / 9, this.seed + 727) - 0.5;   // L372
+    u += n * 0.5;                            // L373
+    const v = n2 * 0.35;                     // L374
+    // L376-397 pSystems/storms 气旋环流——双表构造期空 + 窗口内无风暴生成零效应（机械保持省略——覆盖域守卫语义）
+    return [u, v];                           // L400
+  }
   rebuildBucketsM() { }                      // L2525 零掷纯函数（桶面黄金快照不审计——C# RebuildBuckets 已位精确译件）
   unitsTick() {                              // L3117-3216 JS 路径壳
     const parity = this.tickCount % 2;       // L3118
@@ -988,6 +1096,99 @@ class BREng {
       this.toast('凤凰在灰烬中重生了', 'info');   // L13028
       this.addEvent('phoenix', '烈焰冲天而起——凤凰自灰烬中振翼重生', { x: a.x, y: a.y });   // L13029
       // L13030 onSound?.('phoenix')——宿主音效 no-op（黄金窗口无消费面）
+    }
+  }
+  // ---- M-U24 hydraRegenTick L13038-13047（九头蛇回血引擎级通道：season===3 冬眠 return +
+  //        hp<maxHp 支 hp=min(maxHp, hp+maxHp×0.02) + hurt=0 再生清创——u.dead 支 tick 通道
+  //        不可达〔unitsReap 先于门摘净死单位〕。调用面：runner L2612 %30 门）----
+  hydraRegenTick() {
+    if (TOOL3_RED === 'hydra') return;         // 红证旋钮：禁回血全写面（S31 hp 100 恒值 → step units hp FAIL）
+    if (this.natureSeason === 3) return;       // L13039（冬眠：霜降之日，多头蛇的再生之泉一并封冻——S28 面）
+    for (const u of this.units) {              // L13040
+      if (u.dead || u.race !== R.HYDRA) continue;   // L13041
+      if (u.hp < u.maxHp) {                    // L13042
+        u.hp = Math.min(u.maxHp, u.hp + u.maxHp * 0.02);   // L13043（300×0.02=6.0 f64 精确）
+        u.hurt = 0;                            // L13044（再生中不残留受创闪红）
+      }
+    }
+  }
+  // ---- M-U24 entGroveTick L13055-13097（树人播种引擎级通道：①播种 2 采样/树人 ang/rr 2 掷
+  //        + building 门 + 界外 j 门 + 地形门 GRASS 0.22pm/BURNT 0.45pm/SAND 0.06pm 短路掷
+  //        〔pm 春 1.3；sn===3 冬蛰整支 skip〕+ setTerrain(FOREST) 级联 + spark fx ≤6；
+  //        ②扑火 r=2.5 零掷；声门 planted>0&&rng<0.35 掷位保留〔onSound 宿主 no-op——掷位不丢〕。
+  //        调用面：runner L2608 %10 门）----
+  entGroveTick() {
+    if (TOOL3_RED === 'grove') return;         // 红证旋钮：禁播种+扑火+声门掷全写面（S27 rngA/terrainMd5 FAIL + S28 扑火面 FAIL）
+    let planted = 0;                           // L13056
+    const sn = this.natureSeason;              // L13057（季节节律：春播冬蛰——一次采样，循环内共用）
+    for (const u of this.units) {              // L13058
+      if (u.dead || u.race !== R.ENT) continue;   // L13059
+      if (sn !== 3) {                          // L13061（蛰伏：冬雪封地时树人收拢枝桠——S28 零掷支）
+        const pm = sn === 0 ? 1.3 : 1;         // L13062（春播热情：种子在暖雨里更敢扎根）
+        for (let k = 0; k < 2; k++) {          // L13063
+          const ang = this.rng() * Math.PI * 2;   // L13064
+          const rr = 1 + this.rng() * 2.5;     // L13065
+          const j = idx(Math.floor(u.x + Math.cos(ang) * rr), Math.floor(u.y + Math.sin(ang) * rr));   // L13066
+          if (j < 0 || j >= W * H) continue;   // L13067（S27 u902 落 (-2,0) 界外支）
+          if (this.building[j] > 0) continue;  // L13068（S27 u901 落 (108,65) 建筑盘支）
+          const t = this.terrain[j];           // L13069
+          if ((t === T.GRASS && this.rng() < 0.22 * pm) || (t === T.BURNT && this.rng() < 0.45 * pm) || (t === T.SAND && this.rng() < 0.06 * pm)) {   // L13070（短路 || 各一掷）
+            this.setTerrain(j, T.FOREST);      // L13071（级联——regrow.delete/fire 灭/refreshWaterTierAround 面）
+            planted++;                         // L13072
+            if (planted <= 6) this.fx('spark', (j % W) + 0.5, ((j / W) | 0) + 0.5, 14);   // L13073
+          }
+        }
+      }
+      const ex = Math.floor(u.x);              // L13078
+      const ey = Math.floor(u.y);              // L13079
+      for (let dy = -2; dy <= 2; dy++) {       // L13080
+        for (let dx = -2; dx <= 2; dx++) {     // L13081
+          if (dx * dx + dy * dy > 6.25) continue;   // L13082（r=2.5²）
+          const xx = ex + dx;                  // L13083
+          const yy = ey + dy;                  // L13084
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;   // L13085
+          const j = idx(xx, yy);               // L13086
+          if (this.fire[j] > 0) {              // L13087
+            this.fire[j] = 0;                  // L13088
+            this.fireSet.delete(j);            // L13089
+            this.fx('water', xx + 0.5, yy + 0.5, 12);   // L13090
+          }
+        }
+      }
+    }
+    if (planted > 0 && this.rng() < 0.35) { /* L13096 onSound?.('ent')——宿主音效 no-op（声门掷位保留——掷流不丢） */ }
+  }
+  // ---- M-U24 lichRaiseTick L13105-13131（巫妖复生引擎级通道：骷髅计数 >40 顶层 return +
+  //        尸体 r=4 stone skip + 最陈旧 c.age>bestAge 选择 + spawnUnit(SKELETON,silent) 5 掷链
+  //        〔trait/maxAge/flip/名 FIRST16/breath——undead family 门 skip〕+ corpses.splice +
+  //        fx skull y-1 26 / smoke 16 + addEvent lich events<3 门。!nu null 支挂账（S26 同构
+  //        语义——SKELETON 2400 注入不经济）。调用面：runner L2611 %12〔冬 %8〕门）----
+  lichRaiseTick() {
+    if (TOOL3_RED === 'lich') return;          // 红证旋钮：禁复生全写面（S29 rngA/units/corpses FAIL）
+    let skeletons = 0;                         // L13106
+    for (const s of this.units) if (!s.dead && s.race === R.SKELETON) skeletons++;   // L13107
+    if (skeletons > 40) return;                // L13108（S30 41 骷髅上限门——尸体保留零掷）
+    let events = 0;                            // L13109
+    for (const l of this.units) {              // L13110（for..of 访问 spawn 追加尾元——race≠LICH skip，与引擎同构）
+      if (l.dead || l.race !== R.LICH) continue;   // L13111
+      let best = -1;                           // L13112
+      let bestAge = -1;                        // L13113
+      for (let i = 0; i < this.corpses.length; i++) {   // L13114
+        const c = this.corpses[i];             // L13115
+        if (c.stone) continue;                 // L13116（石像：灵魂被封在石壳里——S29 c2 支）
+        const dx = c.x - l.x;                  // L13117
+        const dy = c.y - l.y;                  // L13118
+        if (dx * dx + dy * dy > 16) continue;  // L13119（4²——S29 c3 支）
+        if (c.age > bestAge) { bestAge = c.age; best = i; }   // L13120（最陈旧选择）
+      }
+      if (best < 0) continue;                  // L13122
+      const c = this.corpses[best];            // L13123
+      const nu = this.spawnUnitM(R.SKELETON, c.x, c.y, { silent: true });   // L13124（5 掷链——S29 黄金同源）
+      if (!nu) continue;                       // L13125（种族上限等分支：尸体保留，下轮再试——挂账）
+      this.corpses.splice(best, 1);            // L13126
+      this.fx('skull', c.x, c.y - 1, 26);      // L13127
+      this.fx('smoke', c.x, c.y, 16);          // L13128
+      if (events < 3) { this.addEvent('lich', '骸骨应声而起——巫妖的死灵术将亡者重新编入军团', { x: c.x, y: c.y }); events++; }   // L13129
     }
   }
   // ---- M-U22 unitsReap L3321-3472（死亡收尸 Stage 2：逆序环五主支 + 常规收尸尾链机械转写） ----
@@ -1116,7 +1317,8 @@ class BREng {
     return u;
   }
   uniqueNameM(race) {                        // L1528-1538 子集（unitName 掷 + 重名扫描——夹具 u970 格式名不撞 FIRST 池）
-    const base = FIRST0[Math.floor(this.rng() * FIRST0.length)];   // names.ts L76-78（pool[FIRST0[race] ?? FIRST0[0]——HYDRA 无专池）
+    const pool = FIRST_BY_RACE[race] ?? FIRST0;   // names.ts L76-78（pool = FIRST[race] ?? FIRST[0]——M-U24：SKELETON 专池 FIRST16；HYDRA 无专池 → FIRST0）
+    const base = pool[Math.floor(this.rng() * pool.length)];
     let n = 0;
     for (const p of this.units) {            // L1533-1536 重名扫描（dead skip）
       if (p.dead) continue;
@@ -1381,7 +1583,7 @@ for (const sc of golden.scenarios) {
     else if (call.fn === 'beginGrab') eng.beginGrab(call.args[0], call.args[1]);             // M-U21：三 API 直调
     else if (call.fn === 'moveGrab') eng.moveGrab(call.args[0], call.args[1]);
     else if (call.fn === 'endGrab') eng.endGrab(call.args[0], call.args[1]);
-    else if (call.fn === 'unitsTick') { eng.tickCount++; eng.fireTickM(); eng.rebuildBucketsM(); eng.unitsTick(); eng.effectsTick(); if (eng.phoenixAshes.length > 0) eng.phoenixAshTick(); }   // M-U21+M-U23：主循环 L2523-2528 + L2606 截断镜像（灰烬门旧场景零效应）
+    else if (call.fn === 'unitsTick') { eng.tickCount++; eng.fireTickM(); eng.rebuildBucketsM(); eng.unitsTick(); eng.effectsTick(); if (eng.phoenixAshes.length > 0) eng.phoenixAshTick(); if (eng.tickCount % 10 === 0) eng.entGroveTick(); if (eng.tickCount % (eng.natureSeason === 3 ? 8 : 12) === 0) eng.lichRaiseTick(); if (eng.tickCount % 30 === 0) eng.hydraRegenTick(); }   // M-U21+M-U23+M-U24：主循环 L2523-2528 + L2606/L2608/L2611/L2612 截断镜像（灰烬门旧场景零效应；三新门旧窗口 %10/%12/%30 全不触零漂移）
     else if (call.fn === 'effectsTick') { eng.tickCount++; eng.effectsTick(); }
     else throw new Error(`${sc.key}: 未知调用 ${call.fn}`);
     const m = {
