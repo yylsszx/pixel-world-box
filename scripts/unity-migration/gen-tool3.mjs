@@ -227,6 +227,9 @@ function buildScenario(spec) {
   //   civ 瘦对象仅给本切片消费字段，effectsTick 无 civ 消费面零漂移）
   for (const c of spec.civs ?? []) eng.civs.push({ ...c });
   for (const [fid, f] of spec.families ?? []) eng.families.set(fid, { ...f });
+  // M-U23：灰烬/wildCount 瘦夹具直写（零掷纯写——phoenixAshTick 重生倒计时窗口 + spawnUnit L1300 预算门 null 支）
+  for (const a of spec.ashes0 ?? []) eng.phoenixAshes.push({ ...a });
+  for (const [r, n] of spec.wild0 ?? []) eng.wildCount.set(r, n);       // wildAlive()=ΣwildCount.values（engine L1572-1576）——注入 900 ≥ MAX_WILDLIFE
 
   // 手术二·快照：直写后/调用前的镜像输入面
   const fixture = {
@@ -259,6 +262,9 @@ function buildScenario(spec) {
     // M-U22：civ/family 瘦夹具快照（reapDump 场景条件键——pop--/onKingDeath/members--/rel 消费面 C# 重放注入）
     ...(spec.civs ? { civs0: spec.civs } : {}),
     ...(spec.families ? { families0: spec.families.map(([id, f]) => ({ id, ...f })) } : {}),
+    // M-U23：灰烬/wildCount 起点快照（C# 重放注入——条件键旧场景字节零变化）
+    ...(spec.ashes0 ? { ashes0: spec.ashes0 } : {}),
+    ...(spec.wild0 ? { wild0: spec.wild0 } : {}),
   };
 
   // 步进快照（calls 与 ticks 统一面——applyTool 紧凑 / effectsTick 全列）
@@ -302,6 +308,10 @@ function buildScenario(spec) {
       eng.unitsTick();
     }
     eng.effectsTick();
+    // M-U23：主循环 L2606 引擎级通道镜像（灰烬倒数到点重生——phoenixAshes.len>0 蓝本门原样；
+    //   旧场景 ashes 空门假零效应字节零变化；L2534-2606 间门位〔panic/civs/rad/front/economy/
+    //   .../angelAura〕夹具窗口全空零效应——S25 三步零掷探针实证）
+    if (eng.phoenixAshes.length > 0) eng.phoenixAshTick();
     steps.push({
       fn: spec.stepUnits ? 'unitsTick' : 'effectsTick', tick: k + 1,
       ...snapCommon(),
@@ -311,6 +321,8 @@ function buildScenario(spec) {
         // M-U21：stepUnits 场景条件扩展面（grab/thrT 位级——旧场景字节零变化）
         ...(spec.stepUnits ? { grab: u.grab ?? 0, thrT: u.thrT ?? 0 } : {}),
       })),
+      // M-U23：stepAsh 场景条件扩展面（灰烬倒数每步位级 t——旧场景字节零变化）
+      ...(spec.stepAsh ? { ashes: eng.phoenixAshes.map((a) => ({ x: f64hex(a.x), y: f64hex(a.y), t: a.t, rebirths: a.rebirths })) } : {}),
       dirty: [...eng.dirty].sort((a, b) => a - b),
     });
   }
@@ -777,7 +789,7 @@ const specs = [
     ],
     ticks: 1, stepUnits: true, reapDump: true,
     sanity: (eng) => eng.phoenixAshes.length === 1
-      && eng.phoenixAshes[0].t === 240 && eng.phoenixAshes[0].rebirths === 1
+      && eng.phoenixAshes[0].t === 238 && eng.phoenixAshes[0].rebirths === 1   // M-U23：步进通道 L2606 门首 tick 即倒数 240→238（零掷——phoenixAshTick t>0 continue）
       && eng.phoenixAshes[0].x === 100 && eng.phoenixAshes[0].y === 60
       && !eng.unitById.get(960)
       && eng.worldEvents.filter((e) => e.kind === 'phoenix').length === 2,
@@ -839,6 +851,41 @@ const specs = [
         && eng.civs[1].pop === 8;
     },
   },
+
+  // ---- S25 phoenix-rebirth（M-U23 phoenixAshTick L13018-13032 消费面成功支：灰烬倒数
+  //        a.t-=2 节拍〔1 tick=2 单位〕len>0 门每 tick → 到点 splice → spawnUnit(PHOENIX,
+  //        silent) 重生体继承 rebirths + fx spawn 46 / fireball y-1 30 双 fx + toast info +
+  //        addEvent phoenix 纪事；onSound 宿主 no-op）----
+  //   窗口设计：tickCount 1005→4 tick（1006-1009）——L2534-2606 间门位全空零效应（decals/fp
+  //   %2 空贴花、angelAura %3 单位空、checkTriggers/lich %8/%12 尸体空——探针三步零掷实证）；
+  //   ash t=8 → tick1-3 倒数 6/4/2 零掷，tick4 恰到点重生；重生体 maxHp=round(200)=200
+  //   （RDEF hp 200 / baseGene 空表零掷 {1,1,1,1}）/ parity=unitSeq%2 尾 dump 位级锚。）----
+  {
+    key: 'phoenix-rebirth', baseSeed: BASE + 25, seed: 0x00000130, tickCount: 1005, fill: 'grass',
+    ashes0: [{ x: 100, y: 60, t: 8, rebirths: 1 }],
+    ticks: 4, stepUnits: true, stepAsh: true, reapDump: true,
+    sanity: (eng, toasts) => eng.phoenixAshes.length === 0 && eng.units.length === 1
+      && eng.units[0].race === R.PHOENIX && eng.units[0].rebirths === 1
+      && eng.units[0].maxHp === 200 && eng.units[0].hp === 200
+      && eng.effects.some((e) => e.kind === 'spawn') && eng.effects.some((e) => e.kind === 'fireball')
+      && eng.worldEvents.filter((e) => e.kind === 'phoenix').length === 1
+      && toasts.some((t) => t.text === '凤凰在灰烬中重生了' && t.tone === 'info'),
+  },
+
+  // ---- S26 phoenix-rebirth-cap（null 支：wildCount 手术注入 900 ≥ MAX_WILDLIFE →
+  //        spawnUnit L1298-1300 预算门 return null〔先于 trait 掷 L1322〕→ 无重生体；
+  //        fx spawn/fireball + toast + addEvent 照常（L13026-13030 在 if(nu) 外）——
+  //        种族上限防御分支：spawnUnit null = 凤凰这次涅槃折戟，但仪式烟火依旧）----
+  {
+    key: 'phoenix-rebirth-cap', baseSeed: BASE + 26, seed: 0x00000131, tickCount: 1005, fill: 'grass',
+    ashes0: [{ x: 104, y: 58, t: 8, rebirths: 2 }],
+    wild0: [[R.SHEEP, 900]],
+    ticks: 4, stepUnits: true, stepAsh: true, reapDump: true,
+    sanity: (eng, toasts) => eng.units.length === 0 && eng.phoenixAshes.length === 0
+      && eng.effects.some((e) => e.kind === 'spawn') && eng.effects.some((e) => e.kind === 'fireball')
+      && eng.worldEvents.filter((e) => e.kind === 'phoenix').length === 1
+      && toasts.some((t) => t.text === '凤凰在灰烬中重生了'),
+  },
 ];
 
 // ---- det 双跑 + 双写（M-U22：TOOL3_ONLY/TOOL3_SEED 单场景种子扫描钩子——scan-nature2-seed 先例） ----
@@ -875,8 +922,8 @@ const out = {
     protocol: 'GameEngine 构造 + 手术式夹具直写（fill 面 grass + terrain/fire/radiate/units 瘦直写 + brush/五成就计数直写）+ rngA 尾置清零起流 + calls 直调 / ticks 步进（tickCount++ 头 + effectsTick——主循环 L2508 序）混合链，每步统一快照（applyTool 紧凑 / effectsTick 全列 fx+units+dirty）',
     rng: 'eng.rngA 单流；fx 恒 2 掷（seed+dir）；cap 门 filter 快照零掷；volcano 引燃圈 1 掷/点燃 + 消费端熔岩弹 age%14 双掷 + 外溢 age%6 双掷；wrath/typhoon 消费端 lightning（n=1：fx 2+中心点燃 1+四邻 4+邻格点燃支）；holystorm 恒真门 1.2 掷位保持 + 采样双掷 + 单位门掷（审判 0.2/缓愈 0.08）；bless/curse 0.4 门 + love 0.5 门 1 掷/单位 + fx 2 掷；teleport randomLandSpot 2 掷/尝试；mutate：civ 0.3 门 1 掷 + rerollTrait rollTrait 1 掷 + 0.25 门 1 掷 + jumpGene 4 门掷/命中维值掷；wild 直 jumpGene 4 门掷/命中维值掷〔baseGene 空表零掷〕；命中单位 fx 2 掷（门 miss 亦掷——L10901 fx 在 if/else 外）；mulberry 纯数学反解 total',
     math: 'Math.hypot（volcano 锥体整数极距 / area 神力单位环〔含 mutate L10891〕 / plasma dist=hypot(7,9) / annihilate dist=hypot(8,11)——bun 原生 fdlibm；C# FdHypot 位精确件对账）+ Math.round（plasma ttl=round(dist*1.5) + mutate rerollTrait/jumpGene maxHp round 域——JS .5 上取整；C# JsRound 禁银行家舍入）+ Math.max/min 铛位（mutate 基因 0.5/2 恰等面 + maxHp≥1）+ 纯算术域',
-    domains: ['unitsReap L3321-3472（M-U22：僵尸尸变 0.35 门→zombify continue / 王权驾崩→onKingDeath / 凤凰涅槃 ash push ashTtl 240〔season3 round×1.5〕/ 九头蛇 gen<2 双幼蛇 spawnUnit silent maxHp round×0.6 + seared 门 fire>0||LAVA / scav r=6 最饿捕食者 food+=55+round(maxHp*0.5) / 商队 rel -6 + trade 纪事 / skull fx + 血泊尸骸〔SANDWORM skip〕/ 肉 0.85 + wep 0.35 / boss 0.5 / wild 0.05 三连掉落门 / delete+bumpWild+pop-swap 逆序环）', 'onKingDeath L1675-1686（kingId -1 + stability 52 + 纪事 + toast danger）', 'dropItem L5190-5213（MAX_ITEMS 门 + isWater→findLandNear(5) + itemSeq + fx spawn 2 掷 + onSound place）', 'dropMeat L5385-5402（cnt 钳 [1,3] + items cap-6 门 + 2 掷/肉 + isWater→findLandNear(3)）', 'rollChestItem constants.ts L797-800（CHEST_TIERS min/max → rollItem）', 'rollItem items.ts L226-240（ALL_ITEMS rarity 窗口过滤 + RARITY_META w 权重池 + r-=w 循环——1 掷）', 'carveRiver L12312-12420（M-U20：applyTool case river runtime 语义——BFS dist 场零掷 + 加权随机选路 1 掷/步 + 刻河/灌溉 setTerrain 级联 + carveLake 湖支 + fx spawn/toast/addEvent 尾面）', 'mutateArea L10888-10906（M-U19：civ 0.3 reroll/0.25 jumpGene 0.12 + wild baseGene/jumpGene 0.2 + fx 每命中单位 2 掷〔双门双 miss 亦掷——fx 在 if/else 外〕）', 'rerollTrait L11037-11057（旧乘数卸除/新乘数上装——maxHp round 域 + hp min/max 双钳不对称〔old 支 max(1,·) / nw 支无〕）', 'jumpGene L11085-11103（四维 0.6 门 + (rng-0.42)*2*amount 重铸 + 0.5/2 铛位 + RACES×TRAITS×JOBS 属性重算）', 'rollTrait L1467-1470（TRAITS keys 12 预设插入序随机抽）', 'baseGene L11029-11031（speciesBase 空表分支——零掷恒 {1,1,1,1}）', 'acidRain L10737-10745（cap 6 + fx acid）', 'volcano L10746-10777（锥体 hypot≤2.3 + 山口/十字/3x3 熔岩 + 引燃圈 3.5*pw + shake 6+2pw + event 双文本）', 'tsunami L10780-10785（r*2.5 钳 [6,30]）', 'blizzard L10788-10795（cap 4 + max(5,r) 钳 [5,15]）', 'meteorShower L10798-10813（clamp [1,24] + rng 散布 + x0/y0/quiet 衍生弹 + statMeteorShowers）', 'locust L10815-10822（cap 3 + r 钳 [3,10]）', 'drought L10823-10830（cap 4）', 'rainCloud L10834-10843（cap 6 + touchMeta 宿主挂点）', 'blessArea L10845-10859（hp+50%max + bless 600 + 驱瘟 + 0.4 fx 门）', 'curseArea L10861-10872（curse 500）', 'loveArea L10874-10886（repro 门 + fert 500）', 'teleportArea L10908-10924（randomLandSpot 40 试 + spark 双发）', 'wrathStorm L10926-10934（cap 3）', 'holyStorm L10936-10945（cap 3）', 'plasmaCannon L10947-10957（x0/y0 钳 + ttl round 域 + dmg + statPlasmas）', 'annihilationLight L10959-10969（colorHex #ff4d4d + statAnnihilations）', 'sandstorm L10972-10979（cap 3）', 'typhoon L10980-10987（cap 3）', 'sinkhole L10988-10996（shake 7）', 'iceAge L10999-11008（cap 2 + shake 4）', 'famineCloud L11030-11036（cap 3）', 'blackhole L11017-11023（cap 2 + statBlackholes）', 'meteor L12277-12282（x0=x+20/y0=y-34）', 'randomLandSpot L11033-11043（40 试六地形门）', 'applyTool case L13342-13455（meteor 内联抖动 + 22 委派）', 'effectsTick 消费端四支：volcano L9851-9876 / wrath L10023-10029 / holystorm L10030-10075 / typhoon L10091-10119'],
-    deferred: ['PhoenixAshTick L13018 消费面（凤凰重生 spawnUnit 链——ash push 已覆盖，重生倒计时挂账）', 'collectUnitDead Task 38 在线采集（引擎 no-op 挂账）', 'chest/ITEM_TOOL/cre:/RACE_TOOL 等其余 applyTool case（各域切片挂账不变）', 'SHEEP AI 游走链 units 域切片（L4213 恒掷门——M-U21 挂账沿用）'],
+    domains: ['unitsReap L3321-3472（M-U22：僵尸尸变 0.35 门→zombify continue / 王权驾崩→onKingDeath / 凤凰涅槃 ash push ashTtl 240〔season3 round×1.5〕/ 九头蛇 gen<2 双幼蛇 spawnUnit silent maxHp round×0.6 + seared 门 fire>0||LAVA / scav r=6 最饿捕食者 food+=55+round(maxHp*0.5) / 商队 rel -6 + trade 纪事 / skull fx + 血泊尸骸〔SANDWORM skip〕/ 肉 0.85 + wep 0.35 / boss 0.5 / wild 0.05 三连掉落门 / delete+bumpWild+pop-swap 逆序环）', 'onKingDeath L1675-1686（kingId -1 + stability 52 + 纪事 + toast danger）', 'dropItem L5190-5213（MAX_ITEMS 门 + isWater→findLandNear(5) + itemSeq + fx spawn 2 掷 + onSound place）', 'dropMeat L5385-5402（cnt 钳 [1,3] + items cap-6 门 + 2 掷/肉 + isWater→findLandNear(3)）', 'rollChestItem constants.ts L797-800（CHEST_TIERS min/max → rollItem）', 'rollItem items.ts L226-240（ALL_ITEMS rarity 窗口过滤 + RARITY_META w 权重池 + r-=w 循环——1 掷）', 'carveRiver L12312-12420（M-U20：applyTool case river runtime 语义——BFS dist 场零掷 + 加权随机选路 1 掷/步 + 刻河/灌溉 setTerrain 级联 + carveLake 湖支 + fx spawn/toast/addEvent 尾面）', 'mutateArea L10888-10906（M-U19：civ 0.3 reroll/0.25 jumpGene 0.12 + wild baseGene/jumpGene 0.2 + fx 每命中单位 2 掷〔双门双 miss 亦掷——fx 在 if/else 外〕）', 'rerollTrait L11037-11057（旧乘数卸除/新乘数上装——maxHp round 域 + hp min/max 双钳不对称〔old 支 max(1,·) / nw 支无〕）', 'jumpGene L11085-11103（四维 0.6 门 + (rng-0.42)*2*amount 重铸 + 0.5/2 铛位 + RACES×TRAITS×JOBS 属性重算）', 'rollTrait L1467-1470（TRAITS keys 12 预设插入序随机抽）', 'baseGene L11029-11031（speciesBase 空表分支——零掷恒 {1,1,1,1}）', 'acidRain L10737-10745（cap 6 + fx acid）', 'volcano L10746-10777（锥体 hypot≤2.3 + 山口/十字/3x3 熔岩 + 引燃圈 3.5*pw + shake 6+2pw + event 双文本）', 'tsunami L10780-10785（r*2.5 钳 [6,30]）', 'blizzard L10788-10795（cap 4 + max(5,r) 钳 [5,15]）', 'meteorShower L10798-10813（clamp [1,24] + rng 散布 + x0/y0/quiet 衍生弹 + statMeteorShowers）', 'locust L10815-10822（cap 3 + r 钳 [3,10]）', 'drought L10823-10830（cap 4）', 'rainCloud L10834-10843（cap 6 + touchMeta 宿主挂点）', 'blessArea L10845-10859（hp+50%max + bless 600 + 驱瘟 + 0.4 fx 门）', 'curseArea L10861-10872（curse 500）', 'loveArea L10874-10886（repro 门 + fert 500）', 'teleportArea L10908-10924（randomLandSpot 40 试 + spark 双发）', 'wrathStorm L10926-10934（cap 3）', 'holyStorm L10936-10945（cap 3）', 'plasmaCannon L10947-10957（x0/y0 钳 + ttl round 域 + dmg + statPlasmas）', 'annihilationLight L10959-10969（colorHex #ff4d4d + statAnnihilations）', 'sandstorm L10972-10979（cap 3）', 'typhoon L10980-10987（cap 3）', 'sinkhole L10988-10996（shake 7）', 'iceAge L10999-11008（cap 2 + shake 4）', 'famineCloud L11030-11036（cap 3）', 'blackhole L11017-11023（cap 2 + statBlackholes）', 'meteor L12277-12282（x0=x+20/y0=y-34）', 'randomLandSpot L11033-11043（40 试六地形门）', 'applyTool case L13342-13455（meteor 内联抖动 + 22 委派）', 'effectsTick 消费端四支：volcano L9851-9876 / wrath L10023-10029 / holystorm L10030-10075 / typhoon L10091-10119', 'phoenixAshTick L13018-13032（M-U23：灰烬倒数 a.t-=2 节拍 len>0 门每 tick——到点 splice + spawnUnit(PHOENIX,silent) 重生体继承 rebirths + fx spawn 46/fireball y-1 30 双 fx + toast info + addEvent phoenix 纪事；S25 成功支 / S26 MAX_WILDLIFE 900 注入 null 支〔先于 trait 掷〕——L2606 主循环门镜像步进通道，L2534-2606 间门位窗口全空零效应）'],
+    deferred: ['collectUnitDead Task 38 在线采集（引擎 no-op 挂账）', 'chest/ITEM_TOOL/cre:/RACE_TOOL 等其余 applyTool case（各域切片挂账不变）', 'SHEEP AI 游走链 units 域切片（L4213 恒掷门——M-U21 挂账沿用）'],
     scenarioCount: scenarios.length,
   },
   scenarios,
