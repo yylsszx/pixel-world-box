@@ -3480,6 +3480,224 @@ namespace PixelWorldBox.Wb
             }
         }
 
+        // ================= 地形整形与邻域神力域（七函数机械翻译——M-U13） =================
+        // 蓝本：boom L12292-12306 / createOasis L12444-12486 / smoothTerrain L12489-12520 /
+        //   roughenTerrain L12521-12563 / plagueArea L12594-12599 / healArea L12600-12622 /
+        //   killArea L12623-12626。本体先行建库（annihilate L9559 M-U10h 先例同构）——调用面
+        //   applyTool L13230 大分发器未译，随 M-U14 切片接入。依赖面：SetTerrain 全级联
+        //   （L1959 已译件）/ WbCivSim.DestroyBuilding（WbCivSim L750 已译件）/ MeltIce（L2969
+        //   已译件）/ FxOptHook（M-U7s o 面先例）/ Toast+AddEvent（事件流纪律③）/ w.variant+
+        //   w.brush（WbWorld L498/L499 字段只加）/ RStats[].undead（IsEnemy L2088 同源查表）。
+        // 数学面：Math.hypot → FdHypot（WbMath L43——bun fdlibm 口径；boom 像素距/oasis 整数
+        //   极距/smooth·rough 格距全无 +0.5 偏移，floodArea M-U11 格角距同构）。
+        // 掷数序：boom 零掷（fx 2 掷/次）；createOasis 浅滩 1 掷/格 + 环带沙格 1 掷（+棕榈
+        //   命中 1）+ 环带草格 1 掷 + fx×2（4 掷）；roughen 内部格 1 掷（variant）+ 边缘格
+        //   1 掷（0.5 门）+ 被选边缘 1 掷（邻居采样）；heal fx 2 掷；plague/kill/smooth 零掷。
+        public static void Boom(WbWorld w, double x, double y, double r = 2.4)
+        {
+            double rr = System.Math.Max(1.0, System.Math.Min(8.0, r));                                              // L12293（C# Max/Min int-double 重载歧义避讳——显式 1.0/8.0）
+            foreach (WbU u in w.units)
+            {
+                double d = WbMath.FdHypot(u.x - x, u.y - y);                                                        // L12295（像素距）
+                if (d < rr + 0.5) { u.hp -= 160.0 * System.Math.Max(0.1, 1.0 - d / (rr + 0.5)); u.hurtN = 30; if (u.hp <= 0) u.dead = 1; }   // L12296（严格 < 恰等不含——S1 u2 边界探针；hurt 语义域 hurtN——fire 域 L3543 先例；dead bool→int 镜像）
+            }
+            for (int yy = (int)System.Math.Floor(y - rr); yy <= y + rr; yy++)                                       // L12298（双上界 y+rr number 语义——annihilate L9571 先例）
+            {
+                for (int xx = (int)System.Math.Floor(x - rr); xx <= x + rr; xx++)
+                {
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                           // L12300
+                    int i = yy * WbWorld.W + xx;                                                                    // L12301（idx 内联——blackhole L10213 先例）
+                    if (WbMath.FdHypot(xx - x, yy - y) < rr && w.building[i] > 0) WbCivSim.DestroyBuilding(w, i);   // L12302（格心距无 +0.5 偏移；destroyBuilding smoke 2 掷级联）
+                }
+            }
+            FxOptHook(w, "explosion", x, y, 22, null, null, null, rr, null);                                        // L12304（opts {r:rr}——M-U7s o 面先例；2 掷 seed/dir）
+            /* onSound('boom') —— 宿主回调（L12305 注记） */
+            w.shake = System.Math.Max(w.shake, System.Math.Min(9.0, WbMath.JsRound(2.0 + rr)));                     // L12306（min(9,round(2+rr)) 封顶——orbital shake=9 L10387 同构）
+        }
+
+        public static void CreateOasis(WbWorld w, double wx, double wy)
+        {
+            int cx = (int)System.Math.Max(1.0, System.Math.Min((double)(WbWorld.W - 2), System.Math.Floor(wx)));    // L12445
+            int cy = (int)System.Math.Max(1.0, System.Math.Min((double)(WbWorld.H - 2), System.Math.Floor(wy)));    // L12446
+            double pondR = System.Math.Max(2.0, System.Math.Min(6.0, (double)w.brush));                             // L12447（brush 字段默认 3——WbWorld L499 M-U13 只加）
+            double ringR = pondR + 2.0;                                                                             // L12448
+            byte center = w.terrain[cy * WbWorld.W + cx];                                                           // L12451（idx 内联）
+            bool barren = center == WbConstants.T_SAND || center == WbConstants.T_BURNT;                            // L12452
+            int greened = 0;                                                                                        // L12453（greened 蓝本计数——黄金 dump 不入，保留写面机械保真）
+            int palms = 0;                                                                                          // L12454
+            for (int dy = (int)-ringR; dy <= ringR; dy++)                                                           // L12455（-ringR number 语义——brush∈[2,6] 恒整）
+            {
+                for (int dx = (int)-ringR; dx <= ringR; dx++)
+                {
+                    int xx = cx + dx, yy = cy + dy;                                                                 // L12458
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                           // L12459
+                    double d = WbMath.FdHypot(dx, yy - cy);                                                         // L12460（整数极距 FdHypot(dx,dy)——dy 形参同名避讳镜像）
+                    int j = yy * WbWorld.W + xx;                                                                    // L12461
+                    if (d <= pondR * 0.55)                                                                          // L12462 泉眼清潭
+                    {
+                        if (w.terrain[j] != WbConstants.T_MOUNTAIN) SetTerrain(w, j, WbConstants.T_WATER);          // L12463（MOUNTAIN 幸存门）
+                    }
+                    else if (d <= pondR)                                                                            // L12465 浅滩
+                    {
+                        if (w.terrain[j] != WbConstants.T_MOUNTAIN && w.Rng() < 0.8) SetTerrain(w, j, WbConstants.T_WATER);   // L12466（短路——山格零掷）
+                    }
+                    else if (d <= ringR)                                                                            // L12467 草木环带
+                    {
+                        byte t = w.terrain[j];                                                                      // L12468
+                        if (t == WbConstants.T_SAND || t == WbConstants.T_BURNT)                                    // L12469
+                        {
+                            SetTerrain(w, j, WbConstants.T_GRASS);                                                  // L12470
+                            greened++;                                                                              // L12471
+                            if (w.Rng() < 0.3) { SetTerrain(w, j, WbConstants.T_FOREST); palms++; }                 // L12472（棕榈 30%）
+                        }
+                        else if (t == WbConstants.T_GRASS && w.Rng() < 0.08)                                        // L12474（GRASS 8% 支——1 掷/格）
+                        {
+                            SetTerrain(w, j, WbConstants.T_FOREST);                                                 // L12475
+                            palms++;                                                                                // L12476
+                        }
+                    }
+                }
+            }
+            // 绿洲不清除领土/建筑（文明疆域内点绿洲只是美化——蓝本 L12481 注记）
+            FxOptHook(w, "spawn", wx, wy, 34, null, null, null, null, null);                                        // L12482（fx spawn×2——4 掷）
+            FxOptHook(w, "spawn", wx, wy - 1, 40, null, null, null, null, null);                                    // L12483
+            w.Toast(barren ? "荒漠中涌出一泓清泉，绿意环绕" : "清泉在草木间闪烁", "good");                          // L12484（toast 宿主回调——纪律③事件流收集）
+            string evText = barren ? (palms > 0 ? $"荒漠中诞生了一片绿洲，{palms} 株棕榈亭亭而立" : "荒漠中诞生了一片绿洲") : "一处泉眼被点化，波光潋滟";   // L12485（模板串拆平——嵌套插值避讳）
+            w.AddEvent("oasis", evText, null, cx + 0.5, cy + 0.5);                                                  // L12485（坐标 cx+0.5 像素中心——addEvent L13995 unshift 面）
+            /* onSound('heal') —— 宿主回调（L12486 注记） */
+        }
+
+        public static void SmoothTerrain(WbWorld w, double wx, double wy, double r)
+        {
+            if (r < 1) r = 1;                                                                                       // L12490
+            // 先算后写（众数必须基于原图——L12491 注记）：双平行表镜像 JS [tileIdx, newTerrain][] 元组序
+            var changesI = new System.Collections.Generic.List<int>();
+            var changesT = new System.Collections.Generic.List<byte>();
+            for (int yy = (int)System.Math.Floor(wy - r); yy <= wy + r; yy++)                                       // L12492
+            {
+                for (int xx = (int)System.Math.Floor(wx - r); xx <= wx + r; xx++)
+                {
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                           // L12494
+                    if (WbMath.FdHypot(xx - wx, yy - wy) > r) continue;                                             // L12495（格距）
+                    int i = yy * WbWorld.W + xx;                                                                    // L12496
+                    var counts = new System.Collections.Generic.Dictionary<int, int>();                             // L12498（3×3 邻域计数——JS Map 插入序 tie-break：Dictionary 无删枚举序=插入序同构）
+                    for (int dy2 = -1; dy2 <= 1; dy2++)
+                    {
+                        for (int dx2 = -1; dx2 <= 1; dx2++)
+                        {
+                            int nx = xx + dx2, ny = yy + dy2;                                                       // L12501
+                            if (nx < 0 || ny < 0 || nx >= WbWorld.W || ny >= WbWorld.H) continue;                   // L12502
+                            byte t = w.terrain[ny * WbWorld.W + nx];                                                // L12503
+                            counts[t] = (counts.TryGetValue(t, out int c0) ? c0 : 0) + 1;                           // L12504
+                        }
+                    }
+                    byte bestT = w.terrain[i];                                                                      // L12507（bestT 初值=自身）
+                    int bestC = 0;                                                                                  // L12508
+                    foreach (System.Collections.Generic.KeyValuePair<int, int> kv in counts)                        // L12510（首现最大者胜出——严格 > 与蓝本同构）
+                    {
+                        if (kv.Value > bestC) { bestC = kv.Value; bestT = (byte)kv.Key; }                           // L12511
+                    }
+                    if (bestT != w.terrain[i] && bestC >= 5) { changesI.Add(i); changesT.Add(bestT); }              // L12513（过半门 ≥5——只抹噪声边缘）
+                }
+            }
+            for (int k = 0; k < changesI.Count; k++) SetTerrain(w, changesI[k], changesT[k]);                       // L12516（批量应用——级联随件）
+        }
+
+        public static void RoughenTerrain(WbWorld w, double wx, double wy, double r)
+        {
+            if (r < 1) r = 1;                                                                                       // L12522
+            var neighbors = new System.Collections.Generic.List<int>();                                             // L12523
+            for (int yy = (int)System.Math.Floor(wy - r); yy <= wy + r; yy++)                                       // L12524
+            {
+                for (int xx = (int)System.Math.Floor(wx - r); xx <= wx + r; xx++)
+                {
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                           // L12526
+                    if (WbMath.FdHypot(xx - wx, yy - wy) > r) continue;                                             // L12527
+                    int i = yy * WbWorld.W + xx;                                                                    // L12528
+                    var kinds = new System.Collections.Generic.HashSet<byte>();                                     // L12529（邻域种类面——JS Set size 镜像）
+                    for (int dy2 = -1; dy2 <= 1; dy2++)
+                    {
+                        for (int dx2 = -1; dx2 <= 1; dx2++)
+                        {
+                            int nx = xx + dx2, ny = yy + dy2;                                                       // L12532
+                            if (nx < 0 || ny < 0 || nx >= WbWorld.W || ny >= WbWorld.H) continue;                   // L12533
+                            kinds.Add(w.terrain[ny * WbWorld.W + nx]);                                              // L12534
+                        }
+                    }
+                    if (kinds.Count < 2)                                                                            // L12536 内部格
+                    {
+                        w.variant[i] = (byte)System.Math.Floor(w.Rng() * 256.0);                                    // L12540（色抖重掷——1 掷；w.variant M-U13 字段只加）
+                        w.MarkDirty(i);                                                                             // L12541（markDirty 五格面——WbWorld L812 已译件）
+                        continue;                                                                                   // L12539
+                    }
+                    if (w.Rng() < 0.5) neighbors.Add(i);                                                            // L12544（边缘吸入 0.5 门——1 掷）
+                }
+            }
+            foreach (int i in neighbors)                                                                            // L12547 二遍
+            {
+                int x = i % WbWorld.W;                                                                              // L12548
+                int y = i / WbWorld.W;                                                                              // L12549
+                var opts = new System.Collections.Generic.List<int>();                                              // L12551（8 邻域含对角）
+                for (int dy2 = -1; dy2 <= 1; dy2++)
+                {
+                    for (int dx2 = -1; dx2 <= 1; dx2++)
+                    {
+                        if (dx2 == 0 && dy2 == 0) continue;                                                         // L12554
+                        int nx = x + dx2, ny = y + dy2;                                                             // L12555
+                        if (nx < 0 || ny < 0 || nx >= WbWorld.W || ny >= WbWorld.H) continue;                       // L12556
+                        opts.Add(ny * WbWorld.W + nx);                                                              // L12557
+                    }
+                }
+                if (opts.Count > 0)                                                                                 // L12560
+                {
+                    int src = opts[(int)System.Math.Floor(w.Rng() * opts.Count)];                                   // L12561（邻居随机采样——1 掷）
+                    if (w.terrain[src] != w.terrain[i]) SetTerrain(w, i, w.terrain[src]);                           // L12562（异地形才写——同格跳零掷）
+                }
+            }
+        }
+
+        public static void PlagueArea(WbWorld w, double x, double y, double r)
+        {
+            foreach (WbU u in w.units)
+            {
+                // L12595-12597（undead 门 RStats[].undead——IsEnemy L2088 同源查表；immune 特质豁免
+                // TraitsAll 查表——L739 spreadPlague 免疫先例同构；u.trait string 语义域 traitName）
+                if (WbMath.FdHypot(u.x - x, u.y - y) < r && !RStats[u.race].undead
+                    && !(u.traitName != null && TraitsAll.TryGetValue(u.traitName, out WbTrait td) && td.immune)) u.infected = 1;
+            }
+        }
+
+        public static void HealArea(WbWorld w, double x, double y, double r)
+        {
+            foreach (WbU u in w.units)                                                                              // L12601
+            {
+                if (WbMath.FdHypot(u.x - x, u.y - y) <= r) { u.hp = u.maxHp; u.infected = 0; u.hurtN = 0.0; }       // L12602-12603（满血三清——infected bool→int 镜像）
+            }
+            for (int yy = (int)System.Math.Floor(y - r); yy <= y + r; yy++)                                         // L12605
+            {
+                for (int xx = (int)System.Math.Floor(x - r); xx <= x + r; xx++)
+                {
+                    if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                           // L12607
+                    if (WbMath.FdHypot(xx - x, yy - y) > r) continue;                                               // L12608
+                    int i = yy * WbWorld.W + xx;                                                                    // L12609
+                    if (w.fire[i] > 0) { w.fire[i] = 0; w.fireSet.Remove(i); w.fireSetList.Remove(i); }             // L12611-12612（熄火——fireSetList 插入序镜像同步，SetTerrain L992 先例）
+                    if (w.terrain[i] == WbConstants.T_BURNT) SetTerrain(w, i, WbConstants.T_GRASS);                 // L12613（焦土复苏——setTerrain 全级联）
+                    if (w.terrain[i] == WbConstants.T_ICE) MeltIce(w, i);                                           // L12614（融冰复苏——L2969 已译件）
+                    if (w.radiate[i] > 0) { w.radiate[i] = 0; w.radSet.Remove(i); w.MarkDirty(i); }                 // L12615（清辐射——radSet Map delete 镜像）
+                }
+            }
+            FxOptHook(w, "heart", x, y - 1, 36, null, null, null, null, null);                                      // L12618（fx heart 2 掷）
+            /* onSound('heal') —— 宿主回调（L12619 注记） */
+        }
+
+        public static void KillArea(WbWorld w, double x, double y, double r)
+        {
+            foreach (WbU u in w.units)
+            {
+                if (u.dead == 0 && WbMath.FdHypot(u.x - x, u.y - y) <= r) u.dead = 1;                               // L12625（!dead → ==0 镜像；u.dead=true bool→int）
+            }
+        }
+
         // ================= 敌意判定域（isEnemyFast/isEnemy 机械翻译——M-U7m 扫描域批次二） =================
         // isEnemyFast L2070-2081（桶扫描专用快速通道）：野生 vs 野生命中 LUT（引擎私有缓存随 World 实例——
         // LUT 键仅 race 对，鲨鱼地形分支 L2113 依赖被扫者站位——跨格缓存污染为蓝本既有行为，机械保持）

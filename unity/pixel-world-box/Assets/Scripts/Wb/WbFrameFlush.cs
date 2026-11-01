@@ -208,6 +208,7 @@ namespace PixelWorldBox.Wb
             for (int i = 0; i < W * H; i++)
             {
                 st.terrain[i] = w.terrain[i];
+                st.variant[i] = w.variant[i];         // byte→byte 直拷（M-U13：roughenTerrain L12540 sim 写点亮——桥不覆盖面注记清偿）
                 st.road[i] = w.road[i];               // byte→int 升宽
                 st.owner[i] = w.owner[i];             // short→int 升宽
                 st.radiate[i] = w.radiate[i];         // byte→double 升宽

@@ -428,6 +428,7 @@ namespace PixelWorldBox.Host
             PixelWorldBox.Wb.WbWorldGenResult gen = PixelWorldBox.Wb.WbWorldgen.GenerateWorld(unchecked((int)seed));
             System.Array.Copy(gen.Terrain, St.terrain, St.terrain.Length);   // L776 this.terrain = gen.terrain
             System.Array.Copy(gen.Variant, St.variant, St.variant.Length);   // L777 this.variant = gen.variant
+            System.Array.Copy(gen.Variant, World.variant, World.variant.Length);   // L777 sim 侧同源灌入（M-U13：w.variant 字段只加——roughenTerrain L12540 写点 + SyncWorldFace 桥消费）
             System.Array.Copy(gen.Temp, World.tempMap, World.tempMap.Length); // L778 this.tempMap = gen.temp（M-U9a：暖候消融门 L2944 消费面——iceTick 已译域）
             // moist（L779）sim 域不消费——overlay 温湿图自有黄金链直灌，宿主不暂存
             // —— M-U7k 河域：generate() L905-949 宿主等价全链（蓝本序保真）——

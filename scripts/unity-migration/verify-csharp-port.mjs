@@ -2061,6 +2061,69 @@ var ecoVerifyFail = 0;
   }
 }
 
-const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0 && fireVerifyFail === 0 && powerVerifyFail === 0 && rainfloodVerifyFail === 0 && ecoVerifyFail === 0;
+// 段 36：M-U13 地形整形与邻域神力域（brush-transcript 镜像 12 场景逐位 + gen det 复跑〔bun——Math.hypot fdlibm 口径〕+ 双写 md5 + 台账）
+var brushVerifyFail = 0;
+{
+  const { execFileSync } = await import('node:child_process');
+  const { createHash } = await import('node:crypto');
+  const { readFileSync } = await import('node:fs');
+  try {
+    execFileSync('bun', [new URL('./brush-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
+    console.log('brush 黄金回放 (brush-transcript 镜像 vs brush.json): PASS (12 场景 每调用步进快照逐位 + fireSet/flood/regrow/wet/radSet 序 + variant/radiate md5 + units dump 位级 + events/toasts 事件流)');
+  } catch (e) {
+    brushVerifyFail++;
+    console.error('brush 黄金回放: FAIL');
+    console.error(String(e.stdout ?? '').split('\n').slice(-8).join('\n'));
+  }
+  try {
+    const goldenPath = new URL('./golden/brush.json', import.meta.url).pathname;
+    const { readFile } = await import('node:fs/promises');
+    const h0 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    execFileSync('bun', [new URL('./gen-brush.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
+    const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
+    if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
+    console.log('brush gen det 复跑 (gen-brush · bun): PASS (12 场景 sanity + GameEngine 真实现 + det 字节级)');
+  } catch (e) {
+    brushVerifyFail++;
+    console.error('brush gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+  try {
+    const g = JSON.parse(readFileSync(new URL('./golden/brush.json', import.meta.url), 'utf8'));
+    const fails = [];
+    const fail = (m) => fails.push(m);
+    if (!Array.isArray(g.scenarios) || g.scenarios.length !== 12) fail('场景数 ≠ 12');
+    const keys = g.scenarios.map((s) => s.key);
+    for (const want of ['boom-center', 'boom-clamp', 'oasis-barren', 'oasis-grass', 'oasis-mountain', 'smooth-mode', 'smooth-uniform', 'rough-edge', 'plague-area', 'heal-area', 'kill-area', 'mixed-sequence'])
+      if (!keys.includes(want)) fail(`场景 ${want} 缺失`);
+    const s1 = g.scenarios.find((s) => s.key === 'boom-center');
+    if (!s1 || s1.totalDraws !== 4 || s1.shake !== 4 || s1.stepsSnap[0].buildingsCount !== 1 || !s1.units.some((u) => u.dead === 1) || !s1.units.some((u) => u.dead === 0 && u.hp === '0000000000004940' && u.hurtN === '0000000000000000')) fail('boom-center 恰等不含签名缺失（4 掷 + shake=4 + 建筑存 1 + u2 hp=50 hurt=0 不动）');
+    const s2 = g.scenarios.find((s) => s.key === 'boom-clamp');
+    if (!s2 || s2.shake !== 9 || s2.stepsSnap.length !== 2) fail('boom-clamp 钳位双支签名缺失（rr=1/8 两调用 + shake 封顶 9）');
+    const s3 = g.scenarios.find((s) => s.key === 'oasis-barren');
+    if (!s3 || s3.toasts.length !== 1 || s3.toasts[0].text !== '荒漠中涌出一泓清泉，绿意环绕' || s3.events.length !== 1 || !s3.events[0].text.includes('绿洲')) fail('oasis-barren 双文本签名缺失（toast barren 面 + oasis 纪事）');
+    const s6 = g.scenarios.find((s) => s.key === 'smooth-mode');
+    if (!s6 || s6.totalDraws !== 0 || s6.stepsSnap[0].terrainMd5 === undefined) fail('smooth-mode 零掷众数签名缺失');
+    const s8 = g.scenarios.find((s) => s.key === 'rough-edge');
+    if (!s8 || s8.totalDraws !== 98) fail('rough-edge 掷流签名缺失（内部重掷+边缘吸入+邻居采样 98 掷）');
+    const s9 = g.scenarios.find((s) => s.key === 'plague-area');
+    if (!s9 || s9.totalDraws !== 0 || s9.units.filter((u) => u.infected === 1).length !== 2) fail('plague-area undead+immune 豁免签名缺失（2 染 3 免）');
+    const s10 = g.scenarios.find((s) => s.key === 'heal-area');
+    if (!s10 || !s10.fx.some((f) => f.kind === 'heart') || !s10.units.some((u) => u.id === 712 && u.hp === '0000000000000840' && u.infected === 1)) fail('heal-area 复苏链签名缺失（fx heart + 界外 hp=3.0/infected=1 三态保留位级）');
+    const s12 = g.scenarios.find((s) => s.key === 'mixed-sequence');
+    if (!s12 || s12.stepsSnap.length !== 4 || s12.totalDraws !== 4) fail('mixed-sequence 多调用序签名缺失（plague→boom→heal→smooth 四调用 4 掷）');
+    const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/brush.json', import.meta.url));
+    const gl = readFileSync(new URL('./golden/brush.json', import.meta.url));
+    const md5a = createHash('md5').update(sa).digest('hex');
+    const md5b = createHash('md5').update(gl).digest('hex');
+    if (md5a !== md5b) fail(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
+    if (fails.length > 0) throw new Error(fails.join(' | '));
+    console.log(`brush 台账完备 (12 场景 + boom falloff 恰等不含/钳位双支 + oasis 三层山幸存双文本 + smooth 零掷众数 + rough 98 掷掷流 + plague undead/immune 豁免 + heal 复苏链 + kill 真值域 + 混合四调用序 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  } catch (e) {
+    brushVerifyFail++;
+    console.error('brush 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
+  }
+}
+
+const allPass = rngFail === 0 && hypotFail === 0 && layoutFail === 0 && scanVerifyFail === 0 && fdlibmFail === 0 && combatVerifyFail === 0 && spawnVerifyFail === 0 && civVerifyFail === 0 && armyVerifyFail === 0 && renderVerifyFail === 0 && render2VerifyFail === 0 && render3VerifyFail === 0 && render4VerifyFail === 0 && saveVerifyFail === 0 && save2VerifyFail === 0 && save3VerifyFail === 0 && render5VerifyFail === 0 && render6VerifyFail === 0 && render7VerifyFail === 0 && overlayVerifyFail === 0 && minimapVerifyFail === 0 && bailVerifyFail === 0 && hostCanvasVerifyFail === 0 && orchVerifyFail === 0 && worldgenVerifyFail === 0 && waterdepthVerifyFail === 0 && riversVerifyFail === 0 && unitsUpdateVerifyFail === 0 && iceVerifyFail === 0 && fireVerifyFail === 0 && powerVerifyFail === 0 && rainfloodVerifyFail === 0 && ecoVerifyFail === 0 && brushVerifyFail === 0;
 console.log(allPass ? 'VERIFY: ALL PASS' : 'VERIFY: FAIL');
 process.exit(allPass ? 0 : 1);

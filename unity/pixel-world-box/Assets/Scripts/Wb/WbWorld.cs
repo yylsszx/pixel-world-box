@@ -494,6 +494,10 @@ namespace PixelWorldBox.Wb
         public int ecoLastNoteYear = -999;                     // engine L250 ecoLastNoteYear（生态播报冷却锚——15 年门 L12162；reset L837 重置）
         public int ecoRepopYear = -999;                        // engine L252 ecoRepopYear（迁徙入境节流锚——≥25 年门 L12178；reset L838 重置）
 
+        // —— M-U13 地形整形域（字段只加）——
+        public byte[] variant = new byte[W * H];               // engine L781 this.variant = gen.variant（worldgen 色抖场 Hash2(x,y,seed+999)；roughenTerrain L12540 重掷写点——宿主 ApplyWorldGen gen.Variant 同源灌入 + WbFrameFlush.SyncWorldFace 桥 L203 注记面同步清偿）
+        public int brush = 3;                                  // engine L688 brush = 3（笔刷半径类字段默认——applyTool L13972 工具联动写面未译，createOasis L12447 pondR 消费）
+
         // —— M-U9a 冰域（字段只加）——
         public HashSet<int> frozen = new HashSet<int>();       // engine L495 frozen: Set<number>（冰面格集——瞬态不入档，读档后地形扫描重建 L15401-15403；成员判定）
         public List<int> frozenList = new List<int>();         // 插入序镜像（JS Set 迭代序——iceTick 相位一按序掷，riverTilesList 先例；删 List.Remove O(n) 夹具级小集可忽）
