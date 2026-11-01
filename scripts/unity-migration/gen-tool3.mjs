@@ -551,6 +551,34 @@ const specs = [
         && eng.effects.filter((e) => e.kind === 'holystorm').length === 1;
     },
   },
+  // ---- S15（M-U20）：applyTool case "river" runtime 语义（carveRiver L12312-12420 全链：
+  //        BFS 绕山 dist 场零掷 + 加权随机选路 1 掷/步 + 刻河 setTerrain 级联〔火墙 9 格
+  //        全灭 L997 / regrow 删 L985 / owner 清 L1000-1003〕+ 灌溉 setTerrain〔SAND/BURNT
+  //        →GRASS L12403 零掷 + GRASS→FOREST rng<0.05*soilMulAt L12404 1 掷/格〕+ flood
+  //        删 L990 + carveLake 湖支不在判据〔hydroTick nature2 链已覆盖 runtime=true〕+
+  //        fx spawn 2 掷 + toast id=1 + addEvent）——种子标定 0x00000CE0
+  //        （probe-river-seed.mjs——引擎复用 + 走廊扫描 + baseSeed 同源 soilF 派生面；ICE prev===ICE frozen 面 fixture
+  //        不可注入由 iceAge/blizzard 切片覆盖）----
+  {
+    key: 'river-runtime', baseSeed: BASE + 15, seed: 0x000000A0, tickCount: 1000, fill: 'grass',
+    terrain: [
+      ...rect(0, 52, 5, 68, T.WATER),                  // 西侧水池（入海终点）
+      ...rect(12, 59, 14, 61, T.SAND),                 // 绿洲沙地（灌溉 → GRASS）
+      [15, 59, T.BURNT], [15, 61, T.BURNT],            // 焦土绿洲支
+      [24, 58, T.MOUNTAIN], [24, 62, T.MOUNTAIN],      // 绕山（刻蚀 skip + BFS dist 门）
+    ],
+    fire: [[18, 60, 100], [18, 59, 100], [18, 61, 100], [19, 60, 100], [19, 59, 100], [19, 61, 100], [17, 60, 100], [17, 59, 100], [17, 61, 100]],   // 3×3 火墙
+    regrow: [[20, 60, 1500], [22, 60, 1500], [24, 60, 1500], [20, 62, 1500]],
+    owner: [[26, 60, 3], [26, 59, 3]],
+    flood: [[18, 58, 2000], [20, 58, 2000]],
+    calls: [{ fn: 'applyTool', args: ['river', 30, 60] }],
+    sanity: (eng, toasts) => toasts.some((t) => t.text === '一条大河蜿蜒入海')
+      && eng.fireSet.size === 0
+      && eng.regrow.size < 4
+      && (eng.owner[idx(26, 60)] === -1 || eng.owner[idx(26, 59)] === -1)
+      && eng.flood.size === 0
+      && eng.effects.some((e) => e.kind === 'spawn'),
+  },
 ];
 
 // ---- det 双跑 + 双写 ----
@@ -578,7 +606,7 @@ const out = {
     protocol: 'GameEngine 构造 + 手术式夹具直写（fill 面 grass + terrain/fire/radiate/units 瘦直写 + brush/五成就计数直写）+ rngA 尾置清零起流 + calls 直调 / ticks 步进（tickCount++ 头 + effectsTick——主循环 L2508 序）混合链，每步统一快照（applyTool 紧凑 / effectsTick 全列 fx+units+dirty）',
     rng: 'eng.rngA 单流；fx 恒 2 掷（seed+dir）；cap 门 filter 快照零掷；volcano 引燃圈 1 掷/点燃 + 消费端熔岩弹 age%14 双掷 + 外溢 age%6 双掷；wrath/typhoon 消费端 lightning（n=1：fx 2+中心点燃 1+四邻 4+邻格点燃支）；holystorm 恒真门 1.2 掷位保持 + 采样双掷 + 单位门掷（审判 0.2/缓愈 0.08）；bless/curse 0.4 门 + love 0.5 门 1 掷/单位 + fx 2 掷；teleport randomLandSpot 2 掷/尝试；mutate：civ 0.3 门 1 掷 + rerollTrait rollTrait 1 掷 + 0.25 门 1 掷 + jumpGene 4 门掷/命中维值掷；wild 直 jumpGene 4 门掷/命中维值掷〔baseGene 空表零掷〕；命中单位 fx 2 掷（门 miss 亦掷——L10901 fx 在 if/else 外）；mulberry 纯数学反解 total',
     math: 'Math.hypot（volcano 锥体整数极距 / area 神力单位环〔含 mutate L10891〕 / plasma dist=hypot(7,9) / annihilate dist=hypot(8,11)——bun 原生 fdlibm；C# FdHypot 位精确件对账）+ Math.round（plasma ttl=round(dist*1.5) + mutate rerollTrait/jumpGene maxHp round 域——JS .5 上取整；C# JsRound 禁银行家舍入）+ Math.max/min 铛位（mutate 基因 0.5/2 恰等面 + maxHp≥1）+ 纯算术域',
-    domains: ['mutateArea L10888-10906（M-U19：civ 0.3 reroll/0.25 jumpGene 0.12 + wild baseGene/jumpGene 0.2 + fx 每命中单位 2 掷〔双门双 miss 亦掷——fx 在 if/else 外〕）', 'rerollTrait L11037-11057（旧乘数卸除/新乘数上装——maxHp round 域 + hp min/max 双钳不对称〔old 支 max(1,·) / nw 支无〕）', 'jumpGene L11085-11103（四维 0.6 门 + (rng-0.42)*2*amount 重铸 + 0.5/2 铛位 + RACES×TRAITS×JOBS 属性重算）', 'rollTrait L1467-1470（TRAITS keys 12 预设插入序随机抽）', 'baseGene L11029-11031（speciesBase 空表分支——零掷恒 {1,1,1,1}）', 'acidRain L10737-10745（cap 6 + fx acid）', 'volcano L10746-10777（锥体 hypot≤2.3 + 山口/十字/3x3 熔岩 + 引燃圈 3.5*pw + shake 6+2pw + event 双文本）', 'tsunami L10780-10785（r*2.5 钳 [6,30]）', 'blizzard L10788-10795（cap 4 + max(5,r) 钳 [5,15]）', 'meteorShower L10798-10813（clamp [1,24] + rng 散布 + x0/y0/quiet 衍生弹 + statMeteorShowers）', 'locust L10815-10822（cap 3 + r 钳 [3,10]）', 'drought L10823-10830（cap 4）', 'rainCloud L10834-10843（cap 6 + touchMeta 宿主挂点）', 'blessArea L10845-10859（hp+50%max + bless 600 + 驱瘟 + 0.4 fx 门）', 'curseArea L10861-10872（curse 500）', 'loveArea L10874-10886（repro 门 + fert 500）', 'teleportArea L10908-10924（randomLandSpot 40 试 + spark 双发）', 'wrathStorm L10926-10934（cap 3）', 'holyStorm L10936-10945（cap 3）', 'plasmaCannon L10947-10957（x0/y0 钳 + ttl round 域 + dmg + statPlasmas）', 'annihilationLight L10959-10969（colorHex #ff4d4d + statAnnihilations）', 'sandstorm L10972-10979（cap 3）', 'typhoon L10980-10987（cap 3）', 'sinkhole L10988-10996（shake 7）', 'iceAge L10999-11008（cap 2 + shake 4）', 'famineCloud L11030-11036（cap 3）', 'blackhole L11017-11023（cap 2 + statBlackholes）', 'meteor L12277-12282（x0=x+20/y0=y-34）', 'randomLandSpot L11033-11043（40 试六地形门）', 'applyTool case L13342-13455（meteor 内联抖动 + 22 委派）', 'effectsTick 消费端四支：volcano L9851-9876 / wrath L10023-10029 / holystorm L10030-10075 / typhoon L10091-10119'],
+    domains: ['carveRiver L12312-12420（M-U20：applyTool case river runtime 语义——BFS dist 场零掷 + 加权随机选路 1 掷/步 + 刻河/灌溉 setTerrain 级联 + carveLake 湖支 + fx spawn/toast/addEvent 尾面）', 'mutateArea L10888-10906（M-U19：civ 0.3 reroll/0.25 jumpGene 0.12 + wild baseGene/jumpGene 0.2 + fx 每命中单位 2 掷〔双门双 miss 亦掷——fx 在 if/else 外〕）', 'rerollTrait L11037-11057（旧乘数卸除/新乘数上装——maxHp round 域 + hp min/max 双钳不对称〔old 支 max(1,·) / nw 支无〕）', 'jumpGene L11085-11103（四维 0.6 门 + (rng-0.42)*2*amount 重铸 + 0.5/2 铛位 + RACES×TRAITS×JOBS 属性重算）', 'rollTrait L1467-1470（TRAITS keys 12 预设插入序随机抽）', 'baseGene L11029-11031（speciesBase 空表分支——零掷恒 {1,1,1,1}）', 'acidRain L10737-10745（cap 6 + fx acid）', 'volcano L10746-10777（锥体 hypot≤2.3 + 山口/十字/3x3 熔岩 + 引燃圈 3.5*pw + shake 6+2pw + event 双文本）', 'tsunami L10780-10785（r*2.5 钳 [6,30]）', 'blizzard L10788-10795（cap 4 + max(5,r) 钳 [5,15]）', 'meteorShower L10798-10813（clamp [1,24] + rng 散布 + x0/y0/quiet 衍生弹 + statMeteorShowers）', 'locust L10815-10822（cap 3 + r 钳 [3,10]）', 'drought L10823-10830（cap 4）', 'rainCloud L10834-10843（cap 6 + touchMeta 宿主挂点）', 'blessArea L10845-10859（hp+50%max + bless 600 + 驱瘟 + 0.4 fx 门）', 'curseArea L10861-10872（curse 500）', 'loveArea L10874-10886（repro 门 + fert 500）', 'teleportArea L10908-10924（randomLandSpot 40 试 + spark 双发）', 'wrathStorm L10926-10934（cap 3）', 'holyStorm L10936-10945（cap 3）', 'plasmaCannon L10947-10957（x0/y0 钳 + ttl round 域 + dmg + statPlasmas）', 'annihilationLight L10959-10969（colorHex #ff4d4d + statAnnihilations）', 'sandstorm L10972-10979（cap 3）', 'typhoon L10980-10987（cap 3）', 'sinkhole L10988-10996（shake 7）', 'iceAge L10999-11008（cap 2 + shake 4）', 'famineCloud L11030-11036（cap 3）', 'blackhole L11017-11023（cap 2 + statBlackholes）', 'meteor L12277-12282（x0=x+20/y0=y-34）', 'randomLandSpot L11033-11043（40 试六地形门）', 'applyTool case L13342-13455（meteor 内联抖动 + 22 委派）', 'effectsTick 消费端四支：volcano L9851-9876 / wrath L10023-10029 / holystorm L10030-10075 / typhoon L10091-10119'],
     deferred: ['finger→beginGrab L5293（抓取交互域切片）', 'chest/ITEM_TOOL/cre:/RACE_TOOL 等其余 applyTool case（各域切片挂账不变）'],
     scenarioCount: scenarios.length,
   },

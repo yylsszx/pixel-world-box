@@ -22,6 +22,13 @@
 //   jumpGene L11085-11103（四维 0.6 门重铸 + RACES×TRAITS×JOBS 属性重算）+
 //   TRAITS 表 types.ts L264-276 / JOBS 表 L296-305 / RACES HUMAN L157 /
 //   WOLF L164 消费切片。
+// M-U20 追加：applyTool case 'river' L13354-13356（this.carveRiver(wx, wy)）+
+//   carveRiver L12312-12420（BFS dist 场零掷 + 加权随机选路 1 掷/步 + 刻河/
+//   灌溉 setTerrain 全级联 L975-1013 + carveLake 湖支 L12341/L12367 + fx spawn/
+//   toast/addEvent 尾面 L12384-12391）+ carveLake L12425-12441（零掷圆湖 + 湖畔
+//   绿洲 + fx spawn）+ encodeRiverDir L63-71（RIVER_DIRS 八向）+ toast L14027-14029
+//   （onToast 宿主回调——黄金 collector 面，toastSeq L181 初值 1）+ soilMulAt
+//   worldsim.ts L168-170（0.6 + soilF/255*0.8——成林门乘子）。
 // 纪律：零引擎 import（fixture 注入 + 镜像回放——typed 数组天然 OOB 语义：
 //   terrain[i] 越界读 undefined、fire[i]=x 越界写静默丢弃、fireSet.add 负索引
 //   容忍——S11 边缘钉面：volcano 引燃圈 (1,1) 负 x 混叠 j=511 与真负 j 双面）。
@@ -106,8 +113,20 @@ const TOOL_BY_ID_KEYS = new Set([
   'acidrain', 'volcano', 'tsunami', 'blizzard', 'meteorshower', 'locust', 'drought', 'rain',
   'bless', 'curse', 'love', 'mutate', 'teleport', 'wrath', 'holystorm', 'plasmacannon', 'annihilate',   // M-U19：mutate 键入集
   'sandstorm', 'typhoon', 'sinkhole', 'iceage', 'famine', 'blackhole', 'meteor',
+  'river',                                             // M-U20：river 键入集（runtime 语义切片）
 ]);
 const parseCreationTool = (toolId) => (toolId.startsWith('cre:') ? toolId.slice(4) : null);   // creations.ts L243-245
+
+// RIVER_DIRS 八向表 + encodeRiverDir（engine L63-71 机械转写——M-U20 水流方向场）
+const RIVER_DIRS = [
+  [0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1],   // L64-65
+];
+function encodeRiverDir(dx, dy) {          // L66-71
+  for (let k = 0; k < 8; k++) {
+    if (RIVER_DIRS[k][0] === Math.sign(dx) && RIVER_DIRS[k][1] === Math.sign(dy)) return k + 1;   // L67-68
+  }
+  return 0;                                                 // L70
+}
 
 // ---- 镜像引擎（fixture 注入 + applyTool 直调 / effectsTick 步进——黄金回放载体） ----
 class BREng {
@@ -145,6 +164,7 @@ class BREng {
     this.effects = [];
     this.worldEvents = [];
     this.toasts = [];
+    this.toastSeq = 1;                     // engine L181 初值 1（generate L927 重置同值）
     this.units = [];
     for (const uo of sc.fixture.units0) {
       this.units.push({
@@ -562,6 +582,136 @@ class BREng {
       e.y0 = y - 34;                                          // L12281（无 quiet——与陨石雨衍生弹语义分离）
     }
   }
+  toast(text, tone, op) {                    // L14027-14029（M-U20：onToast 宿主回调面——黄金 collector 同构）
+    this.toasts.push({ id: this.toastSeq++, text, tone, op: op ?? null });
+  }
+  soilMulAt(i) {                             // worldsim.ts L168-170（M-U20：土壤肥力除子——成林门乘子）
+    return 0.6 + (this.soilF[i] / 255) * 0.8;                 // L169
+  }
+  carveRiver(wx, wy, widthOverride) {        // L12312-12420（M-U20）
+    const sx = Math.max(0, Math.min(W - 1, Math.floor(wx)));   // L12313
+    const sy = Math.max(0, Math.min(H - 1, Math.floor(wy)));   // L12314
+    const start = idx(sx, sy);                                // L12315
+    if (isWater(this.terrain[start])) return false;           // L12316（零掷）
+    const N2 = W * H;                                         // L12319
+    const dist = new Int32Array(N2).fill(-1);                 // L12320
+    const queue = new Int32Array(N2);                         // L12321
+    let qh = 0, qt = 0;                                       // L12322
+    for (let i = 0; i < N2; i++) {                            // L12323
+      if (isWater(this.terrain[i])) { dist[i] = 0; queue[qt++] = i; }   // L12324
+    }
+    while (qh < qt) {                                         // L12326（BFS 绕山——零掷）
+      const i = queue[qh++];
+      const x = i % W;
+      const y = (i / W) | 0;
+      const d = dist[i];
+      if (x > 0 && dist[i - 1] === -1 && this.terrain[i - 1] !== T.MOUNTAIN) { dist[i - 1] = d + 1; queue[qt++] = i - 1; }
+      if (x < W - 1 && dist[i + 1] === -1 && this.terrain[i + 1] !== T.MOUNTAIN) { dist[i + 1] = d + 1; queue[qt++] = i + 1; }
+      if (y > 0 && dist[i - W] === -1 && this.terrain[i - W] !== T.MOUNTAIN) { dist[i - W] = d + 1; queue[qt++] = i - W; }
+      if (y < H - 1 && dist[i + W] === -1 && this.terrain[i + W] !== T.MOUNTAIN) { dist[i + W] = d + 1; queue[qt++] = i + W; }
+    }
+    if (dist[start] === -1) {                                 // L12340（山脉环抱洼地 → 内流湖）
+      this.carveLake(sx, sy, Math.max(2, this.brush));        // L12341
+      this.toast('群山环抱的洼地积水成湖', 'info');           // L12342
+      this.addEvent('river', '群山之间诞生了一泓内流湖', { x: sx + 0.5, y: sy + 0.5 });   // L12343
+      return true;                                            // L12345（onSound 宿主 no-op）
+    }
+    const width = widthOverride != null ? widthOverride : Math.max(0, Math.floor((this.brush - 1) / 2));   // L12349（笔刷 1-2→1 宽；3-4→2 宽；5+→3 宽）
+    const visited = new Uint8Array(N2);                       // L12350
+    let cx = sx, cy = sy;                                     // L12351
+    let carved = 0;                                           // L12352
+    let reached = false;                                      // L12353
+    for (let steps = 0; steps < 400; steps++) {               // L12354
+      const i = idx(cx, cy);
+      if (visited[i]) break;                                  // L12356（防绕圈）
+      visited[i] = 1;
+      if (dist[i] === 0) { reached = true; break; }           // L12358（已抵达大海）
+      const curD = dist[i];                                   // L12363
+      const cands = [];                                       // L12364
+      const wts = [];                                         // L12365
+      for (let dy = -1; dy <= 1; dy++) {                      // L12366
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const xx = cx + dx, yy = cy + dy;
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+          const j = idx(xx, yy);
+          if (dist[j] < 0 || dist[j] >= curD) continue;
+          cands.push(j);
+          wts.push(1 / (1 + (curD - dist[j]) * 0.5));         // L12372（快速下降权重高）
+        }
+      }
+      if (cands.length === 0) {                               // L12375（无下降方向洼地 → 成湖）
+        this.carveLake(cx, cy, Math.max(2, width + 1));       // L12376
+        break;
+      }
+      let total = 0;                                          // L12380
+      for (const w of wts) total += w;
+      let r = this.rng() * total;                             // L12382（1 掷/步——加权随机选路）
+      let pick = cands[0];
+      for (let k = 0; k < cands.length; k++) { r -= wts[k]; if (r <= 0) { pick = cands[k]; break; } }   // L12384
+      const nx = pick % W;                                    // L12385
+      const ny = (pick / W) | 0;
+      const dirCode = encodeRiverDir(nx - cx, ny - cy);       // L12387（水流方向 = 行进方向）
+      for (let dy = -width; dy <= width; dy++) {              // L12389（刻河道圆形绕山）
+        for (let dx = -width; dx <= width; dx++) {
+          if (dx * dx + dy * dy > width * width + 0.5) continue;
+          const xx = cx + dx, yy = cy + dy;
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+          const j = idx(xx, yy);
+          if (this.terrain[j] === T.MOUNTAIN) continue;       // L12394（河绕山不穿山）
+          if (this.terrain[j] !== T.WATER) {
+            if (TOOL3_RED === 'river') this.terrain[j] = T.WATER;   // 红证旋钮：禁 setTerrain 级联（世界生成直写语义）
+            else this.setTerrain(j, T.WATER);                 // L12397（运行时 setTerrain 全级联）
+            carved++;
+          }
+          if (dirCode > 0) {
+            this.riverDir[j] = dirCode;                       // L12401
+            this.riverTiles.add(j);                           // L12402
+          }
+        }
+      }
+      const ir = width + 1;                                   // L12406（沿岸灌溉）
+      for (let dy = -ir; dy <= ir; dy++) {
+        for (let dx = -ir; dx <= ir; dx++) {
+          const xx = cx + dx, yy = cy + dy;
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+          const j = idx(xx, yy);
+          const t = this.terrain[j];
+          if (t === T.SAND || t === T.BURNT) {                // L12411
+            if (TOOL3_RED === 'river') this.terrain[j] = T.GRASS;
+            else this.setTerrain(j, T.GRASS);                 // L12412（绿洲）
+          } else if (t === T.GRASS && this.rng() < 0.05 * this.soilMulAt(j)) {   // L12413（&& 短路 1 掷/GRASS 格）
+            if (TOOL3_RED === 'river') this.terrain[j] = T.FOREST;
+            else this.setTerrain(j, T.FOREST);                // L12414（成林）
+          }
+        }
+      }
+      cx = nx; cy = ny;                                       // L12418
+    }
+    if (carved > 0) {                                         // L12421
+      this.fx('spawn', wx, wy, 30);                           // L12422（2 掷）
+      this.toast(reached ? '一条大河蜿蜒入海' : '河流在洼地尽头积成了湖', 'info');   // L12423（toast 宿主回调）
+      this.addEvent('river', reached ? '一条大河诞生了，蜿蜒流向大海' : '一条河在洼地尽头汇成了湖', { x: sx + 0.5, y: sy + 0.5 });   // L12424（坐标 sx+0.5）
+      return true;                                            // L12426（onSound 宿主 no-op）
+    }
+    return false;                                             // L12428
+  }
+  carveLake(cx, cy, r) {                     // L12425-12441（M-U20）
+    for (let dy = -r - 1; dy <= r + 1; dy++) {                // L12426
+      for (let dx = -r - 1; dx <= r + 1; dx++) {
+        const xx = cx + dx, yy = cy + dy;
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+        const d = Math.hypot(dx, dy);                         // L12430（fdlibm 整数极距）
+        if (d <= r) {
+          this.setTerrain(idx(xx, yy), T.WATER);              // L12432（山区点选 → 允许淹没山体）
+        } else if (d <= r + 1) {
+          const j = idx(xx, yy);
+          if (this.terrain[j] === T.SAND || this.terrain[j] === T.BURNT) this.setTerrain(j, T.GRASS);   // L12435（湖畔绿洲）
+        }
+      }
+    }
+    this.fx('spawn', cx + 0.5, cy + 0.5, 30);                 // L12440（2 掷）
+  }
   // ---- effectsTick 消费端四支（骨架 L9807-9809 倒序 + e.age++ 头 + 到期 splice L10444-10446） ----
   effectsTick() {
     for (let i = this.effects.length - 1; i >= 0; i--) {
@@ -711,6 +861,7 @@ class BREng {
       case 'iceage': this.iceAge(wx, wy, rP ?? Math.max(6, this.brush * 2 + 4), durationP); break;   // L13447-13449（rP ?? max(6,brush*2+4)——笔刷联动缺省面）
       case 'famine': this.famineCloud(wx, wy, rP, durationP); break;     // L13450-13452（rP undefined → JS 默认参 6）
       case 'blackhole': this.blackhole(wx, wy, rP, durationP); break;    // L13453-13455（rP undefined → JS 默认参 8）
+      case 'river': this.carveRiver(wx, wy); break;                      // L13354-13356（M-U20：runtime 语义——widthOverride undefined → 笔刷宽度）
       default: break;                         // L13456-13457
     }
   }
