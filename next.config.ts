@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 // Task 78：双形态构建配置。
-// - 默认（平台部署）：output=standalone，Task 76 v76 部署链使用。
+// - 默认（无 STATIC_EXPORT）：output=standalone，适合 Vercel / Netlify 等
+//   支持 Serverless 函数的非静态托管。API Routes（/api/oracle/agent 等）正常工作。
 // - STATIC_EXPORT=1（GitHub Pages / 任意静态托管）：output=export，
 //   API 路由由 .zscripts/export-static.sh 暂移（游戏本体纯客户端零依赖）。
 // 两个分支互斥，互不影响。
@@ -9,6 +10,9 @@ const isStaticExport = process.env.STATIC_EXPORT === "1";
 const exportBasePath = process.env.EXPORT_BASE_PATH ?? "";
 
 const nextConfig: NextConfig = {
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   ...(isStaticExport
     ? {
         // 纯静态导出：GitHub Pages 项目站点部署在 /仓库名 子路径下

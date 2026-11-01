@@ -76,7 +76,7 @@ interface ProviderPreset {
 }
 
 const PROVIDER_PRESETS: ProviderPreset[] = [
-  { key: 'builtin', label: '内置 Z.ai', config: { kind: 'builtin', label: '内置 Z.ai' } },
+  { key: 'builtin', label: '内置 Z.ai', config: { kind: 'builtin', label: '内置 Z.ai', baseUrl: 'https://api.z.ai', model: '' } },
   { key: 'openai', label: 'OpenAI', config: { kind: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' } },
   { key: 'deepseek', label: 'DeepSeek', config: { kind: 'openai', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' } },
   { key: 'kimi', label: 'Kimi', config: { kind: 'openai', label: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-128k' } },
@@ -85,12 +85,19 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   { key: 'openrouter', label: 'OpenRouter', config: { kind: 'openai', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' } },
   { key: 'ollama', label: 'Ollama 本地', config: { kind: 'openai', label: 'Ollama 本地', baseUrl: 'http://localhost:11434/v1', model: 'llama3.1' } },
   { key: 'anthropic', label: 'Anthropic', config: { kind: 'anthropic', label: 'Anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-20250514' } },
+  { key: 'zai-free', label: 'Z.ai 免费(GLM-Flash)', config: { kind: 'builtin', label: 'Z.ai 免费(GLM-Flash)', baseUrl: 'https://api.z.ai', model: 'GLM-4.7-Flash', temperature: 0.7 } },
+  { key: 'openrouter-free', label: 'OpenRouter 免费路由', config: { kind: 'openai', label: 'OpenRouter 免费路由', baseUrl: 'https://openrouter.ai/api/v1', model: 'openrouter/free', temperature: 0.7 } },
+  { key: 'nvidia-nim', label: 'NVIDIA NIM 免费', config: { kind: 'openai', label: 'NVIDIA NIM 免费', baseUrl: 'https://integrate.api.nvidia.com/v1', model: 'nvidia/nemotron-3.5-lightning-30b-a3b', temperature: 0.7 } },
+  { key: 'groq', label: 'Groq 免费层', config: { kind: 'openai', label: 'Groq 免费层', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.1-8b-instant', temperature: 0.7 } },
+  { key: 'github-models', label: 'GitHub Models 免费', config: { kind: 'openai', label: 'GitHub Models 免费', baseUrl: 'https://models.inference.ai.azure.com', model: 'meta-llama-3.1-8b-instruct', temperature: 0.7 } },
+  { key: 'gemini', label: 'Google Gemini 免费', config: { kind: 'openai', label: 'Google Gemini 免费', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/', model: 'gemini-1.5-flash-latest', temperature: 0.7 } },
+  { key: 'agnes', label: 'Agnes', config: { kind: 'openai', label: 'Agnes', baseUrl: '', model: '', temperature: 0.7 } },
   { key: 'custom', label: '自定义', config: { kind: 'openai', label: '自定义（OpenAI 兼容）', baseUrl: '', model: '' } },
   { key: 'local-qwen05b', label: '本地 Qwen-0.5B ⚠️', config: { kind: 'local', label: '本地 Qwen-0.5B（实验性）', model: 'XENova/qwen2.5-0.5b-instruct', temperature: 0.7 } },
 ];
 
 const PROVIDER_STORE_KEY = 'oracle-provider-v1';
-const DEFAULT_PROVIDER: OracleProviderConfig = { kind: 'builtin', label: '内置 Z.ai' };
+const DEFAULT_PROVIDER: OracleProviderConfig = { kind: 'builtin', label: '内置 Z.ai', baseUrl: 'https://api.z.ai', model: '' };
 
 /** 从 localStorage 恢复 provider 配置（防御式：坏 JSON / 非法 kind 一律回默认） */
 function loadProvider(): OracleProviderConfig {
@@ -596,11 +603,9 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
       </div>
 
       {/* 端点配置（内置 Z.ai 免密钥，仅温度） */}
-      {isBuiltin || isLocal ? (
+      {isLocal ? (
         <p className="rounded-sm border border-teal-400/30 bg-teal-400/5 px-1.5 py-1 text-[9px] leading-relaxed text-teal-300/80">
-          {isLocal
-            ? '本地模型在浏览器端直接运行（transformers.js），无需服务端与密钥；首次使用会下载模型权重（约几百 MB），随后浏览器缓存离线可用。'
-            : '内置 Z.ai 经本站后端直连，无需密钥。'}
+          本地模型在浏览器端直接运行（transformers.js），无需服务端与密钥；首次使用会下载模型权重（约几百 MB），随后浏览器缓存离线可用。
         </p>
       ) : (
         <div className="flex flex-col gap-1.5">
@@ -632,13 +637,16 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
               type="password"
               value={provider.apiKey ?? ''}
               onChange={(e) => onApply({ ...provider, apiKey: e.target.value })}
-              placeholder="sk-…"
+              placeholder="sk-zai-…"
               spellCheck={false}
               autoComplete="off"
               className={inputCls}
               aria-label="API 密钥"
             />
           </label>
+          <p className="rounded-sm border border-amber-400/30 bg-amber-400/5 px-1.5 py-1 text-[9px] leading-relaxed text-amber-300/80">
+            内置 Z.ai 直连 z.ai 云平台，无需服务端代理。请从 https://platform.z.ai 获取 API Key 填入上方，即点即用。
+          </p>
         </div>
       )}
 

@@ -15,6 +15,7 @@ import { executeOracleTool } from './bridge';
 import { AGENT_TOOLS, type ToolArgDef } from './tools';
 import { getEngine } from '@/store/gameStore';
 import { callLocalModel } from './local-provider';
+import { callZaiModel } from './zai-provider';
 
 /** 单条消息里携带的工具事件（面板气泡渲染用） */
 export interface OracleToolEvent {
@@ -419,6 +420,22 @@ async function callModel(
     try {
       const result = await callLocalModel(provider, messages, signal);
       // 本地模型一次性返回完整文本，通过 onDelta 一次性推送，兼容 agent 循环的流式接口
+      onDelta?.({ text: result.content, reason: result.reasoning });
+      return {
+        content: result.content,
+        reasoning: result.reasoning,
+        err: result.err,
+      };
+    } catch (e) {
+      return { content: '', reasoning: '', err: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  // ── builtin（Z.ai 云平台）：客户端直接调用 z.ai REST API，绕过服务端 ──
+  if (provider.kind === 'builtin') {
+    try {
+      const result = await callZaiModel(provider, messages, signal);
+      // Z.ai 一次性返回完整文本，通过 onDelta 一次性推送，兼容 agent 循环的流式接口
       onDelta?.({ text: result.content, reason: result.reasoning });
       return {
         content: result.content,
