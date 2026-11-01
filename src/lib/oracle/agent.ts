@@ -431,61 +431,19 @@ async function callModel(
     }
   }
 
-  // ── builtin（Z.ai 云平台）：服务端代理，前端无需填 Key ──
+  // ── builtin（Z.ai 云平台）：前端直连 Z.ai REST API，无需服务端 ──
   if (provider.kind === 'builtin') {
-    let content = '';
-    let reasoning = '';
-    let streamErr = '';
     try {
-      const res = await fetch('/api/oracle/agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, messages, deep }),
-        signal,
-      });
-      if (!res.ok || !res.body) {
-        let msg = `HTTP ${res.status}`;
-        try {
-          const j = await res.json();
-          if (j.error) msg = j.error;
-        } catch { /* 非 JSON 错误体 */ }
-        return { content: '', reasoning: '', err: msg };
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      for (;;) {
-        if (signal?.aborted) {
-          void reader.cancel();
-          throw new Error('已中止');
-        }
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split(String.fromCharCode(10));
-        buf = lines.pop() ?? '';
-        for (const line of lines) {
-          const t = line.trim();
-          if (!t.startsWith('data:')) continue;
-          const payload = t.slice(5).trim();
-          if (payload === '[DONE]') continue;
-          try {
-            const ev = JSON.parse(payload) as { t?: string; r?: string; err?: string };
-            if (ev.err) streamErr = ev.err;
-            if (ev.t || ev.r) {
-              content += ev.t ?? '';
-              reasoning += ev.r ?? '';
-              onDelta?.({ text: ev.t, reason: ev.r });
-            }
-          } catch {
-            /* 忽略无法解析的行 */
-          }
-        }
-      }
+      const result = await callZaiModel(provider, messages, signal);
+      onDelta?.({ text: result.content, reason: result.reasoning });
+      return {
+        content: result.content,
+        reasoning: result.reasoning,
+        err: result.err,
+      };
     } catch (e) {
       return { content: '', reasoning: '', err: e instanceof Error ? e.message : String(e) };
     }
-    return { content, reasoning, err: streamErr };
   }
 
   let content = '';

@@ -93,6 +93,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   { key: 'gemini', label: 'Google Gemini 免费', config: { kind: 'openai', label: 'Google Gemini 免费', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/', model: 'gemini-1.5-flash-latest', temperature: 0.7 } },
   { key: 'agnes', label: 'Agnes', config: { kind: 'openai', label: 'Agnes', baseUrl: '', model: '', temperature: 0.7 } },
   { key: 'cline', label: 'Cline 自定义', config: { kind: 'openai', label: 'Cline 自定义（OpenAI 兼容）', baseUrl: '', model: 'deepseek-chat', temperature: 0.7 } },
+  { key: 'agnes-cn', label: 'Agnes 中国站', config: { kind: 'openai', label: 'Agnes 中国站', baseUrl: 'https://apihub.agnes-ai.com/v1', model: 'agnes-2.5-flash', temperature: 0.7 } },
   { key: 'custom', label: '自定义', config: { kind: 'openai', label: '自定义（OpenAI 兼容）', baseUrl: '', model: '' } },
   { key: 'local-qwen05b', label: '本地 Qwen-0.5B ⚠️', config: { kind: 'local', label: '本地 Qwen-0.5B（实验性）', model: 'XENova/qwen2.5-0.5b-instruct', temperature: 0.7 } },
 ];
