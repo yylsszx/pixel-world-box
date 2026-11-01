@@ -98,6 +98,11 @@ const idx = (x, y) => y * W + x;
 function f32md5(f32arr) {
   return md5hex(new Uint8Array(f32arr.buffer.slice(0)));
 }
+function u16bytes(intArr) {
+  const u16 = new Uint16Array(intArr.length);
+  for (let i = 0; i < intArr.length; i++) u16[i] = intArr[i];
+  return new Uint8Array(u16.buffer);
+}
 function u16md5(intArr) {
   const u16 = new Uint16Array(intArr.length);
   for (let i = 0; i < intArr.length; i++) u16[i] = intArr[i];
@@ -209,9 +214,11 @@ function buildScenario(spec) {
     drift0: eng.nature.drift.map((d) => f64hex(d.dx) + f64hex(d.dy)),
     plateC0: [...eng.nature.plateCx, ...eng.nature.plateCy].map(f64hex),
     boundaryMd5_0: u16md5([...eng.nature.boundary]),
+    boundary0: gzB64(u16bytes([...eng.nature.boundary])),   // boundary 全列表（S11 单格化手术面固化——镜像端直接注入免推导）
     hotXY0: eng.nature.hotspots.map((h) => [h.x, h.y]),   // 热点坐标全列表（镜像端直接注入——独立流重掷免链）
     plateN0: eng.nature.plateN,
-    units0: (spec.units ?? []).map((uo) => ({ id: uo.id, x: uo.x, y: uo.y, hp: uo.hp ?? 10 })),
+    building0: gzB64(eng.building),   // 建筑面（pre 钩子 mkBuilding 动态面固化——镜像 attackBuilding 门消费）
+    units0: eng.units.map((u) => ({ id: u.id, race: u.race, x: u.x, y: u.y, hp: u.hp, maxHp: u.maxHp })),   // pre 后实况（mkUnitAt 动态面）
     yearF0: eng.yearF,
     seasonOffset0: eng.nature.seasonOffset,
   };
@@ -235,7 +242,7 @@ function buildScenario(spec) {
     if (call.preYear !== undefined) eng.yearF = call.preYear;   // season 场景年相推进（L2521 每帧 +1/40 手术等价）
     const [obj, fn] = call.fn.startsWith('nt.') ? [eng.nature, call.fn.slice(3)] : [eng, call.fn];
     obj[fn](...call.args);
-    steps.push({ fn: call.fn, args: call.args, yearF: f64hex(eng.yearF), ...snapCommon() });
+    steps.push({ fn: call.fn, args: call.args, preYear: call.preYear, yearF: f64hex(eng.yearF), ...snapCommon() });
   }
 
   // sanity（生成即验证）——NAT_DIAG=1 时不符仅告警继续
@@ -290,7 +297,7 @@ function mkBuilding(eng, x, y, kind) {
   const i = idx(x, y);
   eng.building[i] = kind;
   eng.bIdx.set(i, eng.buildings.length);
-  eng.buildings.push({ i, hp: 10 });
+  eng.buildings.push({ i, x, y, kind, civ: -1, hp: 10 });   // x/y/kind/civ 全字段（destroyBuilding smoke fx b.x/b.y 消费面——undefined 怪癖面回避）
 }
 // 瘦单位直写辅助（手术二 units 面同款）
 function mkUnitAt(eng, id, race, x, y, hp) {
