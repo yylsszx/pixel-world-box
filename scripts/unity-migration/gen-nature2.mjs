@@ -279,6 +279,7 @@ function buildScenario(spec) {
     hotXY0: eng.nature.hotspots.map((h) => [h.x, h.y]),
     heat0: eng.nature.hotspots.map((h) => f64hex(h.heat)),
     building0: gzB64(eng.building),
+    soil0: gzB64(eng.worldsim.soilF),   // 土壤肥力场（worldgen initFromTerrain 派生——carveRiver 灌溉成林 rng 门 L12378 消费）
     units0: eng.units.map((u) => ({ id: u.id, race: u.race, x: u.x, y: u.y, hp: u.hp, maxHp: u.maxHp, boat: u.boat ?? 0 })),
     yearF0: eng.yearF,
     seasonOffset0: eng.nature.seasonOffset,

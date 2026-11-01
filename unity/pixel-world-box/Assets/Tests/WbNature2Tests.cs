@@ -131,6 +131,9 @@ namespace PixelWorldBox.Tests
             // 建筑面 + 单位面
             byte[] bu = GunzipB64(fx.Value<string>("building0"));
             for (int k = 0; k < bu.Length; k++) if (bu[k] != 0) { w.building[k] = bu[k]; }
+            // 土壤肥力场（worldgen initFromTerrain 派生——carveRiver 灌溉成林 rng 门 L12378 消费）
+            byte[] sf = GunzipB64(fx.Value<string>("soil0"));
+            System.Buffer.BlockCopy(sf, 0, w.soilF, 0, sf.Length);
             w.buildings.Clear(); w.bIdx.Clear();
             for (int k = 0; k < bu.Length; k++) if (w.building[k] != 0) { w.bIdx[k] = w.buildings.Count; w.buildings.Add(new WbBuilding { i = k, x = k % WbWorld.W, y = k / WbWorld.W, kind = w.building[k], civ = -1 }); }
             foreach (var uo in (JArray)fx["units0"])
