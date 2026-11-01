@@ -209,6 +209,7 @@ function buildScenario(spec) {
     drift0: eng.nature.drift.map((d) => f64hex(d.dx) + f64hex(d.dy)),
     plateC0: [...eng.nature.plateCx, ...eng.nature.plateCy].map(f64hex),
     boundaryMd5_0: u16md5([...eng.nature.boundary]),
+    hotXY0: eng.nature.hotspots.map((h) => [h.x, h.y]),   // 热点坐标全列表（镜像端直接注入——独立流重掷免链）
     plateN0: eng.nature.plateN,
     units0: (spec.units ?? []).map((uo) => ({ id: uo.id, x: uo.x, y: uo.y, hp: uo.hp ?? 10 })),
     yearF0: eng.yearF,
