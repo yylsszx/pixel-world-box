@@ -12,8 +12,9 @@ import type { Components } from 'react-markdown';
 import { useGameStore, getEngine } from '@/store/gameStore';
 import type { OracleMode, OracleMsg, CondExpr } from '@/lib/game/types';
 import type { AgentChatMessage, AgentToolResult, OracleProviderConfig, ProviderKind } from '@/lib/oracle/types';
-import { runOracleAgentTurn } from '@/lib/oracle/agent';
-import { runConnectivityTest, validateProviderConfig } from '@/lib/oracle/direct-client';
+import { runOracleAgentTurn, type AgentTurnResult } from '@/lib/oracle/agent';
+import { runConnectivityTest, validateProviderConfig, runDshSessionTurn } from '@/lib/oracle/direct-client';
+import { loadDshOn, storeDshOn, loadOrCreateSessionId, rotateSessionId } from '@/lib/oracle/session';
 import { renderToolCatalog, AGENT_TOOLS } from '@/lib/oracle/tools';
 import { buildSystemPrompt } from '@/lib/oracle/prompt';
 import { Button } from '@/components/ui/button';
@@ -21,7 +22,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   Sparkles, X, ScrollText, ChartLine, Eye, SendHorizontal, Eraser, BrainCircuit,
-  Scale, Search, Zap, Square, Trash2, Cpu, FlaskConical, Crown, Swords, CloudLightning,
+  Scale, Search, Zap, Square, Trash2, Cpu, FlaskConical, Crown, Swords, CloudLightning, Database,
 } from 'lucide-react';
 
 // ---------------- 基础常量 ----------------
@@ -928,15 +929,33 @@ function OracleBody() {
   /** 当前厂商配置（localStorage 'oracle-provider-v1' 持久化） */
   const [provider, setProvider] = useState<OracleProviderConfig>(DEFAULT_PROVIDER);
   const [cfgOpen, setCfgOpen] = useState(false);
+  /** dsh 持久会话面（M-O4 相三前端接线，localStorage 持久化）：中继后端专属——服务端权威历史 */
+  const [dshOn, setDshOn] = useState(false);
+  /** 持久会话 id（localStorage 恢复 → 切后台/刷新续跑的服务端历史锚点） */
+  const [sessionId, setSessionId] = useState('');
   /** agent 运行中的实时流（阶段/工具卡/思考流/逐 token 正文） */
   const [live, setLive] = useState<LiveState | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // 恢复持久化的厂商配置
+  // 恢复持久化的厂商配置与 dsh 会话面
   useEffect(() => {
     setProvider(loadProvider());
+    setDshOn(loadDshOn());
+    setSessionId(loadOrCreateSessionId());
   }, []);
+
+  /** 切换 dsh 持久会话面并持久化 */
+  const toggleDsh = useCallback((next: boolean) => {
+    setDshOn(next);
+    storeDshOn(next);
+  }, []);
+
+  /** 清空会话 = 气泡清空 + sessionId 轮换（重开会话；旧会话在服务端留档可回放） */
+  const handleClear = useCallback(() => {
+    clearOracle();
+    setSessionId(rotateSessionId());
+  }, [clearOracle]);
 
   /** 更新并持久化厂商配置 */
   const applyProvider = useCallback((next: OracleProviderConfig) => {
@@ -970,19 +989,29 @@ function OracleBody() {
         setCfgOpen(true); // 直接打开厂商接入引导补全
         return;
       }
+      // dsh 持久会话面非静默守卫：该面仅存在于中继后端（oracle-server）——无中继时给出可行动引导，
+      // 绝不静默降级为无状态直连（那会让用户误以为历史已持久）
+      if (dshOn && !provider.relayUrl?.trim()) {
+        setError('dsh 持久会话需要中继后端：请在「厂商接入 → 中继后端」填 oracle-server 地址，或关闭「持久」开关回默认面');
+        setCfgOpen(true);
+        return;
+      }
       // 历史快照须在 addOracleMsg 之前取（否则本轮 user 消息会重复入列）
       // v3：历史压缩带工具回执摘要——模型跨轮记得自己干过什么，复合任务可续接
-      const history: AgentChatMessage[] = [
-        { role: 'assistant', content: buildSystemPrompt(renderToolCatalog()) },
-        ...st.oracleMsgs.slice(-8).map((m): AgentChatMessage => ({
-          role: m.role === 'user' ? 'user' : 'assistant',
-          content:
-            m.role === 'oracle' && m.tools?.length
-              ? `${m.text}\n（系统记忆标注，供你回顾上一轮操作，勿在回答中复述：${m.tools.map((t) => `${t.name}${t.ok ? '✓' : '✗'}`).join(' ')}）`
-              : m.text,
-        })),
-        { role: 'user', content: userText },
-      ];
+      // dsh 持久会话面：历史由服务端事件日志权威投影，前端不组历史（仅发本回合 user）
+      const history: AgentChatMessage[] = dshOn
+        ? []
+        : [
+            { role: 'assistant', content: buildSystemPrompt(renderToolCatalog()) },
+            ...st.oracleMsgs.slice(-8).map((m): AgentChatMessage => ({
+              role: m.role === 'user' ? 'user' : 'assistant',
+              content:
+                m.role === 'oracle' && m.tools?.length
+                  ? `${m.text}\n（系统记忆标注，供你回顾上一轮操作，勿在回答中复述：${m.tools.map((t) => `${t.name}${t.ok ? '✓' : '✗'}`).join(' ')}）`
+                  : m.text,
+            })),
+            { role: 'user', content: userText },
+          ];
       addOracleMsg({ role: 'user', text: userText, mode });
       setView('chat');
       setOracleBusy(true);
@@ -991,50 +1020,76 @@ function OracleBody() {
       const ac = new AbortController();
       abortRef.current = ac;
       try {
-        const res = await runOracleAgentTurn(
-          provider,
-          history,
-          {
-            signal: ac.signal,
-            onDelta: (d) =>
-              setLive((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      phase: d.text ? 'whisper' : prev.phase,
-                      text: prev.text + (d.text ?? ''),
-                      reason: prev.reason + (d.reason ?? ''),
+        // dsh 持久会话面（中继专属）：单回合直发——服务端权威历史 + 服务端工具轮；
+        // 默认面：客户端多轮工具循环（活引擎零延迟执行）
+        const sid = sessionId || loadOrCreateSessionId();
+        if (sid !== sessionId) setSessionId(sid);
+        const res: AgentTurnResult = dshOn
+          ? await runDshSessionTurn(provider, sid, userText, {
+              signal: ac.signal,
+              onDelta: (d) =>
+                setLive((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        phase: d.text ? 'whisper' : prev.phase,
+                        text: prev.text + (d.text ?? ''),
+                        reason: prev.reason + (d.reason ?? ''),
+                      }
+                    : prev,
+                ),
+            }).then((r) => ({
+              // dsh 面结果归一为回合形状：工具轮在服务端执行，前端零工具事件（桥过程已随 {r} 入思考流）
+              content: r.content,
+              toolEvents: [],
+              turns: 1,
+              error: r.err || undefined,
+              reasoning: r.reasoning || undefined,
+            }))
+          : await runOracleAgentTurn(
+              provider,
+              history,
+              {
+                signal: ac.signal,
+                onDelta: (d) =>
+                  setLive((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          phase: d.text ? 'whisper' : prev.phase,
+                          text: prev.text + (d.text ?? ''),
+                          reason: prev.reason + (d.reason ?? ''),
+                        }
+                      : prev,
+                  ),
+              onToolCalls: (calls) =>
+                setLive((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        phase: 'invoke',
+                        invoking: calls.map((c) => c.name).join('、'),
+                        tools: [...prev.tools, ...calls.map((c) => ({ name: c.name, args: c.args, ok: null, summary: '' }))],
+                      }
+                    : prev,
+                ),
+              onToolResult: (call, r) =>
+                setLive((prev) => {
+                  if (!prev) return prev;
+                  let done = false;
+                  const tools = prev.tools.map((t) => {
+                    if (!done && t.ok === null && t.name === call.name) {
+                      done = true;
+                      return { ...t, ok: r.ok, summary: briefResult(r) };
                     }
-                  : prev,
-              ),
-            onToolCalls: (calls) =>
-              setLive((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      phase: 'invoke',
-                      invoking: calls.map((c) => c.name).join('、'),
-                      tools: [...prev.tools, ...calls.map((c) => ({ name: c.name, args: c.args, ok: null, summary: '' }))],
-                    }
-                  : prev,
-              ),
-            onToolResult: (call, r) =>
-              setLive((prev) => {
-                if (!prev) return prev;
-                let done = false;
-                const tools = prev.tools.map((t) => {
-                  if (!done && t.ok === null && t.name === call.name) {
-                    done = true;
-                    return { ...t, ok: r.ok, summary: briefResult(r) };
-                  }
-                  return t;
-                });
-                return { ...prev, tools };
-              }),
-          },
-          400, // 超级演化轮：取消轮数限制（400 = 事实上无限；agent 内置同签名失败/无进展双守卫防失控）
-          deep,
-        );
+                    return t;
+                  });
+                  return { ...prev, tools };
+                }),
+            },
+              400, // 超级演化轮：取消轮数限制（400 = 事实上无限；agent 内置同签名失败/无进展双守卫防失控）
+              deep,
+            );
         addOracleMsg({
           role: 'oracle',
           text: res.content || `神谕沉默了${res.error ? `（${res.error}）` : ''}——世界仍在运转，请再问一次。`,
@@ -1053,7 +1108,7 @@ function OracleBody() {
         abortRef.current = null;
       }
     },
-    [provider, addOracleMsg, setOracleBusy, deep],
+    [provider, addOracleMsg, setOracleBusy, deep, dshOn, sessionId],
   );
 
   /** 中止当前 agent 循环 */
@@ -1175,10 +1230,31 @@ function OracleBody() {
         </Button>
         <Button
           variant="ghost"
+          size="sm"
+          onClick={() => toggleDsh(!dshOn)}
+          disabled={oracleBusy}
+          aria-pressed={dshOn}
+          aria-label="dsh 持久会话"
+          title={
+            dshOn
+              ? 'dsh 持久会话已开启：历史由 oracle-server 权威投影（JSONL 落盘 + compaction），切后台/刷新续跑；清空按钮轮换新会话'
+              : '开启 dsh 持久会话（需中继后端）：服务端权威历史——100 轮不失忆、切后台/刷新续跑'
+          }
+          className={`h-6 shrink-0 gap-1 rounded-sm border-2 px-1.5 text-[10px] font-bold transition-colors disabled:opacity-40 ${
+            dshOn
+              ? 'border-sky-400/60 bg-sky-400/15 text-sky-300'
+              : 'border-zinc-700/70 bg-zinc-800/50 text-zinc-400 hover:border-sky-400/40 hover:text-sky-300'
+          }`}
+        >
+          <Database className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span className="shrink-0">持久</span>
+        </Button>
+        <Button
+          variant="ghost"
           size="icon"
           disabled={oracleBusy || oracleMsgs.length === 0}
-          onClick={clearOracle}
-          aria-label="清空神谕会话"
+          onClick={handleClear}
+          aria-label="清空神谕会话（dsh 持久会话开启时同时轮换新会话）"
           title="清空会话"
           className="h-6 w-7 shrink-0 border-2 border-transparent text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-30"
         >

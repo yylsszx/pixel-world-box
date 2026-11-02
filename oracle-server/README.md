@@ -64,7 +64,20 @@ bash scripts/oracle-server-smoke.sh                            # 中继面 12 �
 bash scripts/oracle-dsh/run-runtime-smoke.sh                   # 装配树运行时冒烟五步（相一）
 bash scripts/oracle-dsh/run-server-runtime-smoke.sh            # dsh 会话面 E2E 八步（相二，离线假上游）
 bash scripts/oracle-dsh/run-session-persistence-smoke.sh       # 100 轮不失忆验收链八步（相三）
+bash scripts/oracle-dsh/run-frontend-session-wire-smoke.sh     # 前端 sessionId 接线线协议冒烟四步（相三挂账①）
 ```
+
+## 前端接线（M-O4 相三挂账①，已通）
+
+网页端神谕面板已原生支持持久会话面，无需手写请求：
+
+1. 「厂商接入 → 中继后端」填本服务地址；
+2. 打开面板控制行「持久」开关（localStorage `oracle-dsh-on-v1`）——开启后每轮自动发
+   `body.dsh.sessionId`（`src/lib/oracle/session.ts` 生成/恢复，localStorage `oracle-dsh-session-v1`），
+   `messages` 仅末条 user，历史由本服务权威投影；
+3. 切后台/刷新后同 sessionId 续跑（localStorage 恢复锚点，服务端日志回放）；
+4. 「清空」按钮同时轮换新 sessionId（旧会话 JSONL 留档可回放）；无中继时开启「持久」会被
+   非静默守卫拦截并引导配置。默认面（无 dsh 字段）行为与 v6 逐字节不变。
 
 ## Sealos 部署三步
 

@@ -9,6 +9,8 @@
 //   ④ 直连网络级失败 → 精确可行动错误文案（绝不误报「离线」）。
 // builtin（内置 Z.ai）必须经后端（SDK 密钥在服务端）：后端不在时才报「离线」，并给出替代路径。
 // SSE 线协议与 /api/oracle/agent 完全一致：data: {"r"|"t"|"err"} \n\n + data: [DONE]。
+// dsh 持久会话面（M-O4 相三前端接线）：仅中继通道附加 body.dsh（服务端权威历史）——
+//   本站后端（Next 静态白名单路由）与 corsDirect 不识别该面，永不发送；无 dsh 时 body 逐字节不变。
 import type { AgentChatMessage, OracleProviderConfig } from './types';
 
 /** 统一模型调用结果（与 agent.ts callModel 返回同构） */
@@ -21,6 +23,12 @@ export interface ModelCallResult {
 export interface RouteCallbacks {
   onDelta?: (d: { text?: string; reason?: string }) => void;
   signal?: AbortSignal;
+}
+
+/** 路由附加选项（可选，缺省=行为与 v6 完全一致） */
+export interface RouteExtras {
+  /** dsh 持久会话面：仅中继通道生效——body.dsh={sessionId}，历史由 oracle-server 事件日志权威投影 */
+  dsh?: { sessionId: string };
 }
 
 const TIMEOUT_MS = 120_000;
@@ -171,6 +179,7 @@ async function callViaBackend(
   deep: boolean,
   cb: RouteCallbacks,
   epLabel: string,
+  dsh?: { sessionId: string },
 ): Promise<ModelCallResult> {
   const state = { content: '', reasoning: '', streamErr: '' };
   const { signal, cleanup } = linkedAbort(cb.signal);
@@ -178,7 +187,8 @@ async function callViaBackend(
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, messages, deep }),
+      // dsh 仅在显式传入时附加（无 dsh 时 body 与 v6 逐字节不变——旧后端零感知）
+      body: JSON.stringify(dsh ? { provider, messages, deep, dsh } : { provider, messages, deep }),
       signal,
     });
     if (!res.ok || !res.body) {
@@ -471,18 +481,21 @@ const BUILTIN_OFFLINE_MSG =
  * - local：不走此层（agent.ts 先行分流）。
  * - builtin：中继（若配）→ 本站后端（若在）→ 准确「离线」文案。
  * - openai/anthropic：中继（若配）→ 本站后端（若在）→ 浏览器直连 → 精确错误（绝不误报离线）。
+ * - extras.dsh：dsh 持久会话面（M-O4 相三）——仅中继通道附加 body.dsh.sessionId；
+ *   本站后端/corsDirect 不识别该面，静默忽略 extras（发方职责：仅在中继场景传入）。
  */
 export async function routeCallModel(
   provider: OracleProviderConfig,
   messages: AgentChatMessage[],
   deep: boolean,
   cb: RouteCallbacks = {},
+  extras?: RouteExtras,
 ): Promise<ModelCallResult> {
   // ① 显式中继后端（Sealos oracle-server）——用户显式配置，失败不静默换道（错误原样上浮）
   const relay = provider.relayUrl?.trim();
   if (relay) {
     const ep = normalizeRelayUrl(relay);
-    const r = await callViaBackend(ep, provider, messages, deep, cb, '中继');
+    const r = await callViaBackend(ep, provider, messages, deep, cb, '中继', extras?.dsh);
     if (r.err && (r.err.includes('请求失败') || r.err.includes('Failed to fetch'))) {
       return {
         ...r,
@@ -535,6 +548,29 @@ export async function runConnectivityTest(provider: OracleProviderConfig): Promi
   if (result.err) return { ok: false, msg: result.err };
   // 无增量也无错误 → 上游已判定（err 应非空；双保险）
   return { ok: false, msg: result.err || '无响应' };
+}
+
+// ============ dsh 持久会话回合（M-O4 相三前端接线） ============
+
+/**
+ * dsh 持久会话单回合：服务端权威历史——前端仅发本回合 user 输入（历史由 oracle-server
+ * 事件日志 JSONL 投影回放 + compaction 双策略压缩），工具轮在服务端 dsh ToolsService 执行，
+ * 桥过程经 {r} 行随流回传（pumpBackendSSE 归入 reason）。100 轮不失忆/切后台续跑的服务端半边。
+ * 永不 throw——错误折进 err。调用方须保证 provider.relayUrl 已配（本站后端/corsDirect 无此面）。
+ */
+export async function runDshSessionTurn(
+  provider: OracleProviderConfig,
+  sessionId: string,
+  userText: string,
+  cb: RouteCallbacks = {},
+): Promise<ModelCallResult> {
+  return routeCallModel(
+    provider,
+    [{ role: 'user', content: userText }],
+    false,
+    cb,
+    { dsh: { sessionId } },
+  );
 }
 
 // ============ 发送前预检（杜绝「发送后才报错」的配置缺失） ============
