@@ -252,5 +252,13 @@ writeFileSync(path.join(OUT_ROOT, 'package.json'), JSON.stringify(rootManifest, 
 writeFileSync(path.join(OUT_ROOT, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*/*\n  - vendor/*\n')
 // tsconfig 随池保留（tsx 源码直消费路线的路径语义）
 if (existsSync(path.join(DSH_ROOT, 'tsconfig.json'))) cpSync(path.join(DSH_ROOT, 'tsconfig.json'), path.join(OUT_ROOT, 'tsconfig.json'))
+// .pwb-hooks 章：server.mjs 镜像内引导所需的 dsh-hook（自 scripts/oracle-dsh 原样复制，逻辑零改动；
+// runtime-boot.mjs 定位顺序 = .pwb-hooks 章 → 仓内 scripts 兜底，镜像内无 scripts 故必须盖章）
+{
+  const hooksDir = path.join(OUT_ROOT, '.pwb-hooks')
+  mkdirSync(hooksDir, { recursive: true })
+  cpSync(path.join(here, 'dsh-hook.mjs'), path.join(hooksDir, 'dsh-hook.mjs'))
+  console.log('[pack] ✓ .pwb-hooks/dsh-hook.mjs 已盖章（server 镜像内引导依赖）')
+}
 console.log(`\n[pack] ✓ 装配完成：${OUT_ROOT}（${kept.size} 包；node_modules/tests/dist 已剔除）`)
 console.log('[pack] 下一步：cd oracle-server/dsh-runtime && pnpm install --ignore-scripts && bash ../../scripts/oracle-dsh/run-runtime-smoke.sh')
