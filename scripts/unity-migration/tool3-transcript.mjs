@@ -136,6 +136,8 @@ const FIRST0 = ['Alric', 'Berta', 'Corin', 'Dahlia', 'Edwin', 'Faye', 'Gareth', 
 const FIRST16 = ['Bones', 'Rattle', 'Marrow', 'Creak', 'Skull', 'Grin', 'Clatter', 'Dust', 'Hollow', 'Grim'];   // names.ts FIRST[16] SKELETON 专池（M-U24：lichRaise 骷髅名掷消费面——race 键控池表）
 const FIRST6 = ['Wooly', 'Fluff', 'Baaald', 'Shears', 'Cloud', 'Tumble'];   // names.ts FIRST[6] SHEEP 专池（M-U25：S36 迁徙奠基羊名掷消费面——黄金 Cloud/Baaald/Fluff/Shears/Fluff II 实证）
 const FIRST_BY_RACE = { [R.SKELETON]: FIRST16, [R.SHEEP]: FIRST6 };   // names.ts FIRST 子集（本切片消费面——SKELETON/SHEEP 专池；HYDRA/FISH/SHARK 走 FIRST0 缺省——FIRST 表键 0-27，FISH 37 无专池）
+const FAM_PRE = ['霜', '烬', '暴风', '血', '铁', '荆棘', '暗影', '星', '狼', '鹰', '珊瑚', '苔', '雷', '冬', '荒', '银'];   // L1112（家族姓氏前缀 16——newFamily 词法姓）
+const FAM_POST = ['牙', '羽', '痕', '鬃', '棘', '誓', '歌', '爪', '翼', '须', '蹄', '岚'];   // L1113（后缀 12）
 function romanM(n) {                       // names.ts L81-94 机械转写（小写表 + toUpperCase 尾——大写罗马输出「Fluff II」黄金实证）
   if (n < 1 || n > 40) return String(n);   // L82
   const table = [[40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']];   // L83-84
@@ -282,6 +284,7 @@ class BREng {
     this.unitById = new Map(this.units.map((u) => [u.id, u]));
     // M-U22：reap 收尸域状态面（fixture 快照注入——civ/family 瘦夹具 + unitSeq 起点锚）
     this.unitSeq = sc.fixture.unitSeq0 ?? 1;        // engine L179 unitSeq = 1（worldgen spawn 推进后快照——幼蛇 id/parity 位级锚）
+    this.familySeq = sc.fixture.familySeq0 ?? 1;    // M-U25：familySeq 起点快照（L213 类字段初值 1——worldgen 播撒 fam 门命中推进；S37 尾 6 鱼 fam=27 位级锚——newFamilyM id 先取后增消费面）
     this.items = [];                                // engine L489 items
     this.itemSeq = 1;                               // engine L508
     this.phoenixAshes = [];                         // engine L492
@@ -296,6 +299,7 @@ class BREng {
     for (const c of (sc.fixture.corpses0 ?? [])) this.corpses.push({ ...c });   // M-U24：尸体瘦夹具（lichRaise r=4 最陈旧选择——零掷纯写）
     for (const [bx, by, bv] of (sc.fixture.building0 ?? [])) this.building[by * W + bx] = bv;   // M-U24：建筑瘦夹具（entGrove L13068 门——零掷纯写）
     this.natureSeason = sc.fixture.season0 ?? 0;    // M-U24：season 夹具（gen eng.nature.season 派生值快照——yearF/2%4 getter 同构消费面；lichRaise 冬 %8 门）
+    this.yearF = sc.fixture.yearF0 ?? 0;            // L413 yearF 快照（newFamily founded=floor(yearF) 消费面——families 无断言面，保守同构）
     this.laws = { zombieVirus: true, reproduction: sc.fixture.repro0 ?? true };   // engine laws 子集（zombie 门——黄金默认 true；M-U25：reproduction 法则门〔wildlifeReboundTick L12841 / sharkBreedTick L12996——构造默认 true，repro0 夹具 S39 false〕）
     this.reboundLast = new Map(sc.fixture.rebound0 ?? []);   // M-U25：迁徙权重表（engine L495 类字段原生空表——rebound0 夹具 ago 权重消费面 L12871）
   }
@@ -1614,11 +1618,14 @@ class BREng {
     this.bumpWild(R.ZOMBIE, 1);              // L4343
     this.fx('spawn', u.x, u.y, 30);          // L4344
   }
-  newFamilyM(race, u) {                      // L11065+ newFamily 子集（silent spawn 0.06 命中支——黄金 hydra 双 MISS 未触达；同构建族防结构漂移）
-    const f = { id: this.familySeq ?? 1, race, name: '氏族', founder: u.name, founded: 0, members: 1, heroes: 0, kills: 0, peak: 1, milestones: 0 };
-    this.familySeq = (this.familySeq ?? 1) + 1;
-    this.families.set(f.id, f);
-    return f;
+  newFamilyM(race, u) {                      // L1117-1136 机械转写（词法姓氏 FAM_PRE×FAM_POST 2 掷——S37 尾 6 鱼 0.06 fam 门首触暴露：旧 hydra 双 MISS 未触达注记的零掷实现即漂移源，已按蓝本补掷）
+    const pre = FAM_PRE[Math.floor(this.rng() * FAM_PRE.length)];      // L1118（1 掷——16 前缀池）
+    const post = FAM_POST[Math.floor(this.rng() * FAM_POST.length)];   // L1119（1 掷——12 后缀池）
+    const f = { id: this.familySeq ?? 1, race, name: pre + post, founder: u.name, founded: Math.floor(this.yearF ?? 0), members: 1, heroes: 0, kills: 0, peak: 1, milestones: 0 };   // L1121-1132（families 无断言面）
+    this.familySeq = (this.familySeq ?? 1) + 1;   // L1121 id 先取后增同构
+    this.families.set(f.id, f);            // L1133
+    // L1139 pruneFamilies：size ≤ 240 早退（镜像窗口族数 ≤ 2 恒零效应——结构性省略零漂移）
+    return f;                              // L1135
   }
   spawnUnitM(race, x, y, opts) {             // L1289+ 机械转写（silent + 无 civ/gear 面——hydra 幼蛇/凤凰重生消费面）
     const def = RACES[race];
@@ -1932,7 +1939,9 @@ class BREng {
 // ---- 黄金回放对账 ----
 const golden = JSON.parse(readFileSync(new URL('./golden/tool3.json', import.meta.url), 'utf8'));
 let pass = 0, fail = 0;
+const SCEN = process.env.TOOL3_SCEN ?? '';   // 诊断基建：单场景过滤（env-gated 零默认效应）
 for (const sc of golden.scenarios) {
+  if (SCEN && sc.key !== SCEN) continue;
   const eng = new BREng(sc);
   eng.rngA = sc.seed >>> 0;
   let stepOk = true, firstErr = '';
@@ -2032,7 +2041,21 @@ for (const sc of golden.scenarios) {
       ...(u.beachTy !== undefined ? { beachTy: u.beachTy } : {}),       // M-U25：归海/猎游目标 y
       ...(u.beachTargetId !== undefined ? { beachTid: u.beachTargetId } : {}),   // M-U25：猎游粘性目标
     });
-    if (JSON.stringify(eng.units.map(dumpUnit)) !== JSON.stringify(sc.units)) { endOk = false; endErr = 'units dump 终态'; }
+    if (JSON.stringify(eng.units.map(dumpUnit)) !== JSON.stringify(sc.units)) {
+      endOk = false; endErr = 'units dump 终态';
+      if (process.env.TOOL3_TRACE) {   // 诊断基建：终态 units 首差异字段定位（env-gated）
+        const A = eng.units.map(dumpUnit), B = sc.units;
+        for (let i = 0; i < Math.max(A.length, B.length); i++) {
+          if (JSON.stringify(A[i]) !== JSON.stringify(B[i])) {
+            const ua = A[i] ?? {}, ub = B[i] ?? {};
+            for (const k of new Set([...Object.keys(ua), ...Object.keys(ub)])) {
+              if (JSON.stringify(ua[k]) !== JSON.stringify(ub[k])) console.error(`[trace] unit#${i} id=${ua.id ?? ub.id} ${k}: mirror=${JSON.stringify(ua[k])} golden=${JSON.stringify(ub[k])}`);
+            }
+            break;
+          }
+        }
+      }
+    }
   }
   if (endOk && JSON.stringify(eng.toasts) !== JSON.stringify(sc.toasts)) { endOk = false; endErr = 'toasts 终态'; }
   // M-U22：reapDump 六域终态对账（items/ash/贴花/civ/family/rel——条件键仅新场景携带）

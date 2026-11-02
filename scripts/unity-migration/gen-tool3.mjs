@@ -275,6 +275,7 @@ function buildScenario(spec) {
     })),
     yearF0: eng.yearF,
     unitSeq0: eng.unitSeq,                             // M-U22：unitSeq 起点快照（worldgen 期野生动物 spawn 推进——reap-hydra 幼蛇 id 604/605 位级锚；C# ReplayScenario 裸构造 unitSeq=1 缺口）
+    familySeq0: eng.familySeq,                         // M-U25：familySeq 起点快照（worldgen 播撒 0.06 fam 门命中推进——S37 尾 6 鱼 fam=27 位级锚；gen 行为零漂移纯记录，镜像消费面同 unitSeq0 先例）
     // M-U22：civ/family 瘦夹具快照（reapDump 场景条件键——pop--/onKingDeath/members--/rel 消费面 C# 重放注入）
     ...(spec.civs ? { civs0: spec.civs } : {}),
     ...(spec.families ? { families0: spec.families.map(([id, f]) => ({ id, ...f })) } : {}),
