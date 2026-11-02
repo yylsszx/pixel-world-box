@@ -69,3 +69,4 @@ unity/pixel-world-box/bin-tests/
 
 # dsh 基线源码池（314MB 纪律：只留沙箱本地，永不入库；ORACLE_V2 §8）
 /third_party/
+oracle-server/dsh-runtime/

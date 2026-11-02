@@ -49,6 +49,14 @@ export async function resolve(specifier, context, nextResolve) {
       } else if (existsSync(base) && statSync(base).isFile()) {
         // package.json / locale json 等真实文件子路径：直取
         return { url: pathToFileURL(base).href, shortCircuit: true }
+      } else {
+        // 子路径导入（如 '@deepseek-ai/dsh-tools/pipeline'）：base 无扩展名时同样
+        // 尝试 TS 扩展候选（M-O4 实证：exports 指向未构建 lib/ 而源码在 src/pipeline.ts）
+        for (const cand of candidatesFor(base)) {
+          if (existsSync(cand) && statSync(cand).isFile()) {
+            return { url: pathToFileURL(cand).href, shortCircuit: true, format: 'module' }
+          }
+        }
       }
       // manifest 命中但候选不存在 → 交回默认解析（lib/ 缺失时报错更可诊断）
     }
