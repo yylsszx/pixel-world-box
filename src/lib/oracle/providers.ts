@@ -8,6 +8,7 @@
 // 服务端 Node 运行时；绝不把 apiKey 写入任何日志/错误信息。
 import ZAI from 'z-ai-web-dev-sdk';
 import type { AgentRequestBody, AgentChatMessage } from './types';
+import { callLocalModel } from './local-provider';
 
 /** SSE 行编码（data: {json}\n\n） */
 const sse = (obj: unknown) => `data: ${JSON.stringify(obj)}\n\n`;
@@ -354,6 +355,44 @@ async function streamAnthropic(body: AgentRequestBody): Promise<ReadableStream<U
   });
 }
 
+// ============ local：浏览器端本地模型（transformers.js） ============
+
+/**
+ * 本地模型流式包装：把 callLocalModel 的一次性返回拆成 SSE 事件流。
+ * 说明：transformers.js 当前不支持原生流式输出，这里把完整生成一次性发送。
+ * 若后续支持流式，可改为逐 token 发送 {t: token}。
+ * 服务端（SSR）环境下返回引导信息，不报错，由客户端自行处理。
+ */
+async function streamLocal(body: AgentRequestBody): Promise<ReadableStream<Uint8Array>> {
+  const { provider, messages } = body;
+  const label = provider.label || provider.model || 'local';
+
+  return makeSSEStream(async (send) => {
+    // 服务端（SSR）环境：返回引导信息，不阻塞流式连接
+    if (typeof window === 'undefined') {
+      send({ t: '[本地模型]' });
+      send({ t: '\n\n' });
+      send({ t: '💡 本地模型需在浏览器端运行（transformers.js + WebGPU/WASM）。' });
+      send({ t: '\n' });
+      send({ t: '   请在前端页面直接调用 /api/oracle/agent（kind: "local"）' });
+      send({ t: '\n' });
+      send({ t: '   首次加载需下载 ~300-500MB 模型文件，随后离线可用。' });
+      send({ t: '\n\n' });
+      send({ t: '   或者使用 OraclePanel 面板，它会自动预加载并管理本地模型。' });
+      return;
+    }
+
+    try {
+      const { content, reasoning, err } = await callLocalModel(provider, messages);
+      if (reasoning) send({ r: reasoning });
+      if (content) send({ t: content });
+      if (err) send({ err: `[${label}] ${err}` });
+    } catch (e) {
+      send({ err: `[${label}] ${e instanceof Error ? e.message : String(e)}` });
+    }
+  });
+}
+
 // ============ 统一入口 ============
 
 export async function streamAgentChat(body: AgentRequestBody): Promise<ReadableStream<Uint8Array>> {
@@ -364,6 +403,8 @@ export async function streamAgentChat(body: AgentRequestBody): Promise<ReadableS
       return streamOpenAI(body);
     case 'anthropic':
       return streamAnthropic(body);
+    case 'local':
+      return streamLocal(body);
     default:
       throw new Error(`未知的 provider.kind：${String(body.provider.kind)}`);
   }

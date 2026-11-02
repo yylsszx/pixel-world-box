@@ -9,7 +9,7 @@ import type { AgentRequestBody, AgentChatMessage, ProviderKind } from '@/lib/ora
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const KINDS: readonly ProviderKind[] = ['builtin', 'openai', 'anthropic'];
+const KINDS: readonly ProviderKind[] = ['builtin', 'openai', 'anthropic', 'local'];
 const MAX_MESSAGES = 64;
 const MAX_CONTENT_CHARS = 24000;
 

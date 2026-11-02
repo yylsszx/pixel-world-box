@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>本地模型 Provider 测试</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #0d1b2e; color: #e0e0e0; max-width: 900px; margin: 0 auto; }
+    .log { white-space: pre-wrap; margin: 10px 0; padding: 10px; background: #1a1a2e; border-radius: 4px; max-height: 400px; overflow: auto; }
+    .ok { color: #4ade80; }
+    .err { color: #f87171; }
+    .warn { color: #fbbf24; }
+    .info { color: #60a5fa; }
+    button { padding: 10px 20px; margin: 5px; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button:disabled { background: #64748b; cursor: not-allowed; }
+    button.secondary { background: #475569; }
+    button.success { background: #059669; }
+    #status { font-weight: bold; padding: 10px; background: #1e293b; border-radius: 4px; margin-bottom: 10px; }
+    .progress { height: 4px; background: #334155; border-radius: 2px; overflow: hidden; margin: 10px 0; }
+    .progress-bar { height: 100%; background: linear-gradient(90deg, #2563eb, #06b6d4); width: 0%; transition: width 0.3s; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+    .card { background: #1e293b; padding: 15px; border-radius: 8px; }
+    label { display: block; margin: 8px 0 4px; font-size: 13px; color: #94a3b8; }
+    input, select, textarea { width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; border-radius: 4px; color: #e0e0e0; font-family: monospace; font-size: 13px; }
+    textarea { min-height: 80px; resize: vertical; }
+  </style>
+</head>
+<body>
+  <h1>🧠 本地模型 Provider 全功能测试</h1>
+  <div id="status" class="warn">初始化中...</div>
+  <div class="progress"><div id="progressBar" class="progress-bar"></div></div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>⚙️ 配置</h3>
+      <label>模型标识符</label>
+      <input id="modelId" value="Xenova/qwen2.5-0.5b-instruct" />
+      <label>温度</label>
+      <input id="temperature" type="range" min="0" max="2" step="0.1" value="0.7" oninput="tempVal.textContent=this.value" />
+      <span id="tempVal">0.7</span>
+      <label>强制 CPU</label>
+      <select id="forceCpu"><option value="false">否（自动 WebGPU/WASM）</option><option value="true">是</option></select>
+      <label>允许本地模型文件</label>
+      <select id="allowLocalModels"><option value="false">否（CDN 下载）</option><option value="true">是（/models/ 离线）</option></select>
+      <label>系统提示词</label>
+      <textarea id="systemPrompt">你是像素世界盒子的神谕助手。简洁回答，必要时引用世界数据。</textarea>
+      <label>用户提问</label>
+      <textarea id="userPrompt">用一句话介绍像素世界盒子游戏。</textarea>
+    </div>
+    <div class="card">
+      <h3>📊 状态</h3>
+      <div id="stateInfo">加载中...</div>
+      <button id="btnPreload" onclick="preloadModel()" class="secondary">🔄 预加载模型</button>
+      <button id="btnClearCache" onclick="clearCache()" class="secondary">🗑️ 清理管线缓存</button>
+      <button id="btnRegisterSW" onclick="registerSW()" class="secondary">📦 注册 Service Worker</button>
+      <button id="btnClearSWCache" onclick="clearSWCache()" class="secondary">🧹 清理 SW 缓存</button>
+    </div>
+  </div>
+
+  <div style="margin-top: 15px;">
+    <button id="btnLoad" onclick="testLoad()" class="success">1. 加载 transformers.js 与模型</button>
+    <button id="btnGen" onclick="testGenerate()" disabled>2. 生成文本（一次性）</button>
+    <button id="btnStream" onclick="testStream()" disabled>3. 测试 SSE 流式接口（/api/oracle/agent）</button>
+    <button id="btnChat" onclick="testChat()" disabled class="success">4. 完整对话测试（含历史压缩）</button>
+  </div>
+
+  <h3>📝 日志</h3>
+  <div id="log" class="log"></div>
+
+  <script type="module">
+    const logEl = document.getElementById('log');
+    const statusEl = document.getElementById('status');
+    const progressBar = document.getElementById('progressBar');
+    const stateInfoEl = document.getElementById('stateInfo');
+    const btnLoad = document.getElementById('btnLoad');
+    const btnGen = document.getElementById('btnGen');
+    const btnStream = document.getElementById('btnStream');
+    const btnChat = document.getElementById('btnChat');
+    const btnPreload = document.getElementById('btnPreload');
+
+    function log(msg, cls = '') {
+      const line = document.createElement('div');
+      line.className = cls;
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setStatus(msg, cls = 'warn') {
+      statusEl.textContent = msg;
+      statusEl.className = cls;
+    }
+
+    function setProgress(pct) {
+      progressBar.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+    }
+
+    function updateStateInfo() {
+      const { state, error } = getModelLoadState();
+      let html = `<span class="${state === 'ready' ? 'ok' : state === 'error' ? 'err' : state === 'loading' ? 'warn' : 'info'}">${state}</span>`;
+      if (error) html += `<br><span class="err">错误: ${error}</span>`;
+      stateInfoEl.innerHTML = html;
+    }
+
+    // 从 local-provider.ts 复现核心逻辑（测试页自包含）
+    let transformers = null;
+    let pipelineCache = new Map();
+    let modelLoadState = 'idle';
+    let modelLoadError = null;
+    const stateListeners = new Set();
+
+    function getModelLoadState() { return { state: modelLoadState, error: modelLoadError }; }
+    function onModelLoadStateChange(l) { stateListeners.add(l); return () => stateListeners.delete(l); }
+    function emitState(state, error = null) { modelLoadState = state; modelLoadError = error; for (const l of stateListeners) l(state, error); updateStateInfo(); }
+
+    async function loadTransformers() {
+      if (transformers) return transformers;
+      const mod = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js');
+      transformers = mod;
+      return mod;
+    }
+
+    async function getLocalPipeline(modelId, opts = {}) {
+      const { pipeline } = await loadTransformers();
+      const { env } = await loadTransformers();
+      const key = `${modelId}:${opts.forceCpu ? 'cpu' : 'auto'}:${opts.allowLocalModels ? 'local' : 'cdn'}`;
+      if (pipelineCache.has(key)) return pipelineCache.get(key)!;
+
+      if (opts.allowLocalModels) {
+        env.allowLocalModels = true;
+        env.localModelPath = `/models/${modelId.replace(/^[^/]+\//, '')}`;
+      } else {
+        env.allowLocalModels = false;
+      }
+
+      emitState('loading');
+      setProgress(10);
+      try {
+        const pipe = await pipeline('text-generation', modelId, { quantized: true });
+        pipelineCache.set(key, pipe);
+        emitState('ready');
+        setProgress(100);
+        return pipe;
+      } catch (e) {
+        const err = e instanceof Error ? e.message : String(e);
+        emitState('error', err);
+        throw e;
+      }
+    }
+
+    function messagesToPrompt(messages) {
+      const lines = [];
+      for (const m of messages) {
+        const role = m.role === 'assistant' ? 'Assistant' : m.role === 'user' ? 'User' : 'System';
+        lines.push(`${role}: ${m.content}`);
+      }
+      lines.push('Assistant:');
+      return lines.join('\n');
+    }
+
+    function compactHistory(messages, maxMessages = 20) {
+      if (messages.length <= maxMessages) return messages;
+      const systemMsg = messages[0];
+      const recent = messages.slice(-maxMessages + 1);
+      const summaryCount = messages.length - maxMessages;
+      return [systemMsg, { role: 'assistant', content: `[系统] 已省略 ${summaryCount} 条早期消息，仅保留最近上下文。` }, ...recent];
+    }
+
+    async function callLocalModel(provider, messages, signal) {
+      if (typeof window === 'undefined') {
+        return { content: '', reasoning: '', err: '本地模型仅在浏览器端可用' };
+      }
+      const modelId = provider.model ?? 'Xenova/qwen2.5-0.5b-instruct';
+      const content = [];
+      let reasoning = '';
+      let err = '';
+      try {
+        const pipe = await getLocalPipeline(modelId, { forceCpu: provider.forceCpu, allowLocalModels: provider.allowLocalModels });
+        const prompt = messagesToPrompt(messages);
+        setProgress(30);
+        const output = await (pipe as any)(prompt, {
+          max_new_tokens: 512,
+          temperature: typeof provider.temperature === 'number' ? provider.temperature : 0.7,
+          do_sample: typeof provider.temperature === 'number' ? provider.temperature > 0 : true,
+          top_p: 0.9,
+          return_full_text: false,
+        });
+        setProgress(80);
+        const results = Array.isArray(output) ? output : [output];
+        for (const r of results) {
+          const text = r?.generated_text ?? '';
+          if (text) content.push(text);
+        }
+      } catch (e) {
+        err = e instanceof Error ? e.message : String(e);
+      }
+      setProgress(100);
+      return { content: content.join(''), reasoning, err };
+    }
+
+    // SSE 流式消费
+    async function consumeSSEStream(stream) {
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      const events = [];
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payload = trimmed.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
+          try { events.push(JSON.parse(payload)); } catch {}
+        }
+      }
+      return events;
+    }
+
+    // 模拟 streamLocal（浏览器端直接调用）
+    async function streamLocalBrowser(body) {
+      const { provider, messages } = body;
+      const label = provider.label || provider.model || 'local';
+      const encoder = new TextEncoder();
+      const sse = (obj) => `data: ${JSON.stringify(obj)}\n\n`;
+      return new ReadableStream({
+        async start(controller) {
+          const send = (obj) => controller.enqueue(encoder.encode(sse(obj)));
+          try {
+            const { content, reasoning, err } = await callLocalModel(provider, messages);
+            if (reasoning) send({ r: reasoning });
+            if (content) send({ t: content });
+            if (err) send({ err: `[${label}] ${err}` });
+          } catch (e) {
+            send({ err: `[${label}] ${e instanceof Error ? e.message : String(e)}` });
+          }
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+        },
+      });
+    }
+
+    // 获取表单配置
+    function getConfig() {
+      return {
+        model: document.getElementById('modelId').value,
+        temperature: parseFloat(document.getElementById('temperature').value),
+        forceCpu: document.getElementById('forceCpu').value === 'true',
+        allowLocalModels: document.getElementById('allowLocalModels').value === 'true',
+        label: '测试本地模型',
+      };
+    }
+
+    function getMessages() {
+      return [
+        { role: 'assistant', content: document.getElementById('systemPrompt').value },
+        { role: 'user', content: document.getElementById('userPrompt').value },
+      ];
+    }
+
+    async function testLoad() {
+      setStatus('加载中...', 'warn');
+      btnLoad.disabled = true;
+      setProgress(0);
+      try {
+        log('开始加载 @xenova/transformers...');
+        await loadTransformers();
+        log('transformers.js 加载成功 ✓', 'ok');
+        const cfg = getConfig();
+        log(`开始下载/加载模型 ${cfg.model}（首次约 300-500MB）...`);
+        await getLocalPipeline(cfg.model, { forceCpu: cfg.forceCpu, allowLocalModels: cfg.allowLocalModels });
+        log('模型管线就绪 ✓', 'ok');
+        setStatus('模型就绪，可测试生成', 'ok');
+        btnGen.disabled = false;
+        btnStream.disabled = false;
+        btnChat.disabled = false;
+      } catch (e) {
+        log(`加载失败：${e}`, 'err');
+        setStatus('加载失败', 'err');
+        btnLoad.disabled = false;
+      }
+    }
+
+    async function preloadModel() {
+      btnPreload.disabled = true;
+      log('后台预加载模型...');
+      try {
+        const cfg = getConfig();
+        await getLocalPipeline(cfg.model, { forceCpu: cfg.forceCpu, allowLocalModels: cfg.allowLocalModels });
+        log('预加载完成 ✓', 'ok');
+      } catch (e) {
+        log(`预加载失败：${e}`, 'err');
+      } finally {
+        btnPreload.disabled = false;
+      }
+    }
+
+    function clearCache() {
+      pipelineCache.clear();
+      log('管线缓存已清理', 'warn');
+      updateStateInfo();
+    }
+
+    async function testGenerate() {
+      btnGen.disabled = true;
+      setProgress(0);
+      log('开始生成文本...');
+      try {
+        const { content, reasoning, err } = await callLocalModel(getConfig(), getMessages());
+        if (reasoning) log(`思考：${reasoning}`, 'warn');
+        if (content) log(`生成：${content}`, 'ok');
+        if (err) log(`错误：${err}`, 'err');
+        setStatus('生成完成', 'ok');
+      } catch (e) {
+        log(`生成异常：${e}`, 'err');
+        setStatus('生成失败', 'err');
+      } finally {
+        btnGen.disabled = false;
+      }
+    }
+
+    async function testStream() {
+      btnStream.disabled = true;
+      setProgress(0);
+      log('测试 SSE 流式接口（/api/oracle/agent）...');
+      try {
+        const res = await fetch('/api/oracle/agent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: getConfig(), messages: getMessages(), deep: false }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          log(`HTTP ${res.status}: ${err.error}`, 'err');
+          return;
+        }
+        const events = await consumeSSEStream(res.body);
+        let fullContent = '';
+        for (const ev of events) {
+          if (ev.r) { log(`思考流：${ev.r}`, 'warn'); }
+          if (ev.t) { log(`内容流：${ev.t}`, 'ok'); fullContent += ev.t; }
+          if (ev.err) { log(`错误流：${ev.err}`, 'err'); }
+        }
+        log(`完整输出：${fullContent}`, 'ok');
+        log(`共收到 ${events.length} 个 SSE 事件`, 'ok');
+        setStatus('流式测试通过', 'ok');
+      } catch (e) {
+        log(`流式异常：${e}`, 'err');
+        setStatus('流式失败', 'err');
+      } finally {
+        btnStream.disabled = false;
+      }
+    }
+
+    async function testChat() {
+      btnChat.disabled = true;
+      setProgress(0);
+      log('=== 完整对话测试（含历史压缩）===');
+      try {
+        let history = getMessages();
+        for (let round = 1; round <= 3; round++) {
+          log(`--- 第 ${round} 轮 ---`, 'info');
+          const res = await fetch('/api/oracle/agent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider: getConfig(), messages: history, deep: false }),
+          });
+          const events = await consumeSSEStream(res.body);
+          let reply = '';
+          for (const ev of events) {
+            if (ev.t) { reply += ev.t; }
+            if (ev.err) { log(`错误：${ev.err}`, 'err'); }
+          }
+          log(`回复：${reply.trim()}`, 'ok');
+          history.push({ role: 'assistant', content: reply.trim() });
+          // 模拟用户追问
+          const followup = round === 1 ? '它有哪些核心玩法？' : round === 2 ? '怎么建立文明？' : '谢谢。';
+          log(`追问：${followup}`, 'info');
+          history.push({ role: 'user', content: followup });
+          // 历史压缩演示
+          if (history.length > 10) {
+            const before = history.length;
+            history = compactHistory(history, 8);
+            log(`历史压缩：${before} → ${history.length} 条`, 'warn');
+          }
+        }
+        log('=== 对话测试完成 ===', 'ok');
+        setStatus('对话测试通过', 'ok');
+      } catch (e) {
+        log(`对话异常：${e}`, 'err');
+        setStatus('对话失败', 'err');
+      } finally {
+        btnChat.disabled = false;
+      }
+    }
+
+    async function registerSW() {
+      if (!('serviceWorker' in navigator)) { log('浏览器不支持 Service Worker', 'err'); return; }
+      try {
+        const reg = await navigator.serviceWorker.register('/sw.js');
+        log(`SW 注册成功: ${reg.scope}`, 'ok');
+      } catch (e) { log(`SW 注册失败: ${e}`, 'err'); }
+    }
+
+    async function clearSWCache() {
+      if (!('serviceWorker' in navigator)) return;
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) { await reg.unregister(); log('SW 已注销', 'warn'); }
+      await caches.delete('pwb-local-model-v1');
+      log('SW 缓存已清理', 'ok');
+    }
+
+    // 初始化
+    updateStateInfo();
+    onModelLoadStateChange(updateStateInfo);
+    log('测试页就绪。点击「预加载模型」或「加载 transformers.js 与模型」开始。', 'info');
+  </script>
+</body>
+</html>
