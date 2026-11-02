@@ -51,6 +51,9 @@ CORS 全放行（`*`）；请求体上限 1MB；上游超时 120s；apiKey 只�
   全量事件永远在日志可溯源。验收链（100 轮不失忆 + 重启续跑）见冒烟 ③④⑤。
 - dsh 面 v1 仅收 openai 兼容厂商（anthropic/builtin 走直通面）；工具轮上限 6 轮；
   预检失败在 SSE 之前以 JSON 应答（400/503）。
+- **前置门分道（相三挂账①中继实测修正）**：dsh 面（带 `dsh` 字段）契约 = `messages` 仅末条 user
+  （服务端权威历史）——不走直通面 `messages[0]` assistant 载体门；直通面（无 `dsh` 字段）
+  契约逐字节不变。dsh 面校验放宽为「至少一条非空 user」。
 - 会话面环境变量（全部可选）：`PWB_STORE_ROOT`（存储根，镜像默认 `/tmp/pwb-store`）、
   `DSH_SESSION_SURFACE_CHAR_BUDGET`（默认 24000）、`DSH_SESSION_PRUNE_KEEP`（默认 6）、
   `DSH_SESSION_COMPACT_KEEP_TAIL`（默认 8）。
@@ -65,9 +68,14 @@ bash scripts/oracle-dsh/run-runtime-smoke.sh                   # 装配树运行
 bash scripts/oracle-dsh/run-server-runtime-smoke.sh            # dsh 会话面 E2E 八步（相二，离线假上游）
 bash scripts/oracle-dsh/run-session-persistence-smoke.sh       # 100 轮不失忆验收链八步（相三）
 bash scripts/oracle-dsh/run-frontend-session-wire-smoke.sh     # 前端 sessionId 接线线协议冒烟四步（相三挂账①）
+bash scripts/oracle-dsh/run-pwb-tools-smoke.sh                 # pwb-tools 真实游戏工具冒烟八步（相三挂账②）
+bash scripts/oracle-dsh/relay-e2e-live.sh                      # 前端中继实测 E2E（挂账①收官）——真前端产物
+                                                                # (:8123 out/ 伺服) × node 直跑本服务 × 假 ollama 上游(:11434)，
+                                                                # 五回合 4 次重启：工具轮/续跑/刷新锚点/轮换/直通回归，
+                                                                # 浏览器 22 断言 + 投影/JSONL/逐字节 8 断言。需 agent-browser。
 ```
 
-## 前端接线（M-O4 相三挂账①，已通）
+## 前端接线（M-O4 相三挂账①，已通 + 中继实测收官）
 
 网页端神谕面板已原生支持持久会话面，无需手写请求：
 
@@ -78,6 +86,10 @@ bash scripts/oracle-dsh/run-frontend-session-wire-smoke.sh     # 前端 sessionI
 3. 切后台/刷新后同 sessionId 续跑（localStorage 恢复锚点，服务端日志回放）；
 4. 「清空」按钮同时轮换新 sessionId（旧会话 JSONL 留档可回放）；无中继时开启「持久」会被
    非静默守卫拦截并引导配置。默认面（无 dsh 字段）行为与 v6 逐字节不变。
+5. **中继实测（v12 轮收官）**：真前端产物 × 本服务（node 直跑）× 假 ollama 上游五回合 E2E
+   ALL PASS——wb_echo 工具轮 {r} 桥过程行、重启#1/#2 同 sessionId 续跑（投影回放三轮锚点+工具链）、
+   刷新锚点恢复、清空轮换独立 JSONL、直通面逐字节回归；实测中抓出并修复前置门对 dsh 面
+   误用直通面契约的接线 bug（见上文「前置门分道」）。Sealos 真容器/真公网验收仍待有 docker 环境。
 
 ## Sealos 部署三步
 

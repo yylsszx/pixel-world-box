@@ -345,9 +345,16 @@ function parseAndValidate(body) {
 
   const rawMsgs = Array.isArray(body.messages) ? body.messages : [];
   if (rawMsgs.length === 0) return { error: 'messages 不能为空' };
+  // 相三挂账①前端中继实测修正：dsh 持久会话面契约 = 前端仅发末条 user（服务端权威历史，
+  // README「前端接线」段明文）——不走直通面 assistant 载体门（dsh 分支 carrier 提取本就宽容无载体）；
+  // 直通面（无 dsh 字段）契约逐字节不变：messages[0] 必须为 assistant 载体。
+  const dshReq = body.dsh === true || (typeof body.dsh === 'object' && body.dsh !== null);
   const first = rawMsgs[0];
-  if (!first || first.role !== 'assistant' || typeof first.content !== 'string' || !first.content.trim()) {
+  if (!dshReq && (!first || first.role !== 'assistant' || typeof first.content !== 'string' || !first.content.trim())) {
     return { error: 'messages[0] 必须是承载系统提示词的 assistant 消息（buildSystemPrompt 产物）' };
+  }
+  if (dshReq && !rawMsgs.some((m) => m && m.role === 'user' && typeof m.content === 'string' && m.content.trim())) {
+    return { error: 'dsh 会话面须至少一条非空 user 消息（服务端权威历史，前端仅发末条输入）' };
   }
   for (const m of rawMsgs) {
     if (!m || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string' || !m.content.trim()) {
