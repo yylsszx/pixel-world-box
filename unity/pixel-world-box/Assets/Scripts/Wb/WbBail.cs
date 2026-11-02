@@ -229,7 +229,8 @@ namespace PixelWorldBox.Wb
 
         // 常量（engine R 值 + R2 别名 L36）
         private const int R_BANDIT = 4, R_SHEEP = 6, R_DRAGON = 9, R_DEER = 10, R_PENGUIN = 11, R_CAMEL = 12,
-            R_CHICKEN = 33, R_PIG = 34, R_RABBIT = 35, R_FISH = 37, R_CRAB = 38;   // isHerbivoreRace L2120 静态八种 + 既有常量
+            R_CHICKEN = 33, R_PIG = 34, R_RABBIT = 35, R_FISH = 37, R_CRAB = 38,   // isHerbivoreRace L2120 静态八种 + 既有常量
+            R_WOLF = 7, R_BEAR = 8, R_SCORPION = 13, R_SNAKE = 14, R_SNOWWOLF = 15, R_FOX = 36, R_TURTLE = 39, R_SHARK = 40;   // M-U25：迁徙域 SEED 十七族补全（WbConstants L43-69 逐值镜像——裸名消费面）
 
         // ================= wbResume L3215-3302（Stage 2 bail 接力分派） =================
         public static void WbResume(WbWorld w, WbU u, int kind, double[] d)
@@ -1715,6 +1716,394 @@ namespace PixelWorldBox.Wb
             else if (tier == "chest3") { mn = 3; mx = 4; }
             else { mn = 0; mx = 4; }                                                                                           // "chest" 与缺档同支
             return RollItemE(w, mn, mx);                                                                                       // L799（t ? rollItem(rng, {min,max}) : rollItem(rng)）
+        }
+
+        // ================= M-U25 引擎级通道四件套（beachedAquaticTick L12652-12753 / predatorHuntTick L12764-12833 / wildlifeReboundTick L12840-12989 / sharkBreedTick L12995-13014） =================
+
+        /// <summary>
+        /// 水生搁浅整治（engine L12652-12753 机械翻译——M-U25 引擎级通道一：逐 tick 无门 L2614）。
+        /// 在水：beachT 清零 + 猎游导向（predator 粘性目标/散签初选）/ 随机游走（实体水 8 试）；
+        /// 搁浅：窒息计数 + 归海导向（findWaterNear r=16）+ beachT≥15 窒息终局。
+        /// </summary>
+        public static void BeachedAquaticTick(WbWorld w)
+        {
+            bool retarget = w.tickCount % 20 == 0;                                                          // L12653（目标采样每 20 tick 一次；断言逐 tick 廉价）
+            for (int ui = 0; ui < w.units.Count; ui++)                                                      // L12654（for..of 数组序——C# 索引同构）
+            {
+                WbU u = w.units[ui];
+                if (u.dead != 0) continue;                                                                  // L12655
+                RaceStat def = RStats[u.race];                                                              // L12656
+                if (!def.aquatic || def.beach) continue;                                                    // L12657
+                int ti = WbWorld.Idx((int)System.Math.Floor(u.x), (int)System.Math.Floor(u.y));             // L12658
+                if (WbWorld.IsWater(w.terrain[ti]))
+                {
+                    u.beachT = 0.0;                                                                         // L12660
+                    if (u.fleeT > 0) { u.beachTxN = null; u.beachTyN = null; continue; }                    // L12661（(u.fleeT ?? 0) > 0——C# int 默认 0 同构；逃亡交给内核 AI）
+                    if (def.predator)
+                    {
+                        // 全时段猎游导向（Task 98 终版）：任何食物水平都导向最近猎物——鲨群定居猎场（L12663-12668 注）
+                        if (retarget || u.beachTxN == null || u.beachTyN == null)                           // L12669
+                        {
+                            WbU tgt = null;                                                                 // L12674
+                            int tid = u.beachTidC ?? -1;                                                    // L12675（粘性目标 id ?? -1）
+                            if (tid >= 0)                                                                   // L12676
+                            {
+                                WbU cand = null;                                                            // L12677（units.find 同构——线性扫）
+                                for (int qi = 0; qi < w.units.Count; qi++) { WbU q = w.units[qi]; if (q.id == tid && q.dead == 0) { cand = q; break; } }
+                                if (cand != null && !RStats[cand.race].isCiv)                               // L12678
+                                {
+                                    int cj = (int)System.Math.Floor(cand.y) * WbWorld.W + (int)System.Math.Floor(cand.x);   // L12679
+                                    double dx = cand.x - u.x, dy = cand.y - u.y;                            // L12680
+                                    if (WbWorld.IsWater(w.terrain[cj]) && dx * dx + dy * dy <= 1600) tgt = cand;   // L12681（≤40 格粘住）
+                                }
+                            }
+                            if (tgt == null)                                                                // L12684（散签初选：最近 6 名抽签）
+                            {
+                                var cands = new System.Collections.Generic.List<System.Tuple<WbU, double>>();                          // L12685（WbBail 无 using——全限定 M-U12 教训）
+                                for (int qi = 0; qi < w.units.Count; qi++)                                  // L12686
+                                {
+                                    WbU q = w.units[qi];
+                                    if (q.dead != 0 || q.race == u.race) continue;                          // L12687
+                                    if (RStats[q.race].isCiv || !IsHerbivoreRace(w, q.race)) continue;      // L12688
+                                    int qx = (int)System.Math.Floor(q.x), qy = (int)System.Math.Floor(q.y); // L12689
+                                    int qj = qy * WbWorld.W + qx;                                           // L12690
+                                    if (!WbWorld.IsWater(w.terrain[qj])) continue;                          // L12691（只追水中猎物）
+                                    int wn = 0;                                                             // L12694（实体水过滤：≥5 邻水实心水体）
+                                    for (int ny = -1; ny <= 1; ny++) for (int nx = -1; nx <= 1; nx++)       // L12695
+                                    {
+                                        int xx = qx + nx, yy = qy + ny;                                     // L12696
+                                        if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;   // L12697
+                                        if (WbWorld.IsWater(w.terrain[yy * WbWorld.W + xx])) wn++;          // L12698
+                                    }
+                                    if (wn < 6) continue;                                                   // L12700
+                                    double dx2 = q.x - u.x, dy2 = q.y - u.y;                                // L12701
+                                    cands.Add(System.Tuple.Create(q, dx2 * dx2 + dy2 * dy2));               // L12702
+                                }
+                                if (cands.Count > 0)                                                        // L12704
+                                {
+                                    // L12705（TS sort 稳定——手写稳定插入排序：严格大于才前插，等键保持插入序；C# List.Sort 不稳定禁用）
+                                    var sorted = new System.Collections.Generic.List<System.Tuple<WbU, double>>();   // L12705
+                                    foreach (var c in cands)
+                                    {
+                                        int pos = sorted.Count;
+                                        for (int p = 0; p < sorted.Count; p++) { if (sorted[p].Item2 > c.Item2) { pos = p; break; } }
+                                        sorted.Insert(pos, c);
+                                    }
+                                    int topN = System.Math.Min(6, sorted.Count);                            // L12706（最近 6 名）
+                                    tgt = sorted[(int)System.Math.Floor(w.Rng() * topN)].Item1;             // L12707（1 掷抽签）—— L12708 tgt = pick.q
+                                }
+                            }
+                            u.beachTidC = tgt != null ? (int?)tgt.id : null;                                // L12711
+                            if (tgt != null) { u.beachTxN = tgt.x; u.beachTyN = tgt.y; }                    // L12712
+                            else { u.beachTxN = null; u.beachTyN = null; }                                  // L12713
+                        }
+                        else if (u.beachTidC != null)                                                       // L12714（粘性目标逐 tick 坐标刷新）
+                        {
+                            WbU tgt2 = null;                                                                // L12716
+                            for (int qi = 0; qi < w.units.Count; qi++) { WbU q = w.units[qi]; if (q.id == u.beachTidC.Value && q.dead == 0) { tgt2 = q; break; } }
+                            if (tgt2 != null) { u.beachTxN = tgt2.x; u.beachTyN = tgt2.y; }                 // L12717
+                        }
+                        if (u.beachTxN != null && u.beachTyN != null) { u.tx = u.beachTxN.Value; u.ty = u.beachTyN.Value; }   // L12719
+                        continue;                                                                           // L12720
+                    }
+                    u.beachTxN = null; u.beachTyN = null;                                                   // L12722（非捕食者：逐 tick 清空→L12723 门恒真——S32 蓝本真相「按代码不按注释」）
+                    if (retarget || u.beachTxN == null)                                                     // L12723
+                    {
+                        // 水域内随机游走：8 试取首个「实体水」（自身+≥5 邻水）；25% 远散布 ±14（L12724-12725 注）
+                        bool far = w.Rng() < 0.25;                                                          // L12726（1 掷）
+                        double spread = far ? 14.0 : 6.0;                                                   // L12727
+                        for (int k = 0; k < 8; k++)                                                         // L12728
+                        {
+                            int wx = System.Math.Max(1, System.Math.Min(WbWorld.W - 2, (int)System.Math.Floor(u.x + (w.Rng() * 2 - 1) * spread)));   // L12729（1 掷——clamp 保 j±W 界内）
+                            int wy = System.Math.Max(1, System.Math.Min(WbWorld.H - 2, (int)System.Math.Floor(u.y + (w.Rng() * 2 - 1) * spread)));   // L12730（1 掷）
+                            int j = wy * WbWorld.W + wx;                                                    // L12731
+                            if (!WbWorld.IsWater(w.terrain[j])) continue;                                   // L12732
+                            int wn2 = 0;                                                                    // L12733
+                            for (int ny = -1; ny <= 1; ny++) for (int nx = -1; nx <= 1; nx++)               // L12734（wx∈[1,W-2]/wy∈[1,H-2] clamp 保邻域界内——蓝本无界检同构）
+                            {
+                                if (WbWorld.IsWater(w.terrain[j + ny * WbWorld.W + nx])) wn2++;             // L12735
+                            }
+                            if (wn2 >= 6) { u.beachTxN = wx + 0.5; u.beachTyN = wy + 0.5; break; }          // L12737
+                        }
+                    }
+                    if (u.beachTxN != null && u.beachTyN != null) { u.tx = u.beachTxN.Value; u.ty = u.beachTyN.Value; }   // L12740
+                    continue;                                                                               // L12741
+                }
+                // —— 搁浅：窒息 + 归海导向（L12743）——
+                u.beachT = (u.beachT ?? 0.0) + 1.0;                                                         // L12744
+                u.hurtN = System.Math.Max(u.hurtN ?? 0.0, 2.0);                                             // L12745（u.hurt 初始 0 非 undefined——(u.hurtN ?? 0.0) 同构）
+                if (retarget || u.beachTxN == null)                                                         // L12746
+                {
+                    var wpos = WbCivSim.FindWaterNear(w, u.x, u.y, 16);                                     // L12747（归海导向 r=16）
+                    if (wpos.HasValue) { u.beachTxN = wpos.Value.Item1; u.beachTyN = wpos.Value.Item2; }    // L12748
+                }
+                if (u.beachTxN != null && u.beachTyN != null) { u.tx = u.beachTxN.Value; u.ty = u.beachTyN.Value; }   // L12750
+                if ((u.beachT ?? 0.0) >= 15.0) u.dead = 1;                                                  // L12751（窒息终局：交还常规收尸）
+            }
+        }
+
+        /// <summary>
+        /// 猎手扑杀（engine L12764-12833 机械翻译——M-U25 引擎级通道二：%20===7 门 L2616）。
+        /// 猎物普查 → 水陆分账弹性预算（分级收缩 + 平滑耦合）→ 饥饿捕食者 r 窗口最近猎物扑杀。
+        /// </summary>
+        public static void PredatorHuntTick(WbWorld w)
+        {
+            int preyAlive = 0;                                                                              // L12769（猎物存量普查 O(n)）
+            int fishAlive = 0;                                                                              // L12770
+            for (int qi = 0; qi < w.units.Count; qi++)                                                      // L12771
+            {
+                WbU q = w.units[qi];
+                if (q.dead == 0 && !RStats[q.race].isCiv && IsHerbivoreRace(w, q.race))                     // L12772
+                {
+                    preyAlive++;                                                                            // L12773
+                    if (RStats[q.race].aquatic) fishAlive++;                                                // L12774
+                }
+            }
+            int hungryAqua = 0;                                                                             // L12781（水生预算随饿鲨规模伸缩 Task 98）
+            for (int pi = 0; pi < w.units.Count; pi++)                                                      // L12782
+            {
+                WbU p = w.units[pi];
+                if (p.dead != 0) continue;                                                                  // L12783
+                RaceStat pd0 = RStats[p.race];
+                if (pd0.predator && pd0.aquatic && !pd0.undead && !pd0.isCiv && (p.foodN ?? 70.0) <= 300.0) hungryAqua++;   // L12785
+            }
+            int capLand = 8;                                                                                // L12788（分级预算：>150 满额 → ≤150 减半 → ≤60 收缩 → ≤25 禁猎）
+            int capAqua = System.Math.Min(10, System.Math.Max(4, (int)System.Math.Ceiling(hungryAqua * 0.75)));   // L12789
+            if (preyAlive <= 150) { capLand = 4; capAqua = (int)System.Math.Ceiling(capAqua / 2.0); }       // L12790（TS Math.ceil(capAqua/2)——整参 /2 f64 同构）
+            if (preyAlive <= 60) { capLand = 2; capAqua = System.Math.Max(1, (int)System.Math.Ceiling(capAqua / 4.0)); }   // L12791
+            if (preyAlive <= 25) { capLand = 0; capAqua = 0; }                                              // L12792（生态保护期禁猎）
+            capAqua = System.Math.Min(capAqua, System.Math.Max(1, (int)WbMath.JsRound(fishAlive / 28.0)));       // L12795（猎物存量平滑耦合——JS round 半上同构；JsRound f64→int 显式收窄）
+            int killsLand = 0;                                                                              // L12796
+            int killsAqua = 0;                                                                              // L12797
+            for (int pi = 0; pi < w.units.Count; pi++)                                                      // L12798
+            {
+                WbU p = w.units[pi];
+                if (p.dead != 0) continue;                                                                  // L12799
+                RaceStat pd = RStats[p.race];
+                if (!pd.predator || pd.undead || pd.isCiv) continue;                                        // L12801
+                if (pd.aquatic ? killsAqua >= capAqua : killsLand >= capLand) continue;                     // L12802（弹性预算分账）
+                if ((p.foodN ?? 70.0) > (pd.aquatic ? 300.0 : 45.0)) continue;                              // L12806（出手门：水生 ≤300 同猎游轨 / 陆生维持 45）
+                WbU prey = null;                                                                            // L12807
+                double bd = pd.aquatic ? 196.0 : 2.56;                                                      // L12808（扑杀窗口：陆 r=1.6² / 水 r=14²）
+                for (int qi = 0; qi < w.units.Count; qi++)                                                  // L12811
+                {
+                    WbU q = w.units[qi];
+                    if (q.dead != 0 || (q.grab ?? 0) > 0) continue;                                         // L12812（神明手中之物不捕）
+                    if (RStats[q.race].isCiv || !IsHerbivoreRace(w, q.race)) continue;                      // L12813
+                    double dx = q.x - p.x, dy = q.y - p.y;                                                  // L12814
+                    double d2 = dx * dx + dy * dy;                                                          // L12815
+                    if (d2 < bd) { bd = d2; prey = q; }                                                     // L12816（严格 < 最近——同距取先见序）
+                }
+                if (prey == null) continue;                                                                 // L12818
+                prey.dead = 1;                                                                              // L12819
+                // L12820 WB.syncDead(prey)：WASM 双端镜像协调面——C# 单端无操作（结构性省略零语义差）
+                w.Fx("blood", prey.x, prey.y, 14);                                                          // L12821
+                if (pd.aquatic)                                                                             // L12822
+                {
+                    killsAqua++;                                                                            // L12823
+                    w.Fx("water", prey.x, prey.y, 16);                                                      // L12826（深海突袭水花）
+                }
+                else
+                {
+                    killsLand++;                                                                            // L12828
+                }
+                p.foodN = System.Math.Min(400.0, (p.foodN ?? 0.0) + 25.0);                                  // L12830（扑杀即刻进食）
+                if ((p.foodN ?? 0.0) >= 380.0) break;                                                       // L12831（吃饱收手）
+            }
+        }
+
+        /// <summary>
+        /// 百兽迁徙（engine L12840-12989 机械翻译——M-U25 引擎级通道三：%600===61 门 L2618）。
+        /// 灭绝名单掷签加权 → 水陆分轨预算 → SHARK 锚鱼 / FISH 三锚撒网 / 通用奠基群三落位支。
+        /// </summary>
+        public static void WildlifeReboundTick(WbWorld w)
+        {
+            if (!w.laws.reproduction) return;                                                               // L12841（神明关闭繁衍法则时，世界静寂如死）
+            // 奠基者名单十七族（L12845-12863——与 worldgen trySpawn 播撒对齐；n 群规模区间 + habitat 栖息地判定）
+            int[] seedRace = { R_SHEEP, R_WOLF, R_BEAR, R_DEER, R_PENGUIN, R_CAMEL, R_SCORPION, R_SNAKE, R_SNOWWOLF, R_CHICKEN, R_PIG, R_RABBIT, R_FOX, R_FISH, R_CRAB, R_TURTLE, R_SHARK };   // L12845-12862 序
+            int[] seedN0 = { 3, 2, 1, 2, 2, 2, 2, 2, 2, 3, 2, 3, 1, 4, 2, 2, 1 };                           // n[0] 逐族
+            int[] seedN1 = { 5, 3, 2, 4, 3, 3, 3, 3, 3, 5, 4, 5, 2, 7, 3, 3, 2 };                           // n[1] 逐族
+            System.Func<byte, bool>[] seedHab =                                                    // L12846-12862 habitat 逐族（全限定——using 缺失）
+            {
+                (t) => t == WbConstants.T_GRASS,                                                            // L12846 SHEEP
+                (t) => t == WbConstants.T_FOREST,                                                           // L12847 WOLF
+                (t) => t == WbConstants.T_FOREST,                                                           // L12848 BEAR
+                (t) => t == WbConstants.T_GRASS,                                                            // L12849 DEER
+                (t) => t == WbConstants.T_SNOW,                                                             // L12850 PENGUIN
+                (t) => t == WbConstants.T_SAND,                                                             // L12851 CAMEL
+                (t) => t == WbConstants.T_SAND,                                                             // L12852 SCORPION
+                (t) => t == WbConstants.T_SAND,                                                             // L12853 SNAKE
+                (t) => t == WbConstants.T_SNOW,                                                             // L12854 SNOWWOLF
+                (t) => t == WbConstants.T_GRASS,                                                            // L12855 CHICKEN
+                (t) => t == WbConstants.T_GRASS,                                                            // L12856 PIG
+                (t) => t == WbConstants.T_GRASS || t == WbConstants.T_FOREST,                               // L12857 RABBIT
+                (t) => t == WbConstants.T_FOREST,                                                           // L12858 FOX
+                (t) => t == WbConstants.T_DEEP || t == WbConstants.T_WATER,                                 // L12859 FISH（isW）
+                (t) => t == WbConstants.T_SAND,                                                             // L12860 CRAB
+                (t) => t == WbConstants.T_DEEP || t == WbConstants.T_WATER,                                 // L12861 TURTLE（isW）
+                (t) => t == WbConstants.T_DEEP || t == WbConstants.T_WATER,                                 // L12862 SHARK（isW）
+            };
+            var extinct = new System.Collections.Generic.List<int>();                                                                  // L12865（灭绝名单：wildCount 为 0 的候选）
+            for (int si = 0; si < seedRace.Length; si++) { if (!w.wildCount.TryGetValue(seedRace[si], out int cnt) || cnt == 0) extinct.Add(si); }   // L12865（索引表 ext sunk）
+            if (extinct.Count == 0) return;                                                                 // L12866
+            if (w.Rng() > 0.6) return;                                                                      // L12867（掷签门：并非每轮都迁来——1 掷）
+            var weights = new System.Collections.Generic.List<double>();                                                               // L12870（加权掷签：灭绝越久权重越高 1→5 封顶）
+            for (int ei = 0; ei < extinct.Count; ei++)
+            {
+                int race = seedRace[extinct[ei]];
+                double ago = w.reboundLast.TryGetValue(race, out int last) ? (w.tickCount - last) : 9007199254740991.0;   // L12872（Number.MAX_SAFE_INTEGER 同构 f64）
+                weights.Add(1.0 + System.Math.Min(4.0, ago / 2400.0));                                      // L12873
+            }
+            double totalW = 0.0; foreach (double wt in weights) totalW += wt;                               // L12875
+            double pick = w.Rng() * totalW;                                                                 // L12876（1 掷）
+            int idx = extinct.Count - 1;                                                                    // L12877
+            for (int i = 0; i < extinct.Count; i++) { pick -= weights[i]; if (pick <= 0) { idx = i; break; } }   // L12878-12881
+            int seedIdx = extinct[idx];                                                                     // L12882
+            int race0 = seedRace[seedIdx];
+            RaceStat def = RStats[race0];                                                                   // L12883
+            bool aquatic = def.aquatic;                                                                     // L12884
+            // 预算按轨检（L12886——水生掷签看海洋配额，陆生看全球预算）
+            if (aquatic ? WildAliveAquatic(w) >= CAP_WILDLIFE_AQUATIC - 8 : WildAlive(w) >= CAP_WILDLIFE - 8) return;   // L12886
+            if (race0 == R_SHARK)                                                                           // L12889（鲨鱼特例：锚定一条活鱼落位 Task 96）
+            {
+                var fishes = new System.Collections.Generic.List<WbU>();                                                               // L12890
+                for (int qi = 0; qi < w.units.Count; qi++) { WbU q = w.units[qi]; if (q.dead == 0 && q.race == R_FISH) fishes.Add(q); }
+                if (fishes.Count > 0)
+                {
+                    int placed = 0;                                                                         // L12892
+                    int n = seedN0[seedIdx] + (int)System.Math.Floor(w.Rng() * (seedN1[seedIdx] - seedN0[seedIdx] + 1));   // L12893（1 掷）
+                    for (int k = 0; k < n; k++)                                                             // L12894
+                    {
+                        WbU f = fishes[(int)System.Math.Floor(w.Rng() * fishes.Count)];                     // L12895（1 掷）
+                        for (int t2 = 0; t2 < 8; t2++)                                                      // L12896
+                        {
+                            double jx = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, f.x + (w.Rng() * 3 - 1.5)));   // L12897（1 掷）
+                            double jy = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, f.y + (w.Rng() * 3 - 1.5)));   // L12898（1 掷）
+                            int j = (int)System.Math.Floor(jy) * WbWorld.W + (int)System.Math.Floor(jx);    // L12899
+                            if (!WbWorld.IsWater(w.terrain[j])) continue;                                   // L12900
+                            if (SpawnUnit(w, R_SHARK, jx, jy, new WbSpawnOpts { silent = true }) != null) placed++;   // L12901
+                            break;                                                                          // L12902
+                        }
+                    }
+                    if (placed > 0)                                                                         // L12905
+                    {
+                        w.reboundLast[race0] = w.tickCount;                                                 // L12906
+                        w.Fx("spawn", fishes[0].x, fishes[0].y, 46);                                        // L12907
+                        w.AddEvent("eco", $"洋流送来了远方的族群——{def.name}循着鱼群的踪迹重新游回了这片海域", x: fishes[0].x, y: fishes[0].y);   // L12908
+                    }
+                    return;                                                                                 // L12910
+                }
+                // 无鱼可锚（海洋真空）→ 落回通用随机采样（L12912）
+            }
+            if (race0 == R_FISH)                                                                            // L12917（鱼群补种撒网式落位 Task 98）
+            {
+                var spots = new System.Collections.Generic.List<(double x, double y)>();                                               // L12918
+                for (int tries = 0; tries < 260 && spots.Count < 3; tries++)                                // L12919（260 试三锚）
+                {
+                    int x = 2 + (int)System.Math.Floor(w.Rng() * (WbWorld.W - 4));                          // L12920（1 掷）
+                    int y = 2 + (int)System.Math.Floor(w.Rng() * (WbWorld.H - 4));                          // L12921（1 掷）
+                    int i = y * WbWorld.W + x;                                                              // L12922
+                    if (!seedHab[seedIdx](w.terrain[i])) continue;                                          // L12923
+                    bool ok = true;                                                                         // L12924（锚间 ≥18 格）
+                    foreach (var s in spots)                                                                // L12925
+                    {
+                        double dx = s.x - x, dy = s.y - y;                                                  // L12926
+                        if (dx * dx + dy * dy < 324.0) { ok = false; break; }                               // L12927
+                    }
+                    if (!ok) continue;                                                                      // L12929
+                    spots.Add((x, y));                                                                      // L12930
+                }
+                int placedF = 0;                                                                            // L12932
+                foreach (var s in spots)                                                                    // L12933
+                {
+                    int nF = 2 + (int)System.Math.Floor(w.Rng() * 2);                                       // L12934（每锚 2-3 尾 1 掷）
+                    for (int k = 0; k < nF; k++)                                                            // L12935
+                    {
+                        for (int t2 = 0; t2 < 8; t2++)                                                      // L12936
+                        {
+                            double jx = s.x + (w.Rng() * 2.5 - 1.25), jy = s.y + (w.Rng() * 2.5 - 1.25);    // L12937（±1.25 抖动 2 掷）
+                            int j = System.Math.Max(0, System.Math.Min(WbWorld.W * WbWorld.H - 1, (int)System.Math.Floor(jy) * WbWorld.W + (int)System.Math.Floor(jx)));   // L12938（j 钳 [0, W*H-1]）
+                            if (!seedHab[seedIdx](w.terrain[j])) continue;                                  // L12939
+                            if (SpawnUnit(w, R_FISH, jx, jy, new WbSpawnOpts { silent = true }) != null) placedF++;   // L12940
+                            break;                                                                          // L12941
+                        }
+                    }
+                }
+                if (placedF > 0)                                                                            // L12945
+                {
+                    w.reboundLast[race0] = w.tickCount;                                                     // L12946
+                    var s0 = spots[0];                                                                      // L12947
+                    w.Fx("spawn", s0.x + 0.5, s0.y + 0.5, 46);                                              // L12948（首锚 fx 2 掷——S37 尾 6 鱼 fam 门首触面）
+                    w.AddEvent("eco", $"洋流送来了远方的族群——{def.name}重新出现在这片水域", x: s0.x + 0.5, y: s0.y + 0.5);   // L12949
+                }
+                return;                                                                                     // L12951
+            }
+            for (int tries = 0; tries < 140; tries++)                                                       // L12953（通用支：140 试栖息地采样）
+            {
+                int x = 2 + (int)System.Math.Floor(w.Rng() * (WbWorld.W - 4));                              // L12954（1 掷）
+                int y = 2 + (int)System.Math.Floor(w.Rng() * (WbWorld.H - 4));                              // L12955（1 掷）
+                int i = y * WbWorld.W + x;                                                                  // L12956
+                if (!seedHab[seedIdx](w.terrain[i])) continue;                                              // L12957
+                if (race0 == R_CRAB)                                                                        // L12958（蟹需 r=2 内有水——沿 worldgen 口径）
+                {
+                    int wc = 0;                                                                             // L12959
+                    for (int dy = -2; dy <= 2; dy++) for (int dx = -2; dx <= 2; dx++)                       // L12960
+                    {
+                        int nx = x + dx, ny = y + dy;                                                       // L12961
+                        if (nx < 0 || ny < 0 || nx >= WbWorld.W || ny >= WbWorld.H) continue;               // L12962
+                        if (WbWorld.IsWater(w.terrain[ny * WbWorld.W + nx])) wc++;                          // L12963
+                    }
+                    if (wc == 0) continue;                                                                  // L12965
+                }
+                int nG = seedN0[seedIdx] + (int)System.Math.Floor(w.Rng() * (seedN1[seedIdx] - seedN0[seedIdx] + 1));   // L12968（奠基群规模 1 掷）
+                int placedG = 0;                                                                            // L12969
+                for (int k = 0; k < nG; k++)                                                                // L12970
+                {
+                    for (int t2 = 0; t2 < 10; t2++)                                                         // L12971（±1.5 抖动）
+                    {
+                        double jx = x + (w.Rng() * 3 - 1.5), jy = y + (w.Rng() * 3 - 1.5);                  // L12972（2 掷）
+                        int j = System.Math.Max(0, System.Math.Min(WbWorld.W * WbWorld.H - 1, (int)System.Math.Floor(jy) * WbWorld.W + (int)System.Math.Floor(jx)));   // L12973
+                        if (!seedHab[seedIdx](w.terrain[j])) continue;                                      // L12974
+                        WbU nu = SpawnUnit(w, race0, jx, jy, new WbSpawnOpts { silent = true });            // L12975
+                        if (nu != null) placedG++;                                                          // L12976
+                        break;                                                                              // L12977
+                    }
+                }
+                if (placedG == 0) continue;                                                                 // L12980（落点全数失败→换点再试）
+                w.reboundLast[race0] = w.tickCount;                                                         // L12981
+                w.Fx("spawn", x + 0.5, y + 0.5, 46);                                                        // L12982
+                string msg = aquatic ? $"洋流送来了远方的族群——{def.name}重新出现在这片水域" : $"远方的兽群跋涉而来——{def.name}重新踏上了这片大地";   // L12983-12985
+                w.AddEvent("eco", msg, x: x + 0.5, y: y + 0.5);                                             // L12986
+                return;                                                                                     // L12987（每轮至多一支兽群迁入）
+            }
+        }
+
+        /// <summary>
+        /// 鲨群繁衍（engine L12995-13014 机械翻译——M-U25 引擎级通道四：%240===13 门 L2620）。
+        /// 种群 &lt;8 地板机制 + 母体 food&gt;220 妊娠成本 -60 + 8 试落水诞崽 + 双 fx。
+        /// </summary>
+        public static void SharkBreedTick(WbWorld w)
+        {
+            if (!w.laws.reproduction) return;                                                               // L12996（神明关闭繁衍法则时静默）
+            int sharks = 0; WbU mother = null;                                                              // L12997（filter+find 合并线性扫——数组序同构）
+            for (int qi = 0; qi < w.units.Count; qi++) { WbU u = w.units[qi]; if (u.dead == 0 && u.race == R_SHARK) { sharks++; if (mother == null && (u.foodN ?? 0.0) > 220.0) mother = u; } }
+            if (sharks == 0 || sharks >= 8) return;                                                         // L12998（地板机制：种群 <8 才启动）
+            if (mother == null) return;                                                                     // L12999-13000（food>220 母体）
+            for (int t = 0; t < 8; t++)                                                                     // L13001（8 试落水）
+            {
+                double jx = System.Math.Max(0.5, System.Math.Min(WbWorld.W - 0.5, mother.x + (w.Rng() * 3 - 1.5)));   // L13002（1 掷）
+                double jy = System.Math.Max(0.5, System.Math.Min(WbWorld.H - 0.5, mother.y + (w.Rng() * 3 - 1.5)));   // L13003（1 掷）
+                int j = (int)System.Math.Floor(jy) * WbWorld.W + (int)System.Math.Floor(jx);                // L13004
+                if (!WbWorld.IsWater(w.terrain[j])) continue;                                               // L13005（诞崽必须落水——Task 98 worldgen 教训）
+                WbU pup = SpawnUnit(w, R_SHARK, jx, jy, new WbSpawnOpts { silent = true });                 // L13006
+                if (pup != null)                                                                            // L13007
+                {
+                    mother.foodN = System.Math.Max(0.0, (mother.foodN ?? 0.0) - 60.0);                      // L13008（妊娠成本）
+                    w.Fx("spawn", jx, jy, 30);                                                              // L13009
+                    w.Fx("water", jx, jy, 18);                                                              // L13010（诞崽水花）
+                }
+                break;                                                                                      // L13012（每轮至多一崽）
+            }
         }
 
         // ================= updateBoat L5608-5660（殖民船航海：贪心绕障/超时改向/靠岸登陆） =================
@@ -6259,7 +6648,7 @@ namespace PixelWorldBox.Wb
             new RaceStat{ name="兔",     hp=12,  dmg=1,   speed=0.13,  maxAge=12, repro = 0.014 },                                    // L196 RABBIT
             new RaceStat{ name="狐",     hp=28,  dmg=8,   speed=0.105, maxAge=18, predator=true, repro = 0.004 },                                    // L197 FOX
             new RaceStat{ name="鱼",     hp=6,   dmg=0.5, speed=0.075, maxAge=10,   aquatic=true, repro = 0.016 },                                    // L198 FISH
-            new RaceStat{ name="蟹",     hp=16,  dmg=3,   speed=0.03,  maxAge=16,   aquatic=true, repro = 0.007 },                                    // L199 CRAB
+            new RaceStat{ name="蟹",     hp=16,  dmg=3,   speed=0.03,  maxAge=16,   aquatic=true, beach=true, repro = 0.007 },                                    // L199 CRAB（M-U25：beach 双旗补全——beachedAquaticTick L12657 双旗 skip 铁证面，S32 蟹零写面）
             new RaceStat{ name="龟",     hp=40,  dmg=1,   speed=0.028, maxAge=120,  aquatic=true, repro = 0.003 },                                   // L200 TURTLE
             new RaceStat{ name="鲨鱼",   hp=85,  dmg=18,  speed=0.1,   maxAge=40,   aquatic=true, predator=true, reach=1.3, repro = 0.002 },                                   // L201 SHARK
         };

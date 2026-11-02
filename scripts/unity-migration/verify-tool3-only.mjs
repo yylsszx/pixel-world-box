@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 let fail = 0;
 try {
   execFileSync('bun', [new URL('./tool3-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
-  console.log('tool3 黄金回放 (tool3-transcript 镜像 vs tool3.json): PASS (31 场景神力生成器/消费端每步快照逐位 + volcano 锥体/引燃圈/熔岩弹/外溢 + cap 门 13 族 + bless/curse/love/teleport 四瞬态 + M-U19 mutate 特质域 + M-U20 river runtime 级联 + M-U21 grab 三场景（三 API + unitsTick 壳 + grabbedTick 全链） + M-U22 reap 六场景（尸变/王权/凤凰/九头蛇/掉落链/scav/商队） + M-U23 phoenix 双场景（灰烬倒数重生/null 支） + M-U24 引擎级通道三件套（entGrove 播种扑火/lichRaise 复生/hydraRegen 回血 + fireTick 风驱蔓延全译 + windAt 环流面） + meteor/meteorShower x0/y0 偏移 + 超武双神力 + typhoon 推拽/间歇雷电/暴雨灭火 + holystorm 审判/缓愈/驱瘟 + units dump 位级含 trait/gene + events colorHex 流 + toasts 面)');
+  console.log('tool3 黄金回放 (tool3-transcript 镜像 vs tool3.json): PASS (40 场景神力生成器/消费端每步快照逐位 + volcano 锥体/引燃圈/熔岩弹/外溢 + cap 门 13 族 + bless/curse/love/teleport 四瞬态 + M-U19 mutate 特质域 + M-U20 river runtime 级联 + M-U21 grab 三场景（三 API + unitsTick 壳 + grabbedTick 全链） + M-U22 reap 六场景（尸变/王权/凤凰/九头蛇/掉落链/scav/商队） + M-U23 phoenix 双场景（灰烬倒数重生/null 支） + M-U24 引擎级通道三件套（entGrove 播种扑火/lichRaise 复生/hydraRegen 回血 + fireTick 风驱蔓延全译 + windAt 环流面） + meteor/meteorShower x0/y0 偏移 + 超武双神力 + typhoon 推拽/间歇雷电/暴雨灭火 + holystorm 审判/缓愈/驱瘟 + M-U25 beachedAquatic/predatorHunt/wildlifeRebound/sharkBreed 四件套九场景 + units dump 位级含 trait/gene + events colorHex 流 + toasts 面)');
 } catch (e) {
   fail++;
   console.error('tool3 黄金回放: FAIL');
@@ -31,7 +31,7 @@ try {
   execFileSync('bun', [new URL('./gen-tool3.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
   const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
   if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
-  console.log('tool3 gen det 复跑 (gen-tool3 · bun): PASS (31 场景 sanity + GameEngine 真实现 + det 字节级)');
+  console.log('tool3 gen det 复跑 (gen-tool3 · bun): PASS (40 场景 sanity + GameEngine 真实现 + det 字节级)');
 } catch (e) {
   fail++;
   console.error('tool3 gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -40,9 +40,9 @@ try {
   const g = JSON.parse(readFileSync(new URL('./golden/tool3.json', import.meta.url), 'utf8'));
   const fails = [];
   const fail2 = (m) => fails.push(m);
-  if (!Array.isArray(g.scenarios) || g.scenarios.length !== 31) fail2('场景数 ≠ 31');
+  if (!Array.isArray(g.scenarios) || g.scenarios.length !== 40) fail2('场景数 ≠ 40');
   const keys = g.scenarios.map((s) => s.key);
-  for (const want of ['volcano-default', 'volcano-power3', 'spawn-quartet', 'meteor-meteorshower', 'wrath-ticks', 'area-powers', 'static-quartet', 'caps-composite', 'typhoon-ticks', 'plasma-annihilate', 'volcano-edge', 'mutate-civ-reroll', 'mutate-wild-clamp', 'holystorm-ticks', 'river-runtime', 'grab-light', 'grab-throw', 'finger-tool', 'ent-grove', 'grove-winter', 'lich-raise', 'lich-cap', 'hydra-regen'])
+  for (const want of ['volcano-default', 'volcano-power3', 'spawn-quartet', 'meteor-meteorshower', 'wrath-ticks', 'area-powers', 'static-quartet', 'caps-composite', 'typhoon-ticks', 'plasma-annihilate', 'volcano-edge', 'mutate-civ-reroll', 'mutate-wild-clamp', 'holystorm-ticks', 'river-runtime', 'grab-light', 'grab-throw', 'finger-tool', 'ent-grove', 'grove-winter', 'lich-raise', 'lich-cap', 'hydra-regen', 'beach-wander', 'shark-targets', 'predator-land', 'predator-aqua', 'wildlife-rebound', 'rebound-fish', 'shark-breed', 'rebound-lawsoff', 'rebound-miss'])
     if (!keys.includes(want)) fail2(`场景 ${want} 缺失`);
   const s1 = g.scenarios.find((s) => s.key === 'volcano-default');
   if (!s1 || s1.totalDraws !== 28 || s1.fx.length !== 3 || s1.shake !== 8 || s1.units[0].dead !== 1 || s1.units[0].hurtN !== '0000000000002840' || s1.fx[0]?.seed !== 26084) fail2('volcano-default 签名缺失（28 掷 = 引燃 8 + fx 2 + 熔岩弹 2×4 + 外溢 5×2 + u900 灼烧环死 dead=1 hurtN=12 + shake=8）');
@@ -160,13 +160,48 @@ try {
   const s31 = g.scenarios.find((s) => s.key === 'hydra-regen');
   if (!s31 || s31.totalDraws !== 0 || s31.fx?.length !== 0 || s31.stepsSnap.at(-1).rngA !== '00000144') fail2('hydra-regen 签名缺失（零掷铁证 rngA=seed 原值）');
   if (s31 && (s31.units?.[0]?.hp !== '0000000000805a40' || s31.units?.[0]?.hurtN !== '0000000000000000' || s31.units?.[1]?.hp !== '0000000000c07240' || s31.units?.[2]?.hp !== '0000000000001840' || s31.units?.[2]?.hurtN !== '0000000000000040')) fail2('hydra-regen 回血面缺失（u975 100→106 + hurt 清创 + u976 满血 300 恒 + u977 SHEEP 6 恒/hurt 3→2 位级）');
+  // —— M-U25 引擎级通道四件套签名（beachedAquaticTick L12652-12753 / predatorHuntTick L12764-12833 / wildlifeReboundTick L12840-12989 / sharkBreedTick L12995-13014）——
+  const s32 = g.scenarios.find((s) => s.key === 'beach-wander');
+  if (!s32 || s32.totalDraws !== 156 || s32.stepsSnap.length !== 22 || s32.stepsSnap.at(-1).rngA !== '867e529c' || s32.fx.length !== 0) fail2('beach-wander 签名缺失（156 掷 = 游走逐 tick 重采样 far 门 0.25 + 8 试实体水；22 步；零 fx）');
+  if (s32) {
+    const u981 = s32.units.find((u) => u.id === 981), u982 = s32.units.find((u) => u.id === 982), u984 = s32.units.find((u) => u.id === 984);
+    if (!u981 || u981.dead !== 1 || u981.beachT !== 15) fail2('beach-wander 窒息终局面缺失（u981 beachT=15 冻结 dead=1——1015 tick 窒息）');
+    if (!u982 || u982.beachT !== undefined) fail2('beach-wander 蟹双旗 skip 面缺失（u982 beachT undefined——aquatic+beach 双旗零写面）');
+    if (!u984 || u984.tx !== '0000000000a05b40') fail2('beach-wander 逃亡让位面缺失（u984 fleeT=5 → tx 恒 x=110.5）');
+  }
+  const s33 = g.scenarios.find((s) => s.key === 'shark-targets');
+  if (!s33 || s33.totalDraws !== 221 || s33.stepsSnap.length !== 22 || s33.stepsSnap.at(-1).rngA !== '3e8849d2') fail2('shark-targets 签名缺失（221 掷 = 猎游初选 1 掷 + 粘性 1020 零掷 + 逃亡让位 + 禁猎零击杀）');
+  if (s33) {
+    const s0u990 = s33.stepsSnap[0].units.find((u) => u.id === 990);
+    if (!s0u990 || s0u990.btid !== 991 || s0u990.btx !== 110.5) fail2('shark-targets 粘性目标面缺失（u990 首步 btid=991 btx=110.5——散签初选抽中 u991 位级）');
+  }
+  const s34 = g.scenarios.find((s) => s.key === 'predator-land');
+  if (!s34 || s34.totalDraws !== 2 || s34.fx.length !== 1 || s34.units.length !== 33 || s34.stepsSnap.at(-1).rngA !== 'da56f53c') fail2('predator-land 签名缺失（2 掷 = draw 血泊双掷精确——28 羊 preyAlive=30>25 禁猎线 + grab=999 最近羊豁免 + 次近羊扑杀 + 饱狼 100>45 跳过）');
+  const s35 = g.scenarios.find((s) => s.key === 'predator-aqua');
+  if (!s35 || s35.totalDraws !== 78 || s35.fx.length !== 2 || s35.units.length !== 32 || s35.stepsSnap.at(-1).rngA !== '433f29f9') fail2('predator-aqua 签名缺失（78 掷 = r=14 深海突袭 + hungryAqua 弹性预算 4→2 + fishAlive=1 平滑耦合 + 陈旧目标保持 + blood+water 双 fx）');
+  const s36 = g.scenarios.find((s) => s.key === 'wildlife-rebound');
+  if (!s36 || s36.totalDraws !== 47 || s36.fx.length !== 1 || s36.events.length !== 1 || s36.reboundLast && (s36.reboundLast.length !== 1 || s36.reboundLast[0][0] !== 6 || s36.reboundLast[0][1] !== 661)) fail2('wildlife-rebound 签名缺失（47 掷 = 掷签+加权+栖息地采样+奠基群 3-5 只+spawn 六掷链+fx+eco 纪事+bumpWild 入账+reboundLast=661）');
+  const s37 = g.scenarios.find((s) => s.key === 'rebound-fish');
+  if (!s37 || s37.totalDraws !== 81 || s37.units.length !== 6 || s37.stepsSnap.at(-1).rngA !== '8ac197da') fail2('rebound-fish 签名缺失（81 掷 = 全图 DEEP 栖息地首试即中 + 三锚互距 ≥18 + 每锚 2-3 尾 + 662 tick 撒网鱼群游走首触 + 水生预算分轨；fam 门 0.06 首触 2 掷 newFamily 词法姓）');
+  if (s37) {
+    const fish37 = (s37.wildAll ?? []).find((w) => w[0] === 37);
+    const famU = s37.units.find((u) => u.fam === 27);
+    if (!fish37 || fish37[1] !== 6) fail2('rebound-fish 撒网面缺失（wildAll 37:6——三锚 2+2+2 尾）');
+    if (!famU) fail2('rebound-fish fam 门首触面缺失（尾 6 鱼 fam=27 familySeq0 快照位级——newFamily 词法姓 2 掷）');
+  }
+  const s38 = g.scenarios.find((s) => s.key === 'shark-breed');
+  if (!s38 || s38.totalDraws !== 12 || s38.fx.length !== 2 || s38.units.length !== 3 || s38.stepsSnap.at(-1).rngA !== '1e09b8d2') fail2('shark-breed 签名缺失（12 掷 = 抖动 2 + spawn 6 + 双 fx 4；母体 300→240 + 幼鲨 50 不够格 + mkUnit 不入账 wildCount=1）');
+  const s39 = g.scenarios.find((s) => s.key === 'rebound-lawsoff');
+  if (!s39 || s39.totalDraws !== 0 || s39.stepsSnap.at(-1).rngA !== '00000157') fail2('rebound-lawsoff 签名缺失（laws 支零掷铁证 rngA=seed 原值——repro0 夹具 reproduction=false 顶层早退）');
+  const s40 = g.scenarios.find((s) => s.key === 'rebound-miss');
+  if (!s40 || s40.totalDraws !== 1 || s40.stepsSnap.at(-1).rngA !== '6d2b7b4d') fail2('rebound-miss 签名缺失（1 掷掷签门拒签——灭绝名单非空但 rng>0.6 拒）');
   const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/tool3.json', import.meta.url));
   const gl = readFileSync(new URL('./golden/tool3.json', import.meta.url));
   const md5a = createHash('md5').update(sa).digest('hex');
   const md5b = createHash('md5').update(gl).digest('hex');
   if (md5a !== md5b) fail2(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
   if (fails.length > 0) throw new Error(fails.join(' | '));
-  console.log(`tool3 台账完备 (31 场景 + volcano 锥体/双烈度/边缘钳 + cap 13 族拒面 + 超武双神力 colorHex + 黑洞计数先于 cap + bless/curse/fert 三瞬态 + M-U19 mutate 双场景 + M-U20 river runtime 级联 + M-U21 grab 三场景 + M-U22 reap 六场景 + M-U23 phoenix 双场景 + M-U24 引擎级通道五场景 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  console.log(`tool3 台账完备 (40 场景 + volcano 锥体/双烈度/边缘钳 + cap 13 族拒面 + 超武双神力 colorHex + 黑洞计数先于 cap + bless/curse/fert 三瞬态 + M-U19 mutate 双场景 + M-U20 river runtime 级联 + M-U21 grab 三场景 + M-U22 reap 六场景 + M-U23 phoenix 双场景 + M-U24 引擎级通道五场景 + M-U25 beachedAquatic/predatorHunt/wildlifeRebound/sharkBreed 四件套九场景 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
 } catch (e) {
   fail++;
   console.error('tool3 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -296,6 +331,24 @@ try {
 } catch (e) {
   fail++;
   console.error('tool3 hydra 红证旋钮: FAIL —', String(e.message ?? e).slice(0, 200));
+}
+// —— M-U25 红证四旋钮：TOOL3_RED=beached/hunt/rebound/breed 禁四通道全写面 → 对应场景 FAIL → 复绿 ——
+for (const [knob, scen] of [['beached', 'beach-wander'], ['hunt', 'predator-land'], ['rebound', 'wildlife-rebound'], ['breed', 'shark-breed']]) {
+  try {
+    const env = { ...process.env, TOOL3_RED: knob, TOOL3_SCEN: scen };
+    try {
+      execFileSync('bun', [new URL('./tool3-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000, env });
+      throw new Error(`红证未红：TOOL3_RED=${knob} 仍 PASS（旋钮无效）`);
+    } catch (e) {
+      if (String(e.message ?? '').includes('红证未红')) throw e;
+      const out = String(e.stdout ?? '');
+      if (!out.includes(`${scen}: FAIL`)) throw new Error(`红证面不达：${scen} 未 FAIL`);
+    }
+    console.log(`tool3 红证旋钮 (TOOL3_RED=${knob} 禁写面 → ${scen} FAIL): PASS`);
+  } catch (e) {
+    fail++;
+    console.error(`tool3 ${knob} 红证旋钮: FAIL —`, String(e.message ?? e).slice(0, 200));
+  }
 }
 console.log(fail === 0 ? 'VERIFY-TOOL3: ALL PASS' : 'VERIFY-TOOL3: FAIL');
 process.exit(fail === 0 ? 0 : 1);

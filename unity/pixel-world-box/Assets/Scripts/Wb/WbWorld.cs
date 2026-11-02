@@ -176,6 +176,9 @@ namespace PixelWorldBox.Wb
         public int? chillN;                  // engine u.chill（undefined → null——snapU null 与 0 位分离；int chill 旧占位不动）
         public int? stk;                     // engine u.stk（卡死计数 (u.stk ?? 0)+1；undefined → null）
         public double? sxk, syk;             // engine u.sxk/syk（卡死锚点；undefined → null）
+        // —— M-U25 beached 域消费（字段只加；TS beachTx/beachTy/beachTargetId number|undefined → null 语义）——
+        public double? beachTxN, beachTyN;   // engine u.beachTx/u.beachTy（归海/猎游/游走目标坐标；undefined → null）
+        public int? beachTidC;               // engine u.beachTargetId（猎游粘性目标 id；undefined → null）
         public double? foodN;                // engine u.food（f64 域 (u.food ?? 70)-1；int food 旧占位不动）
         public List<int> gIdsN;              // engine u.gIds（undefined → null——空表 [] 与 undefined 位分离；List gIds 旧占位不动）
         public List<double> gValN;             // engine u.gVal（undefined → null）
@@ -469,6 +472,7 @@ namespace PixelWorldBox.Wb
         public int grassTiles;                             // engine this.grassTiles（postJS 非文明繁衍增益）
         public int itemSeq = 1;                            // engine L508 this.itemSeq = 1（items.push L5388 id 序列器；M-U3h 第五批——M-U22 S24 黄金 item.id 1 起位级实证补初值）
         public Dictionary<int, int> wildCount = new Dictionary<int, int>(); // engine this.wildCount（种族 O(1) 计数）
+        public Dictionary<int, int> reboundLast = new Dictionary<int, int>();   // M-U25：engine reboundLast L495 类字段（wildlifeReboundTick L12871 ago 权重 / L12906+12946+12981 挂账——迁徙回归权重表）
         // —— M-U3h 第五批 tail 索敌/鱼群宿主结构（字段只加）——
         public int[] preyGrid = new int[32 * 20];          // engine L252 preyGrid: Uint16Array(32*20)（猎物密度场；生态核算写、索敌导航读）
         public const int BKW = (W + 3) / 4;                // engine L717 bw = ceil(W/4) = 64

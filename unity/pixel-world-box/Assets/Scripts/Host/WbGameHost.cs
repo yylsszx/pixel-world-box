@@ -136,6 +136,10 @@ namespace PixelWorldBox.Host
             Orch.D[PixelWorldBox.Wb.WbTickOrch.ICE] = () => PixelWorldBox.Wb.WbBailRelay.IceTick(World);         // M-U9a：iceTick 已译域真调（空集安全：frozen/flood/wet 顶层 Count==0 早退）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.EFFECTS] = () => PixelWorldBox.Wb.WbBailRelay.EffectsTick(World); // M-U10a：effectsTick 游荡云族八种已译域真调（空集安全：effects.Count==0 循环零进）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.ECO] = () => PixelWorldBox.Wb.WbBailRelay.EcoTick(World);         // M-U12：ecoTick 已译域真调（零场安全：空 units 时 grass 重算+播报仍走——蓝本 L12096 无早退门，机械保持）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.BEACHED_AQUATIC] = () => PixelWorldBox.Wb.WbBailRelay.BeachedAquaticTick(World);       // M-U25：beachedAquaticTick 已译域真调（L2614 每 tick 无门——空 units 零进安全）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.WILDLIFE_REBOUND] = () => PixelWorldBox.Wb.WbBailRelay.WildlifeReboundTick(World);     // M-U25：wildlifeReboundTick 已译域真调（L2616 %600===61——extinct 空表顶层早退）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.PREDATOR_HUNT] = () => PixelWorldBox.Wb.WbBailRelay.PredatorHuntTick(World);           // M-U25：predatorHuntTick 已译域真调（L2618 %20===7——普查零掷安全）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.SHARK_BREED] = () => PixelWorldBox.Wb.WbBailRelay.SharkBreedTick(World);               // M-U25：sharkBreedTick 已译域真调（L2620 %240===13——sharks==0 顶层早退）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.NATURE_SEASON_CHECK] = () => PixelWorldBox.Wb.WbBailRelay.NatureSeasonCheck(World);   // M-U17：seasonCheck 已译域真调（lastSeason 初 -1 首调静默全图刷——蓝本 L2595 %40===0）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.NATURE_TECTONIC] = () => PixelWorldBox.Wb.WbBailRelay.NatureTectonicTick(World);       // M-U17：tectonicTick 已译域真调（boundary 空表安全：漂移+recompute 走，应力/释压零进——蓝本 L2597 %240===21）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.NATURE_GEOLOGY] = () => PixelWorldBox.Wb.WbBailRelay.NatureGeologyTick(World);         // M-U17：geologyTick 已译域真调（boundary 空表安全：造山/岛弧/裂谷 cand 空 break，热点/侵蚀掷面独立——蓝本 L2599 %600===31）

@@ -121,6 +121,7 @@ namespace PixelWorldBox.Tests
             if (uo["gen"] != null) u.gen = uo.Value<int>("gen");                             // 九头蛇世代
             if (uo["caravan"] != null) u.caravan = uo.Value<int>("caravan");                 // 商队（rel 降温面）
             if (uo["food"] != null) u.foodN = uo.Value<double>("food");                      // 饥饿（scav 面——f64 镜像域）
+            if (uo["fleeT"] != null) u.fleeT = uo.Value<int>("fleeT");                       // M-U25：逃亡让位预设（S32 u984 fleeT=5 / S33 u994 fleeT=9——beachedAquaticTick L12661 让位门零掷铁证单位）
             w.units.Add(u);
             w.unitById[u.id] = u;
         }
@@ -182,6 +183,14 @@ namespace PixelWorldBox.Tests
             w.statBlackholes = 0;
             w.yearF = fx.Value<double>("yearF0");
             w.unitSeq = fx.Value<int?>("unitSeq0") ?? 1;      // M-U22：unitSeq 起点快照（worldgen spawn 推进——幼蛇 id/parity 位级锚；旧黄金无键回退 1）
+            w.familySeq = fx.Value<int?>("familySeq0") ?? 1;  // M-U25：familySeq 起点快照（worldgen 播撒 0.06 fam 门命中推进——S37 尾 6 鱼 fam=27 位级锚；旧黄金无键回退 1——unitSeq0 先例同构）
+            w.reboundLast.Clear();                            // M-U25：reboundLast 逐场景重置（引擎 L495 类字段——C# world 生命周期跨测试复用防串场）
+            if (fx["rebound0"] is JArray rebA)                // M-U25：rebound0 夹具注入（S39 ago 权重面——零掷纯写）
+                foreach (var rt in rebA) w.reboundLast[rt[0].Value<int>()] = rt[1].Value<int>();
+            if (fx["repro0"] is JValue repV && repV.Type == JTokenType.Boolean)   // M-U25：repro0 法则门注入（S39 rebound-lawsoff reproduction=false——wildlifeReboundTick L12841 / sharkBreedTick L12996 顶层早退；镜像端 reproduction: fixture.repro0 ?? true 同构）
+            {
+                w.laws.reproduction = repV.Value<bool>();
+            }
             w.tickCount = sc.Value<int>("tickCount");
             // —— 手术二：直写相（terrain/soil/regrow/flood/fire/radiate/units）——
             w.terrain = GunzipB64(fx.Value<string>("terrain0"));
@@ -357,7 +366,7 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindTool3()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(31));   // M-U24：26→31（ent-grove/grove-winter/lich-raise/lich-cap/hydra-regen 引擎级通道同构三件套——parity 红证面 Expected 26 But was 31 实证）
+            Assert.That(scens.Count, Is.EqualTo(40));   // M-U25：31→40（beachedAquatic/predatorHunt/wildlifeRebound/sharkBreed 引擎级通道四件套——S32-S40 九场景 parity 先红 Expected 31 But was 40 实证）
             foreach (var scTok in scens)
             {
                 var sc = (JObject)scTok;
@@ -402,12 +411,26 @@ namespace PixelWorldBox.Tests
                         if (w.tickCount % 10 == 0) WbBailRelay.EntGroveTick(w);                                              // L2608
                         if (w.tickCount % (w.NatureSeason() == 3 ? 8 : 12) == 0) WbBailRelay.LichRaiseTick(w);               // L2611（季节节律：寒冬死潮加速 12→8）
                         if (w.tickCount % 30 == 0) WbBailRelay.HydraRegenTick(w);                                            // L2612
+                        // M-U25：主循环 L2614/L2616/L2618/L2620 引擎级通道四件套（蓝本门原样——stepUnits 场景 gen 端同序跑四门零效应实证：旧场景无 aquatic 族/饿捕食者窗口不触）
+                        WbBailRelay.BeachedAquaticTick(w);                                                                   // L2614（每 tick 无门）
+                        if (w.tickCount % 600 == 61) WbBailRelay.WildlifeReboundTick(w);                                     // L2616
+                        if (w.tickCount % 20 == 7) WbBailRelay.PredatorHuntTick(w);                                          // L2618
+                        if (w.tickCount % 240 == 13) WbBailRelay.SharkBreedTick(w);                                          // L2620
                     }
                     else
                     {
                         Assert.That(fn, Is.EqualTo("effectsTick"), $"fn {key} S{k}");
                         w.tickCount++;                        // gen 步进协议：tickCount++ 头（主循环 L2508 序）
                         WbBailRelay.EffectsTick(w);
+                        if (w.phoenixAshes.Count > 0) WbBailRelay.PhoenixAshTick(w);   // L2606 灰烬门（镜像 runner effectsTick 分支同构——S37 等新场景双路四门严格同序）
+                        if (w.tickCount % 10 == 0) WbBailRelay.EntGroveTick(w);        // L2608
+                        if (w.tickCount % (w.NatureSeason() == 3 ? 8 : 12) == 0) WbBailRelay.LichRaiseTick(w);   // L2611
+                        if (w.tickCount % 30 == 0) WbBailRelay.HydraRegenTick(w);      // L2612
+                        // M-U25：effectsTick 分支四门接线（镜像 runner L1951 同序——gen 端 effectsTick 分支同构防未来漂移）
+                        WbBailRelay.BeachedAquaticTick(w);                             // L2614（每 tick 无门）
+                        if (w.tickCount % 600 == 61) WbBailRelay.WildlifeReboundTick(w);   // L2616
+                        if (w.tickCount % 20 == 7) WbBailRelay.PredatorHuntTick(w);    // L2618
+                        if (w.tickCount % 240 == 13) WbBailRelay.SharkBreedTick(w);    // L2620
                     }
                     AssertCommon(w, g, key, k);
                     if (fn == "effectsTick" || fn == "unitsTick")   // M-U21：unitsTick 步同列 fx/units/dirty 快照
@@ -443,6 +466,19 @@ namespace PixelWorldBox.Tests
                             {
                                 Assert.That(u.grab ?? 0, Is.EqualTo(e.Value<int>("grab")), $"tick u.grab {key} S{k}#{q}");
                                 Assert.That(u.thrT ?? 0, Is.EqualTo(e.Value<int>("thrT")), $"tick u.thrT {key} S{k}#{q}");
+                            }
+                            // M-U25：stepBeach 场景条件扩展面（搁浅域 tx/ty 断言 + beachT 计数 + 猎游目标位级——六键仅 S32/S33 携带）
+                            if (e["tx"] != null)
+                            {
+                                Assert.That(F64Hex(u.tx), Is.EqualTo(e.Value<string>("tx")), $"tick u.tx {key} S{k}#{q}");
+                                Assert.That(F64Hex(u.ty), Is.EqualTo(e.Value<string>("ty")), $"tick u.ty {key} S{k}#{q}");
+                                if (e["beachT"] != null) Assert.That(u.beachT, Is.EqualTo(e["beachT"].Type == JTokenType.Null ? null : (double?)e.Value<double>("beachT")), $"tick u.beachT {key} S{k}#{q}");   // null=引擎未写面（蟹 skip beachT:null 位分离）
+                                if (e["btx"] != null)
+                                {
+                                    Assert.That(u.beachTxN, Is.EqualTo(e["btx"].Type == JTokenType.Null ? null : (double?)e.Value<double>("btx")), $"tick u.btx {key} S{k}#{q}");
+                                    Assert.That(u.beachTyN, Is.EqualTo(e["bty"].Type == JTokenType.Null ? null : (double?)e.Value<double>("bty")), $"tick u.bty {key} S{k}#{q}");
+                                }
+                                if (e["btid"] != null) Assert.That(u.beachTidC, Is.EqualTo(e["btid"].Type == JTokenType.Null ? null : (int?)e.Value<int>("btid")), $"tick u.btid {key} S{k}#{q}");
                             }
                         }
                         // M-U23：stepAsh 场景条件扩展面（灰烬倒数每步位级 t/x/y/rebirths——条件键仅新场景携带）
@@ -482,6 +518,21 @@ namespace PixelWorldBox.Tests
                 var gotRad2 = new List<string>();
                 foreach (var kv in w.radSet) gotRad2.Add($"{kv.Key}:{kv.Value}");
                 Assert.That(gotRad2, Is.EqualTo(goldRad2), $"radSet 终态序 {key}");
+                // —— M-U25：迁徙/繁衍域终态条件双键（wildCount 全量 + reboundLast 权重表——S36-S40 wildAll 场景；
+                //   Map/Dictionary 枚举序同构：注入序 + 同 key set 更新不重排——S37 37:0→6 原位更新实证，无删后重插路径）——
+                if (sc["wildAll"] != null)
+                {
+                    var goldWildAll = new List<string>();
+                    foreach (var t in (JArray)sc["wildAll"]) goldWildAll.Add($"{t[0].Value<int>()}:{t[1].Value<int>()}");
+                    var gotWildAll = new List<string>();
+                    foreach (var kv in w.wildCount) gotWildAll.Add($"{kv.Key}:{kv.Value}");
+                    Assert.That(gotWildAll, Is.EqualTo(goldWildAll), $"wildAll 终态序 {key}");
+                    var goldReb = new List<string>();
+                    foreach (var t in (JArray)sc["reboundLast"]) goldReb.Add($"{t[0].Value<int>()}:{t[1].Value<int>()}");
+                    var gotReb = new List<string>();
+                    foreach (var kv in w.reboundLast) gotReb.Add($"{kv.Key}:{kv.Value}");
+                    Assert.That(gotReb, Is.EqualTo(goldReb), $"reboundLast 终态序 {key}");
+                }
                 // 终态 fx 全列（kind/x/y/x0/y0/ttl/seed/dir/r/age/quiet/dmg 位级）
                 var goldFxAll = (JArray)sc["fx"];
                 Assert.That(w.effects.Count, Is.EqualTo(goldFxAll.Count), $"fx count {key}");
