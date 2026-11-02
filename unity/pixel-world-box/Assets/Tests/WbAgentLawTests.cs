@@ -9,13 +9,14 @@
 // 对账面: 逐步 rngA 终态 + terrain md5 + laws 状态序（id/enabled/fired/lastYear）+
 //   counters 插入序 + eventsCount/fxCount + fireSet 插入序 + 终态 fx/events/units/
 //   params/reverts 全列（f64 位级）+ 纯函数 evalCond/resolveRace 全分支。
-// 切片边界: create/update/normalizeTrigger/normalizeLaw/list 属工具/存档面下一轮
-//   （法则夹具直写注入，不经 create——gen-power radSet 先例）。
+// 切片边界: M-U29 起工具/存档面已点亮（Test49）——validateCond/normalizeTrigger/normalizeLaw
+//   纯函数 40 向量 + create/update/saveRoundTrip 系统面 12 case（f64hex 位级 canonical 对账）。
 // Unity 侧执行: Window > General > Test Runner（EditMode）。
 // ============================================================
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using PixelWorldBox.Wb;
@@ -302,6 +303,335 @@ namespace PixelWorldBox.Tests
                 nRace++;
             }
             Assert.That(nRace, Is.EqualTo(15));
+        }
+
+        // ---------------- M-U29 工具/存档面（validateCond/normalizeTrigger/normalizeLaw/validateActions/create/update + 存档双面） ----------------
+        // canonical 对账面（f64hex 位级，禁 double 往返——M-U28 教训 d；JS undefined → 键省略、null → null 保留）
+
+        private static readonly Dictionary<string, string[]> ActKeyOrder = new Dictionary<string, string[]>
+        {
+            { "meteor", new[]{ "kind", "x", "y" } }, { "flood", new[]{ "kind", "x", "y" } },
+            { "quake", new[]{ "kind", "x", "y", "power" } }, { "volcano", new[]{ "kind", "x", "y", "power" } },
+            { "lightning", new[]{ "kind", "x", "y", "count" } }, { "tornado", new[]{ "kind", "x", "y", "count" } },
+            { "tsunami", new[]{ "kind", "x", "y", "radius" } }, { "drought", new[]{ "kind", "x", "y", "radius" } }, { "blizzard", new[]{ "kind", "x", "y", "radius" } },
+            { "weather", new[]{ "kind", "weather", "x", "y", "radius" } },
+            { "spawn", new[]{ "kind", "race", "count", "x", "y" } },
+            { "terrain", new[]{ "kind", "terrain", "radius", "x", "y" } },
+            { "bless", new[]{ "kind", "x", "y", "radius" } }, { "heal", new[]{ "kind", "x", "y", "radius" } }, { "smite", new[]{ "kind", "x", "y", "radius" } },
+            { "param", new[]{ "kind", "path", "value" } }, { "announce", new[]{ "kind", "text" } },
+            { "meteor_shower", new[]{ "kind", "x", "y", "radius", "count" } },
+            { "typhoon", new[]{ "kind", "x", "y", "radius" } }, { "acid_rain", new[]{ "kind", "x", "y", "radius" } }, { "locust", new[]{ "kind", "x", "y", "radius" } },
+            { "famine", new[]{ "kind", "x", "y", "radius" } }, { "ice_age", new[]{ "kind", "x", "y", "radius" } }, { "sinkhole", new[]{ "kind", "x", "y", "radius" } },
+            { "blackhole", new[]{ "kind", "x", "y", "radius" } }, { "wrath", new[]{ "kind", "x", "y", "radius" } }, { "curse", new[]{ "kind", "x", "y", "radius" } },
+            { "love", new[]{ "kind", "x", "y", "radius" } }, { "mutate", new[]{ "kind", "x", "y", "radius" } }, { "teleport", new[]{ "kind", "x", "y", "radius" } },
+            { "rain_cloud", new[]{ "kind", "x", "y", "radius" } },
+            { "mech", new[]{ "kind", "action", "target" } }, { "counter", new[]{ "kind", "name", "op", "value" } },
+            { "nuke", new[]{ "kind", "x", "y", "power" } },
+            { "plague", new[]{ "kind", "x", "y", "radius" } }, { "fire", new[]{ "kind", "x", "y", "radius" } }, { "boom", new[]{ "kind", "x", "y", "radius" } },
+            { "river", new[]{ "kind", "x", "y" } }, { "oasis", new[]{ "kind", "x", "y" } },
+        };
+
+        // F64Hex 复用顶部既有定义（小写 16 字符 LE —— JS f64hex 同构）
+
+        private static JObject CondCanonTf(WbCondExpr c)
+        {
+            var o = new JObject { ["op"] = c.op };
+            if (c.op == "and" || c.op == "or") { var arr = new JArray(); foreach (var s in c.sub) arr.Add(CondCanonTf(s)); o["sub"] = arr; }
+            else if (c.op == "not") o["sub"] = CondCanonTf(c.subOne);
+            else { o["stat"] = c.stat; o["value"] = F64Hex(c.value); }
+            return o;
+        }
+
+        private static JObject TrigCanonTf(WbMechTrigger t)
+        {
+            var o = new JObject { ["kind"] = t.kind };
+            if (t.kind == "event")
+            {
+                o["chance"] = F64Hex(t.chance);
+                o["event"] = t.@event;
+                o["eventCooldownYears"] = F64Hex(t.eventCooldownYears ?? 0);   // event 型 cd 恒有值（L165/L477）
+                return o;
+            }
+            if (t.everyYears != null) o["everyYears"] = F64Hex(t.everyYears.Value);   // event→cron 回退后 undefined → 键省略（L475）
+            o["chance"] = F64Hex(t.chance);
+            o["season"] = t.season == null ? JToken.Parse("null") : (JToken)t.season.Value;   // JS season 原样数值（非 f64hex）
+            if (t.kind == "condition") o["cond"] = CondCanonTf(t.cond);
+            return o;
+        }
+
+        private static JObject ActCanonTf(WbLawAction a)
+        {
+            var o = new JObject();
+            if (!ActKeyOrder.TryGetValue(a.kind, out var keys)) keys = new[] { "kind" };
+            foreach (string k in keys)
+            {
+                switch (k)
+                {
+                    case "kind": o["kind"] = a.kind; break;
+                    case "x": if (a.x != null) o["x"] = F64Hex(a.x.Value); break;
+                    case "y": if (a.y != null) o["y"] = F64Hex(a.y.Value); break;
+                    case "power": if (a.power != null) o["power"] = F64Hex(a.power.Value); break;
+                    case "count": if (a.count != null) o["count"] = F64Hex(a.count.Value); break;
+                    case "radius": if (a.radius != null) o["radius"] = F64Hex(a.radius.Value); break;
+                    case "value": o["value"] = F64Hex(a.value); break;   // param/counter 校验面强制有限数
+                    case "weather": if (a.weather != null) o["weather"] = a.weather; break;
+                    case "race": if (a.race != null) o["race"] = a.race; break;
+                    case "terrain": if (a.terrain != null) o["terrain"] = a.terrain; break;
+                    case "path": if (a.path != null) o["path"] = a.path; break;
+                    case "text": if (a.text != null) o["text"] = a.text; break;
+                    case "action": if (a.action != null) o["action"] = a.action; break;
+                    case "target": if (a.target != null) o["target"] = a.target; break;
+                    case "name": if (a.name != null) o["name"] = a.name; break;
+                    case "op": if (a.op != null) o["op"] = a.op; break;
+                }
+            }
+            return o;
+        }
+
+        private static JObject LawCanonTf(WbAgentLaw l)
+        {
+            var rev = new JArray();
+            foreach (var kv in l.revert) rev.Add(new JArray { kv.Key, F64Hex(kv.Value) });
+            return new JObject
+            {
+                ["id"] = l.id,
+                ["name"] = l.name,
+                ["desc"] = l.desc,
+                ["enabled"] = l.enabled,
+                ["createdYear"] = F64Hex(l.createdYear),
+                ["durationYears"] = l.durationYears == null ? JToken.Parse("null") : (JToken)F64Hex(l.durationYears.Value),
+                ["trigger"] = TrigCanonTf(l.trigger),
+                ["actions"] = new JArray(l.actions.Select(ActCanonTf)),
+                ["fired"] = F64Hex(l.fired),
+                ["lastYear"] = F64Hex(l.lastYear),
+                ["revert"] = rev,
+            };
+        }
+
+        // —— 存档原始行发射器（serialize L15305 形态——活法条 JSON.stringify 镜像，原始数值） ——
+        private static JObject CondToRawTf(WbCondExpr c)
+        {
+            var o = new JObject { ["op"] = c.op };
+            if (c.op == "and" || c.op == "or") { var arr = new JArray(); foreach (var s in c.sub) arr.Add(CondToRawTf(s)); o["sub"] = arr; }
+            else if (c.op == "not") o["sub"] = CondToRawTf(c.subOne);
+            else { o["stat"] = c.stat; o["value"] = c.value; }
+            return o;
+        }
+
+        private static JObject TrigToRawTf(WbMechTrigger t)
+        {
+            var o = new JObject { ["kind"] = t.kind };
+            if (t.kind == "event")
+            {
+                o["chance"] = t.chance;
+                if (t.@event != null) o["event"] = t.@event;
+                o["eventCooldownYears"] = t.eventCooldownYears ?? 1;
+                return o;
+            }
+            if (t.everyYears != null) o["everyYears"] = t.everyYears.Value;
+            o["chance"] = t.chance;
+            o["season"] = t.season == null ? JToken.Parse("null") : (JToken)t.season.Value;
+            if (t.kind == "condition") o["cond"] = CondToRawTf(t.cond);
+            return o;
+        }
+
+        private static JObject ActToRawTf(WbLawAction a)
+        {
+            var o = new JObject();
+            if (!ActKeyOrder.TryGetValue(a.kind, out var keys)) keys = new[] { "kind" };
+            foreach (string k in keys)
+            {
+                switch (k)
+                {
+                    case "kind": o["kind"] = a.kind; break;
+                    case "x": if (a.x != null) o["x"] = a.x.Value; break;
+                    case "y": if (a.y != null) o["y"] = a.y.Value; break;
+                    case "power": if (a.power != null) o["power"] = a.power.Value; break;
+                    case "count": if (a.count != null) o["count"] = a.count.Value; break;
+                    case "radius": if (a.radius != null) o["radius"] = a.radius.Value; break;
+                    case "value": o["value"] = a.value; break;
+                    case "weather": if (a.weather != null) o["weather"] = a.weather; break;
+                    case "race": if (a.race != null) o["race"] = a.race; break;
+                    case "terrain": if (a.terrain != null) o["terrain"] = a.terrain; break;
+                    case "path": if (a.path != null) o["path"] = a.path; break;
+                    case "text": if (a.text != null) o["text"] = a.text; break;
+                    case "action": if (a.action != null) o["action"] = a.action; break;
+                    case "target": if (a.target != null) o["target"] = a.target; break;
+                    case "name": if (a.name != null) o["name"] = a.name; break;
+                    case "op": if (a.op != null) o["op"] = a.op; break;
+                }
+            }
+            return o;
+        }
+
+        private static JObject LawToRawTf(WbAgentLaw l)
+        {
+            var acts = new JArray();
+            foreach (var a in l.actions) acts.Add(ActToRawTf(a));
+            var rev = new JObject();
+            foreach (var kv in l.revert) rev[kv.Key] = kv.Value;
+            return new JObject
+            {
+                ["id"] = l.id,
+                ["name"] = l.name,
+                ["desc"] = l.desc,
+                ["enabled"] = l.enabled,
+                ["createdYear"] = l.createdYear,
+                ["durationYears"] = l.durationYears == null ? JToken.Parse("null") : (JToken)l.durationYears.Value,
+                ["trigger"] = TrigToRawTf(l.trigger),
+                ["actions"] = acts,
+                ["fired"] = l.fired,
+                ["lastYear"] = l.lastYear,
+                ["revert"] = rev,
+            };
+        }
+
+        private static JArray CountersCanonTf(Dictionary<string, double> counters)
+        {
+            var arr = new JArray();
+            foreach (var kv in counters) arr.Add(new JArray { kv.Key, F64Hex(kv.Value) });
+            return arr;
+        }
+
+        private static JArray RevertsCanonTf(List<WbAgentLaw> laws)
+        {
+            var arr = new JArray();
+            foreach (var l in laws)
+            {
+                var rev = new JArray();
+                foreach (var kv in l.revert) rev.Add(new JArray { kv.Key, F64Hex(kv.Value) });
+                arr.Add(new JObject { ["id"] = l.id, ["revert"] = rev });
+            }
+            return arr;
+        }
+
+        private static void AssertJDeepTf(JToken got, JToken exp, string what)
+            => Assert.That(JToken.DeepEquals(got, exp), Is.True, $"{what}: got={got.ToString(Newtonsoft.Json.Formatting.None)} exp={exp.ToString(Newtonsoft.Json.Formatting.None)}");
+
+        /// <summary>系统面 case 重放：引擎重建 + 手术注入 + create/update ops + 快照对账（+saveRoundTrip）</summary>
+        private static void RunToolSystem(JObject s)
+        {
+            string key = s.Value<string>("key");
+            WbEngineParams.Reset();                                             // gen 场景间复位同构
+            var w = new WbWorld();
+            w.yearF = s.Value<double>("yearF");
+            w.tickCount = 900;
+            foreach (var lt in (JArray)s["laws0"]) w.agentLaws.laws.Add(LawFromJ((JObject)lt));
+            int maxSeq = 0;                                                     // seq 重算（gen 手术同构 maxSeq+1）
+            foreach (var l in w.agentLaws.laws)
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(l.id ?? "", "^L(\\d+)$");
+                if (m.Success) maxSeq = Math.Max(maxSeq, int.Parse(m.Groups[1].Value));
+            }
+            w.agentLaws.seq = maxSeq + 1;
+            foreach (var p in ((JObject)s["counters0"]).Properties()) w.agentLaws.counters[p.Name] = p.Value.Value<double>();
+
+            var results = new JArray();
+            foreach (var stepT in (JArray)s["ops"])
+            {
+                var step = (JObject)stepT;
+                string err;
+                if (step.Value<string>("op") == "create") err = w.agentLaws.Create((JObject)step["raw"]);
+                else err = w.agentLaws.Update(step.Value<string>("id"), (JObject)step["patch"]);
+                results.Add(new JObject { ["err"] = err == null ? JToken.Parse("null") : (JToken)err });
+            }
+
+            var gotParams = new JArray();
+            foreach (var m in WbEngineParams.Reg) gotParams.Add(new JObject { ["path"] = m.path, ["valueHex"] = F64Hex(m.value) });
+            var gotEvents = new JArray();
+            foreach (var e in w.worldEvents)
+                gotEvents.Add(new JObject { ["kind"] = e.kind, ["text"] = e.text, ["x"] = e.x == null ? JToken.Parse("null") : e.x, ["y"] = e.y == null ? JToken.Parse("null") : e.y });
+
+            AssertJDeepTf(results, s["results"], $"{key} results");
+            var gotLaws = new JArray(w.agentLaws.laws.Select(LawCanonTf));
+            AssertJDeepTf(gotLaws, s["laws"], $"{key} laws");
+            Assert.That(w.agentLaws.seq, Is.EqualTo(s.Value<int>("seq")), $"{key} seq");
+            AssertJDeepTf(CountersCanonTf(w.agentLaws.counters), s["counters"], $"{key} counters");
+            AssertJDeepTf(gotEvents, s["events"], $"{key} events");
+            AssertJDeepTf(gotParams, s["params"], $"{key} params");
+            AssertJDeepTf(RevertsCanonTf(w.agentLaws.laws), s["reverts"], $"{key} reverts");
+
+            if (!s.Value<bool>("saveRoundTrip")) return;
+            // 存档双面直演：serialize L15305-15307（原样落 JSON）→ applySave L15660-15672（normalizeLaw 逐行 + seq 保底 + counters 展开）
+            var payloadAlws = new JArray();
+            foreach (var l in w.agentLaws.laws) payloadAlws.Add(LawToRawTf(l));
+            payloadAlws.Add(JObject.Parse("{\"id\":\"L99\",\"name\":\"坏行\",\"actions\":[{\"kind\":\"nonexist_kind_x\",\"x\":1}],\"fired\":3}"));
+            payloadAlws.Add(JObject.Parse("{\"id\":\"L98\",\"name\":\"v1 旧档行\",\"desc\":\"legacy\",\"enabled\":false,\"createdYear\":2,\"lastYear\":4,\"fired\":7,\"trigger\":{\"everyYears\":3,\"chance\":0.5,\"season\":1},\"actions\":[{\"kind\":\"announce\",\"text\":\"旧\"}]}"));
+            var w2 = new WbWorld();
+            w2.yearF = 9.25;
+            foreach (var lawT in payloadAlws) { var n = WbAgentLaws.NormalizeLaw(lawT); if (n != null) w2.agentLaws.laws.Add(n); }
+            w2.agentLaws.seq = Math.Max(1, w.agentLaws.seq);                    // payload.alwsSeq ?? 1（seq≥1 恒真同构）
+            w2.agentLaws.counters = new Dictionary<string, double>(w.agentLaws.counters);   // {...spread}
+            var gotSaved = new JObject
+            {
+                ["laws"] = new JArray(w2.agentLaws.laws.Select(LawCanonTf)),
+                ["seq"] = w2.agentLaws.seq,
+                ["counters"] = CountersCanonTf(w2.agentLaws.counters),
+                ["reverts"] = RevertsCanonTf(w2.agentLaws.laws),
+            };
+            AssertJDeepTf(gotSaved, s["saved"], $"{key} saved");
+        }
+
+        [Test]
+        public void Test49_AgentLaws_Toolface()
+        {
+            var gold = JObject.Parse(System.IO.File.ReadAllText(FindGolden()));
+            var tf = (JObject)gold["toolface"];
+            var cases = (JArray)tf["cases"];
+            Assert.That(cases.Count, Is.EqualTo(40), "纯函数向量数（validateCond 15 + normalizeTrigger 15 + normalizeLaw 10）");
+            int nVc = 0, nNt = 0, nNl = 0;
+            foreach (var ct in cases)
+            {
+                var c = (JObject)ct;
+                string op = c.Value<string>("op");
+                string name = c.Value<string>("name");
+                JToken input = c["input"];
+                JToken expect = c["expect"];
+                if (op == "validateCond")
+                {
+                    object r = WbAgentLaws.ValidateCond(input, 0);
+                    if (expect.Type == JTokenType.String)
+                    {
+                        Assert.That(r, Is.InstanceOf<string>(), $"validateCond {name} 应返回错误文案");
+                        Assert.That((string)r, Is.EqualTo((string)expect), $"validateCond {name}");
+                    }
+                    else
+                    {
+                        Assert.That(r, Is.InstanceOf<WbCondExpr>(), $"validateCond {name} 应返回条件树");
+                        AssertJDeepTf(CondCanonTf((WbCondExpr)r), expect, $"validateCond {name}");
+                    }
+                    nVc++;
+                }
+                else if (op == "normalizeTrigger")
+                {
+                    object r = WbAgentLaws.NormalizeTrigger(input);
+                    if (expect.Type == JTokenType.String)
+                    {
+                        Assert.That(r, Is.InstanceOf<string>(), $"normalizeTrigger {name} 应返回错误文案");
+                        Assert.That((string)r, Is.EqualTo((string)expect), $"normalizeTrigger {name}");
+                    }
+                    else
+                    {
+                        Assert.That(r, Is.InstanceOf<WbMechTrigger>(), $"normalizeTrigger {name} 应返回触发器");
+                        AssertJDeepTf(TrigCanonTf((WbMechTrigger)r), expect, $"normalizeTrigger {name}");
+                    }
+                    nNt++;
+                }
+                else
+                {
+                    var r = WbAgentLaws.NormalizeLaw(input);
+                    if (expect.Type == JTokenType.Null) Assert.That(r, Is.Null, $"normalizeLaw {name} 应丢弃");
+                    else AssertJDeepTf(LawCanonTf(r), expect, $"normalizeLaw {name}");
+                    nNl++;
+                }
+            }
+            Assert.That(nVc, Is.EqualTo(15), "validateCond 向量数");
+            Assert.That(nNt, Is.EqualTo(15), "normalizeTrigger 向量数");
+            Assert.That(nNl, Is.EqualTo(10), "normalizeLaw 向量数");
+
+            var systems = (JArray)tf["systems"];
+            Assert.That(systems.Count, Is.EqualTo(12), "系统面 case 数（create×5 + update×6 + saveRoundTrip×1）");
+            foreach (var st in systems) RunToolSystem((JObject)st);
         }
 
         // ---------------- 槽 60 节律（WbTickOrch AGENT_LAWS_TICK %120===57 后半门） ----------------

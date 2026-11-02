@@ -550,17 +550,347 @@ const pureResolveRace = ['人类', 'human', 'HUMAN', 'elf', '雪狼', '狼', '�
 for (const t of pureResolveRace) { if (t.expected !== alMod.resolveRace(t.name)) throw new Error('pure resolveRace 自洽失败'); }
 console.log('pure 向量: evalCond ' + pureEvalCond.length + ' + resolveRace ' + pureResolveRace.length);
 
+// ============================================================================
+// 工具/存档面（M-U29 切片）：validateCond L94-122 / normalizeTrigger L149-174 /
+//   normalizeLaw L178-209 / validateActions L212-310（经 create/update 错误路径覆盖）/
+//   create L341-391 / update L395-493 + 存档双面（engine.ts serialize L15305-15307 /
+//   applySave L15660-15672——saveRoundTrip 直演）。
+// 纯函数面无引擎（validateCond/normalizeTrigger/normalizeLaw 独立导出 L12）；系统面
+//   （create/update）每 case 独立引擎 + 手术注入（laws0/counters0 直写）——零 rng
+//   （create/update 不掷），det 双跑全量 JSON 字节级。
+// canonical 面（f64hex 位级对账，M-U28 教训 d——禁 double 往返）：所有 JS 数值 → f64hex
+//   字符串；JS undefined 字段 → 键省略（JSON.stringify 语义）；null 字段 → null 保留。
+// ============================================================================
+const f64h = f64hex;
+const condCanon = (c) => {
+  if (c.op === 'and' || c.op === 'or') return { op: c.op, sub: c.sub.map(condCanon) };
+  if (c.op === 'not') return { op: 'not', sub: condCanon(c.sub) };
+  return { op: c.op, stat: c.stat, value: f64h(c.value) };
+};
+const trigCanon = (t) => {
+  const out = { kind: t.kind };
+  if (t.kind === 'event') {
+    out.chance = f64h(t.chance); out.event = t.event; out.eventCooldownYears = f64h(t.eventCooldownYears);
+    return out;
+  }
+  if (t.everyYears !== undefined) out.everyYears = f64h(t.everyYears);   // event→cron 回退后 undefined → 键省略（L475）
+  out.chance = f64h(t.chance);
+  out.season = t.season === undefined ? null : t.season;
+  if (t.kind === 'condition') out.cond = condCanon(t.cond);
+  return out;
+};
+const ACT_KEY_ORDER = {
+  meteor: ['kind', 'x', 'y'], flood: ['kind', 'x', 'y'],
+  quake: ['kind', 'x', 'y', 'power'], volcano: ['kind', 'x', 'y', 'power'],
+  lightning: ['kind', 'x', 'y', 'count'], tornado: ['kind', 'x', 'y', 'count'],
+  tsunami: ['kind', 'x', 'y', 'radius'], drought: ['kind', 'x', 'y', 'radius'], blizzard: ['kind', 'x', 'y', 'radius'],
+  weather: ['kind', 'weather', 'x', 'y', 'radius'],
+  spawn: ['kind', 'race', 'count', 'x', 'y'],
+  terrain: ['kind', 'terrain', 'radius', 'x', 'y'],
+  bless: ['kind', 'x', 'y', 'radius'], heal: ['kind', 'x', 'y', 'radius'], smite: ['kind', 'x', 'y', 'radius'],
+  param: ['kind', 'path', 'value'], announce: ['kind', 'text'],
+  meteor_shower: ['kind', 'x', 'y', 'radius', 'count'],
+  typhoon: ['kind', 'x', 'y', 'radius'], acid_rain: ['kind', 'x', 'y', 'radius'], locust: ['kind', 'x', 'y', 'radius'],
+  famine: ['kind', 'x', 'y', 'radius'], ice_age: ['kind', 'x', 'y', 'radius'], sinkhole: ['kind', 'x', 'y', 'radius'],
+  blackhole: ['kind', 'x', 'y', 'radius'], wrath: ['kind', 'x', 'y', 'radius'], curse: ['kind', 'x', 'y', 'radius'],
+  love: ['kind', 'x', 'y', 'radius'], mutate: ['kind', 'x', 'y', 'radius'], teleport: ['kind', 'x', 'y', 'radius'],
+  rain_cloud: ['kind', 'x', 'y', 'radius'],
+  mech: ['kind', 'action', 'target'], counter: ['kind', 'name', 'op', 'value'],
+  nuke: ['kind', 'x', 'y', 'power'],
+  plague: ['kind', 'x', 'y', 'radius'], fire: ['kind', 'x', 'y', 'radius'], boom: ['kind', 'x', 'y', 'radius'],
+  river: ['kind', 'x', 'y'], oasis: ['kind', 'x', 'y'],
+};
+const NUMERIC_ACT_KEYS = new Set(['x', 'y', 'power', 'count', 'radius', 'value']);
+const actCanon = (a) => {
+  const out = {};
+  for (const k of ACT_KEY_ORDER[a.kind] ?? ['kind']) {
+    if (!(k in a) || a[k] === undefined) continue;   // JS undefined → 键省略（JSON.stringify 语义）
+    out[k] = NUMERIC_ACT_KEYS.has(k) ? f64h(a[k]) : a[k];
+  }
+  return out;
+};
+const lawCanon = (l) => ({
+  id: l.id,
+  name: l.name,
+  desc: l.desc,
+  enabled: l.enabled,
+  createdYear: f64h(l.createdYear),
+  durationYears: l.durationYears === undefined || l.durationYears === null ? null : f64h(l.durationYears),
+  trigger: trigCanon(l.trigger),
+  actions: l.actions.map(actCanon),
+  fired: f64h(l.fired),
+  lastYear: f64h(l.lastYear),
+  revert: Object.entries(l.revert ?? {}).map(([k, v]) => [k, f64h(v)]),
+});
+
+// ---- 纯函数向量（无引擎）：validateCond / normalizeTrigger / normalizeLaw ----
+const tfCases = [];
+const pushTF = (op, name, input, expect) => tfCases.push({ op, name, input, expect });
+const ccOrStr = (r) => (typeof r === 'string' ? r : condCanon(r));
+const tcOrStr = (r) => (typeof r === 'string' ? r : trigCanon(r));
+const lcOrNull = (r) => (r === null || r === undefined ? null : lawCanon(r));
+{
+  const A = (op, name, c) => pushTF('validateCond', name, c, ccOrStr(alMod.validateCond(c)));
+  A(1, 'and-ok', { op: 'and', sub: [{ op: 'gt', stat: 'pop', value: 5 }, { op: 'lt', stat: 'wars', value: 1 }] });
+  A(2, 'or-empty-true', { op: 'or', sub: [] });
+  A(3, 'not-ok', { op: 'not', sub: { op: 'eq', stat: 'pop', value: 1 } });
+  A(4, 'depth5', { op: 'not', sub: { op: 'not', sub: { op: 'not', sub: { op: 'not', sub: { op: 'not', sub: { op: 'gt', stat: 'pop', value: 1 } } } } } });
+  A(5, 'non-object', 'cond string');
+  A(6, 'array-input', [{ op: 'gt' }]);
+  A(7, 'null-input', null);
+  A(8, 'and-no-sub', { op: 'and' });
+  A(9, 'and-sub5', { op: 'and', sub: [1, 2, 3, 4, 5].map((i) => ({ op: 'gt', stat: 'pop', value: i })) });
+  A(10, 'and-sub-bad', { op: 'and', sub: [{ op: 'gt', stat: 'pop', value: 1 }, { op: 'bad' }] });
+  A(11, 'gt-no-stat', { op: 'gt', value: 1 });
+  A(12, 'gt-string-value', { op: 'gt', stat: 'pop', value: '5' });
+  A(13, 'unknown-op', { op: 'xor', stat: 'pop', value: 1 });
+  A(14, 'empty-op', { stat: 'pop' });
+  pushTF('validateCond', 'cmp-ok-gte', { op: 'gte', stat: 'counter:k', value: 3.5 }, ccOrStr(alMod.validateCond({ op: 'gte', stat: 'counter:k', value: 3.5 })));
+  // 16 全分支：and/or/not × 结构错误 × 比较五 op × 深度/类型/空 stat/非有限 value/未知 op
+
+  const T = (name, raw) => pushTF('normalizeTrigger', name, raw, tcOrStr(alMod.normalizeTrigger(raw)));
+  T('empty-default-cron', {});
+  T('null-raw-cron', null);
+  T('legacy-v1', { everyYears: 5, chance: 0.5, season: 2 });
+  T('infer-event', { event: 'fall' });
+  T('infer-cond', { cond: { op: 'gt', stat: 'year', value: 3 } });
+  T('event-ok', { kind: 'event', event: 'oracle', eventCooldownYears: 7, chance: 0.3 });
+  T('event-unknown', { kind: 'event', event: 'nope' });
+  T('event-cd-clamp', { kind: 'event', event: 'war', eventCooldownYears: 500 });
+  T('cond-missing', { kind: 'condition' });
+  T('cond-bad', { kind: 'condition', cond: { op: 'bad' } });
+  T('cond-ok-clamps', { kind: 'condition', everyYears: 0.4, chance: 5, season: 9, cond: { op: 'lte', stat: 'pop', value: 100 } });
+  T('kind-null-stringified', { kind: null });
+  T('everyyears-string', { kind: 'cron', everyYears: 'x', chance: -2, season: -1 });
+  T('season-string-num', { kind: 'cron', everyYears: 3.6, season: '2' });
+  T('number-raw', 42);
+  // 15 全分支：默认/推断 × event/condition/cron × 钳制 × null-kind 怪癖 × Number 强转
+
+  const L = (name, raw) => pushTF('normalizeLaw', name, raw, lcOrNull(alMod.normalizeLaw(raw)));
+  L('full-valid', {
+    id: 'L9', name: '条件法则', desc: 'd', enabled: true, createdYear: 2.4, durationYears: 50, fired: 3, lastYear: 2,
+    trigger: { kind: 'condition', everyYears: 2, chance: 1, season: 1, cond: { op: 'gt', stat: 'pop', value: 4 } },
+    actions: [{ kind: 'announce', text: 'x' }, { kind: 'counter', name: 'c', op: 'add', value: 1 }],
+    revert: { 'pop.reproMul': 0.7 },
+  });
+  L('minimal', { id: 'L1', actions: [{ kind: 'announce', text: 'hi' }] });
+  L('v1-legacy-trigger', { id: 'L2', actions: [{ kind: 'heal', radius: 3 }], trigger: { everyYears: 3, chance: 0.5, season: 1 }, fired: 9, lastYear: 4, createdYear: 1 });
+  L('corrupt-trigger-fallback', { id: 'L3', actions: [{ kind: 'smite', radius: 2 }], trigger: { kind: 'lunar' }, fired: 5 });
+  L('no-id', { actions: [{ kind: 'announce', text: 'x' }] });
+  L('no-actions', { id: 'L4' });
+  L('all-actions-unknown', { id: 'L5', actions: [{ kind: 'zap' }, 'junk', null] });
+  L('mixed-actions-filter', { id: 'L6', actions: [{ kind: 'zap' }, { kind: 'nuke', power: 1 }, 42] });
+  L('slices-and-clamps', { id: 'L7', name: '一二三四五六七八九十一二三四五六七八九十二十四字名', desc: '很'.repeat(130), enabled: false, durationYears: 5000, fired: -5, lastYear: 'x', createdYear: 9.6, trigger: { kind: 'cron', everyYears: 1, chance: 1, season: null }, actions: [{ kind: 'announce', text: 'ok' }] });
+  L('non-object', 'law string');
+  // 10 全分支：有效/最小/legacy/损坏退化 × 结构 null × 过滤 × 切片钳制
+}
+
+// ---- 系统面向量（create/update/saveRoundTrip）：每 case 独立引擎 + 手术注入 ----
+function buildToolCase(spec) {
+  const eng = new GameEngine(spec.baseSeed);
+  epMod.resetEngineParams();
+  eng.worldEvents.length = 0;
+  eng.eventSeq = 1;
+  eng.yearF = spec.yearF ?? 3.5;
+  eng.tickCount = spec.tickCount ?? 900;
+  for (const jl of spec.laws0 ?? []) eng.agentLaws.laws.push(JSON.parse(JSON.stringify(jl)));
+  let maxSeq = 0;
+  for (const l of eng.agentLaws.laws) { const m = /^L(\d+)$/.exec(l.id); if (m) maxSeq = Math.max(maxSeq, Number(m[1])); }
+  eng.agentLaws.seq = maxSeq + 1;
+  for (const [k, v] of Object.entries(spec.counters0 ?? {})) eng.agentLaws.counters[k] = v;
+
+  const results = [];
+  for (const step of spec.ops) {
+    if (step.op === 'create') results.push({ err: eng.agentLaws.create(step.raw) });
+    else if (step.op === 'update') results.push({ err: eng.agentLaws.update(step.id, step.patch) });
+    else throw new Error(`未知工具步 ${step.op}`);
+  }
+
+  let saved = null;
+  if (spec.saveRoundTrip) {
+    // 存档双面直演：serialize L15305-15307（alws/alwsSeq/alwsCounters 原样落 JSON）→
+    // applySave L15660-15672（new AgentLawSystem + normalizeLaw 逐行 + seq 保底 + counters 展开）
+    const payload = JSON.parse(JSON.stringify({ alws: eng.agentLaws.laws, alwsSeq: eng.agentLaws.seq, alwsCounters: eng.agentLaws.counters }));
+    payload.alws.push({ id: 'L99', name: '坏行', actions: [{ kind: 'nonexist_kind_x', x: 1 }], fired: 3 });
+    payload.alws.push({ id: 'L98', name: 'v1 旧档行', desc: 'legacy', enabled: false, createdYear: 2, lastYear: 4, fired: 7, trigger: { everyYears: 3, chance: 0.5, season: 1 }, actions: [{ kind: 'announce', text: '旧' }] });
+    const eng2 = new GameEngine(spec.baseSeed + 777);
+    eng2.yearF = 9.25;
+    for (const law of payload.alws) { const n = alMod.normalizeLaw(law); if (n) eng2.agentLaws.laws.push(n); }
+    eng2.agentLaws.seq = Math.max(1, payload.alwsSeq ?? 1);
+    eng2.agentLaws.counters = payload.alwsCounters && typeof payload.alwsCounters === 'object' ? { ...payload.alwsCounters } : {};
+    saved = {
+      laws: eng2.agentLaws.laws.map(lawCanon),
+      seq: eng2.agentLaws.seq,
+      counters: Object.entries(eng2.agentLaws.counters).map(([k, v]) => [k, f64h(v)]),
+      reverts: eng2.agentLaws.laws.map((l) => ({ id: l.id, revert: Object.entries(l.revert).map(([k, v]) => [k, f64h(v)]) })),
+    };
+  }
+
+  return {
+    key: spec.key,
+    yearF: spec.yearF ?? 3.5,
+    laws0: spec.laws0 ?? [],
+    counters0: spec.counters0 ?? {},
+    ops: spec.ops,
+    saveRoundTrip: !!spec.saveRoundTrip,
+    results,
+    laws: eng.agentLaws.laws.map(lawCanon),
+    seq: eng.agentLaws.seq,
+    counters: Object.entries(eng.agentLaws.counters).map(([k, v]) => [k, f64h(v)]),
+    events: eng.worldEvents.map((e) => ({ kind: e.kind, text: e.text, x: e.x ?? null, y: e.y ?? null })),
+    params: epMod.listEngineParams().map((m) => ({ path: m.path, valueHex: f64h(m.value) })),
+    reverts: eng.agentLaws.laws.map((l) => ({ id: l.id, revert: Object.entries(l.revert).map(([k, v]) => [k, f64h(v)]) })),
+    saved,
+  };
+}
+
+const CRON_T = { kind: 'cron', everyYears: 1, chance: 1, season: null };
+const toolSpecs = [
+  {
+    // T1 create 成功三态：legacy cron（顶层字段）+ 结构化 trigger + 事件型——id 序/纪事/缺省
+    key: 'create-ok', baseSeed: 91000001, yearF: 3.5,
+    ops: [
+      { op: 'create', raw: { name: '天命', desc: '宣告', everyYears: 5, chance: 0.5, season: 1, actions: [{ kind: 'announce', text: '昭' }] } },
+      { op: 'create', raw: { name: '结构', trigger: { kind: 'cron', everyYears: 2, chance: 0.9 }, actions: [{ kind: 'heal', radius: 3, x: 60, y: 60 }] } },
+      { op: 'create', raw: { name: '哨卫', trigger: { kind: 'event', event: 'fall', eventCooldownYears: 9 }, desc: '听覆灭', actions: [{ kind: 'spawn', race: 'skeleton', count: 2 }] } },
+    ],
+  },
+  {
+    // T2 create 条件型 + 顶层 cond 推断 + param 缺省值（cur.value 兜底——getEngineParam 面）
+    key: 'create-cond-param', baseSeed: 91000002, yearF: 4.5,
+    ops: [
+      { op: 'create', raw: { name: '-cond', everyYears: 2, cond: { op: 'and', sub: [{ op: 'gt', stat: 'pop', value: 3 }, { op: 'not', sub: { op: 'eq', stat: 'wars', value: 0 } }] }, actions: [{ kind: 'counter', name: 'cond数', op: 'add', value: 1 }] } },
+      { op: 'create', raw: { name: '调参', trigger: { kind: 'cron', everyYears: 1, chance: 1 }, actions: [{ kind: 'param', path: 'fire.damage' }] } },
+    ],
+  },
+  {
+    // T3 create 错误面全分支：空名/bad trigger/空 actions/未知种族/未知地形/未知参数/
+    //   mech 非法 action/counter 空 name——每错误零副作用（laws/seq/事件零增）
+    key: 'create-errors', baseSeed: 91000003, yearF: 5.5,
+    ops: [
+      { op: 'create', raw: { name: '  ', actions: [{ kind: 'announce', text: 'x' }] } },
+      { op: 'create', raw: { name: '坏触发', trigger: { kind: 'lunar' }, actions: [{ kind: 'announce', text: 'x' }] } },
+      { op: 'create', raw: { name: '空动作', actions: [] } },
+      { op: 'create', raw: { name: '九动作', actions: [1, 2, 3, 4, 5, 6, 7, 8, 9].map(() => ({ kind: 'announce', text: 'x' })) } },
+      { op: 'create', raw: { name: '异种', actions: [{ kind: 'spawn', race: '龙象' }] } },
+      { op: 'create', raw: { name: '异地', actions: [{ kind: 'terrain', terrain: 'sky' }] } },
+      { op: 'create', raw: { name: '异参', actions: [{ kind: 'param', path: 'nope.mul', value: 1 }] } },
+      { op: 'create', raw: { name: '异mech', actions: [{ kind: 'mech', action: 'toggle', target: 'L1' }] } },
+      { op: 'create', raw: { name: '异target', actions: [{ kind: 'mech', action: 'enable', target: 'mech1' }] } },
+      { op: 'create', raw: { name: '异counter', actions: [{ kind: 'counter', name: '', op: 'add', value: 1 }] } },
+      { op: 'create', raw: { name: '异天气', actions: [{ kind: 'weather', weather: 'snow' }] } },
+    ],
+  },
+  {
+    // T4 create LRU 24：26 连创（announce 最小行）——第 1 条被 remove(false) 静默挤出
+    key: 'create-lru24', baseSeed: 91000004, yearF: 6.5,
+    ops: Array.from({ length: 26 }, (_, i) => ({ op: 'create', raw: { name: `m${i + 1}`, actions: [{ kind: 'announce', text: `a${i + 1}` }] } })),
+  },
+  {
+    // T5 create 切片/清洗面：30 字名 slice 24 + 130 字宣告 slice 120 + counter 名清洗
+    //   （'a b:c'→'a_b_c'）+ value ±1e9 钳制
+    key: 'create-slice', baseSeed: 91000005, yearF: 7.5,
+    ops: [
+      { op: 'create', raw: { name: '一二三四五六七八九十一二三四五六七八九十二十四字名', desc: '很'.repeat(130), actions: [{ kind: 'announce', text: '长'.repeat(130) }] } },
+      { op: 'create', raw: { name: '清洗', actions: [{ kind: 'counter', name: 'a b:c', op: 'add', value: 2e9 }] } },
+    ],
+  },
+  {
+    // T6 update 基础面：更名+desc（changes 文案）+ enabled 布尔校验错误（零副作用）+ no-op 微调
+    key: 'update-basic', baseSeed: 91000006, yearF: 8.5,
+    laws0: [{ id: 'L1', name: '旧名', desc: '旧说', enabled: true, createdYear: 0, durationYears: null, trigger: CRON_T, actions: [{ kind: 'announce', text: 'a' }], fired: 0, lastYear: 0, revert: {} }],
+    ops: [
+      { op: 'update', id: 'L1', patch: { name: '新名', desc: '新说' } },
+      { op: 'update', id: 'L1', patch: { enabled: 'yes' } },
+      { op: 'update', id: 'L1', patch: { desc: '新说' } },
+      { op: 'update', id: 'L99', patch: { name: '不存在' } },
+    ],
+  },
+  {
+    // T7 update 时效/周期/概率/季节：duration 50→null（改为永久）+ everyYears 周期文案 + chance + season
+    key: 'update-fields', baseSeed: 91000007, yearF: 8.5,
+    laws0: [{ id: 'L1', name: '调时', desc: 'd', enabled: true, createdYear: 0, durationYears: 50, trigger: { kind: 'cron', everyYears: 5, chance: 1, season: null }, actions: [{ kind: 'heal', radius: 2 }], fired: 0, lastYear: 0, revert: {} }],
+    ops: [
+      { op: 'update', id: 'L1', patch: { durationYears: 80 } },
+      { op: 'update', id: 'L1', patch: { durationYears: null } },
+      { op: 'update', id: 'L1', patch: { everyYears: 30 } },
+      { op: 'update', id: 'L1', patch: { chance: 0.2, season: 3 } },
+    ],
+  },
+  {
+    // T8 update 触发器改道：cron→event（cd ?? 1 兜底）→event everyYears 冷却文案→event null 回 cron
+    //   （everyYears undefined 键省略）→cond 设立（everyYears ?? 1——cron 10 保持）→冲突错误
+    key: 'update-trigger', baseSeed: 91000008, yearF: 8.5,
+    laws0: [{ id: 'L1', name: '改道', desc: 'd', enabled: true, createdYear: 0, durationYears: null, trigger: { kind: 'cron', everyYears: 10, chance: 1, season: null }, actions: [{ kind: 'announce', text: 'a' }], fired: 0, lastYear: 0, revert: {} }],
+    ops: [
+      { op: 'update', id: 'L1', patch: { event: 'plague' } },
+      { op: 'update', id: 'L1', patch: { everyYears: 9 } },
+      { op: 'update', id: 'L1', patch: { event: null } },
+      { op: 'update', id: 'L1', patch: { cond: { op: 'gt', stat: 'year', value: 2 } } },
+      { op: 'update', id: 'L1', patch: { event: 'war', cond: { op: 'lt', stat: 'pop', value: 9 } } },
+      { op: 'update', id: 'L1', patch: { event: 'nope' } },
+    ],
+  },
+  {
+    // T9 update event→cron 回退（everyYears undefined 键省略）+ condition 型 everyYears 判定间隔文案
+    key: 'update-event-cron', baseSeed: 91000009, yearF: 8.5,
+    laws0: [{ id: 'L1', name: '回退', desc: 'd', enabled: true, createdYear: 0, durationYears: null, trigger: { kind: 'event', chance: 1, event: 'war', eventCooldownYears: 4 }, actions: [{ kind: 'announce', text: 'a' }], fired: 0, lastYear: 0, revert: {} }],
+    ops: [
+      { op: 'update', id: 'L1', patch: { event: null } },
+      { op: 'update', id: 'L1', patch: { everyYears: 7 } },
+    ],
+  },
+  {
+    // T10 update 动作重铸还原 param 账本（可逆性承诺——改 actions 前先 revertParams）
+    key: 'update-reforge', baseSeed: 91000010, yearF: 8.5,
+    laws0: [{ id: 'L1', name: '丰饶', desc: 'd', enabled: true, createdYear: 0, durationYears: null, trigger: CRON_T, actions: [{ kind: 'param', path: 'pop.reproMul', value: 2 }], fired: 0, lastYear: 0, revert: { 'pop.reproMul': 0.7 } }],
+    ops: [
+      { op: 'update', id: 'L1', patch: { actions: [{ kind: 'announce', text: '改写后' }] } },
+      { op: 'update', id: 'L1', patch: { actions: [{ kind: 'param', path: 'nope.x', value: 1 }] } },
+    ],
+  },
+  {
+    // T11 update 条件型 everyYears 判定间隔 + 零 side-effect 错误（未知动作在 patch 里）
+    key: 'update-cond', baseSeed: 91000011, yearF: 8.5,
+    laws0: [{ id: 'L1', name: '_cond', desc: 'd', enabled: true, createdYear: 0, durationYears: null, trigger: { kind: 'condition', everyYears: 2, chance: 1, season: null, cond: { op: 'gt', stat: 'pop', value: 1 } }, actions: [{ kind: 'counter', name: 'c', op: 'add', value: 1 }], fired: 0, lastYear: 0, revert: {} }],
+    ops: [
+      { op: 'update', id: 'L1', patch: { everyYears: 8 } },
+      { op: 'update', id: 'L1', patch: { actions: [{ kind: 'zap' }] } },
+    ],
+  },
+  {
+    // T12 saveRoundTrip：create 双法则（event 型 + counter）+ 计数器 → serialize → 损坏行/v1 行
+    //   混入 → applySave 归一化恢复（revert 不序列化/seq 保底/counters 展开）
+    key: 'save-roundtrip', baseSeed: 91000012, yearF: 4.5, saveRoundTrip: true,
+    counters0: { 岁月: 2, 战功: -1.5 },
+    ops: [
+      { op: 'create', raw: { name: '哨卫', trigger: { kind: 'event', event: 'fall', eventCooldownYears: 3 }, desc: '听覆灭', actions: [{ kind: 'spawn', race: 'wolf', count: 1 }] } },
+      { op: 'create', raw: { name: '计数', everyYears: 1, actions: [{ kind: 'counter', name: '岁月', op: 'add', value: 2 }] } },
+    ],
+  },
+];
+
+const toolCases = toolSpecs.map((s) => buildToolCase(s));
+const toolDet2 = toolSpecs.map((s) => buildToolCase(s));
+for (let i = 0; i < toolCases.length; i++) {
+  if (JSON.stringify(toolCases[i]) !== JSON.stringify(toolDet2[i])) throw new Error(`tool det 失败 ${toolCases[i].key}`);
+}
+console.log('toolface det 双跑字节级一致:', toolCases.map((c) => c.key).join(' '));
+
 const out = {
   meta: {
     gen: 'gen-agentlaws.mjs',
     protocol: 'GameEngine 构造 + 手术式夹具直写（法则/计数器注入）+ rngA 尾置清零起流 + agentLaws.tick() 直调步进（tickCount 不 ++）',
     rng: 'eng.rngA 单流；mulberry 纯数学反解 total',
-    domains: ['agentLaws.tick L524-557', 'onEvent L562-582', 'statValue/buildStats L585-629', 'fire 39 动作 L638-875', 'remove/toggle/revertParams L496-520', 'evalCond L125-143', 'resolveRace L70-87', 'engineParams get/set'],
-    sliceBoundary: 'create/update/normalizeTrigger/normalizeLaw/list 属工具/存档面下一轮；WBB.touchMeta（槽 59）未译 no-op',
+    domains: ['agentLaws.tick L524-557', 'onEvent L562-582', 'statValue/buildStats L585-629', 'fire 39 动作 L638-875', 'remove/toggle/revertParams L496-520', 'evalCond L125-143', 'resolveRace L70-87', 'engineParams get/set', 'M-U29 工具/存档面: validateCond L94-122/normalizeTrigger L149-174/normalizeLaw L178-209/validateActions L212-310/create L341-391/update L395-493/saveRoundTrip engine.ts L15305-15307+L15660-15672'],
+    sliceBoundary: 'WBB.touchMeta（槽 59）未译 no-op；validateActions 非导出经 create/update 错误路径覆盖；normalizeLaw 动作行 AS-IS 平铺拷贝（null 字段动作不在切片）',
     scenarioCount: scenarios.length,
+    toolfaceCount: toolCases.length,
+    toolPureCount: tfCases.length,
   },
   pure: { evalCond: pureEvalCond, resolveRace: pureResolveRace },
   scenarios,
+  toolface: { cases: tfCases, systems: toolCases },
 };
 const json = JSON.stringify(out);
 const GOLDEN1 = path.join(ROOT, 'scripts/unity-migration/golden/agentlaws.json');
