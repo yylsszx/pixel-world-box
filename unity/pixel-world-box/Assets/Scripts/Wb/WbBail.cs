@@ -4039,12 +4039,14 @@ namespace PixelWorldBox.Wb
             Explode(w, x, y, r, true, true, true);                                                                   // L12259（{terrain:true, lava:true, nuke:true}——M-U10c 全译件复用；核域支 radSet/radiate/MarkDirty 随件）
         }
 
-        // ================= emergentPayload（engine L9397-9436 桩形——武器铸造域 L8715+/L9440+ 未译） =================
-        //   emergentWeapons 恒空表（铸造域无写点）→ L9398 get(e.wid ?? -1) 恒 undefined → L9399 早退即全语义；
-        //   w.rad/w.terra/w.morale 躯干（辐射环 40%/奇点焦土 55%/士气崩落）随铸造域入链按锚补译（M-U10e+ 候选）。
+        // ================= emergentPayload（engine L9397-9436 桩形——发射面 M-U31 待译） =================
+        //   M-U30 起铸造域已译（WbArmory——forge/fuse/divine/forgeTick/armoryTick 全件），
+        //   但 fireEmergent L9317-9396 未译 → 无 fx 携 wid 落点 → L9398 get(e.wid ?? -1) 恒 undefined
+        //   → L9399 早退即全语义（killCredit 同理恒 null——WbCivSim.WwCountKill 桩注释同步）。
+        //   w.rad/w.terra/w.morale 躯干（辐射环 40%/奇点焦土 55%/士气崩落）随发射面入链按锚补译（M-U31）。
         private static void EmergentPayload(WbWorld w, WbFx e)                                                       // L9397
         {
-            // const w = this.emergentWeapons.get(e.wid ?? -1)（L9398）——恒空表；if (!w) return（L9399）早退即全语义
+            // const w = this.emergentWeapons.get(e.wid ?? -1)（L9398）——发射面未译无 wid 携带；if (!w) return（L9399）早退即全语义
         }
 
         // ================= regrowTick L2830-2840（M-U8b regrow 域核心——sim 域切片） =================
@@ -7110,16 +7112,14 @@ namespace PixelWorldBox.Wb
             return n == 0 ? bas : $"{bas} {WbNames.Roman(n + 1)}";                              // L1532-1533
         }
 
-        // ================= techModsOf 最小面（engine L4859-4874 场景切片机械翻译） =================
+        // ================= techModsOf 最小面（engine L4859-4874 机械翻译） =================
+        // M-U30：GUARD 放宽——委托 WbCivSim.TechModsOf 真源（techs/emTechs 叠加 M-U3h 译件）。
+        // 空 techs 场景位级等价（modsOfTechs([]) → NEUTRAL_MODS (1,1)）；旧黄金零漂移。
         private static (double hp, double dmg) TechModsOf2(WbWorld w, int civId)
         {
             if (civId < 0) return (1, 1);                                                       // L4860 NEUTRAL
-            WbCiv c = civId < w.civs.Count ? w.civs[civId] : null;                              // L4861
-            if (c != null && c.techs != null && c.techs.Count > 0)                              // L4862 GUARD
-                throw new System.InvalidOperationException("techModsOf 非空 techs 未转写（case2 场景外）");
-            if (w.emTechs != null && w.emTechs.Count > 0)                                       // L4864 GUARD
-                throw new System.InvalidOperationException("emTechs 叠加未转写（case2 场景外）");
-            return (1, 1);
+            WbTechMods tm = WbCivSim.TechModsOf(w, civId);                                      // L4861-4874 真源
+            return (tm.hp, tm.dmg);                                                             // L1361-1362（tm?.hp ?? 1 / tm?.dmg ?? 1）
         }
 
         // ================= govOf（engine L8067-8070 机械翻译） =================

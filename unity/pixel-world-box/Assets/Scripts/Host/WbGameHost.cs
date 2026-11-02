@@ -158,6 +158,7 @@ namespace PixelWorldBox.Host
             Orch.D[PixelWorldBox.Wb.WbTickOrch.WORLDSIM_HYDRO] = () => PixelWorldBox.Wb.WbBailRelay.WorldsimHydroTick(World);         // M-U26：worldsim.hydroTick 已译域真调（侵蚀/沉积+重分类——蓝本 L2620 %600===41）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.WORLDSIM_COAST] = () => PixelWorldBox.Wb.WbBailRelay.WorldsimCoastTick(World);         // M-U26：worldsim.coastTick 已译域真调（海平面进退——蓝本 L2622 %600===47）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.WORLDSIM_BIOME] = () => PixelWorldBox.Wb.WbBailRelay.WorldsimBiomeTick(World);         // M-U26：worldsim.biomeTick 已译域真调（群系漂移——蓝本 L2624 %600===53）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.ARMORY] = () => PixelWorldBox.Wb.WbArmory.ArmoryTick(World);                           // M-U30：armoryTick 已译域真调（头部武装 + 尾 emergentForgeTick——蓝本 L12219-12264 %240===13；tier<1/gold<2 顶层跳过安全）
         }
 
         /// <summary>applyTool 大分发器宿主门（M-U14 切片一——Unity 输入域后续接位；事件驱动非 tick 槽。

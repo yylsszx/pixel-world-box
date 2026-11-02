@@ -9,6 +9,7 @@
 namespace PixelWorldBox.Wb
 {
     using System.Collections.Generic;
+    using Newtonsoft.Json.Linq;
 
     /// Civ POCO —— types.ts Civ 接口 M-U3b 可达子集（全字段声明，未达字段留给 M-U3c+）
     public class WbCiv
@@ -664,6 +665,35 @@ namespace PixelWorldBox.Wb
         public List<WbEvoNode> evoNodes = new List<WbEvoNode>();
         public int evoSeq;
         public Dictionary<string, int> evoIndex = new Dictionary<string, int>();
+
+        // ---------------- M-U30 武器铸造域（engine L574/L576/L619/L621 —— 字段只加） ----------------
+        /// engine L574 emergentWeapons: Map<number, EmergentWeapon>（JObject 行镜像——JS 对象即 JSON 行；
+        /// st.EmergentWeapons 同形协议 M-U6b；可选字段 absent 语义保留）
+        public Dictionary<int, JObject> emergentWeapons = new Dictionary<int, JObject>();
+        /// JS Map 插入序镜像（M-U28 教训 c：Dictionary 迭代序≠插入序——forge 池 [..values()] 序消费）
+        public List<int> emergentWeaponKeys = new List<int>();
+        /// engine L576 weapSeq = 1
+        public int weapSeq = 1;
+        /// engine L619 doctrines: Map<number, WeaponDoctrine>
+        public Dictionary<int, WbDoctrine> doctrines = new Dictionary<int, WbDoctrine>();
+        /// JS Map 插入序镜像（serialize [...entries()] 行序 + 遍历序消费）
+        public List<int> doctrinesKeys = new List<int>();
+        /// engine L621 defenses: Map<number, WeaponDefense>
+        public Dictionary<int, WbDefense> defenses = new Dictionary<int, WbDefense>();
+        /// JS Map 插入序镜像
+        public List<int> defensesKeys = new List<int>();
+
+        /// types.ts L1102 WeaponDoctrine（四轴学说——实战反馈漂移）
+        public class WbDoctrine
+        {
+            public double precision, saturation, terror, attrition;
+        }
+
+        /// types.ts L1114 WeaponDefense（对抗演化防御套件——挨打成长 0-100）
+        public class WbDefense
+        {
+            public double point, armor, evade;
+        }
 
         /// types.ts L221 ALLIANCE_COLORS（formAlliance 颜色轮转）
         public static readonly string[] AllianceColors = { "#14b8a6", "#f97316", "#a855f7", "#84cc16", "#ec4899", "#06b6d4" };
