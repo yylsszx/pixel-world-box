@@ -15,6 +15,7 @@ import type { AgentChatMessage, AgentToolResult, OracleProviderConfig, ProviderK
 import { runOracleAgentTurn } from '@/lib/oracle/agent';
 import { renderToolCatalog, AGENT_TOOLS } from '@/lib/oracle/tools';
 import { buildSystemPrompt } from '@/lib/oracle/prompt';
+import { preloadLocalModel, getModelLoadState, onModelLoadStateChange, compactHistory } from '@/lib/oracle/local-provider';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -977,6 +978,9 @@ function OracleBody() {
   const [cfgOpen, setCfgOpen] = useState(false);
   /** agent 运行中的实时流（阶段/工具卡/思考流/逐 token 正文） */
   const [live, setLive] = useState<LiveState | null>(null);
+  /** 本地模型加载状态（idle/loading/ready/error） */
+  const [modelLoadState, setModelLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [modelLoadError, setModelLoadError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -984,6 +988,33 @@ function OracleBody() {
   useEffect(() => {
     setProvider(loadProvider());
   }, []);
+
+  // 本地模型：预加载 + 状态监听
+  useEffect(() => {
+    const isLocal = provider.kind === 'local';
+    if (!isLocal) {
+      setModelLoadState('idle');
+      setModelLoadError(null);
+      return;
+    }
+    // 初始化状态
+    const { state, error } = getModelLoadState();
+    setModelLoadState(state);
+    setModelLoadError(error);
+
+    // 订阅状态变化
+    const unsub = onModelLoadStateChange((s, e) => {
+      setModelLoadState(s);
+      setModelLoadError(e);
+    });
+
+    // 后台预加载（不阻塞 UI）
+    preloadLocalModel(provider.model, { forceCpu: provider.forceCpu, allowLocalModels: true });
+
+    return () => {
+      unsub();
+    };
+  }, [provider.kind, provider.model, provider.forceCpu]);
 
   /** 更新并持久化厂商配置 */
   const applyProvider = useCallback((next: OracleProviderConfig) => {
@@ -1012,9 +1043,10 @@ function OracleBody() {
       if (!userText) return;
       // 历史快照须在 addOracleMsg 之前取（否则本轮 user 消息会重复入列）
       // v3：历史压缩带工具回执摘要——模型跨轮记得自己干过什么，复合任务可续接
-      const history: AgentChatMessage[] = [
+      // v4：使用 compactHistory 防止本地模型上下文窗口溢出（保留 system prompt + 最近 N 轮）
+      const rawHistory: AgentChatMessage[] = [
         { role: 'assistant', content: buildSystemPrompt(renderToolCatalog()) },
-        ...st.oracleMsgs.slice(-8).map((m): AgentChatMessage => ({
+        ...st.oracleMsgs.slice(-20).map((m): AgentChatMessage => ({
           role: m.role === 'user' ? 'user' : 'assistant',
           content:
             m.role === 'oracle' && m.tools?.length
@@ -1023,6 +1055,8 @@ function OracleBody() {
         })),
         { role: 'user', content: userText },
       ];
+      // 压缩历史：保留 system prompt + 最近 16 条（本地模型上下文窗口小，云端模型也受益）
+      const history = compactHistory(rawHistory, 16);
       addOracleMsg({ role: 'user', text: userText, mode });
       setView('chat');
       setOracleBusy(true);
@@ -1180,6 +1214,36 @@ function OracleBody() {
             <ProviderConfig provider={provider} onApply={applyProvider} />
           </PopoverContent>
         </Popover>
+
+            {/* 本地模型加载状态指示器（仅 local provider 显示） */}
+            {provider.kind === 'local' && (
+              <div className="flex items-center gap-1" title={modelLoadError ?? undefined}>
+                {modelLoadState === 'loading' && (
+                  <>
+                    <div className="h-3 w-3 animate-spin rounded-full border-2 border-amber-400/50 border-t-transparent" aria-label="模型加载中" />
+                    <span className="text-[9px] font-bold text-amber-300">加载中</span>
+                  </>
+                )}
+                {modelLoadState === 'ready' && (
+                  <>
+                    <span className="h-3 w-3 shrink-0 rounded-full bg-emerald-400" aria-label="模型就绪" />
+                    <span className="text-[9px] font-bold text-emerald-300">就绪</span>
+                  </>
+                )}
+                {modelLoadState === 'error' && (
+                  <>
+                    <span className="h-3 w-3 shrink-0 rounded-full bg-red-400" aria-label="模型加载失败" />
+                    <span className="text-[9px] font-bold text-red-300">失败</span>
+                  </>
+                )}
+                {modelLoadState === 'idle' && (
+                  <>
+                    <span className="h-3 w-3 shrink-0 rounded-full border border-zinc-600 bg-zinc-700" aria-label="模型未加载" />
+                    <span className="text-[9px] font-bold text-zinc-500">未加载</span>
+                  </>
+                )}
+              </div>
+            )}
         <Button
           variant="ghost"
           size="sm"

@@ -3,6 +3,8 @@
 // 适合移动设备：模型量化后 ~300-500MB，首次加载后浏览器 IndexedDB + Service Worker 缓存，离线可用。
 // 零服务端依赖，适配 GitHub Pages 静态导出部署。
 
+import type { AgentChatMessage } from './types';
+
 /** transformers.js 模块缓存（避免重复动态导入） */
 let transformersModule: typeof import('@xenova/transformers') | null = null;
 
@@ -86,9 +88,9 @@ function messagesToPrompt(messages: { role: string; content: string }[]): string
 
 /** 简单的对话历史压缩（保留 system prompt + 最近 N 轮，中间用摘要替代） */
 export function compactHistory(
-  messages: { role: string; content: string }[],
+  messages: AgentChatMessage[],
   maxMessages = 20
-): { role: string; content: string }[] {
+): AgentChatMessage[] {
   if (messages.length <= maxMessages) return messages;
   const systemMsg = messages[0];
   const recent = messages.slice(-maxMessages + 1);

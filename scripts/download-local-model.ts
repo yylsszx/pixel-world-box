@@ -1,52 +1,32 @@
 #!/usr/bin/env bun
-// ============ 本地模型预下载脚本 ============
-// 把 Xenova/qwen2.5-0.5b-instruct 量化模型文件下载到 public/models/
-// 运行：bun scripts/download-local-model.ts
+// ============ 本地模型预下载脚本（说明文档） ============
+// 
+// 由于 Hugging Face 现在要求认证才能下载模型文件，直接下载脚本无法工作。
+// 
+// 推荐方案：使用浏览器端自动下载 + IndexedDB + Service Worker 缓存
+// 
+// 步骤：
+// 1. 启动开发服务器：bun run dev
+// 2. 打开测试页：http://localhost:3000/test-local-provider.html
+// 3. 点击「1. 加载 transformers.js 与模型」—— 首次会自动从 CDN 下载 ~300-500MB
+// 4. 待模型就绪后，测试各项功能
+// 5. 断网刷新页面 —— 验证离线可用（IndexedDB + SW 双重缓存）
+// 
+// 如果必须预下载到 public/models/，需手动操作：
+// - 在浏览器开发者工具 Application -> IndexedDB 中找到缓存的模型文件
+// - 或配置 HF_TOKEN 环境变量后运行 transformers.js Node 端下载
+// 
+// 当前脚本仅作说明，不执行下载。
 
-import { writeFile, mkdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const MODEL_ID = 'Xenova/qwen2.5-0.5b-instruct';
-const BASE_URL = `https://huggingface.co/${MODEL_ID}/resolve/main`;
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const OUT_DIR = join(__dirname, '..', 'public', 'models', 'qwen2.5-0.5b-instruct');
-
-// transformers.js 需要的文件列表（量化版）
-const FILES = [
-  'config.json',
-  'tokenizer.json',
-  'tokenizer_config.json',
-  'onnx/model_quantized.onnx',
-  'onnx/model_quantized.onnx_data',
-  'special_tokens_map.json',
-];
-
-async function downloadFile(url: string, dest: string) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`下载失败 ${res.status}: ${url}`);
-  const buf = await res.arrayBuffer();
-  await writeFile(dest, Buffer.from(buf));
-  console.log(`✓ ${dest} (${(buf.byteLength / 1024 / 1024).toFixed(2)} MB)`);
-}
-
-async function main() {
-  console.log(`下载 ${MODEL_ID} 量化模型到 ${OUT_DIR}...`);
-  await mkdir(OUT_DIR, { recursive: true });
-
-  for (const file of FILES) {
-    const url = `${BASE_URL}/${file}`;
-    const dest = join(OUT_DIR, file);
-    await mkdir(join(dest, '..'), { recursive: true });
-    try {
-      await downloadFile(url, dest);
-    } catch (e) {
-      console.error(`✗ ${file}: ${e}`);
-      process.exit(1);
-    }
-  }
-  console.log('\n✅ 所有文件下载完成！');
-  console.log(`模型路径: /models/qwen2.5-0.5b-instruct`);
-}
-
-main();
+console.log('⚠️  直接下载不可用（Hugging Face 需认证）');
+console.log('');
+console.log('请使用浏览器端自动下载方案：');
+console.log('  1. bun run dev');
+console.log('  2. 打开 http://localhost:3000/test-local-provider.html');
+console.log('  3. 点击「预加载模型」或「加载 transformers.js 与模型」');
+console.log('  4. 首次加载会自动下载 ~300-500MB 到 IndexedDB');
+console.log('  5. 后续访问离线可用（Service Worker + IndexedDB 双重缓存）');
+console.log('');
+console.log('如需手动预下载到 public/models/：');
+console.log('  export HF_TOKEN=your_token  # 从 https://huggingface.co/settings/tokens 获取');
+console.log('  bun scripts/download-local-model.ts  # 需修改脚本读取 HF_TOKEN');
