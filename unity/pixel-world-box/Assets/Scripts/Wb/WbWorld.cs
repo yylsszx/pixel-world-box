@@ -558,7 +558,40 @@ namespace PixelWorldBox.Wb
         public double windPhase = 0;                           // nature.ts L63 windPhase（大气湍流相位——atmTick L432 演绎未译，夹具注入态）
         public int natureSeed = 0;                             // nature.ts L88 seed（nature 系统种子——windAt valueNoise 输入）
         public byte[] rainCell = new byte[WbConstants.AW * WbConstants.AH];   // nature.ts L65 rainCell: Uint8Array（雨区格——fireMul 雨区难燃门 L316；atmTick 演绎未译注入态）
-        public byte[] glacier = new byte[W * H];               // worldsim.ts L90 glacier: Uint8Array（冰川覆被——fireMul 冰上不燃门 L312；glacierTick 演绎未译注入态）
+        public byte[] glacier = new byte[W * H];               // worldsim.ts L90 glacier: Uint8Array（冰川覆被——fireMul 冰上不燃门 L312；glacierTick M-U26 已译注入态）
+
+        // —— M-U26 深时涌现域字段（worldsim.ts L39-105 只加；全瞬态不入档——L13-14 存档哲学「已恢复地形+seed 重导出」）——
+        public float[] elev = new float[W * H];                // worldsim.ts L45 elev: Float32Array（连续海拔场——initFromTerrain L124 ELEV_TGT+fbm ±0.08）
+        public float[] tNoise = new float[W * H];              // worldsim.ts L47 tNoise: Float32Array（静态气候纹波 ±0.15——initFromTerrain L128）
+        public float[] flowAcc = new float[W * H];             // worldsim.ts L49 flowAcc: Float32Array（流向累加 scratch——hydroTick L187 每 %600 重算）
+        public uint[] order = new uint[W * H];                 // worldsim.ts L51 order: Uint32Array（海拔降序索引 scratch——hydroTick L192 稳定降序；biomeTick L635 错配池复用）
+        public float[] tempF = new float[W * H];               // worldsim.ts L57 tempF: Float32Array（动态温度场——computeTemps L352 每 %120 重写）
+        public byte[] tempOverlay = new byte[W * H];           // worldsim.ts L58 tempOverlay: Uint8Array（温度覆盖层量化 (t+0.5)×165——computeTemps L355）
+        public float[] psi = new float[WbConstants.AW * WbConstants.AH];       // worldsim.ts L62 psi: Float32Array（Stommel 流函数——oceanTick L410 Jacobi 24 it 暖启动）
+        public float[] curU = new float[WbConstants.AW * WbConstants.AH];      // worldsim.ts L63 curU: Float32Array（流速 u=−∂ψ/∂y——oceanTick L424 夹断 ±0.6）
+        public float[] curV = new float[WbConstants.AW * WbConstants.AH];      // worldsim.ts L64 curV: Float32Array（流速 v=+∂ψ/∂x——oceanTick L425）
+        public float[] heatQ = new float[WbConstants.AW * WbConstants.AH];     // worldsim.ts L68 heatQ: Float32Array（热含量场——oceanTick L438 平流 ×0.975）
+        public byte[] upwell = new byte[WbConstants.AW * WbConstants.AH];      // worldsim.ts L70 upwell: Uint8Array（上升流标记——oceanTick L465 itczLat 邻域）
+        public float[] cont = new float[WbConstants.AW * WbConstants.AH];      // worldsim.ts L72 cont: Float32Array（大陆度记忆 0 洋性↔1 陆性——initFromTerrain fill 0.5；computeTemps L316 α=0.05 平滑）
+        public float[] coastal = new float[WbConstants.AW * WbConstants.AH];   // worldsim.ts L74 coastal: Float32Array（陆格邻近海温异常缓存——computeTemps L329 4 邻均值）
+        public ushort[] waterCnt = new ushort[WbConstants.AW * WbConstants.AH]; // worldsim.ts L76 waterCnt: Uint16Array（粗格水格计数 scratch）
+        public float[] windU = new float[WbConstants.AW * WbConstants.AH];     // worldsim.ts L78 windU: Float32Array（风应力 scratch——oceanTick L381）
+        public float[] windV = new float[WbConstants.AW * WbConstants.AH];     // worldsim.ts L79 windV: Float32Array（风应力 scratch）
+        public float[] curlArr = new float[WbConstants.AW * WbConstants.AH];   // worldsim.ts L81 curlArr: Float32Array（风应力旋度 scratch——oceanTick L394）
+        public float[] qNext = new float[WbConstants.AW * WbConstants.AH];     // worldsim.ts L83 qNext: Float32Array（热含量平流双缓冲——oceanTick L441 set 回拷）
+        public double strongFrac = 0;                          // worldsim.ts L85 strongFrac（强流占比 |v|>0.35——oceanTick L480 FdHypot 面）
+        public int upwellingCells = 0;                         // worldsim.ts L87 upwellingCells（上升流渔场粗格数——oceanTick L458 每 %120 清零重计）
+        public int glacierTiles = 0;                           // worldsim.ts L92 glacierTiles（glacier>80 视觉冰盖计数——glacierTick/onTerrainChanged L160 维护）
+        public double seaLevel = 0;                            // worldsim.ts L95 seaLevel（海平面 −8..+8 米——coastTick L560 clamp ±8）
+        public byte[] driftAcc = new byte[W * H];              // worldsim.ts L96 driftAcc: Uint8Array（群系错配累计 >3 迁移——biomeTick L634）
+        public double globalTemp = 0;                          // worldsim.ts L99 globalTemp（全球均温 EMA——tempTick L301 ×0.12）
+        public double baselineTemp = 0;                        // worldsim.ts L100 baselineTemp（基线均温——coastTick L560 海平面驱动差）
+        public double eroded = 0;                              // worldsim.ts L101 eroded（累计侵蚀量——hydroTick L240）
+        public double deposited = 0;                           // worldsim.ts L102 deposited（累计沉积量——hydroTick L245/L270）
+        public int biomeDrift = 0;                             // worldsim.ts L103 biomeDrift（群系漂移累计格数——biomeTick L664）
+        public int coastNoteCd = 0;                            // worldsim.ts L105 coastNoteCd（海岸播报冷却——coastTick L561 −600/L596 置 2400）
+        public int wsSeed = 0;                                 // worldsim.ts L41 seed（worldsim 系统种子——initFromTerrain L116 eng.seed）
+        public uint wsRngState = 0;                            // worldsim.ts L42 rng mulberry32 状态（initFromTerrain L117 seed^0x3a91f7 起流——WbRng.Mulberry32Next(ref) 消费）
         public List<double[]> pSystems = new List<double[]>(); // nature.ts L74 气压中心 {x, y, kind, str, ttl}——windAt 科氏旋涡（x/y 像素域 f64；atmTick 生灭未译注入态）
         public List<double[]> storms = new List<double[]>();   // nature.ts L70 风暴——windAt 气旋环流；M-U18 槽协议扩展（字段只加）：[0]=x [1]=y [2]=strength [3]=id [4]=ttl [5]=seed [6]=kind(0=cyclone,1=blizzard) [7]=landed(0/1)——windAt 只读 [0..2] 零触碰；name 可由 id 导出（STORM_NAME_AT(id) nature.ts L27）
 

@@ -1602,6 +1602,20 @@ namespace PixelWorldBox.Wb
             }
         }
 
+        // ---------------- M-U26 深时涌现域六门（worldsim.ts 全域——WbWorldsim 全译件转发） ----------------
+        /// <summary>worldsim.oceanTick L365-481（槽 44 %120===15——atmosphere 门顶层早退）</summary>
+        public static void WorldsimOceanTick(WbWorld w) => WbWorldsim.OceanTick(w);
+        /// <summary>worldsim.tempTick L299-302（槽 54 %120===27——EMA 零门）</summary>
+        public static void WorldsimTempTick(WbWorld w) => WbWorldsim.TempTick(w);
+        /// <summary>worldsim.glacierTick L486-552（槽 55 %240===33——积累/消融+采样 300）</summary>
+        public static void WorldsimGlacierTick(WbWorld w) => WbWorldsim.GlacierTick(w);
+        /// <summary>worldsim.hydroTick L175-294（槽 56 %600===41——侵蚀/沉积/土壤/重分类）</summary>
+        public static void WorldsimHydroTick(WbWorld w) => WbWorldsim.HydroTick(w);
+        /// <summary>worldsim.coastTick L557-600（槽 57 %600===47——海平面进退）</summary>
+        public static void WorldsimCoastTick(WbWorld w) => WbWorldsim.CoastTick(w);
+        /// <summary>worldsim.biomeTick L605-670（槽 58 %600===53——群系漂移）</summary>
+        public static void WorldsimBiomeTick(WbWorld w) => WbWorldsim.BiomeTick(w);
+
         /// <summary>树人播种（引擎级通道）：①播种——每 10 tick 每棵树人采样周围 r∈[1,3.5] 格 2 点，
         ///  草地/沙地/焦土概率化为森林（春播热情 ×1.3，冬季蛰停）；②扑火——熄灭周围 r=2.5 的火焰（四季在岗）。</summary>
         public static void EntGroveTick(WbWorld w)
@@ -2934,15 +2948,12 @@ namespace PixelWorldBox.Wb
                 w.road[i] = 0;                                                                                           // L1003
             }
             RefreshWaterTierAround(w, i);                                                                                // L1006 refreshWaterTierAround（M-U10a 点亮：水深场局部重算——tier 变化格 dirty.add L1066 模拟可观测面，no-op 注记消亡）
-            // worldsim.onTerrainChanged L153-165 观测面（M-U9b 点亮——蓝本 L976 在 L972 写入后即时触发；
-            //   本处级联尾置语义等价：soilF/glacier 为后续无消费的簿记面，regrow.set L2825 读 soilF
-            //   在 setTerrain 返回后——时序与蓝本一致）:
-            if (t == WbConstants.T_BURNT && w.soilF[i] > 8) w.soilF[i] -= 8;                                             // L157 火烧地力损耗（灰烬回田等腐殖质累积）
-            if ((WbWorld.IsWater(t) || t == WbConstants.T_LAVA) && w.glacier[i] > 0)                                     // L159-163 水面/岩浆覆写清冰川（glacierTiles 计数——worldsim 层非观测域；eng.dirty.add L166 worldsim 面=glacier 门触达才写，夹具零值域）
-            {
-                w.glacier[i] = 0;
-            }
-            // L155 elev 场（ELEV_TGT 回归）/ L164 driftAcc 场——worldsim 域未译注记维持
+            // worldsim.onTerrainChanged L153-165 观测面（M-U9b 点亮内联面于 M-U26 升级为 WbWorldsim 全译件直调——
+            //   蓝本 L976 在 L972 写入后即时触发；本处级联尾置语义等价注记维持：soilF/elev/glacier/driftAcc
+            //   为后续无消费的簿记面，regrow.set L2825 读 soilF 在 setTerrain 返回后——时序与蓝本一致）。
+            //   兼容性：旧黄金场景 glacier 全零 → L159 门恒假 → dirty.add L162 零触达；elev/driftAcc
+            //   新增场写入不入旧对账面——S1-S56 黄金掷值链零漂移维持。
+            WbWorldsim.OnTerrainChanged(w, i, t);                                                                        // L976（M-U26：L155 elev 靠拢 + L157 soilF−8 + L159-163 清冰川计数 + L164 driftAcc 清零）
         }
 
         // ---- M-U10a 水深场三件（engine L1011-1070 机械翻译——refreshWaterTierAround dirty 面消费） ----

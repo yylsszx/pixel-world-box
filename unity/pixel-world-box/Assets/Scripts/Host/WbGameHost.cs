@@ -150,6 +150,12 @@ namespace PixelWorldBox.Host
             Orch.D[PixelWorldBox.Wb.WbTickOrch.ENT_GROVE] = () => PixelWorldBox.Wb.WbBailRelay.EntGroveTick(World);                   // M-U24：entGroveTick 已译域真调（空 units 安全：无树人零效应零掷——蓝本 L2608 %10 门机械保持）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.LICH_RAISE] = () => PixelWorldBox.Wb.WbBailRelay.LichRaiseTick(World);                 // M-U24：lichRaiseTick 已译域真调（骷髅>40 顶层 return + 无巫妖/尸体零效应——蓝本 L2611 %12〔冬%8〕门机械保持）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.HYDRA_REGEN] = () => PixelWorldBox.Wb.WbBailRelay.HydraRegenTick(World);               // M-U24：hydraRegenTick 已译域真调（无九头蛇零效应——蓝本 L2612 %30 门机械保持）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.WORLDSIM_OCEAN] = () => PixelWorldBox.Wb.WbBailRelay.WorldsimOceanTick(World);         // M-U26：worldsim.oceanTick 已译域真调（atmosphere 门顶层早退——蓝本 L2595 %120===15）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.WORLDSIM_TEMP] = () => PixelWorldBox.Wb.WbBailRelay.WorldsimTempTick(World);           // M-U26：worldsim.tempTick 已译域真调（EMA 零门——蓝本 L2616 %120===27）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.WORLDSIM_GLACIER] = () => PixelWorldBox.Wb.WbBailRelay.WorldsimGlacierTick(World);     // M-U26：worldsim.glacierTick 已译域真调（积累/消融+采样 300——蓝本 L2618 %240===33）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.WORLDSIM_HYDRO] = () => PixelWorldBox.Wb.WbBailRelay.WorldsimHydroTick(World);         // M-U26：worldsim.hydroTick 已译域真调（侵蚀/沉积+重分类——蓝本 L2620 %600===41）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.WORLDSIM_COAST] = () => PixelWorldBox.Wb.WbBailRelay.WorldsimCoastTick(World);         // M-U26：worldsim.coastTick 已译域真调（海平面进退——蓝本 L2622 %600===47）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.WORLDSIM_BIOME] = () => PixelWorldBox.Wb.WbBailRelay.WorldsimBiomeTick(World);         // M-U26：worldsim.biomeTick 已译域真调（群系漂移——蓝本 L2624 %600===53）
         }
 
         /// <summary>applyTool 大分发器宿主门（M-U14 切片一——Unity 输入域后续接位；事件驱动非 tick 槽。
