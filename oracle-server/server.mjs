@@ -1,9 +1,12 @@
-// ============ PWB 神谕中继后端（Sealos 容器版 · v1.1 dsh 会话面） ============
+// ============ PWB 神谕中继后端（Sealos 容器版 · v1.2 dsh 持久会话面） ============
 // 职责：为 GitHub Pages 静态前端提供云端厂商统一 SSE 网关——
-//   GET  /healthz            健康检查（Sealos 探针 / R1 冷启动探测；报 dsh 运行时状态）
+//   GET  /healthz            健康检查（Sealos 探针 / R1 冷启动探测；报 dsh 运行时+持久化状态）
 //   POST /api/oracle/agent   AgentRequestBody → 统一 SSE（{"r"|"t"|"err"} + [DONE]）
 //     └ body.dsh（M-O4 相二）：dsh 会话面——运行时系统提示 + pwb 工具循环 +
 //       pwb-bridge 事件桥，同一端点同一线协议；v1 支持 openai 兼容厂商（本地小模型即此形态）
+//     └ body.dsh.sessionId（M-O4 相三）：服务端权威持久会话——事件溯源 JSONL 落盘（
+//       ctx.sessionPersistence 缝）+ foldSurface 投影回放 + compaction 双策略（100 轮不失忆）；
+//       带 sessionId 时前端 messages 仅取最后一条 user 输入，历史由服务端日志权威投影
 //   GET  /api/oracle/agent   405（前端 probeSiteBackend 以 405 识别「后端在」）
 // 设计铁律：
 //   ① 零 npm 依赖——纯 node: 内置能力，镜像构建不触网（R1 网络波动韧性）。
@@ -13,13 +16,15 @@
 //   ⑤ builtin（z-ai-web-dev-sdk）为可选增强：镜像内未安装时给出明确指引，不影响 openai/anthropic。
 import http from 'node:http';
 import { bootDshRuntime } from './runtime-boot.mjs';
+// 线文本辅助零依赖小模块（可顶层静态导入；dsh 依赖模块由 runtime-boot 在 hook 注册后动态挂载）
+import { textFromFrontendContent } from './dsh-wire-text.mjs';
 
 const PORT = Number(process.env.PORT || 8787);
 const TIMEOUT_MS = 120_000;
 const MAX_BODY_BYTES = 1_000_000; // 1MB 请求体上限
 const MAX_MESSAGES = 64;
 const MAX_CONTENT_CHARS = 24_000;
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const DSH_MAX_TOOL_ROUNDS = 6;
 
 // ============ SSE 输出 ============
@@ -376,6 +381,8 @@ const dshState = {
   packages: 0,
   bootMs: null,
   app: null,
+  memory: null,
+  storeRoot: null,
 };
 
 if (dshState.enabled) {
@@ -386,7 +393,9 @@ if (dshState.enabled) {
     dshState.packages = rt.manifestCount;
     dshState.bootMs = Date.now() - t0;
     dshState.app = rt.app;
-    console.log(`[pwb-oracle-server] dsh 运行时就绪：${rt.manifestCount} 包 / ${dshState.bootMs}ms`);
+    dshState.memory = rt.memory;
+    dshState.storeRoot = rt.storeRoot;
+    console.log(`[pwb-oracle-server] dsh 运行时就绪：${rt.manifestCount} 包 / ${dshState.bootMs}ms / 持久化=${rt.storeRoot}`);
   } catch (e) {
     dshState.error = e && e.message ? e.message : String(e);
     console.error(`[pwb-oracle-server] dsh 运行时引导失败：${dshState.error}`);
@@ -455,8 +464,8 @@ function normalizeDshOption(raw) {
   return jsonRec(raw) ?? undefined;
 }
 
-/** dsh 会话面预检（SSE 之前以 JSON 应答） */
-function dshPrecheck(v) {
+/** dsh 会话面预检（SSE 之前以 JSON 应答）；相三：sessionId 形状与非空 user 输入在此把关 */
+function dshPrecheck(v, dshOpt) {
   if (!dshState.enabled) {
     return { code: 503, error: '[dsh] 本实例未启用运行时（DSH_RUNTIME=1 开启）；中继直通面不受影响' };
   }
@@ -465,6 +474,15 @@ function dshPrecheck(v) {
   }
   if (v.provider.kind !== 'openai') {
     return { code: 400, error: '[dsh] 会话面 v1 仅支持 openai 兼容厂商（本地小模型 127.0.0.1 即此形态）；builtin/anthropic 请走直通面' };
+  }
+  if (dshOpt?.sessionId !== undefined) {
+    if (typeof dshOpt.sessionId !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(dshOpt.sessionId)) {
+      return { code: 400, error: '[dsh] sessionId 须为 1–64 位 [A-Za-z0-9._-] 字符串' };
+    }
+    const lastUser = [...(v.messages ?? [])].reverse().find((m) => m?.role === 'user');
+    if (!textFromFrontendContent(lastUser?.content).trim()) {
+      return { code: 400, error: '[dsh] sessionId 会话面需要至少一条非空 user 消息（服务端权威历史，仅取最后一条 user 输入）' };
+    }
   }
   return null;
 }
@@ -559,17 +577,34 @@ async function runDshTurn({ v, dshOpt, send, signal }) {
   try {
     app.pwbBridge?.emit?.({ type: 'turn-start', at: Date.now() });
 
+    // 相三：服务端权威持久会话——开启回合（turn/start + user/message 落盘）
+    let session = null;
+    if (dshOpt.sessionId) {
+      try {
+        const lastUser = [...v.messages].reverse().find((m) => m?.role === 'user');
+        const userText = textFromFrontendContent(lastUser?.content).trim();
+        const opened = await dshState.memory.beginTurn(dshOpt.sessionId, userText);
+        session = { id: dshOpt.sessionId, turn: opened.turn };
+      } catch (e) {
+        send({ err: `[dsh] 会话打开失败（sessionId=${dshOpt.sessionId}）：${e && e.message ? e.message : e}` });
+        return;
+      }
+    }
+
     // 线协议契约：messages[0] 为 assistant 载体系统提示 → 降为调度方补充；运行时所有系统提示
     const carrier = v.messages[0]?.role === 'assistant' ? v.messages[0].content : '';
     const dialog = v.messages[0]?.role === 'assistant' ? v.messages.slice(1) : v.messages.slice();
-    const chat = [
-      { role: 'system', content: dshSystemPrompt(app, carrier) },
-      ...dialog.map((m) => ({ role: m.role, content: m.content })),
-    ];
+    const sys = { role: 'system', content: dshSystemPrompt(app, carrier) };
+    // 相三：sessionId 面 = [system(现组装)] + 服务端日志投影回放（含本回合新输入）；
+    //       无 sessionId = 相二无状态面逐字节不变
+    const chat = session
+      ? [sys, ...dshState.memory.wireMessages(session.id)]
+      : [sys, ...dialog.map((m) => ({ role: m.role, content: m.content }))];
 
     const url = normalizeOpenAIUrl(provider.baseUrl ?? '');
     const tools = toolDefsOpenAI(app);
     let rounds = 0;
+    let lastText = ''; // 相三：终文（收回合落盘用）
     for (;;) {
       rounds += 1;
       const payload = { model: provider.model, messages: chat, stream: true, max_tokens: 6000 };
@@ -587,6 +622,7 @@ async function runDshTurn({ v, dshOpt, send, signal }) {
       const gotAny = await pumpDshOpenAI(upstream.body, send, acc);
       if (acc.calls.size === 0) {
         if (!gotAny) send({ err: `[${label}] 流式响应为空` });
+        lastText = acc.text;
         break;
       }
       if (rounds >= DSH_MAX_TOOL_ROUNDS) {
@@ -604,6 +640,9 @@ async function runDshTurn({ v, dshOpt, send, signal }) {
           function: { name: c.name, arguments: c.arguments || '{}' },
         })),
       });
+      if (session) {
+        await dshState.memory.recordAssistantToolCalls(session.id, session.turn, callList, acc.text, provider);
+      }
 
       // dsh ToolsService 真实执行（NativeToolExecutor；runtime-smoke ② 同参）
       app.pwbBridge?.emit?.({ type: 'tool-round', round: rounds, tools: callList.map((c) => c.name) });
@@ -616,12 +655,26 @@ async function runDshTurn({ v, dshOpt, send, signal }) {
         })),
         signal,
       });
+      const resultPairs = [];
       batch.results.forEach((r, i) => {
         const blocks = r?.result?.content ?? r?.content ?? null;
         const content = (blocks ? JSON.stringify(blocks) : JSON.stringify(r ?? {})).slice(0, 8000);
         const call = callList[i];
         chat.push({ role: 'tool', tool_call_id: call?.id || `call_${call?.index}`, content });
+        resultPairs.push({ callId: call?.id || `call_${call?.index}`, content });
       });
+      if (session) {
+        await dshState.memory.recordToolResults(session.id, session.turn, resultPairs);
+      }
+    }
+
+    if (session) {
+      // 相三：收回合（终文 assistant + turn/end 落盘 + compaction 双策略预算触发）
+      try {
+        await dshState.memory.endTurn(session.id, session.turn, lastText, provider);
+      } catch (e) {
+        send({ err: `[dsh] 会话落盘失败（回合已答）：${e && e.message ? e.message : e}` });
+      }
     }
 
     app.pwbBridge?.emit?.({ type: 'turn-end', rounds });
@@ -659,6 +712,8 @@ const server = http.createServer(async (req, res) => {
         packages: dshState.packages,
         boot_ms: dshState.bootMs,
         error: dshState.error,
+        store_root: dshState.storeRoot,
+        persistence: dshState.ready && dshState.memory ? await dshState.memory.stats() : null,
       },
       node: process.version,
     });
@@ -714,7 +769,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (dshOpt) {
-      const pre = dshPrecheck(v);
+      const pre = dshPrecheck(v, dshOpt);
       if (pre) {
         json(res, pre.code, { error: pre.error });
         return;
@@ -759,7 +814,7 @@ const server = http.createServer(async (req, res) => {
       service: 'pwb-oracle-server',
       version: VERSION,
       endpoints: ['GET /healthz', 'POST /api/oracle/agent'],
-      note: 'PWB 神谕中继后端（Sealos 容器版）——前端「厂商接入 → 中继后端」填本服务地址即可；body.dsh=true 走 dsh 会话面（运行时工具循环）。',
+      note: 'PWB 神谕中继后端（Sealos 容器版）——前端「厂商接入 → 中继后端」填本服务地址即可；body.dsh=true 走 dsh 会话面（运行时工具循环）；body.dsh.sessionId 走服务端权威持久会话（事件溯源 + compaction）。',
     });
     return;
   }
@@ -771,9 +826,10 @@ server.listen(PORT, () => {
   console.log(`[pwb-oracle-server] v${VERSION} listening on :${PORT} (builtin=${BUILTIN_READY}, node=${process.version})`);
 });
 
-// —— 优雅退出（Sealos 滚动更新） ——
+// —— 优雅退出（Sealos 滚动更新；相三：先 flush 会话存储） ——
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, () => {
+    try { void dshState.memory?.dispose(); } catch { /* 尽力而为 */ }
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 3000).unref();
   });

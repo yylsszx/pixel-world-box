@@ -1,11 +1,15 @@
-// M-O4 相二：dsh 运行时引导器（oracle-server 挂运行时的唯一入口）
+// M-O4 相二/相三：dsh 运行时引导器（oracle-server 挂运行时的唯一入口）
 // 职责：DSH_RUNTIME=1 时把 oracle-server/dsh-runtime（装配树）以「源码直消费」方式
 //       挂进本进程——tsx 程序化注册（TS 转译）+ dsh-hook（@deepseek-ai/* → src/ 源码）
 //       + cordis Context（SystemPrompt/ToolsService/NativeToolExecutor + pwb 五件）。
+// 相三：追加会话持久化装配——JsonlSessionPersistence（ctx.sessionPersistence 缝）
+//       + SessionMemory（回合事件机 + foldSurface 投影回放 + compaction 双策略）。
 // 纪律：复用 dsh 源码不改逻辑（钩子组合与 scripts/oracle-dsh/run-runtime-smoke.sh 同链：
 //       先 tsx 后 dsh-hook，池冒烟五步实证）；本文件不含任何游戏/厂商业务逻辑。
 // 消费方：server.mjs（DSH_RUNTIME=1 门）；镜像内路径见 Dockerfile 装配层。
+// 挂载序铁律：tsx → dsh-hook → 一切 @deepseek-ai/* 静态导入模块（pwb-plugins/persistence/memory）。
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { register as moduleRegister } from 'node:module'
 import { pathToFileURL, fileURLToPath } from 'node:url'
@@ -117,11 +121,33 @@ export async function bootDshRuntime({ runtimeRoot } = {}) {
     throw new Error('pwb 五件未就位')
   }
 
+  // ④ 相三：会话持久化装配（ctx.sessionPersistence JSONL 后端 + 会话记忆引擎）
+  //    存储根：PWB_STORE_ROOT 优先（镜像内 /tmp/pwb-store），缺省 os.tmpdir()/pwb-store（不污染仓）
+  const storeRoot = process.env.PWB_STORE_ROOT
+    ? path.resolve(process.env.PWB_STORE_ROOT)
+    : path.join(os.tmpdir(), 'pwb-store')
+  const { JsonlSessionPersistence } = await import('./dsh-jsonl-persistence.mjs')
+  const { SessionMemory } = await import('./dsh-session-memory.mjs')
+  const persistence = new JsonlSessionPersistence(app, { root: storeRoot })
+  // cordis 以 fiber 过滤 getter 暴露服务（非恒等），此处只断言能力面
+  if (typeof app.sessionPersistence?.create !== 'function' || typeof app.sessionPersistence?.open !== 'function') {
+    throw new Error('ctx.sessionPersistence 注册失败')
+  }
+  const budgetChars = Number(process.env.DSH_SESSION_SURFACE_CHAR_BUDGET) || undefined
+  const keepTail = Number(process.env.DSH_SESSION_COMPACT_KEEP_TAIL) || undefined
+  const pruneKeep = Number(process.env.DSH_SESSION_PRUNE_KEEP) || undefined
+  const memory = new SessionMemory(app, { budgetChars, keepTail, pruneKeep })
+
   return {
     app,
     root,
     manifestCount,
-    dispose() {
+    storeRoot,
+    persistence,
+    memory,
+    async dispose() {
+      try { await memory.dispose() } catch { /* 幂等卸载 */ }
+      try { await persistence.closeAll() } catch { /* 幂等卸载 */ }
       try { disposePwb() } catch { /* 幂等卸载 */ }
       try { unregisterTsx?.() } catch { /* 进程级钩子，尽力而为 */ }
     },
