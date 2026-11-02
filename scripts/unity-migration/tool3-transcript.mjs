@@ -52,7 +52,7 @@ import { readFileSync } from 'node:fs';
 import zlib from 'node:zlib';
 
 const T = { DEEP: 0, WATER: 1, SAND: 2, GRASS: 3, FOREST: 4, HILL: 5, MOUNTAIN: 6, SNOW: 7, LAVA: 8, BURNT: 9, ICE: 10, SWAMP: 11 };
-const R = { HUMAN: 0, ZOMBIE: 5, SKELETON: 16, SHEEP: 6, WOLF: 7, BEAR: 8, DRAGON: 9, DEER: 10, PENGUIN: 11, CAMEL: 12, SCORPION: 13, SNAKE: 14, SNOWWOLF: 15, DEMON: 17, TROLL: 21, OGRE: 22, WHITEWALKER: 23, VAMPIRE: 24, KRAKEN: 25, SANDWORM: 26, BASILISK: 27, PHOENIX: 29, ENT: 30, LICH: 31, HYDRA: 32, CHICKEN: 33, PIG: 34, RABBIT: 35, FOX: 36, FISH: 37, CRAB: 38, TURTLE: 39, SHARK: 40 };   // M-U19：HUMAN/WOLF 入表；M-U22：reap 域八族 + isHerbivoreRace 八静态 + MONSTER_LOOT 九族（types.ts R 枚举序逐值）；M-U24：SKELETON/ENT/LICH 引擎级通道三族；M-U25：BEAR/SCORPION/SNAKE/SNOWWOLF/FOX/CRAB/TURTLE/SHARK 迁徙域 SEED 十七族补全（types.ts L38/43/44/45/78/82/84/86 逐值）
+const R = { HUMAN: 0, ZOMBIE: 5, SKELETON: 16, SHEEP: 6, WOLF: 7, BEAR: 8, DRAGON: 9, DEER: 10, PENGUIN: 11, CAMEL: 12, SCORPION: 13, SNAKE: 14, SNOWWOLF: 15, DEMON: 17, TROLL: 21, OGRE: 22, WHITEWALKER: 23, VAMPIRE: 24, KRAKEN: 25, SANDWORM: 26, BASILISK: 27, ANGEL: 28, PHOENIX: 29, ENT: 30, LICH: 31, HYDRA: 32, CHICKEN: 33, PIG: 34, RABBIT: 35, FOX: 36, FISH: 37, CRAB: 38, TURTLE: 39, SHARK: 40 };   // M-U19：HUMAN/WOLF 入表；M-U22：reap 域八族 + isHerbivoreRace 八静态 + MONSTER_LOOT 九族（types.ts R 枚举序逐值）；M-U24：SKELETON/ENT/LICH 引擎级通道三族；M-U25：BEAR/SCORPION/SNAKE/SNOWWOLF/FOX/CRAB/TURTLE/SHARK 迁徙域 SEED 十七族补全（types.ts L38/43/44/45/78/82/84/86 逐值）；M-U27：ANGEL 光环域（types.ts L62）
 const W = 256, H = 160, N = W * H;
 const isWater = (t) => t === T.DEEP || t === T.WATER;
 const walkable = (t) => t !== T.DEEP && t !== T.WATER && t !== T.MOUNTAIN && t !== T.LAVA;   // constants.ts L73-75
@@ -90,6 +90,7 @@ const RACES = {
   [R.KRAKEN]: { name: '克拉肯', undead: false, aquatic: true, hostile: true, flying: false, lavaImmune: false, isCiv: false, predator: true },   // L187（aquatic true——beached 水中/搁浅支触达面）
   [R.BASILISK]: { name: '蛇怪', undead: false, aquatic: false, hostile: true, flying: false, lavaImmune: false, isCiv: false, predator: true },   // L190
   [R.ENT]: { name: '树人', undead: false, aquatic: false, hostile: false, flying: false, lavaImmune: false, isCiv: false, predator: false },   // L190'（S27/S28 播种主角）
+  [R.ANGEL]: { name: '天使', isCiv: false, hostile: false, flying: true, predator: false, undead: false, lavaImmune: true, hp: 240, dmg: 22, speed: 0.105, maxAge: 9999, repro: 0 },   // L188 ANGEL（M-U27：光环域主角——hostile/undead 旗治愈门消费〔S47 天使渡天使 o 循环 RACES[28] 面〕）
   [R.LICH]: { name: '巫妖', undead: true, aquatic: false, hostile: true, flying: false, lavaImmune: false, isCiv: false, predator: true },   // L191'（S29/S30 复生主角——predator 但 food 缺省 70>45 出手门 skip）
   [R.DEER]: { name: '鹿', undead: false, aquatic: false, hostile: false, flying: false, lavaImmune: false, isCiv: false, predator: false },   // L167（isHerbivore 八静态族）
   [R.PENGUIN]: { name: '企鹅', undead: false, aquatic: false, hostile: false, flying: false, lavaImmune: false, isCiv: false, predator: false },   // L168
@@ -1446,6 +1447,37 @@ class BREng {
       break;                                 // L13012（至多一崽）
     }
   }
+  // ---- M-U27 angelAuraTick L13138-13161（天使光环引擎级通道：治愈周围无辜生灵〔含国民/动物〕
+  //        + 驱散瘟疫——phase=(tickCount/3)|0 相位门 (phase+id*13)%50===0〔id 按位错开防同帧扎堆〕；
+  //        治愈内环门序：dead/o===a → hostile/undead〔只渡无辜者〕→ hp满&&!infected → d²>12.25
+  //        〔r=3.5²〕→ hp<maxHp 支 min(maxHp,hp+max(10,maxHp*0.25))+bless16 → infected 支清+bless20
+  //        → healed 上限 10 break → 本体 bless34 + onSound heal〔宿主 no-op〕。
+  //        调用面：runner L2604 %3 门〔phoenixAshTick 前——L2604<L2606 蓝本序；旧 40 场景无 ANGEL 族外层环零效应零掷〕）----
+  angelAuraTick() {
+    if (TOOL3_RED === 'aura') return;          // 红证旋钮：禁扫描全写面（S43-S48 hp/infected/fx/rngA FAIL）
+    const phase = (this.tickCount / 3) | 0;    // L13139
+    for (const a of this.units) {              // L13140
+      if (a.dead || a.race !== R.ANGEL) continue;   // L13141
+      if ((phase + a.id * 13) % 50 !== 0) continue; // L13142（S42 相位拒）
+      let healed = 0;                          // L13143
+      for (const o of this.units) {            // L13144
+        if (o.dead || o === a) continue;       // L13145（自遇 skip——S47 随行）
+        const od = RACES[o.race];              // L13146
+        if (od.hostile || od.undead) continue; // L13147（S46 敌对/亡灵拒——只渡无辜者）
+        if (o.hp >= o.maxHp && !o.infected) continue;   // L13148（S43 满血拒——S44 感染羊不拒）
+        const dxo = o.x - a.x;                 // L13149
+        const dyo = o.y - a.y;                 // L13150
+        if (dxo * dxo + dyo * dyo > 12.25) continue;    // L13151（S46 圈外拒——r=3.5²）
+        if (o.hp < o.maxHp) {                  // L13152
+          o.hp = Math.min(o.maxHp, o.hp + Math.max(10, o.maxHp * 0.25));   // L13153（S43 hp 5→15 位级）
+          this.fx('bless', o.x, o.y, 16);      // L13154
+        }
+        if (o.infected) { o.infected = false; this.fx('bless', o.x, o.y, 20); }   // L13156（S44/S45 清瘟面）
+        if (++healed >= 10) break;             // L13157（S48 cap10——第 11 只未触）
+      }
+      if (healed > 0) { this.fx('bless', a.x, a.y, 34); /* L13159 onSound?.('heal')——宿主音效 no-op（黄金窗口无消费面） */ }   // L13159
+    }
+  }
   // ---- M-U23 phoenixAshTick L13018-13032（凤凰涅槃引擎级通道：灰烬倒数到点重生机械转写——
   //        调用面：runner unitsTick 步进通道 L2606 门〔len>0 蓝本门原样，旧场景 ashes 空门假零效应〕----
   phoenixAshTick() {
@@ -1956,8 +1988,8 @@ for (const sc of golden.scenarios) {
     else if (call.fn === 'beginGrab') eng.beginGrab(call.args[0], call.args[1]);             // M-U21：三 API 直调
     else if (call.fn === 'moveGrab') eng.moveGrab(call.args[0], call.args[1]);
     else if (call.fn === 'endGrab') eng.endGrab(call.args[0], call.args[1]);
-    else if (call.fn === 'unitsTick') { eng.tickCount++; eng.fireTickM(); eng.rebuildBucketsM(); eng.unitsTick(); eng.effectsTick(); if (eng.phoenixAshes.length > 0) eng.phoenixAshTick(); if (eng.tickCount % 10 === 0) eng.entGroveTick(); if (eng.tickCount % (eng.natureSeason === 3 ? 8 : 12) === 0) eng.lichRaiseTick(); if (eng.tickCount % 30 === 0) eng.hydraRegenTick(); eng.beachedAquaticTickM(); if (eng.tickCount % 600 === 61) eng.wildlifeReboundTickM(); if (eng.tickCount % 20 === 7) eng.predatorHuntTickM(); if (eng.tickCount % 240 === 13) eng.sharkBreedTickM(); }   // M-U21+M-U23+M-U24：主循环 L2523-2528 + L2606/L2608/L2611/L2612 截断镜像（灰烬门旧场景零效应；三新门旧窗口 %10/%12/%30 全不触零漂移）+ M-U25：L2614/L2616/L2618/L2620 四门接线（beached 逐 tick 无门 + 三条件门蓝本门原样——stepUnits 场景 gen 端同序跑四门零效应实证：旧 31 场景无 aquatic 族/唯一饿捕食者 S24 food:30 窗口 1001 不触/LICH-HYDRA predator 但 food 缺省 70>45 出手门 skip）
-    else if (call.fn === 'effectsTick') { eng.tickCount++; eng.effectsTick(); if (eng.phoenixAshes.length > 0) eng.phoenixAshTick(); if (eng.tickCount % 10 === 0) eng.entGroveTick(); if (eng.tickCount % (eng.natureSeason === 3 ? 8 : 12) === 0) eng.lichRaiseTick(); if (eng.tickCount % 30 === 0) eng.hydraRegenTick(); eng.beachedAquaticTickM(); if (eng.tickCount % 600 === 61) eng.wildlifeReboundTickM(); if (eng.tickCount % 20 === 7) eng.predatorHuntTickM(); if (eng.tickCount % 240 === 13) eng.sharkBreedTickM(); }   // M-U25：gen 步进循环 L340-381 全序同构（effectsTick → L2606 灰烬门 → L2608/L2611/L2612 三门 → L2614/L2616/L2618/L2620 四门——旧 31 场景八门零效应窗口实证：phoenix ashes 空/%10 entGrove 无 ENT/%12 lich corpses 空→零掷/%30 hydra 无 HYDRA/beached 无 aquatic 族/rebound %600===61 旧窗口 1001-1050 不触/hunt 普查零掷/breed 不触——镜像端不接门与接门掷流等价，本轮补齐严格同构防未来漂移）
+    else if (call.fn === 'unitsTick') { eng.tickCount++; eng.fireTickM(); eng.rebuildBucketsM(); eng.unitsTick(); eng.effectsTick(); if (eng.tickCount % 3 === 0) eng.angelAuraTick(); if (eng.phoenixAshes.length > 0) eng.phoenixAshTick(); if (eng.tickCount % 10 === 0) eng.entGroveTick(); if (eng.tickCount % (eng.natureSeason === 3 ? 8 : 12) === 0) eng.lichRaiseTick(); if (eng.tickCount % 30 === 0) eng.hydraRegenTick(); eng.beachedAquaticTickM(); if (eng.tickCount % 600 === 61) eng.wildlifeReboundTickM(); if (eng.tickCount % 20 === 7) eng.predatorHuntTickM(); if (eng.tickCount % 240 === 13) eng.sharkBreedTickM(); }   // M-U21+M-U23+M-U24：主循环 L2523-2528 + L2606/L2608/L2611/L2612 截断镜像（灰烬门旧场景零效应；三新门旧窗口 %10/%12/%30 全不触零漂移）+ M-U25：L2614/L2616/L2618/L2620 四门接线（beached 逐 tick 无门 + 三条件门蓝本门原样——stepUnits 场景 gen 端同序跑四门零效应实证：旧 31 场景无 aquatic 族/唯一饿捕食者 S24 food:30 窗口 1001 不触/LICH-HYDRA predator 但 food 缺省 70>45 出手门 skip）+ M-U27：L2604 %3 门接线（phoenixAshTick 前——蓝本序；旧 40 场景无 ANGEL 族外层环零效应零掷）
+    else if (call.fn === 'effectsTick') { eng.tickCount++; eng.effectsTick(); if (eng.tickCount % 3 === 0) eng.angelAuraTick(); if (eng.phoenixAshes.length > 0) eng.phoenixAshTick(); if (eng.tickCount % 10 === 0) eng.entGroveTick(); if (eng.tickCount % (eng.natureSeason === 3 ? 8 : 12) === 0) eng.lichRaiseTick(); if (eng.tickCount % 30 === 0) eng.hydraRegenTick(); eng.beachedAquaticTickM(); if (eng.tickCount % 600 === 61) eng.wildlifeReboundTickM(); if (eng.tickCount % 20 === 7) eng.predatorHuntTickM(); if (eng.tickCount % 240 === 13) eng.sharkBreedTickM(); }   // M-U25：gen 步进循环 L340-381 全序同构（effectsTick → L2604 天使光环 M-U27 接线 → L2606 灰烬门 → L2608/L2611/L2612 三门 → L2614/L2616/L2618/L2620 四门——旧 31 场景八门零效应窗口实证：phoenix ashes 空/%10 entGrove 无 ENT/%12 lich corpses 空→零掷/%30 hydra 无 HYDRA/beached 无 aquatic 族/rebound %600===61 旧窗口 1001-1050 不触/hunt 普查零掷/breed 不触——镜像端不接门与接门掷流等价，本轮补齐严格同构防未来漂移；M-U27 L2604 同款——旧 40 无 ANGEL 零效应）
     else throw new Error(`${sc.key}: 未知调用 ${call.fn}`);
     const m = {
       rngA: (eng.rngA >>> 0).toString(16).padStart(8, '0'),
@@ -1988,6 +2020,8 @@ for (const sc of golden.scenarios) {
         ...(call.units[0]?.grab !== undefined ? { grab: u.grab ?? 0, thrT: u.thrT ?? 0 } : {}),   // M-U21：条件面
         // M-U25：stepBeach 场景条件扩展面（S32/S33/S35——units[0] 可能是羊群无 beachT 键，some() 检测同构 gen 端 spec.stepBeach 全单位条件展开）
         ...(call.units.some((q) => q.beachT !== undefined) ? { tx: f64hex(u.tx ?? u.x), ty: f64hex(u.ty ?? u.y), beachT: u.beachT ?? null, btx: u.beachTx ?? null, bty: u.beachTy ?? null, btid: u.beachTargetId ?? null } : {}),
+        // M-U27：stepAura 场景条件扩展面（infected 旗步内位级——S41-S48 八场景全单位展开）
+        ...(call.units[0]?.infected !== undefined ? { infected: u.infected ? 1 : 0 } : {}),
       }));
       cmp(mu, call.units, `step${s}.units`);
       cmp([...eng.dirty].sort((a, b) => a - b), call.dirty, `step${s}.dirty`);

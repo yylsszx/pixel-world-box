@@ -366,7 +366,7 @@ namespace PixelWorldBox.Tests
         {
             var gold = JObject.Parse(System.IO.File.ReadAllText(FindTool3()));
             var scens = (JArray)gold["scenarios"];
-            Assert.That(scens.Count, Is.EqualTo(40));   // M-U25：31→40（beachedAquatic/predatorHunt/wildlifeRebound/sharkBreed 引擎级通道四件套——S32-S40 九场景 parity 先红 Expected 31 But was 40 实证）
+            Assert.That(scens.Count, Is.EqualTo(48));   // M-U27：40→48（angelAuraTick 天使光环引擎级通道——S41-S48 八场景 parity 先红 Expected 40 But was 48 实证）
             foreach (var scTok in scens)
             {
                 var sc = (JObject)scTok;
@@ -403,6 +403,9 @@ namespace PixelWorldBox.Tests
                         w.RebuildBuckets();
                         WbBailRelay.UnitsTick(w);
                         WbBailRelay.EffectsTick(w);
+                        // M-U27：主循环 L2604 引擎级通道（天使光环——蓝本 %3 门原样；旧场景无 ANGEL 族外层环零效应零掷；
+                        // gen 侧 L2604 接线同序——phoenixAsh L2606 之前蓝本序）
+                        if (w.tickCount % 3 == 0) WbBailRelay.AngelAuraTick(w);
                         // M-U23：主循环 L2606 引擎级通道（灰烬倒数到点重生——蓝本 len>0 门原样；旧场景
                         // ashes 空门假零效应字节零变化；L2534-2606 间门位窗口全空零效应——S25 三步零掷黄金实证）
                         if (w.phoenixAshes.Count > 0) WbBailRelay.PhoenixAshTick(w);
@@ -422,6 +425,7 @@ namespace PixelWorldBox.Tests
                         Assert.That(fn, Is.EqualTo("effectsTick"), $"fn {key} S{k}");
                         w.tickCount++;                        // gen 步进协议：tickCount++ 头（主循环 L2508 序）
                         WbBailRelay.EffectsTick(w);
+                        if (w.tickCount % 3 == 0) WbBailRelay.AngelAuraTick(w);        // M-U27 L2604 天使光环（镜像 runner effectsTick 分支同序——phoenixAsh L2606 之前蓝本序）
                         if (w.phoenixAshes.Count > 0) WbBailRelay.PhoenixAshTick(w);   // L2606 灰烬门（镜像 runner effectsTick 分支同构——S37 等新场景双路四门严格同序）
                         if (w.tickCount % 10 == 0) WbBailRelay.EntGroveTick(w);        // L2608
                         if (w.tickCount % (w.NatureSeason() == 3 ? 8 : 12) == 0) WbBailRelay.LichRaiseTick(w);   // L2611
@@ -461,6 +465,10 @@ namespace PixelWorldBox.Tests
                             Assert.That(u.dead != 0 ? 1 : 0, Is.EqualTo(e.Value<int>("dead")), $"tick u.dead {key} S{k}#{q}");
                             Assert.That(F64Hex(u.x), Is.EqualTo(e.Value<string>("x")), $"tick u.x {key} S{k}#{q}");
                             Assert.That(F64Hex(u.y), Is.EqualTo(e.Value<string>("y")), $"tick u.y {key} S{k}#{q}");
+                            // M-U27：stepAura 场景条件扩展面（infected 旗步内位级——dumpUnit 无条件键但 stepsSnap units dump 为条件扩展协议，
+                            // 缺键 Value<int> 返 0 会误红 S0#3 angel-skip 感染羊——parity 先红铁证改条件键同 stepBeach 先例）
+                            if (e["infected"] != null)
+                                Assert.That(u.infected, Is.EqualTo(e.Value<int>("infected")), $"tick u.infected {key} S{k}#{q}");
                             // M-U21：stepUnits 场景条件扩展面（grab/thrT 位级——条件键仅新场景携带）
                             if (e["grab"] != null)
                             {

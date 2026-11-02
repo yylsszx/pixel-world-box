@@ -335,9 +335,12 @@ function buildScenario(spec) {
       eng.unitsTick();
     }
     eng.effectsTick();
+    // M-U27：主循环 L2604 引擎级通道镜像（天使光环——相位 (phase+id*13)%50 门；phase=(tickCount/3)|0。
+    //   旧 40 场景夹具无 ANGEL 族——外层 for..of 纯读零写零掷字节零漂移〔M-U23 同款论证〕）
+    if (eng.tickCount % 3 === 0) eng.angelAuraTick();                                            // L2604
     // M-U23：主循环 L2606 引擎级通道镜像（灰烬倒数到点重生——phoenixAshes.len>0 蓝本门原样；
-    //   旧场景 ashes 空门假零效应字节零变化；L2534-2606 间门位〔panic/civs/rad/front/economy/
-    //   .../angelAura〕夹具窗口全空零效应——S25 三步零掷探针实证）
+    //   旧场景 ashes 空门假零效应字节零变化；L2534-2606 间门位〔panic/civs/rad/front/economy〕
+    //   夹具窗口全空零效应——S25 三步零掷探针实证）
     if (eng.phoenixAshes.length > 0) eng.phoenixAshTick();
     // M-U24：主循环 L2608/L2611/L2612 引擎级通道镜像（树人播种/巫妖复生/九头蛇回血——蓝本门原样；
     //   旧场景窗口取值 %10/%12/%30 全不触（S16-S26 ticks 窗口 1001/1006-1009/1010 实证）字节零变化）
@@ -390,6 +393,8 @@ function buildScenario(spec) {
         ...(spec.stepUnits ? { grab: u.grab ?? 0, thrT: u.thrT ?? 0 } : {}),
         // M-U25：stepBeach 场景条件扩展面（搁浅域 tx/ty 断言 + beachT 计数 + 猎游目标位级——旧场景字节零变化）
         ...(spec.stepBeach ? { tx: f64hex(u.tx ?? u.x), ty: f64hex(u.ty ?? u.y), beachT: u.beachT ?? null, btx: u.beachTx ?? null, bty: u.beachTy ?? null, btid: u.beachTargetId ?? null } : {}),
+        // M-U27：stepAura 场景条件扩展面（光环域 infected 旗步内位级——清瘟/三门拒面；旧 40 场景字节零变化）
+        ...(spec.stepAura ? { infected: u.infected ? 1 : 0 } : {}),
       })),
       // M-U23：stepAsh 场景条件扩展面（灰烬倒数每步位级 t——旧场景字节零变化）
       ...(spec.stepAsh ? { ashes: eng.phoenixAshes.map((a) => ({ x: f64hex(a.x), y: f64hex(a.y), t: a.t, rebirths: a.rebirths })) } : {}),
@@ -1287,6 +1292,113 @@ const specs = [
     ticks: 1,
     sanity: (eng) => eng.units.length === 0 && eng.effects.length === 0,
   },
+
+  // ================= M-U27：angelAuraTick L13138-13161 天使光环引擎级通道（槽 45） =================
+  //   节律 L2604 %3===0 门；phase=(tickCount/3)|0；相位门 (phase + id*13)%50===0——
+  //   窗口 tickCount=1002（spec.tickCount=1001 步1 ++ 触发）phase=334：id≡32 (mod 50) 命中
+  //   （13⁻¹≡27 mod 50，id≡16·27≡432≡32）；id=82（82·13=1066，334+1066=1400%50=0）同帧双触发。
+  //   治愈门序：dead/o===a → hostile/undead（只渡无辜者）→ hp满&&!infected → d²>12.25（r=3.5²）
+  //   → hp<maxHp 支（min(maxHp, hp+max(10, maxHp*0.25)) + bless16）→ infected 支（清 + bless20）
+  //   → healed 上限 10 break → 本体 bless34 + onSound('heal')（宿主 no-op 零掷）。
+  //   fx 恒 2 掷（seed+dir）；门全确定性（相位/旗/距离）——种子任意无需标定（fx 不入门）。
+  // ---- S41 angel-none（零天使：外层环空转——两步零掷零效应，外层纯读面字节零漂移对照）----
+  {
+    key: 'angel-none', baseSeed: BASE + 41, seed: 0x00000160, tickCount: 1001, fill: 'grass', stepAura: true,
+    units: [
+      { id: 900, race: R.SHEEP, x: 100.5, y: 60.5, hp: 5, maxHp: 16 },
+    ],
+    ticks: 2,   // 步1 tickCount=1002 %3=0 触发扫描——无天使零效应
+    sanity: (eng) => eng.effects.length === 0 && (eng.rngA >>> 0) === 0x160,
+  },
+  // ---- S42 angel-phase-miss（相位门拒：id=33 → (334+429)%50=13≠0——受伤羊未愈圈内在场零效应）----
+  {
+    key: 'angel-phase-miss', baseSeed: BASE + 42, seed: 0x00000161, tickCount: 1001, fill: 'grass', stepAura: true,
+    units: [
+      { id: 33, race: R.ANGEL, x: 100.5, y: 60.5 },
+      { id: 901, race: R.SHEEP, x: 101.5, y: 60.5, hp: 5, maxHp: 16 },
+    ],
+    ticks: 2,
+    sanity: (eng) => eng.effects.length === 0 && eng.units[1].hp === 5 && (eng.rngA >>> 0) === 0x161,
+  },
+  // ---- S43 angel-heal（治愈支：受伤羊 hp 5→15〔min(16,5+max(10,4))〕bless16 + 满血羊 L13148
+  //        skip 不计 healed——healed=1 本体 bless34。draws=4）----
+  {
+    key: 'angel-heal', baseSeed: BASE + 43, seed: 0x00000162, tickCount: 1001, fill: 'grass', stepAura: true,
+    units: [
+      { id: 32, race: R.ANGEL, x: 100.5, y: 60.5, hp: 240, maxHp: 240 },
+      { id: 902, race: R.SHEEP, x: 101.5, y: 60.5, hp: 5, maxHp: 16 },    // d²=1≤12.25 受伤
+      { id: 903, race: R.SHEEP, x: 99.5, y: 60.5, hp: 16, maxHp: 16 },    // 满血无感染 skip
+    ],
+    ticks: 2,
+    sanity: (eng) => eng.units[1].hp === 15 && eng.units[2].hp === 16 && eng.effects.length === 2,
+  },
+  // ---- S44 angel-infected（清瘟支：满血感染羊 L13148 不 continue〔infected 门〕→ hp满不治血、
+  //        infected 清 false + bless20——healed=1 本体 bless34。draws=4）----
+  {
+    key: 'angel-infected', baseSeed: BASE + 44, seed: 0x00000163, tickCount: 1001, fill: 'grass', stepAura: true,
+    units: [
+      { id: 32, race: R.ANGEL, x: 100.5, y: 60.5 },
+      { id: 904, race: R.SHEEP, x: 100.5, y: 62.5, hp: 16, maxHp: 16, infected: true },   // d²=4
+    ],
+    ticks: 2,
+    sanity: (eng) => eng.units[1].infected === false && eng.units[1].hp === 16 && eng.effects.length === 2,
+  },
+  // ---- S45 angel-both（双支同体：受伤+感染 → bless16〔hp 4→14〕+ bless20 连发——draws=6）----
+  {
+    key: 'angel-both', baseSeed: BASE + 45, seed: 0x00000164, tickCount: 1001, fill: 'grass', stepAura: true,
+    units: [
+      { id: 32, race: R.ANGEL, x: 100.5, y: 60.5 },
+      { id: 905, race: R.SHEEP, x: 100.5, y: 61.5, hp: 4, maxHp: 16, infected: true },    // d²=1
+    ],
+    ticks: 2,
+    sanity: (eng) => eng.units[1].hp === 14 && eng.units[1].infected === false && eng.effects.length === 3,
+  },
+  // ---- S46 angel-skip（三门拒：hostile〔DRAGON L13147〕/ undead〔ZOMBIE〕/ 圈外 d²=25>12.25
+  //        〔感染羊不治不净——距离门在 infected 支前〕——healed=0 无本体 fx。draws=0）----
+  {
+    key: 'angel-skip', baseSeed: BASE + 46, seed: 0x00000165, tickCount: 1001, fill: 'grass', stepAura: true,
+    units: [
+      { id: 32, race: R.ANGEL, x: 100.5, y: 60.5 },
+      { id: 906, race: R.DRAGON, x: 101.5, y: 60.5, hp: 10, maxHp: 300 },   // hostile skip
+      { id: 907, race: R.ZOMBIE, x: 99.5, y: 60.5, hp: 10, maxHp: 60 },     // undead skip
+      { id: 908, race: R.SHEEP, x: 105.5, y: 60.5, hp: 5, maxHp: 16, infected: true },   // d²=25 圈外
+    ],
+    ticks: 2,
+    sanity: (eng) => eng.effects.length === 0 && eng.units[3].infected === true && (eng.rngA >>> 0) === 0x165,
+  },
+  // ---- S47 angel-duo（天使渡天使：id=32/id=82 同帧双触发〔1400%50=0〕——A 先触发治 B
+  //        （hp 150→210 + 清瘟）本体 bless34；B 后触发治 A（hp 100→170）本体 bless34。
+  //        fx 5 发 draws=10——o===a 自遇 skip 面随行）----
+  {
+    key: 'angel-duo', baseSeed: BASE + 47, seed: 0x00000166, tickCount: 1001, fill: 'grass', stepAura: true,
+    units: [
+      { id: 32, race: R.ANGEL, x: 100.5, y: 60.5, hp: 100, maxHp: 240 },
+      { id: 82, race: R.ANGEL, x: 101.5, y: 60.5, hp: 150, maxHp: 240, infected: true },
+    ],
+    ticks: 2,
+    sanity: (eng) => eng.units[0].hp === 160 && eng.units[1].hp === 210 && eng.units[1].infected === false && eng.effects.length === 5,
+  },
+  // ---- S48 angel-cap（healed 上限 L13157 break：11 受伤羊仅前 10 治愈〔hp 1→11〕，
+  //        第 11 只 hp=1 未触——fx 11 发 draws=22）----
+  {
+    key: 'angel-cap', baseSeed: BASE + 48, seed: 0x00000167, tickCount: 1001, fill: 'grass', stepAura: true,
+    units: [
+      { id: 32, race: R.ANGEL, x: 100.5, y: 60.5 },
+      { id: 909, race: R.SHEEP, x: 98.5, y: 60.5, hp: 1, maxHp: 16 },   // 排1 d²=4
+      { id: 910, race: R.SHEEP, x: 99.5, y: 60.5, hp: 1, maxHp: 16 },   // d²=1
+      { id: 911, race: R.SHEEP, x: 100.5, y: 59.5, hp: 1, maxHp: 16 },  // d²=1
+      { id: 912, race: R.SHEEP, x: 100.5, y: 61.5, hp: 1, maxHp: 16 },  // d²=1
+      { id: 913, race: R.SHEEP, x: 101.5, y: 60.5, hp: 1, maxHp: 16 },  // d²=1
+      { id: 914, race: R.SHEEP, x: 102.5, y: 60.5, hp: 1, maxHp: 16 },  // d²=4
+      { id: 915, race: R.SHEEP, x: 99.5, y: 59.5, hp: 1, maxHp: 16 },   // 排2 d²=2
+      { id: 916, race: R.SHEEP, x: 100.5, y: 62.5, hp: 1, maxHp: 16 },  // d²=4
+      { id: 917, race: R.SHEEP, x: 101.5, y: 61.5, hp: 1, maxHp: 16 },  // d²=2
+      { id: 918, race: R.SHEEP, x: 102.5, y: 59.5, hp: 1, maxHp: 16 },  // d²=5
+      { id: 919, race: R.SHEEP, x: 98.5, y: 59.5, hp: 1, maxHp: 16 },   // 第11只 d²=8——break 未触
+    ],
+    ticks: 2,
+    sanity: (eng) => eng.units[10].hp === 11 && eng.units[11].hp === 1 && eng.effects.length === 11,
+  },
 ];
 
 // ---- det 双跑 + 双写（M-U22：TOOL3_ONLY/TOOL3_SEED 单场景种子扫描钩子——scan-nature2-seed 先例） ----
@@ -1321,10 +1433,10 @@ const out = {
   meta: {
     gen: 'gen-tool3.mjs',
     protocol: 'GameEngine 构造 + 手术式夹具直写（fill 面 grass + terrain/fire/radiate/units 瘦直写 + brush/五成就计数直写）+ rngA 尾置清零起流 + calls 直调 / ticks 步进（tickCount++ 头 + effectsTick——主循环 L2508 序）混合链，每步统一快照（applyTool 紧凑 / effectsTick 全列 fx+units+dirty）',
-    rng: 'eng.rngA 单流；fx 恒 2 掷（seed+dir）；cap 门 filter 快照零掷；volcano 引燃圈 1 掷/点燃 + 消费端熔岩弹 age%14 双掷 + 外溢 age%6 双掷；wrath/typhoon 消费端 lightning（n=1：fx 2+中心点燃 1+四邻 4+邻格点燃支）；holystorm 恒真门 1.2 掷位保持 + 采样双掷 + 单位门掷（审判 0.2/缓愈 0.08）；bless/curse 0.4 门 + love 0.5 门 1 掷/单位 + fx 2 掷；teleport randomLandSpot 2 掷/尝试；mutate：civ 0.3 门 1 掷 + rerollTrait rollTrait 1 掷 + 0.25 门 1 掷 + jumpGene 4 门掷/命中维值掷；wild 直 jumpGene 4 门掷/命中维值掷〔baseGene 空表零掷〕；命中单位 fx 2 掷（门 miss 亦掷——L10901 fx 在 if/else 外）；mulberry 纯数学反解 total；M-U25：beached 游走 far 门 1 掷 + 采样 wx/wy 2 掷/试 + 猎游 top6 抽签 1 掷（findWaterNear/普查/最近选择零掷）；predatorHunt blood/water fx 2 掷/特效；rebound 掷签门 1 + 加权 1 + 栖息地采样 2 掷/试 + spawnUnit silent 6 掷/只 + fx 2 掷；breed 抖动 2 + spawn 6 + spawn/water 双 fx 4 掷',
+    rng: 'eng.rngA 单流；fx 恒 2 掷（seed+dir）；cap 门 filter 快照零掷；volcano 引燃圈 1 掷/点燃 + 消费端熔岩弹 age%14 双掷 + 外溢 age%6 双掷；wrath/typhoon 消费端 lightning（n=1：fx 2+中心点燃 1+四邻 4+邻格点燃支）；holystorm 恒真门 1.2 掷位保持 + 采样双掷 + 单位门掷（审判 0.2/缓愈 0.08）；bless/curse 0.4 门 + love 0.5 门 1 掷/单位 + fx 2 掷；teleport randomLandSpot 2 掷/尝试；mutate：civ 0.3 门 1 掷 + rerollTrait rollTrait 1 掷 + 0.25 门 1 掷 + jumpGene 4 门掷/命中维值掷；wild 直 jumpGene 4 门掷/命中维值掷〔baseGene 空表零掷〕；命中单位 fx 2 掷（门 miss 亦掷——L10901 fx 在 if/else 外）；mulberry 纯数学反解 total；M-U25：beached 游走 far 门 1 掷 + 采样 wx/wy 2 掷/试 + 猎游 top6 抽签 1 掷（findWaterNear/普查/最近选择零掷）；predatorHunt blood/water fx 2 掷/特效；rebound 掷签门 1 + 加权 1 + 栖息地采样 2 掷/试 + spawnUnit silent 6 掷/只 + fx 2 掷；breed 抖动 2 + spawn 6 + spawn/water 双 fx 4 掷；M-U27：aura 门全确定性（相位/旗/距离）零掷——bless fx 2 掷/发（S43-S45+S48 4/4/6/22 掷 + S47 双天使 10 掷；S41/S42/S46 零掷）',
     math: 'Math.hypot（volcano 锥体整数极距 / area 神力单位环〔含 mutate L10891〕 / plasma dist=hypot(7,9) / annihilate dist=hypot(8,11)——bun 原生 fdlibm；C# FdHypot 位精确件对账）+ Math.round（plasma ttl=round(dist*1.5) + mutate rerollTrait/jumpGene maxHp round 域——JS .5 上取整；C# JsRound 禁银行家舍入）+ Math.max/min 铛位（mutate 基因 0.5/2 恰等面 + maxHp≥1）+ 纯算术域',
-    domains: ['unitsReap L3321-3472（M-U22：僵尸尸变 0.35 门→zombify continue / 王权驾崩→onKingDeath / 凤凰涅槃 ash push ashTtl 240〔season3 round×1.5〕/ 九头蛇 gen<2 双幼蛇 spawnUnit silent maxHp round×0.6 + seared 门 fire>0||LAVA / scav r=6 最饿捕食者 food+=55+round(maxHp*0.5) / 商队 rel -6 + trade 纪事 / skull fx + 血泊尸骸〔SANDWORM skip〕/ 肉 0.85 + wep 0.35 / boss 0.5 / wild 0.05 三连掉落门 / delete+bumpWild+pop-swap 逆序环）', 'onKingDeath L1675-1686（kingId -1 + stability 52 + 纪事 + toast danger）', 'dropItem L5190-5213（MAX_ITEMS 门 + isWater→findLandNear(5) + itemSeq + fx spawn 2 掷 + onSound place）', 'dropMeat L5385-5402（cnt 钳 [1,3] + items cap-6 门 + 2 掷/肉 + isWater→findLandNear(3)）', 'rollChestItem constants.ts L797-800（CHEST_TIERS min/max → rollItem）', 'rollItem items.ts L226-240（ALL_ITEMS rarity 窗口过滤 + RARITY_META w 权重池 + r-=w 循环——1 掷）', 'carveRiver L12312-12420（M-U20：applyTool case river runtime 语义——BFS dist 场零掷 + 加权随机选路 1 掷/步 + 刻河/灌溉 setTerrain 级联 + carveLake 湖支 + fx spawn/toast/addEvent 尾面）', 'mutateArea L10888-10906（M-U19：civ 0.3 reroll/0.25 jumpGene 0.12 + wild baseGene/jumpGene 0.2 + fx 每命中单位 2 掷〔双门双 miss 亦掷——fx 在 if/else 外〕）', 'rerollTrait L11037-11057（旧乘数卸除/新乘数上装——maxHp round 域 + hp min/max 双钳不对称〔old 支 max(1,·) / nw 支无〕）', 'jumpGene L11085-11103（四维 0.6 门 + (rng-0.42)*2*amount 重铸 + 0.5/2 铛位 + RACES×TRAITS×JOBS 属性重算）', 'rollTrait L1467-1470（TRAITS keys 12 预设插入序随机抽）', 'baseGene L11029-11031（speciesBase 空表分支——零掷恒 {1,1,1,1}）', 'acidRain L10737-10745（cap 6 + fx acid）', 'volcano L10746-10777（锥体 hypot≤2.3 + 山口/十字/3x3 熔岩 + 引燃圈 3.5*pw + shake 6+2pw + event 双文本）', 'tsunami L10780-10785（r*2.5 钳 [6,30]）', 'blizzard L10788-10795（cap 4 + max(5,r) 钳 [5,15]）', 'meteorShower L10798-10813（clamp [1,24] + rng 散布 + x0/y0/quiet 衍生弹 + statMeteorShowers）', 'locust L10815-10822（cap 3 + r 钳 [3,10]）', 'drought L10823-10830（cap 4）', 'rainCloud L10834-10843（cap 6 + touchMeta 宿主挂点）', 'blessArea L10845-10859（hp+50%max + bless 600 + 驱瘟 + 0.4 fx 门）', 'curseArea L10861-10872（curse 500）', 'loveArea L10874-10886（repro 门 + fert 500）', 'teleportArea L10908-10924（randomLandSpot 40 试 + spark 双发）', 'wrathStorm L10926-10934（cap 3）', 'holyStorm L10936-10945（cap 3）', 'plasmaCannon L10947-10957（x0/y0 钳 + ttl round 域 + dmg + statPlasmas）', 'annihilationLight L10959-10969（colorHex #ff4d4d + statAnnihilations）', 'sandstorm L10972-10979（cap 3）', 'typhoon L10980-10987（cap 3）', 'sinkhole L10988-10996（shake 7）', 'iceAge L10999-11008（cap 2 + shake 4）', 'famineCloud L11030-11036（cap 3）', 'blackhole L11017-11023（cap 2 + statBlackholes）', 'meteor L12277-12282（x0=x+20/y0=y-34）', 'randomLandSpot L11033-11043（40 试六地形门）', 'applyTool case L13342-13455（meteor 内联抖动 + 22 委派）', 'effectsTick 消费端四支：volcano L9851-9876 / wrath L10023-10029 / holystorm L10030-10075 / typhoon L10091-10119', 'phoenixAshTick L13018-13032（M-U23：灰烬倒数 a.t-=2 节拍 len>0 门每 tick——到点 splice + spawnUnit(PHOENIX,silent) 重生体继承 rebirths + fx spawn 46/fireball y-1 30 双 fx + toast info + addEvent phoenix 纪事；S25 成功支 / S26 MAX_WILDLIFE 900 注入 null 支〔先于 trait 掷〕——L2606 主循环门镜像步进通道，L2534-2606 间门位窗口全空零效应）', 'entGroveTick L13055-13097（M-U24：树人播种引擎级通道 %10 门——①播种 2 采样/树人 ang/rr 2 掷 + building 门 skip + 界外 j 门 skip + 地形门 GRASS 0.22pm/BURNT 0.45pm/SAND 0.06pm 短路掷〔pm=春 1.3/余 1；sn===3 冬蛰整支 skip 零掷〕+ setTerrain(FOREST) 级联 + spark fx ≤6；②扑火 r=2.5 dx²+dy²≤6.25 fire=0+fireSet 删+water fx 零掷；声门 planted>0&&rng<0.35 掷位保留〔onSound 宿主 no-op——掷位不丢〕；S27 成功支全分支 / S28 冬蛰+扑火+九头蛇冬眠）', 'lichRaiseTick L13105-13131（M-U24：巫妖复生引擎级通道 %12〔冬 %8〕门——骷髅计数 >40 顶层 return + 尸体 r=4 dx²+dy²≤16 stone skip + 最陈旧 c.age>bestAge 选择 + spawnUnit(SKELETON,silent) 6 掷链 + corpses.splice + fx skull y-1 26/smoke 16 + addEvent lich events<3 门；!nu null 支〔种族上限——S26 同构语义挂账〕；S29 成功支 / S30 41 骷髅上限门）', 'hydraRegenTick L13038-13047（M-U24：九头蛇回血引擎级通道 %30 门——season===3 冬眠 return + hp<maxHp 支 hp=min(maxHp,hp+maxHp×0.02) + hurt=0 再生清创；u.dead 支通道不可达〔unitsReap 先于门摘净死单位〕；S31 回血/满血/非九头蛇三面 + S28 冬眠面）', 'beachedAquaticTick L12652-12753（M-U25：水生搁浅整治引擎级通道逐 tick 无门——纯水生（aquatic && !beach）单位：①水中非捕食者 retarget %20 采样（far 门 0.25 1 掷 + 8 试实体水 wn≥6/9 含自身 + tx/ty 逐 tick 断言）；②水中捕食者猎游（粘性目标 ≤40 格 d²≤1600 + 散签初选 cands 排序 top6 抽签 1 掷 + 逐 tick units.find 坐标刷新——死亡支不清 beachTx 陈旧保持 + 逃亡 fleeT>0 让位内核）；③搁浅支（beachT 逐 tick +1 + hurt≥2 + findWaterNear r=16 环扫零掷 + ≥15 窒息 dead 交常规收尸）；蟹 beach 两栖/死单位/非水生 skip；S32 游走+窒息 / S33 猎游+搁浅鲨）', 'predatorHuntTick L12764-12833（M-U25：猎手扑杀引擎级通道 %20===7 门——preyAlive/fishAlive O(n) 普查 + hungryAqua 计数（水生捕食者 food≤300）+ 分级预算（>150 满额陆 8/水 4-10 弹性 → ≤150 减半 → ≤60 收缩 → ≤25 禁猎）+ capAqua 平滑耦合 min(capAqua, max(1, round(fishAlive/28))) + 出手门（陆 45/水 300——?? 70 缺省）+ 最近猎物严格 <（陆 r=1.6 d²<2.56 / 水 r=14 d²<196 + grab 豁免 + isCiv/非食草 skip）+ 扑杀链（prey.dead + WB.syncDead + blood fx 2 掷 + 水生 water fx 2 掷 + food=min(400,+25) + ≥380 break〔前置 355>300 出手门不可达——防御死码注记〕）；S34 陆生支 / S35 水生支+预算门+陈旧目标）', 'wildlifeReboundTick L12840-12989（M-U25：百兽迁徙引擎级通道 %600===61 门——laws.reproduction 门 + 灭绝名单（SEED 十七族 wildCount===0）+ 掷签门 0.6 + 加权掷签（ago/2400 权重 1..5——未迁入 MAX_SAFE_INTEGER 封顶 5）+ 预算分轨（水生 wildAliveAquatic<512 / 陆生 wildAlive<892）+ SHARK 锚鱼特例 + FISH 撒网特例（260 试三锚互距 ≥18 + 每锚 2-3 尾）+ 通用 140 试栖息地采样（CRAB r=2 邻水门）+ 奠基者 spawnUnit silent + fx spawn + eco 纪事双文本；S36 通用支 / S37 鱼群支 / S39 laws 门 / S40 掷签拒）', 'sharkBreedTick L12995-13014（M-U25：鲨群繁衍辅助引擎级通道 %240===13 门——laws 门 + 种群地板 0<len<8 + 肥鲨母体 find food>220 + 8 试落水门（±1.5 抖动钳 [0.5,W-0.5]）+ spawnUnit silent + 母体 food-60 妊娠成本 + spawn/water 双 fx；S38 成功支）'],
-    deferred: ['collectUnitDead Task 38 在线采集（引擎 no-op 挂账）', 'chest/ITEM_TOOL/cre:/RACE_TOOL 等其余 applyTool case（各域切片挂账不变）', 'SHEEP AI 游走链 units 域切片（L4213 恒掷门——M-U21 挂账沿用）', 'lichRaiseTick !nu null 支（spawnUnit 种族上限——S26 MAX_WILDLIFE 同构语义；SKELETON 2400 注入不经济——防御分支挂账）', 'entGrove/lich/hydra u.dead 支 tick 通道不可达（unitsReap 同 tick 先于门摘净死单位——防御分支注记）', 'lichRaise 冬 %8 节律面（gate 三元式非冬 12 支 S29 已证；冬支 S28 窗口 %8=2 不触——节律算术面挂账）', 'beachedAquaticTick 8 试全 miss 游走支（far 散布 14 落草地——种子标定不经济，镜像算术面覆盖）', 'predatorHuntTick ≥380 break 支（前置 355>300 出手门不可达——防御死码注记）+ undead 捕食者门（RACES 无 undead+predator 复合族——ZOMBIE 非捕食者）', 'wildlifeReboundTick SHARK 锚鱼支（需灭绝鲨+活鱼同场——夹具不经济挂账）+ extinct 空名单支 + 预算门双轨拒签支（wildAll 注入 890+ 不经济）+ 多 extinct 加权竞争面（单 extinct 恒中——权重算术镜像覆盖）', 'sharkBreedTick ≥8 上限/0 鲨/无肥母三防御门（零掷 return——红证旋钮覆盖写面）', 'M-U25 C# 全译 + tool3-transcript 镜像 + Test48 扩面 + verify 扩签名（相二三——本轮黄金先行相一交付）'],
+    domains: ['unitsReap L3321-3472（M-U22：僵尸尸变 0.35 门→zombify continue / 王权驾崩→onKingDeath / 凤凰涅槃 ash push ashTtl 240〔season3 round×1.5〕/ 九头蛇 gen<2 双幼蛇 spawnUnit silent maxHp round×0.6 + seared 门 fire>0||LAVA / scav r=6 最饿捕食者 food+=55+round(maxHp*0.5) / 商队 rel -6 + trade 纪事 / skull fx + 血泊尸骸〔SANDWORM skip〕/ 肉 0.85 + wep 0.35 / boss 0.5 / wild 0.05 三连掉落门 / delete+bumpWild+pop-swap 逆序环）', 'onKingDeath L1675-1686（kingId -1 + stability 52 + 纪事 + toast danger）', 'dropItem L5190-5213（MAX_ITEMS 门 + isWater→findLandNear(5) + itemSeq + fx spawn 2 掷 + onSound place）', 'dropMeat L5385-5402（cnt 钳 [1,3] + items cap-6 门 + 2 掷/肉 + isWater→findLandNear(3)）', 'rollChestItem constants.ts L797-800（CHEST_TIERS min/max → rollItem）', 'rollItem items.ts L226-240（ALL_ITEMS rarity 窗口过滤 + RARITY_META w 权重池 + r-=w 循环——1 掷）', 'carveRiver L12312-12420（M-U20：applyTool case river runtime 语义——BFS dist 场零掷 + 加权随机选路 1 掷/步 + 刻河/灌溉 setTerrain 级联 + carveLake 湖支 + fx spawn/toast/addEvent 尾面）', 'mutateArea L10888-10906（M-U19：civ 0.3 reroll/0.25 jumpGene 0.12 + wild baseGene/jumpGene 0.2 + fx 每命中单位 2 掷〔双门双 miss 亦掷——fx 在 if/else 外〕）', 'rerollTrait L11037-11057（旧乘数卸除/新乘数上装——maxHp round 域 + hp min/max 双钳不对称〔old 支 max(1,·) / nw 支无〕）', 'jumpGene L11085-11103（四维 0.6 门 + (rng-0.42)*2*amount 重铸 + 0.5/2 铛位 + RACES×TRAITS×JOBS 属性重算）', 'rollTrait L1467-1470（TRAITS keys 12 预设插入序随机抽）', 'baseGene L11029-11031（speciesBase 空表分支——零掷恒 {1,1,1,1}）', 'acidRain L10737-10745（cap 6 + fx acid）', 'volcano L10746-10777（锥体 hypot≤2.3 + 山口/十字/3x3 熔岩 + 引燃圈 3.5*pw + shake 6+2pw + event 双文本）', 'tsunami L10780-10785（r*2.5 钳 [6,30]）', 'blizzard L10788-10795（cap 4 + max(5,r) 钳 [5,15]）', 'meteorShower L10798-10813（clamp [1,24] + rng 散布 + x0/y0/quiet 衍生弹 + statMeteorShowers）', 'locust L10815-10822（cap 3 + r 钳 [3,10]）', 'drought L10823-10830（cap 4）', 'rainCloud L10834-10843（cap 6 + touchMeta 宿主挂点）', 'blessArea L10845-10859（hp+50%max + bless 600 + 驱瘟 + 0.4 fx 门）', 'curseArea L10861-10872（curse 500）', 'loveArea L10874-10886（repro 门 + fert 500）', 'teleportArea L10908-10924（randomLandSpot 40 试 + spark 双发）', 'wrathStorm L10926-10934（cap 3）', 'holyStorm L10936-10945（cap 3）', 'plasmaCannon L10947-10957（x0/y0 钳 + ttl round 域 + dmg + statPlasmas）', 'annihilationLight L10959-10969（colorHex #ff4d4d + statAnnihilations）', 'sandstorm L10972-10979（cap 3）', 'typhoon L10980-10987（cap 3）', 'sinkhole L10988-10996（shake 7）', 'iceAge L10999-11008（cap 2 + shake 4）', 'famineCloud L11030-11036（cap 3）', 'blackhole L11017-11023（cap 2 + statBlackholes）', 'meteor L12277-12282（x0=x+20/y0=y-34）', 'randomLandSpot L11033-11043（40 试六地形门）', 'applyTool case L13342-13455（meteor 内联抖动 + 22 委派）', 'effectsTick 消费端四支：volcano L9851-9876 / wrath L10023-10029 / holystorm L10030-10075 / typhoon L10091-10119', 'phoenixAshTick L13018-13032（M-U23：灰烬倒数 a.t-=2 节拍 len>0 门每 tick——到点 splice + spawnUnit(PHOENIX,silent) 重生体继承 rebirths + fx spawn 46/fireball y-1 30 双 fx + toast info + addEvent phoenix 纪事；S25 成功支 / S26 MAX_WILDLIFE 900 注入 null 支〔先于 trait 掷〕——L2606 主循环门镜像步进通道，L2534-2606 间门位窗口全空零效应）', 'entGroveTick L13055-13097（M-U24：树人播种引擎级通道 %10 门——①播种 2 采样/树人 ang/rr 2 掷 + building 门 skip + 界外 j 门 skip + 地形门 GRASS 0.22pm/BURNT 0.45pm/SAND 0.06pm 短路掷〔pm=春 1.3/余 1；sn===3 冬蛰整支 skip 零掷〕+ setTerrain(FOREST) 级联 + spark fx ≤6；②扑火 r=2.5 dx²+dy²≤6.25 fire=0+fireSet 删+water fx 零掷；声门 planted>0&&rng<0.35 掷位保留〔onSound 宿主 no-op——掷位不丢〕；S27 成功支全分支 / S28 冬蛰+扑火+九头蛇冬眠）', 'lichRaiseTick L13105-13131（M-U24：巫妖复生引擎级通道 %12〔冬 %8〕门——骷髅计数 >40 顶层 return + 尸体 r=4 dx²+dy²≤16 stone skip + 最陈旧 c.age>bestAge 选择 + spawnUnit(SKELETON,silent) 6 掷链 + corpses.splice + fx skull y-1 26/smoke 16 + addEvent lich events<3 门；!nu null 支〔种族上限——S26 同构语义挂账〕；S29 成功支 / S30 41 骷髅上限门）', 'hydraRegenTick L13038-13047（M-U24：九头蛇回血引擎级通道 %30 门——season===3 冬眠 return + hp<maxHp 支 hp=min(maxHp,hp+maxHp×0.02) + hurt=0 再生清创；u.dead 支通道不可达〔unitsReap 先于门摘净死单位〕；S31 回血/满血/非九头蛇三面 + S28 冬眠面）', 'beachedAquaticTick L12652-12753（M-U25：水生搁浅整治引擎级通道逐 tick 无门——纯水生（aquatic && !beach）单位：①水中非捕食者 retarget %20 采样（far 门 0.25 1 掷 + 8 试实体水 wn≥6/9 含自身 + tx/ty 逐 tick 断言）；②水中捕食者猎游（粘性目标 ≤40 格 d²≤1600 + 散签初选 cands 排序 top6 抽签 1 掷 + 逐 tick units.find 坐标刷新——死亡支不清 beachTx 陈旧保持 + 逃亡 fleeT>0 让位内核）；③搁浅支（beachT 逐 tick +1 + hurt≥2 + findWaterNear r=16 环扫零掷 + ≥15 窒息 dead 交常规收尸）；蟹 beach 两栖/死单位/非水生 skip；S32 游走+窒息 / S33 猎游+搁浅鲨）', 'predatorHuntTick L12764-12833（M-U25：猎手扑杀引擎级通道 %20===7 门——preyAlive/fishAlive O(n) 普查 + hungryAqua 计数（水生捕食者 food≤300）+ 分级预算（>150 满额陆 8/水 4-10 弹性 → ≤150 减半 → ≤60 收缩 → ≤25 禁猎）+ capAqua 平滑耦合 min(capAqua, max(1, round(fishAlive/28))) + 出手门（陆 45/水 300——?? 70 缺省）+ 最近猎物严格 <（陆 r=1.6 d²<2.56 / 水 r=14 d²<196 + grab 豁免 + isCiv/非食草 skip）+ 扑杀链（prey.dead + WB.syncDead + blood fx 2 掷 + 水生 water fx 2 掷 + food=min(400,+25) + ≥380 break〔前置 355>300 出手门不可达——防御死码注记〕）；S34 陆生支 / S35 水生支+预算门+陈旧目标）', 'wildlifeReboundTick L12840-12989（M-U25：百兽迁徙引擎级通道 %600===61 门——laws.reproduction 门 + 灭绝名单（SEED 十七族 wildCount===0）+ 掷签门 0.6 + 加权掷签（ago/2400 权重 1..5——未迁入 MAX_SAFE_INTEGER 封顶 5）+ 预算分轨（水生 wildAliveAquatic<512 / 陆生 wildAlive<892）+ SHARK 锚鱼特例 + FISH 撒网特例（260 试三锚互距 ≥18 + 每锚 2-3 尾）+ 通用 140 试栖息地采样（CRAB r=2 邻水门）+ 奠基者 spawnUnit silent + fx spawn + eco 纪事双文本；S36 通用支 / S37 鱼群支 / S39 laws 门 / S40 掷签拒）', 'sharkBreedTick L12995-13014（M-U25：鲨群繁衍辅助引擎级通道 %240===13 门——laws 门 + 种群地板 0<len<8 + 肥鲨母体 find food>220 + 8 试落水门（±1.5 抖动钳 [0.5,W-0.5]）+ spawnUnit silent + 母体 food-60 妊娠成本 + spawn/water 双 fx；S38 成功支）', 'angelAuraTick L13138-13161（M-U27：天使光环引擎级通道 %3 门 phase=(tickCount/3)|0 相位门 (phase+id*13)%50===0——窗口 tick1002 phase=334 id≡32 mod 50 命中/id=82 同帧双触发；治愈内环门序 dead/o===a→hostile/undead〔只渡无辜者〕→hp满&&!infected→d²>12.25〔r=3.5²〕→hp<maxHp 支 min(maxHp,hp+max(10,maxHp*0.25))+bless16→infected 支清+bless20→healed 上限 10 break→本体 bless34+onSound heal〔宿主 no-op 零掷〕；S41 零天使/S42 相位拒/S43 治愈+满血 skip/S44 清瘟/S45 双支/S46 三门拒/S47 天使渡天使/S48 cap10）'],
+    deferred: ['collectUnitDead Task 38 在线采集（引擎 no-op 挂账）', 'chest/ITEM_TOOL/cre:/RACE_TOOL 等其余 applyTool case（各域切片挂账不变）', 'SHEEP AI 游走链 units 域切片（L4213 恒掷门——M-U21 挂账沿用）', 'lichRaiseTick !nu null 支（spawnUnit 种族上限——S26 MAX_WILDLIFE 同构语义；SKELETON 2400 注入不经济——防御分支挂账）', 'entGrove/lich/hydra u.dead 支 tick 通道不可达（unitsReap 同 tick 先于门摘净死单位——防御分支注记）', 'lichRaise 冬 %8 节律面（gate 三元式非冬 12 支 S29 已证；冬支 S28 窗口 %8=2 不触——节律算术面挂账）', 'beachedAquaticTick 8 试全 miss 游走支（far 散布 14 落草地——种子标定不经济，镜像算术面覆盖）', 'predatorHuntTick ≥380 break 支（前置 355>300 出手门不可达——防御死码注记）+ undead 捕食者门（RACES 无 undead+predator 复合族——ZOMBIE 非捕食者）', 'wildlifeReboundTick SHARK 锚鱼支（需灭绝鲨+活鱼同场——夹具不经济挂账）+ extinct 空名单支 + 预算门双轨拒签支（wildAll 注入 890+ 不经济）+ 多 extinct 加权竞争面（单 extinct 恒中——权重算术镜像覆盖）', 'sharkBreedTick ≥8 上限/0 鲨/无肥母三防御门（零掷 return——红证旋钮覆盖写面）', 'M-U25 C# 全译 + tool3-transcript 镜像 + Test48 扩面 + verify 扩签名（相二三——M-U25 收官轮交付）', 'M-U27 angelAuraTick C# 全译 + transcript 镜像 + Test48 扩面 + verify 扩签名（本轮黄金先行）'],
     scenarioCount: scenarios.length,
   },
   scenarios,

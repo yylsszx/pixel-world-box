@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 let fail = 0;
 try {
   execFileSync('bun', [new URL('./tool3-transcript.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
-  console.log('tool3 黄金回放 (tool3-transcript 镜像 vs tool3.json): PASS (40 场景神力生成器/消费端每步快照逐位 + volcano 锥体/引燃圈/熔岩弹/外溢 + cap 门 13 族 + bless/curse/love/teleport 四瞬态 + M-U19 mutate 特质域 + M-U20 river runtime 级联 + M-U21 grab 三场景（三 API + unitsTick 壳 + grabbedTick 全链） + M-U22 reap 六场景（尸变/王权/凤凰/九头蛇/掉落链/scav/商队） + M-U23 phoenix 双场景（灰烬倒数重生/null 支） + M-U24 引擎级通道三件套（entGrove 播种扑火/lichRaise 复生/hydraRegen 回血 + fireTick 风驱蔓延全译 + windAt 环流面） + meteor/meteorShower x0/y0 偏移 + 超武双神力 + typhoon 推拽/间歇雷电/暴雨灭火 + holystorm 审判/缓愈/驱瘟 + M-U25 beachedAquatic/predatorHunt/wildlifeRebound/sharkBreed 四件套九场景 + units dump 位级含 trait/gene + events colorHex 流 + toasts 面)');
+  console.log('tool3 黄金回放 (tool3-transcript 镜像 vs tool3.json): PASS (48 场景神力生成器/消费端每步快照逐位 + volcano 锥体/引燃圈/熔岩弹/外溢 + cap 门 13 族 + bless/curse/love/teleport 四瞬态 + M-U19 mutate 特质域 + M-U20 river runtime 级联 + M-U21 grab 三场景（三 API + unitsTick 壳 + grabbedTick 全链） + M-U22 reap 六场景（尸变/王权/凤凰/九头蛇/掉落链/scav/商队） + M-U23 phoenix 双场景（灰烬倒数重生/null 支） + M-U24 引擎级通道三件套（entGrove 播种扑火/lichRaise 复生/hydraRegen 回血 + fireTick 风驱蔓延全译 + windAt 环流面） + meteor/meteorShower x0/y0 偏移 + 超武双神力 + typhoon 推拽/间歇雷电/暴雨灭火 + holystorm 审判/缓愈/驱瘟 + M-U25 beachedAquatic/predatorHunt/wildlifeRebound/sharkBreed 四件套九场景 + units dump 位级含 trait/gene + events colorHex 流 + toasts 面 + M-U27 angelAura 天使光环八场景（相位门/治愈/清瘟/三门拒/天使渡天使/cap10）)');
 } catch (e) {
   fail++;
   console.error('tool3 黄金回放: FAIL');
@@ -31,7 +31,7 @@ try {
   execFileSync('bun', [new URL('./gen-tool3.mjs', import.meta.url).pathname], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 300000 });
   const h1 = createHash('md5').update(await readFile(goldenPath)).digest('hex');
   if (h0 !== h1) throw new Error(`golden漂移 ${h0} -> ${h1}`);
-  console.log('tool3 gen det 复跑 (gen-tool3 · bun): PASS (40 场景 sanity + GameEngine 真实现 + det 字节级)');
+  console.log('tool3 gen det 复跑 (gen-tool3 · bun): PASS (48 场景 sanity + GameEngine 真实现 + det 字节级)');
 } catch (e) {
   fail++;
   console.error('tool3 gen det 复跑: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -40,9 +40,9 @@ try {
   const g = JSON.parse(readFileSync(new URL('./golden/tool3.json', import.meta.url), 'utf8'));
   const fails = [];
   const fail2 = (m) => fails.push(m);
-  if (!Array.isArray(g.scenarios) || g.scenarios.length !== 40) fail2('场景数 ≠ 40');
+  if (!Array.isArray(g.scenarios) || g.scenarios.length !== 48) fail2('场景数 ≠ 48');
   const keys = g.scenarios.map((s) => s.key);
-  for (const want of ['volcano-default', 'volcano-power3', 'spawn-quartet', 'meteor-meteorshower', 'wrath-ticks', 'area-powers', 'static-quartet', 'caps-composite', 'typhoon-ticks', 'plasma-annihilate', 'volcano-edge', 'mutate-civ-reroll', 'mutate-wild-clamp', 'holystorm-ticks', 'river-runtime', 'grab-light', 'grab-throw', 'finger-tool', 'ent-grove', 'grove-winter', 'lich-raise', 'lich-cap', 'hydra-regen', 'beach-wander', 'shark-targets', 'predator-land', 'predator-aqua', 'wildlife-rebound', 'rebound-fish', 'shark-breed', 'rebound-lawsoff', 'rebound-miss'])
+  for (const want of ['volcano-default', 'volcano-power3', 'spawn-quartet', 'meteor-meteorshower', 'wrath-ticks', 'area-powers', 'static-quartet', 'caps-composite', 'typhoon-ticks', 'plasma-annihilate', 'volcano-edge', 'mutate-civ-reroll', 'mutate-wild-clamp', 'holystorm-ticks', 'river-runtime', 'grab-light', 'grab-throw', 'finger-tool', 'ent-grove', 'grove-winter', 'lich-raise', 'lich-cap', 'hydra-regen', 'beach-wander', 'shark-targets', 'predator-land', 'predator-aqua', 'wildlife-rebound', 'rebound-fish', 'shark-breed', 'rebound-lawsoff', 'rebound-miss', 'angel-none', 'angel-phase-miss', 'angel-heal', 'angel-infected', 'angel-both', 'angel-skip', 'angel-duo', 'angel-cap'])
     if (!keys.includes(want)) fail2(`场景 ${want} 缺失`);
   const s1 = g.scenarios.find((s) => s.key === 'volcano-default');
   if (!s1 || s1.totalDraws !== 28 || s1.fx.length !== 3 || s1.shake !== 8 || s1.units[0].dead !== 1 || s1.units[0].hurtN !== '0000000000002840' || s1.fx[0]?.seed !== 26084) fail2('volcano-default 签名缺失（28 掷 = 引燃 8 + fx 2 + 熔岩弹 2×4 + 外溢 5×2 + u900 灼烧环死 dead=1 hurtN=12 + shake=8）');
@@ -195,13 +195,30 @@ try {
   if (!s39 || s39.totalDraws !== 0 || s39.stepsSnap.at(-1).rngA !== '00000157') fail2('rebound-lawsoff 签名缺失（laws 支零掷铁证 rngA=seed 原值——repro0 夹具 reproduction=false 顶层早退）');
   const s40 = g.scenarios.find((s) => s.key === 'rebound-miss');
   if (!s40 || s40.totalDraws !== 1 || s40.stepsSnap.at(-1).rngA !== '6d2b7b4d') fail2('rebound-miss 签名缺失（1 掷掷签门拒签——灭绝名单非空但 rng>0.6 拒）');
+  // —— M-U27 angelAura 八场景签名（天使光环引擎级通道 L13138-13161——相位门/治愈/清瘟/三门拒/天使渡天使/cap10）——
+  const s41 = g.scenarios.find((s) => s.key === 'angel-none');
+  if (!s41 || s41.totalDraws !== 0 || s41.fx.length !== 0 || s41.stepsSnap.at(-1).rngA !== '00000160') fail2('angel-none 签名缺失（零天使外层环空转——零掷铁证 rngA=seed 原值）');
+  const s42 = g.scenarios.find((s) => s.key === 'angel-phase-miss');
+  if (!s42 || s42.totalDraws !== 0 || s42.stepsSnap.at(-1).rngA !== '00000161' || s42.units[1].hp !== '0000000000001440') fail2('angel-phase-miss 签名缺失（相位门拒 (334+33*13)%50=13≠0——受伤羊 hp=5 未愈零掷）');
+  const s43 = g.scenarios.find((s) => s.key === 'angel-heal');
+  if (!s43 || s43.totalDraws !== 4 || s43.fx.length !== 2 || s43.fx[0]?.seed !== 61487 || s43.fx[0]?.ttl !== '0000000000003040' || s43.units[1].hp !== '0000000000002e40' || s43.units[2].hp !== '0000000000003040' || s43.stepsSnap.at(-1).rngA !== 'b4ade936') fail2('angel-heal 签名缺失（4 掷 = bless16 2 + 本体 bless34 2；hp 5→15 位级 min(16,5+max(10,4))；满血羊 L13148 skip）');
+  const s44 = g.scenarios.find((s) => s.key === 'angel-infected');
+  if (!s44 || s44.totalDraws !== 4 || s44.fx.length !== 2 || s44.fx[0]?.seed !== 42042 || s44.units[1].infected !== 0 || s44.units[1].hp !== '0000000000003040' || s44.stepsSnap.at(-1).rngA !== 'b4ade937') fail2('angel-infected 签名缺失（4 掷 = bless20 2 + 本体 2；满血感染羊清瘴 hp 不变）');
+  const s45 = g.scenarios.find((s) => s.key === 'angel-both');
+  if (!s45 || s45.totalDraws !== 6 || s45.fx.length !== 3 || s45.units[1].hp !== '0000000000002c40' || s45.units[1].infected !== 0 || s45.stepsSnap.at(-1).rngA !== '8f04dd22') fail2('angel-both 签名缺失（6 掷 = bless16 2 + bless20 2 + 本体 2；hp 4→14 双支同体）');
+  const s46 = g.scenarios.find((s) => s.key === 'angel-skip');
+  if (!s46 || s46.totalDraws !== 0 || s46.fx.length !== 0 || s46.units[3].infected !== 1 || s46.stepsSnap.at(-1).rngA !== '00000165') fail2('angel-skip 签名缺失（三门拒 hostile/undead/圈外 d²=25——healed=0 零掷，圈外感染不净）');
+  const s47 = g.scenarios.find((s) => s.key === 'angel-duo');
+  if (!s47 || s47.totalDraws !== 10 || s47.fx.length !== 5 || s47.units[0].hp !== '0000000000006440' || s47.units[1].hp !== '0000000000406a40' || s47.units[1].infected !== 0 || s47.stepsSnap.at(-1).rngA !== '43b2c4f8') fail2('angel-duo 签名缺失（10 掷 = A 轮 6 + B 轮 4；id=32/82 同帧双触发 1400%50=0；A 100→160 / B 150→210 + 清瘴——天使渡天使 o===a 自遇 skip 随行）');
+  const s48 = g.scenarios.find((s) => s.key === 'angel-cap');
+  if (!s48 || s48.totalDraws !== 22 || s48.fx.length !== 11 || s48.units[10].hp !== '0000000000002640' || s48.units[11].hp !== '000000000000f03f' || s48.stepsSnap.at(-1).rngA !== '61bc7c75') fail2('angel-cap 签名缺失（22 掷 = 10 bless16 + 本体 34；healed 上限 break 第 11 只 hp=1 未触——L13157 cap10）');
   const sa = readFileSync(new URL('../../unity/pixel-world-box/Assets/StreamingAssets/WbGolden/tool3.json', import.meta.url));
   const gl = readFileSync(new URL('./golden/tool3.json', import.meta.url));
   const md5a = createHash('md5').update(sa).digest('hex');
   const md5b = createHash('md5').update(gl).digest('hex');
   if (md5a !== md5b) fail2(`双写 md5 不一致 ${md5a} ≠ ${md5b}`);
   if (fails.length > 0) throw new Error(fails.join(' | '));
-  console.log(`tool3 台账完备 (40 场景 + volcano 锥体/双烈度/边缘钳 + cap 13 族拒面 + 超武双神力 colorHex + 黑洞计数先于 cap + bless/curse/fert 三瞬态 + M-U19 mutate 双场景 + M-U20 river runtime 级联 + M-U21 grab 三场景 + M-U22 reap 六场景 + M-U23 phoenix 双场景 + M-U24 引擎级通道五场景 + M-U25 beachedAquatic/predatorHunt/wildlifeRebound/sharkBreed 四件套九场景 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
+  console.log(`tool3 台账完备 (48 场景 + volcano 锥体/双烈度/边缘钳 + cap 13 族拒面 + 超武双神力 colorHex + 黑洞计数先于 cap + bless/curse/fert 三瞬态 + M-U19 mutate 双场景 + M-U20 river runtime 级联 + M-U21 grab 三场景 + M-U22 reap 六场景 + M-U23 phoenix 双场景 + M-U24 引擎级通道五场景 + M-U25 beachedAquatic/predatorHunt/wildlifeRebound/sharkBreed 四件套九场景 + M-U27 angelAura 八场景 + 双写 md5 ${md5b.slice(0, 8)} 一致): PASS`);
 } catch (e) {
   fail++;
   console.error('tool3 台账完备: FAIL —', String(e.message ?? e).slice(0, 200));
@@ -332,8 +349,8 @@ try {
   fail++;
   console.error('tool3 hydra 红证旋钮: FAIL —', String(e.message ?? e).slice(0, 200));
 }
-// —— M-U25 红证四旋钮：TOOL3_RED=beached/hunt/rebound/breed 禁四通道全写面 → 对应场景 FAIL → 复绿 ——
-for (const [knob, scen] of [['beached', 'beach-wander'], ['hunt', 'predator-land'], ['rebound', 'wildlife-rebound'], ['breed', 'shark-breed']]) {
+// —— M-U25/M-U27 红证五旋钮：TOOL3_RED=beached/hunt/rebound/breed/aura 禁通道全写面 → 对应场景 FAIL → 复绿 ——
+for (const [knob, scen] of [['beached', 'beach-wander'], ['hunt', 'predator-land'], ['rebound', 'wildlife-rebound'], ['breed', 'shark-breed'], ['aura', 'angel-heal']]) {
   try {
     const env = { ...process.env, TOOL3_RED: knob, TOOL3_SCEN: scen };
     try {

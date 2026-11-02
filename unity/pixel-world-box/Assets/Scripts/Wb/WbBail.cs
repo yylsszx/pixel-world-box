@@ -1581,6 +1581,47 @@ namespace PixelWorldBox.Wb
             }
         }
 
+        // ================= M-U27 angelAuraTick L13138-13161（天使光环引擎级通道：治愈周围无辜生灵
+        //   〔含国民/动物〕+ 驱散瘟疫。为什么不在 updateUnit：天使是和平野生单位，会被 rust 批内核
+        //   整批接管，TS 的和平分支不执行〔实证 breath 不衰减〕；治愈是纯 TS 增益，挂 tick 通道。
+        //   节律：主循环 L2604 每 3 tick 扫描一次，(phase + id*13) % 50 === 0 时触发——每只天使约每
+        //   150 tick（10s@1x）一轮，相位按 id 错开防同帧扎堆。调用面：L2604 在 L2606 phoenixAsh /
+        //   L2608 entGrove 之前；WbTickOrch 槽 45 ANGEL_AURA 已预埋 + WbGameHost M-U27 注册） =================
+        private const int R_ANGEL = 28;                                                                                    // engine types.ts R 枚举序 28（RelayDef 表 L73 flying=true 位——hostile/undead 默认 false 与蓝本一致）
+
+        /// <summary>天使光环（引擎级通道）：治愈 r=3.5 内无辜生灵（hp 回复 + 驱散瘟疫），单天使单轮上限 10 位；
+        ///  healed&gt;0 时天使本体放 bless 特效并上报 heal 音效（宿主挂账 no-op）。</summary>
+        public static void AngelAuraTick(WbWorld w)
+        {
+            int phase = (int)(w.tickCount / 3);                                                                            // L13139（(x/3)|0 截断除——tickCount 恒非负，(int) 截断同构）
+            for (int ai = 0; ai < w.units.Count; ai++)                                                                     // L13140（JS for..of——通道内无增删，索引环同构）
+            {
+                WbU a = w.units[ai];
+                if (a.dead != 0 || a.race != R_ANGEL) continue;                                                            // L13141（u.dead 支 tick 通道不可达——unitsReap 同 tick 先于门摘净死单位，防御分支机械保持）
+                if ((phase + a.id * 13) % 50 != 0) continue;                                                               // L13142（相位门：id 按位错开防同帧扎堆——S42 id=33 (334+429)%50=13 拒）
+                int healed = 0;                                                                                            // L13143
+                for (int oi = 0; oi < w.units.Count; oi++)                                                                 // L13144（内环全量扫——天使稀少开销可忽略）
+                {
+                    WbU o = w.units[oi];
+                    if (o.dead != 0 || ReferenceEquals(o, a)) continue;                                                    // L13145（自遇 skip——S47 随行）
+                    RelayDef od = DefOf(o.race);                                                                           // L13146（RACES 旗面消费——RDEF 41 表 DefOf 先例 L4952/L7080 同构）
+                    if (od.hostile || od.undead) continue;                                                                 // L13147（只渡无辜者——S46 hostile DRAGON/undead ZOMBIE 拒）
+                    if (o.hp >= o.maxHp && o.infected == 0) continue;                                                      // L13148（满血无瘟 skip——S43 满血羊不计 healed；S44 感染羊不拒）
+                    double dxo = o.x - a.x;                                                                                // L13149
+                    double dyo = o.y - a.y;                                                                                // L13150
+                    if (dxo * dxo + dyo * dyo > 12.25) continue;                                                           // L13151（r=3.5²——S46 圈外 d²=25 拒）
+                    if (o.hp < o.maxHp)                                                                                    // L13152
+                    {
+                        o.hp = System.Math.Min(o.maxHp, o.hp + System.Math.Max(10.0, o.maxHp * 0.25));                     // L13153（S43 hp 5→15 位级：min(16,5+max(10,4))）
+                        FxHook(w, "bless", o.x, o.y, 16);                                                                  // L13154（fx 恒 2 掷：seed+dir）
+                    }
+                    if (o.infected != 0) { o.infected = 0; FxHook(w, "bless", o.x, o.y, 20); }                             // L13156（驱散瘟疫——S44/S45 清瘴面）
+                    if (++healed >= 10) break;                                                                             // L13157（单轮上限——S48 第 11 只未触）
+                }
+                if (healed > 0) { FxHook(w, "bless", a.x, a.y, 34); /* L13159 this.onSound?.('heal')——宿主音效挂账 no-op（healAudio 先例同构） */ }   // L13159
+            }
+        }
+
         // ================= M-U24 引擎级通道同构三件套（hydraRegenTick L13038 / entGroveTick L13055 / lichRaiseTick L13105） =================
         private const int R_ENT = 30;                                                                                      // engine types.ts R 枚举序 30（R_PHOENIX L1330 注记同源）
         private const int R_LICH = 31;                                                                                     // engine types.ts R 枚举序 31
