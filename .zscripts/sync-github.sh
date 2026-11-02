@@ -36,7 +36,7 @@ find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .zscripts -exec rm -rf {} +
 mkdir -p .zscripts
 # Task 129（Job 2902286）教训：白名单缺 worklog.md/.gitignore 曾致 021e062 误删（Task 126 bddb62c 同款）——
 # 恢复式提交治标，白名单补齐治本；两文件为仓库常驻真相源（worklog 台账/构建产物忽略规则）。
-for item in src public prisma rust-core scripts unity docs README-GITHUB.md package.json bun.lock tsconfig.json tailwind.config.ts postcss.config.mjs components.json eslint.config.mjs next-env.d.ts next.config.ts .github .gitignore worklog.md; do
+for item in src public prisma rust-core scripts unity docs oracle-server README-GITHUB.md package.json bun.lock tsconfig.json tailwind.config.ts postcss.config.mjs components.json eslint.config.mjs next-env.d.ts next.config.ts .github .gitignore worklog.md; do
   [ -e "/home/z/my-project/$item" ] && cp -r "/home/z/my-project/$item" "./$item"
 done
 cp /home/z/my-project/.zscripts/export-static.sh .zscripts/
@@ -70,7 +70,8 @@ if [ -z "$(git status --porcelain)" ]; then
   fi
 else
   echo "==> 变更文件："
-  git status --short | head -20
+  # Task 191 教训：变更超 20 行时 head 截断 → git status 收 SIGPIPE → pipefail 下脚本猝死（commit 永不执行）
+  git status --short | head -20 || true
   git -c user.name="deploy-bot" -c user.email="deploy@users.noreply.github.com" commit -qm "$MSG"
 fi
 
