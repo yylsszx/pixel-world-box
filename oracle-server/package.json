@@ -1,0 +1,14 @@
+{
+  "name": "pwb-oracle-server",
+  "version": "1.0.0",
+  "description": "PWB 神谕中继后端（Sealos 容器版）：统一 SSE 网关 /healthz + /api/oracle/agent，零 npm 依赖，纯 Node >=20 内置能力。前端（GitHub Pages 静态产物）经 corsDirect 直连本服务转发云端厂商请求。",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

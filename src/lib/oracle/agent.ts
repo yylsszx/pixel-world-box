@@ -9,12 +9,14 @@
 //   ⑤ 写操作回执台账（ledger）＋「全失败却声称完成」幻觉检测 v2；
 //   ⑥ 循环上限 8→14；到顶不空手而归——注入收束指令强制产出最终总结；
 //   ⑦ 深度思考（deep）全链路接线；空响应单次重试。
-// 每一轮模型调用都是对 /api/oracle/agent 的一次无状态 SSE 请求（会话历史由客户端持有）。
+// 每一轮模型调用都经由 direct-client.ts 的 v6 路由（中继后端 → 本站后端 → corsDirect
+// 浏览器直连），对协议端点而言是一次无状态 SSE 请求（会话历史由客户端持有）。
 import type { AgentChatMessage, AgentToolCall, AgentToolResult, OracleProviderConfig } from './types';
 import { executeOracleTool } from './bridge';
 import { AGENT_TOOLS, type ToolArgDef } from './tools';
 import { getEngine } from '@/store/gameStore';
 import { callLocalModel } from './local-provider';
+import { routeCallModel } from './direct-client';
 
 /** 单条消息里携带的工具事件（面板气泡渲染用） */
 export interface OracleToolEvent {
@@ -430,66 +432,9 @@ async function callModel(
     }
   }
 
-  let content = '';
-  let reasoning = '';
-  let streamErr = '';
-  try {
-    const res = await fetch('/api/oracle/agent', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, messages, deep }),
-      signal,
-    });
-    if (!res.ok || !res.body) {
-      let msg = `HTTP ${res.status}`;
-      try {
-        const j = (await res.json()) as { error?: string };
-        if (j.error) msg = j.error;
-      } catch {
-        /* 非 JSON 错误体 */
-      }
-      // 静态托管（GitHub Pages 等）上 /api/* 不存在：404/405 → 友好降级文案
-      if (res.status === 404 || res.status === 405) {
-        msg = '神谕离线：此部署为纯静态托管，无 AI 后端（游戏本体不受影响）';
-      }
-      throw new Error(msg);
-    }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    for (;;) {
-      if (signal?.aborted) {
-        void reader.cancel();
-        throw new Error('已中止');
-      }
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop() ?? '';
-      for (const line of lines) {
-        const t = line.trim();
-        if (!t.startsWith('data:')) continue;
-        const payload = t.slice(5).trim();
-        if (payload === '[DONE]') continue;
-        try {
-          const ev = JSON.parse(payload) as { t?: string; r?: string; err?: string };
-          if (ev.err) streamErr = ev.err;
-          if (ev.t || ev.r) {
-            content += ev.t ?? '';
-            reasoning += ev.r ?? '';
-            onDelta?.({ text: ev.t, reason: ev.r });
-          }
-        } catch {
-          /* 忽略无法解析的行 */
-        }
-      }
-    }
-  } catch (e) {
-    if (signal?.aborted) return { content, reasoning, err: '已中止' };
-    return { content: '', reasoning, err: e instanceof Error ? e.message : String(e) };
-  }
-  return { content, reasoning, err: streamErr };
+  // ── 云厂商统一路由（v6 API 接入适配）：中继后端 → 本站后端 → 浏览器直连（corsDirect）──
+  // 永不 throw；错误折进 err（自定义厂商直连失败给精确可行动文案，绝不误报「离线」——见 direct-client.ts）。
+  return routeCallModel(provider, messages, deep, { onDelta, signal });
 }
 
 /** 会话防失控裁剪：保留首条系统提示 + 最近 59 条（中间整段丢弃） */

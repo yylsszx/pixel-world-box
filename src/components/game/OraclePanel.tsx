@@ -13,6 +13,7 @@ import { useGameStore, getEngine } from '@/store/gameStore';
 import type { OracleMode, OracleMsg, CondExpr } from '@/lib/game/types';
 import type { AgentChatMessage, AgentToolResult, OracleProviderConfig, ProviderKind } from '@/lib/oracle/types';
 import { runOracleAgentTurn } from '@/lib/oracle/agent';
+import { runConnectivityTest, validateProviderConfig } from '@/lib/oracle/direct-client';
 import { renderToolCatalog, AGENT_TOOLS } from '@/lib/oracle/tools';
 import { buildSystemPrompt } from '@/lib/oracle/prompt';
 import { Button } from '@/components/ui/button';
@@ -99,7 +100,7 @@ function loadProvider(): OracleProviderConfig {
     if (!raw) return DEFAULT_PROVIDER;
     const p = JSON.parse(raw) as OracleProviderConfig;
     if (p && (p.kind === 'builtin' || p.kind === 'openai' || p.kind === 'anthropic' || p.kind === 'local')) {
-      return { kind: p.kind as ProviderKind, label: p.label, baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.model, temperature: p.temperature, forceCpu: p.forceCpu };
+      return { kind: p.kind as ProviderKind, label: p.label, baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.model, temperature: p.temperature, forceCpu: p.forceCpu, relayUrl: p.relayUrl };
     }
   } catch {
     /* 坏存档回默认 */
@@ -481,78 +482,11 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
   const isBuiltin = provider.kind === 'builtin';
   const isLocal = provider.kind === 'local';
 
-  /** 测试连通：POST /api/oracle/agent 发最小会话，读首个 SSE data 事件判断成败 */
+  /** 测试连通：走 routeCallModel 全路由（中继→本站后端→浏览器直连），与真实对话完全同路径 */
   const runTest = useCallback(async () => {
     setTest({ state: 'testing' });
-    let okFlag = false;
-    let failMsg = '无响应';
-    try {
-      const res = await fetch('/api/oracle/agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider,
-          messages: [
-            { role: 'assistant', content: '连通测试' },
-            { role: 'user', content: '回复：OK' },
-          ],
-        }),
-      });
-      if (!res.ok || !res.body) {
-        let msg = `HTTP ${res.status}`;
-        try {
-          const j = (await res.json()) as { error?: string };
-          if (j.error) msg = j.error;
-        } catch {
-          /* 非 JSON 错误体 */
-        }
-        // 静态托管（GitHub Pages 等）上 /api/* 不存在：404/405 → 友好降级文案
-        if (res.status === 404 || res.status === 405) {
-          msg = '神谕离线：此部署为纯静态托管，无 AI 后端（游戏本体不受影响）';
-        }
-        setTest({ state: 'fail', msg });
-        return;
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      let got = false;
-      for (; !got;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() ?? '';
-        for (const line of lines) {
-          const t = line.trim();
-          if (!t.startsWith('data:')) continue;
-          const payload = t.slice(5).trim();
-          if (payload === '[DONE]') {
-            got = true;
-            break;
-          }
-          try {
-            const ev = JSON.parse(payload) as { t?: string; r?: string; err?: string };
-            if (ev.err) {
-              failMsg = ev.err;
-              got = true;
-              break;
-            }
-            if (ev.t || ev.r) {
-              okFlag = true;
-              got = true;
-              break;
-            }
-          } catch {
-            /* 忽略无法解析的行 */
-          }
-        }
-      }
-      void reader.cancel().catch(() => undefined);
-      setTest(okFlag ? { state: 'ok' } : { state: 'fail', msg: failMsg });
-    } catch (e) {
-      setTest({ state: 'fail', msg: e instanceof Error ? e.message : String(e) });
-    }
+    const r = await runConnectivityTest(provider);
+    setTest(r.ok ? { state: 'ok' } : { state: 'fail', msg: r.msg ?? '无响应' });
   }, [provider]);
 
   const inputCls =
@@ -581,6 +515,7 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
                   model: pre.config.model,
                   apiKey: '',
                   temperature: provider.temperature,
+                  relayUrl: provider.relayUrl, // 中继后端跨预设保留（换厂商不必重填）
                 });
               }}
               className={`min-w-0 truncate rounded-sm border-2 px-1 py-1 text-[9px] font-bold transition-colors ${
@@ -600,7 +535,7 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
         <p className="rounded-sm border border-teal-400/30 bg-teal-400/5 px-1.5 py-1 text-[9px] leading-relaxed text-teal-300/80">
           {isLocal
             ? '本地模型在浏览器端直接运行（transformers.js），无需服务端与密钥；首次使用会下载模型权重（约几百 MB），随后浏览器缓存离线可用。'
-            : '内置 Z.ai 经本站后端直连，无需密钥。'}
+            : '内置 Z.ai 经后端直连，无需密钥；静态托管下需部署中继后端（见下）。'}
         </p>
       ) : (
         <div className="flex flex-col gap-1.5">
@@ -640,6 +575,24 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
             />
           </label>
         </div>
+      )}
+
+      {/* 中继后端（corsDirect 直连 Sealos oracle-server；静态托管接入无 CORS 厂商端点与内置 Z.ai 的唯一通路） */}
+      {!isLocal && (
+        <label className="flex flex-col gap-0.5">
+          <span className={labelCls}>中继后端（可选）</span>
+          <input
+            value={provider.relayUrl ?? ''}
+            onChange={(e) => onApply({ ...provider, relayUrl: e.target.value || undefined })}
+            placeholder="http://<sealos-host>:8787"
+            spellCheck={false}
+            className={inputCls}
+            aria-label="中继后端地址"
+          />
+          <span className="text-[8px] leading-relaxed text-zinc-600">
+            填入后所有云端请求改经该后端转发（内网网关可填 /api/oracle/agent?XTransformPort=8787）；留空则自动路由：本站后端 → 浏览器直连厂商。
+          </span>
+        </label>
       )}
 
       <label className="flex flex-col gap-0.5">
@@ -724,7 +677,7 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
       )}
 
       <p className="text-[8px] leading-relaxed text-zinc-600">
-        apiKey 仅存本浏览器 localStorage，并经本站后端转发至厂商——不会出现在日志与世界存档中。
+        apiKey 仅存本浏览器 localStorage；云端请求按「中继后端 → 本站后端 → 浏览器直连」路由转发至厂商——不出现在日志与世界存档中。
       </p>
     </div>
   );
@@ -1010,6 +963,13 @@ function OracleBody() {
       const preset = MODE_PROMPT[mode as keyof typeof MODE_PROMPT];
       const userText = (question ?? '').trim() || preset;
       if (!userText) return;
+      // v6 预检：配置缺失就地拦截（custom 空字段不再走到发送后才报错/误报离线）
+      const verr = validateProviderConfig(provider);
+      if (verr) {
+        setError(verr);
+        setCfgOpen(true); // 直接打开厂商接入引导补全
+        return;
+      }
       // 历史快照须在 addOracleMsg 之前取（否则本轮 user 消息会重复入列）
       // v3：历史压缩带工具回执摘要——模型跨轮记得自己干过什么，复合任务可续接
       const history: AgentChatMessage[] = [

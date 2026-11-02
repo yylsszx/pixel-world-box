@@ -19,6 +19,12 @@ export interface OracleProviderConfig {
   temperature?: number;
   /** 本地模型：是否强制使用 CPU（回退）。默认 false，transformers.js 会自动使用 WebGPU/WASM */
   forceCpu?: boolean;
+  /**
+   * 神谕中继后端地址（corsDirect 直连，如 Sealos 部署的 oracle-server：http://<host>:8787）。
+   * 设置后所有云端厂商请求（含 builtin）改经该后端转发——静态托管（GitHub Pages）下接入
+   * 无 CORS 头厂商端点与 builtin 的唯一通路。为空时自动路由：本站后端（若有）→ 浏览器直连厂商。
+   */
+  relayUrl?: string;
 }
 
 export interface AgentChatMessage {

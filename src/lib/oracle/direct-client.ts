@@ -1,0 +1,559 @@
+// ============ 神谕 · 浏览器端直连与后端路由层（v6 API 接入适配） ============
+// 解决「自定义厂商在静态托管下一刀切报神谕离线」的典型误报：
+//   旧逻辑把除 local 外全部厂商（含自定义 openai/anthropic）都硬编码走 /api/oracle/agent，
+//   GitHub Pages 静态托管下 404 → 一律「神谕离线」——而自定义厂商本可由浏览器 corsDirect 直连。
+// v6 路由决策（openai/anthropic 云厂商）：
+//   ① provider.relayUrl（Sealos oracle-server 等中继后端，用户显式配置）→ 中继转发；
+//   ② 本站后端存在（next dev / 同源部署，GET 探测 405=在）→ 本站 /api/oracle/agent；
+//   ③ 静态托管（探测 404）或后端不可达 → 浏览器直连厂商端点（CORS 允许的端点可通）；
+//   ④ 直连网络级失败 → 精确可行动错误文案（绝不误报「离线」）。
+// builtin（内置 Z.ai）必须经后端（SDK 密钥在服务端）：后端不在时才报「离线」，并给出替代路径。
+// SSE 线协议与 /api/oracle/agent 完全一致：data: {"r"|"t"|"err"} \n\n + data: [DONE]。
+import type { AgentChatMessage, OracleProviderConfig } from './types';
+
+/** 统一模型调用结果（与 agent.ts callModel 返回同构） */
+export interface ModelCallResult {
+  content: string;
+  reasoning: string;
+  err: string;
+}
+
+export interface RouteCallbacks {
+  onDelta?: (d: { text?: string; reason?: string }) => void;
+  signal?: AbortSignal;
+}
+
+const TIMEOUT_MS = 120_000;
+
+// ============ 通用工具 ============
+
+function jsonRec(v: unknown): Record<string, unknown> | null {
+  return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+/** 外部 signal + 超时 → 联动 AbortController；cleanup 须在流结束时调用 */
+function linkedAbort(external?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  const onAbort = () => ctl.abort();
+  if (external) {
+    if (external.aborted) onAbort();
+    else external.addEventListener('abort', onAbort, { once: true });
+  }
+  return {
+    signal: ctl.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      external?.removeEventListener('abort', onAbort);
+    },
+  };
+}
+
+/** 非 2xx → 含状态码与响应体摘要（截断 300 字）的错误文案 */
+async function describeBadResponse(label: string, res: Response): Promise<string> {
+  let text = '';
+  try {
+    text = await res.text();
+  } catch {
+    /* ignore */
+  }
+  if (text.length > 300) text = `${text.slice(0, 300)}…`;
+  return `[${label}] HTTP ${res.status}${text ? `：${text}` : '（空响应体）'}`;
+}
+
+/** 网络级失败（fetch throw）→ 精确可行动文案（直连场景的 CORS/网络不可达区分提示） */
+function describeNetworkError(label: string, url: string, e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  if (externalAborted(e)) return '已中止';
+  const host = safeHost(url);
+  return `[${label}] 浏览器直连 ${host || '端点'} 失败（CORS 拦截或网络不可达：${raw}）。` +
+    `可在「厂商接入」填「中继后端」地址（Sealos 部署 oracle-server）转发，或改用支持 CORS 的端点 / 本地模型。`;
+}
+
+function externalAborted(e: unknown): boolean {
+  return e instanceof DOMException && e.name === 'AbortError';
+}
+
+function safeHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '';
+  }
+}
+
+// ============ 后端探测（60s TTL 缓存；GET 405=后端在，404=静态托管） ============
+
+export type BackendState = 'up' | 'static' | 'down';
+
+let probeCache: { at: number; state: BackendState } | null = null;
+const PROBE_TTL_MS = 60_000;
+
+export async function probeSiteBackend(now = Date.now()): Promise<BackendState> {
+  if (probeCache && now - probeCache.at < PROBE_TTL_MS) return probeCache.state;
+  const state: BackendState = await (async () => {
+    try {
+      const res = await fetch('/api/oracle/agent', { method: 'GET', cache: 'no-store' });
+      // next dev / node 部署：GET 返回 405（POST only）；静态托管：404 页面
+      if (res.status === 405 || res.status === 200) return 'up';
+      if (res.status === 404) return 'static';
+      return 'down';
+    } catch {
+      return 'down';
+    }
+  })();
+  probeCache = { at: now, state };
+  return state;
+}
+
+/** 探测结果变化时失效缓存（测试连通按钮手动触发前调用，保证及时性） */
+export function invalidateBackendProbe(): void {
+  probeCache = null;
+}
+
+// ============ 通道 A/B：中继后端 / 本站后端（同一线协议 SSE 泵） ============
+
+/** 中继地址归一化：去尾斜杠；已含 /api/oracle/agent 用原样，否则拼接；
+ * 内网网关相对形式（含 XTransformPort 查询串，如 /api/oracle/agent?XTransformPort=8787）原样直通——
+ * 查询串之后不可再拼接路径 */
+export function normalizeRelayUrl(relay: string): string {
+  const raw = relay.trim();
+  const base = raw.replace(/\/+$/, '');
+  if (base.includes('XTransformPort=')) return raw;
+  if (base.endsWith('/api/oracle/agent')) return base;
+  return `${base}/api/oracle/agent`;
+}
+
+/** 泵取后端统一 SSE 协议（{"r"|"t"|"err"} + [DONE]）——中继与本站后端共用 */
+async function pumpBackendSSE(
+  upstream: ReadableStream<Uint8Array>,
+  cb: RouteCallbacks,
+  state: { content: string; reasoning: string; streamErr: string },
+): Promise<void> {
+  const reader = upstream.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    if (cb.signal?.aborted) {
+      void reader.cancel();
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t.startsWith('data:')) continue;
+      const payload = t.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      try {
+        const ev = JSON.parse(payload) as { t?: string; r?: string; err?: string };
+        if (ev.err) state.streamErr = ev.err;
+        if (ev.t || ev.r) {
+          state.content += ev.t ?? '';
+          state.reasoning += ev.r ?? '';
+          cb.onDelta?.({ text: ev.t, reason: ev.r });
+        }
+      } catch {
+        /* 忽略无法解析的行 */
+      }
+    }
+  }
+}
+
+/** 经后端（中继或本站）调用：POST AgentRequestBody → 统一 SSE。网络/HTTP 错误折进 err，永不 throw。 */
+async function callViaBackend(
+  endpoint: string,
+  provider: OracleProviderConfig,
+  messages: AgentChatMessage[],
+  deep: boolean,
+  cb: RouteCallbacks,
+  epLabel: string,
+): Promise<ModelCallResult> {
+  const state = { content: '', reasoning: '', streamErr: '' };
+  const { signal, cleanup } = linkedAbort(cb.signal);
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, messages, deep }),
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      let msg = `HTTP ${res.status}`;
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (j.error) msg = j.error;
+      } catch {
+        /* 非 JSON 错误体 */
+      }
+      return { content: '', reasoning: '', err: `[${epLabel}] ${msg}` };
+    }
+    await pumpBackendSSE(res.body, cb, state);
+    return { content: state.content, reasoning: state.reasoning, err: state.streamErr };
+  } catch (e) {
+    if (cb.signal?.aborted || externalAborted(e)) return { content: state.content, reasoning: state.reasoning, err: '已中止' };
+    return { content: '', reasoning: state.reasoning, err: `[${epLabel}] 请求失败：${e instanceof Error ? e.message : String(e)}` };
+  } finally {
+    cleanup();
+  }
+}
+
+// ============ 通道 C：浏览器直连厂商（corsDirect） ============
+
+/** baseUrl 归一化：去尾斜杠；已以 /chat/completions 结尾用原样，否则拼接（与服务端 providers.ts 同构） */
+function normalizeOpenAIUrl(baseUrl: string): string {
+  const base = baseUrl.trim().replace(/\/+$/, '');
+  if (base.endsWith('/chat/completions')) return base;
+  return `${base}/chat/completions`;
+}
+
+/** baseUrl 归一化（Anthropic）：/v1/messages 用原样；/v1 拼 /messages；否则拼 /v1/messages */
+function normalizeAnthropicUrl(baseUrl: string): string {
+  const base = baseUrl.trim().replace(/\/+$/, '');
+  if (base.endsWith('/v1/messages')) return base;
+  if (base.endsWith('/v1')) return `${base}/messages`;
+  return `${base}/v1/messages`;
+}
+
+/** 协议转换：messages[0]（assistant 系统提示）→ system 顶层 + user/assistant 交替（与服务端同构） */
+function toAnthropicPayload(messages: AgentChatMessage[]): {
+  system: string;
+  messages: { role: 'user' | 'assistant'; content: string }[];
+} {
+  const system = messages[0]?.role === 'assistant' ? messages[0].content : '';
+  const rest = messages[0]?.role === 'assistant' ? messages.slice(1) : messages.slice();
+  const merged: { role: 'user' | 'assistant'; content: string }[] = [];
+  for (const m of rest) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === m.role) last.content = `${last.content}\n\n${m.content}`;
+    else merged.push({ role: m.role, content: m.content });
+  }
+  if (merged.length === 0) throw new Error('[anthropic] 除系统提示词外至少需要一条消息');
+  if (merged[0].role === 'assistant') merged.unshift({ role: 'user', content: '（开始）' });
+  return { system, messages: merged };
+}
+
+/** 泵取 OpenAI 兼容 SSE（reasoning_content/reasoning → r，content → t） */
+async function pumpDirectOpenAI(
+  upstream: ReadableStream<Uint8Array>,
+  cb: RouteCallbacks,
+  state: { content: string; reasoning: string },
+): Promise<void> {
+  const reader = upstream.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    if (cb.signal?.aborted) {
+      void reader.cancel();
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      try {
+        const rec = jsonRec(JSON.parse(payload));
+        const choices = rec && Array.isArray(rec.choices) ? rec.choices : [];
+        const first = jsonRec(choices[0]);
+        const delta = jsonRec(first?.delta) ?? jsonRec(first?.message) ?? {};
+        const reasoning =
+          typeof delta.reasoning_content === 'string'
+            ? delta.reasoning_content
+            : typeof delta.reasoning === 'string'
+              ? delta.reasoning
+              : '';
+        if (reasoning) {
+          state.reasoning += reasoning;
+          cb.onDelta?.({ reason: reasoning });
+        }
+        if (typeof delta.content === 'string' && delta.content) {
+          state.content += delta.content;
+          cb.onDelta?.({ text: delta.content });
+        }
+      } catch {
+        /* 忽略心跳/注释行 */
+      }
+    }
+  }
+}
+
+/** 泵取 Anthropic SSE（thinking → r / text → t；error → 抛错；message_stop → 收泵） */
+async function pumpDirectAnthropic(
+  upstream: ReadableStream<Uint8Array>,
+  label: string,
+  cb: RouteCallbacks,
+  state: { content: string; reasoning: string },
+): Promise<void> {
+  const reader = upstream.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let gotAny = false;
+  outer: for (;;) {
+    if (cb.signal?.aborted) {
+      void reader.cancel();
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      let rec: Record<string, unknown> | null;
+      try {
+        rec = jsonRec(JSON.parse(payload));
+      } catch {
+        continue;
+      }
+      if (!rec) continue;
+      const type = typeof rec.type === 'string' ? rec.type : '';
+      if (type === 'content_block_delta') {
+        const d = jsonRec(rec.delta) ?? {};
+        const thinking = typeof d.thinking === 'string' ? d.thinking : '';
+        const text = typeof d.text === 'string' ? d.text : '';
+        if (thinking) {
+          gotAny = true;
+          state.reasoning += thinking;
+          cb.onDelta?.({ reason: thinking });
+        }
+        if (text) {
+          gotAny = true;
+          state.content += text;
+          cb.onDelta?.({ text });
+        }
+      } else if (type === 'error') {
+        const errRec = jsonRec(rec.error);
+        const msg = errRec && typeof errRec.message === 'string' ? errRec.message : '上游错误';
+        throw new Error(`[${label}] ${msg}`);
+      } else if (type === 'message_stop') {
+        break outer;
+      }
+    }
+  }
+  if (!gotAny && !state.content) throw new Error(`[${label}] 流式响应为空`);
+}
+
+/** 浏览器直连 OpenAI 兼容端点。兼容非流式 JSON 回包（部分网关忽略 stream:true）。 */
+async function streamDirectOpenAI(
+  provider: OracleProviderConfig,
+  messages: AgentChatMessage[],
+  deep: boolean,
+  cb: RouteCallbacks,
+): Promise<ModelCallResult> {
+  const label = provider.label || provider.model || 'openai';
+  const url = normalizeOpenAIUrl(provider.baseUrl ?? '');
+  const payload: Record<string, unknown> = {
+    model: provider.model,
+    messages,
+    stream: true,
+    max_tokens: 6000, // 部分兼容端点默认上限低，截断的 JSON 工具块会直接失败（与服务端同参）
+  };
+  if (typeof provider.temperature === 'number') payload.temperature = provider.temperature;
+  void deep; // 推理模型原生输出 reasoning_content，解析侧统一处理
+
+  const { signal, cleanup } = linkedAbort(cb.signal);
+  const state = { content: '', reasoning: '' };
+  // Ollama 等本地端点可无密钥：无 key 时不下发 Authorization（避免 "Bearer undefined" 灰头）
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (provider.apiKey?.trim()) headers.Authorization = `Bearer ${provider.apiKey}`;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal,
+    });
+    if (!res.ok) return { content: '', reasoning: '', err: await describeBadResponse(label, res) };
+    if (!res.body) return { content: '', reasoning: '', err: `[${label}] 响应无流式体` };
+    const ctype = res.headers.get('content-type') ?? '';
+    if (ctype.includes('application/json')) {
+      // 非流式兜底：完整 JSON 对象一次性解析
+      const full = jsonRec(await res.json()) as { choices?: { message?: { content?: string; reasoning_content?: string } }[] } | null;
+      const msg = full?.choices?.[0]?.message;
+      const content = msg?.content ?? '';
+      const reasoning = msg?.reasoning_content ?? '';
+      if (content) {
+        state.content += content;
+        cb.onDelta?.({ text: content });
+      }
+      if (reasoning) {
+        state.reasoning += reasoning;
+        cb.onDelta?.({ reason: reasoning });
+      }
+      if (!content && !reasoning) return { content: '', reasoning: '', err: `[${label}] 响应为空` };
+      return { content: state.content, reasoning: state.reasoning, err: '' };
+    }
+    await pumpDirectOpenAI(res.body, cb, state);
+    if (!state.content && !state.reasoning) return { content: '', reasoning: '', err: `[${label}] 流式响应为空` };
+    return { content: state.content, reasoning: state.reasoning, err: '' };
+  } catch (e) {
+    if (cb.signal?.aborted || externalAborted(e)) return { content: state.content, reasoning: state.reasoning, err: '已中止' };
+    return { content: '', reasoning: state.reasoning, err: describeNetworkError(label, url, e) };
+  } finally {
+    cleanup();
+  }
+}
+
+/** 浏览器直连 Anthropic messages API */
+async function streamDirectAnthropic(
+  provider: OracleProviderConfig,
+  messages: AgentChatMessage[],
+  deep: boolean,
+  cb: RouteCallbacks,
+): Promise<ModelCallResult> {
+  const label = provider.label || provider.model || 'anthropic';
+  const url = normalizeAnthropicUrl(provider.baseUrl ?? '');
+  let body: { system: string; messages: { role: 'user' | 'assistant'; content: string }[] };
+  try {
+    body = toAnthropicPayload(messages);
+  } catch (e) {
+    return { content: '', reasoning: '', err: e instanceof Error ? e.message : String(e) };
+  }
+  const payload: Record<string, unknown> = {
+    model: provider.model,
+    max_tokens: 8192,
+    stream: true,
+    system: body.system,
+    messages: body.messages,
+  };
+  if (typeof provider.temperature === 'number') payload.temperature = provider.temperature;
+  void deep;
+
+  const { signal, cleanup } = linkedAbort(cb.signal);
+  const state = { content: '', reasoning: '' };
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': provider.apiKey ?? '',
+        'anthropic-version': '2023-06-01',
+        // 浏览器直连必需的放行头（anthropic 官方支持 anthropic-dangerous-direct-browser-access）
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    if (!res.ok) return { content: '', reasoning: '', err: await describeBadResponse(label, res) };
+    if (!res.body) return { content: '', reasoning: '', err: `[${label}] 响应无流式体` };
+    await pumpDirectAnthropic(res.body, label, cb, state);
+    return { content: state.content, reasoning: state.reasoning, err: '' };
+  } catch (e) {
+    if (cb.signal?.aborted || externalAborted(e)) return { content: state.content, reasoning: state.reasoning, err: '已中止' };
+    return { content: '', reasoning: state.reasoning, err: describeNetworkError(label, url, e) };
+  } finally {
+    cleanup();
+  }
+}
+
+// ============ 路由决策入口 ============
+
+/** builtin（内置 Z.ai）专用：后端不在时的准确文案（唯一允许「离线」字样的场景） */
+const BUILTIN_OFFLINE_MSG =
+  '神谕离线：此部署为纯静态托管，内置 Z.ai 需要服务端。替代路径：厂商接入中改用自定义厂商（浏览器直连）、' +
+  '本地模型（浏览器推理），或部署 oracle-server 中继后端后填入「中继后端」地址。';
+
+/**
+ * 统一路由入口：按 provider 配置选择最优通道。永不 throw——错误折进 err。
+ * - local：不走此层（agent.ts 先行分流）。
+ * - builtin：中继（若配）→ 本站后端（若在）→ 准确「离线」文案。
+ * - openai/anthropic：中继（若配）→ 本站后端（若在）→ 浏览器直连 → 精确错误（绝不误报离线）。
+ */
+export async function routeCallModel(
+  provider: OracleProviderConfig,
+  messages: AgentChatMessage[],
+  deep: boolean,
+  cb: RouteCallbacks = {},
+): Promise<ModelCallResult> {
+  // ① 显式中继后端（Sealos oracle-server）——用户显式配置，失败不静默换道（错误原样上浮）
+  const relay = provider.relayUrl?.trim();
+  if (relay) {
+    const ep = normalizeRelayUrl(relay);
+    const r = await callViaBackend(ep, provider, messages, deep, cb, '中继');
+    if (r.err && (r.err.includes('请求失败') || r.err.includes('Failed to fetch'))) {
+      return {
+        ...r,
+        err: `${r.err}（请检查中继地址与服务存活；清除「中继后端」可回退自动路由）`,
+      };
+    }
+    return r;
+  }
+
+  // ② 本站后端（next dev / 同源 node 部署）
+  const backend = await probeSiteBackend();
+  if (backend === 'up') {
+    return callViaBackend('/api/oracle/agent', provider, messages, deep, cb, '本站后端');
+  }
+
+  // ③ 静态托管 / 后端不可达
+  if (provider.kind === 'builtin') {
+    return { content: '', reasoning: '', err: BUILTIN_OFFLINE_MSG };
+  }
+  if (provider.kind === 'openai') return streamDirectOpenAI(provider, messages, deep, cb);
+  if (provider.kind === 'anthropic') return streamDirectAnthropic(provider, messages, deep, cb);
+  return { content: '', reasoning: '', err: `未知的 provider.kind：${String(provider.kind)}` };
+}
+
+// ============ 连通性测试（面板「测试连通」共用此单一代码路径） ============
+
+export interface ConnectTestResult {
+  ok: boolean;
+  msg?: string;
+}
+
+/** 最小会话连通测试：走 routeCallModel 全路由（与真实对话完全同路径），读首个增量判定。 */
+export async function runConnectivityTest(provider: OracleProviderConfig): Promise<ConnectTestResult> {
+  invalidateBackendProbe(); // 用户手动触发 → 强制重新探测（后端刚部署好的场景）
+  let ok = false;
+  const result = await routeCallModel(
+    provider,
+    [
+      { role: 'assistant', content: '连通测试' },
+      { role: 'user', content: '回复：OK' },
+    ],
+    false,
+    {
+      onDelta: (d) => {
+        if (d.text || d.reason) ok = true;
+      },
+    },
+  );
+  if (ok) return { ok: true };
+  if (result.err) return { ok: false, msg: result.err };
+  // 无增量也无错误 → 上游已判定（err 应非空；双保险）
+  return { ok: false, msg: result.err || '无响应' };
+}
+
+// ============ 发送前预检（杜绝「发送后才报错」的配置缺失） ============
+
+/**
+ * 校验 provider 配置完整性（custom 空字段在发送前拦截，不再等到 400/直连失败才报错）。
+ * 返回错误文案或 null（通过）。本地/内网网关形式（含 XTransformPort）放行。
+ */
+export function validateProviderConfig(p: OracleProviderConfig): string | null {
+  if (p.kind === 'builtin') return null;
+  if (p.kind === 'local') {
+    return p.model?.trim() ? null : '本地模型需要模型标识符（如 XENova/qwen2.5-0.5b-instruct）';
+  }
+  const label = p.label || p.kind;
+  if (!p.baseUrl?.trim()) return `[${label}] 缺少 Base URL——请补全下方「厂商接入」端点配置`;
+  const b = p.baseUrl.trim();
+  if (!/^https?:\/\//i.test(b) && !b.includes('XTransformPort=')) {
+    return `[${label}] Base URL 需以 http(s):// 开头`;
+  }
+  if (!p.model?.trim()) return `[${label}] 缺少模型名——请补全下方「厂商接入」配置`;
+  return null;
+}

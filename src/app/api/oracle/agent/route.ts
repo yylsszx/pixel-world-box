@@ -19,12 +19,14 @@ const SSE_HEADERS: Record<string, string> = {
   'X-Accel-Buffering': 'no',
 };
 
-/** openai/anthropic 必填字段校验（builtin 全忽略）；返回错误文案或 null */
+/** openai/anthropic 必填字段校验（builtin 全忽略）；返回错误文案或 null。
+ *  v6.1：apiKey 仅 anthropic 必填——openai 兼容端点（Ollama 等本地服务）可无密钥，
+ *  Bearer 头由 providers.ts 按存在性条件下发（杜绝「缺少 apiKey」一刀切误报）。 */
 function validateProvider(p: AgentRequestBody['provider']): string | null {
   const label = p.label || p.model || p.kind;
   if (p.kind === 'openai' || p.kind === 'anthropic') {
     if (!p.baseUrl?.trim()) return `[${label}] 缺少 baseUrl`;
-    if (!p.apiKey?.trim()) return `[${label}] 缺少 apiKey`;
+    if (p.kind === 'anthropic' && !p.apiKey?.trim()) return `[${label}] 缺少 apiKey`;
     if (!p.model?.trim()) return `[${label}] 缺少 model`;
   }
   return null;

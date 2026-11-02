@@ -20,6 +20,9 @@ function candidatesFor(entry) {
     entry + '.tsx',
     path.join(entry, 'index.ts'),
     path.join(entry, 'index.tsx'),
+    // dsh 各包普遍为 src/ 布局（exports 指向未构建 lib/，源码入口在 src/index.ts）
+    path.join(entry, 'src', 'index.ts'),
+    path.join(entry, 'src', 'index.tsx'),
     entry,
   ]
 }

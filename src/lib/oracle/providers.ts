@@ -236,14 +236,14 @@ async function streamOpenAI(body: AgentRequestBody): Promise<ReadableStream<Uint
   // deep：deepseek-r1 / *reason* 等推理模型原生输出 reasoning_content，无需额外参数——解析侧已统一处理
 
   const { signal, timer } = makeAbort();
+  // Ollama 等本地端点可无密钥：无 key 时不下发 Authorization（v6.1 与 route.ts 校验放宽配套）
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (provider.apiKey?.trim()) headers.Authorization = `Bearer ${provider.apiKey}`;
   let res: Response;
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${provider.apiKey}`,
-      },
+      headers,
       body: JSON.stringify(payload),
       signal,
     });
