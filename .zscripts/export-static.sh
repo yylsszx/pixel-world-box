@@ -39,16 +39,48 @@ if [ -d "$API_DIR" ]; then
   echo "[EXPORT] api 路由已暂移（构建后自动还原）"
 fi
 
-# ---- 2) 静态构建（独立 distDir，与运行中的 dev server 互不干扰） ----
+# ---- 1.5) 临时补丁：放开 Next 构建工人的堆顶 ----
+# 根因（2026-11-02 实证）：next build 以 isolatedMemory:true 硬编码在 worker 子进程
+# 内删除 NODE_OPTIONS 的 max-old-space-size（dist/lib/worker.js），4GB 沙箱下 worker
+# 落回 V8 默认堆顶 ~2048MB，预渲染必 OOM（外部 2048/2800/3200 三档全数无效实证）。
+# 处置：构建期临时 isolatedMemory→false 让堆参数直达 worker，构建后自动还原。
+NEXT_PATCH_FILES=(
+  "node_modules/next/dist/build/index.js"
+  "node_modules/next/dist/esm/build/index.js"
+)
+restore_next_patch() {
+  if [ "${PATCHED:-0}" = "1" ]; then
+    for f in "${NEXT_PATCH_FILES[@]}"; do
+      if [ -f "$f.bak-heap" ]; then mv "$f.bak-heap" "$f"; fi
+    done
+    echo "[EXPORT] next worker 堆补丁已还原"
+  fi
+}
+restore_all() { restore_api; restore_next_patch; }
+PATCHED=0
+for f in "${NEXT_PATCH_FILES[@]}"; do
+  if [ -f "$f" ] && grep -q 'isolatedMemory: true' "$f"; then
+    cp "$f" "$f.bak-heap"
+    sed -i 's/isolatedMemory: true/isolatedMemory: false/g' "$f"
+    PATCHED=1
+  fi
+done
+if [ "$PATCHED" = "1" ]; then
+  trap restore_all EXIT
+  echo "[EXPORT] next worker 堆补丁已打（isolatedMemory→false，构建后自动还原）"
+fi
+
+# ---- 2) 静态构建（独立 distDir，与运行中的 dev server 互不干扰；堆顶可覆写） ----
 rm -rf "$OUT_DIR" ".next-export"
 STATIC_EXPORT=1 \
   EXPORT_BASE_PATH="$BASE_PATH" \
   NEXT_DIST_DIR=".next-export" \
-  NODE_OPTIONS="--max-old-space-size=2048" \
+  NODE_OPTIONS="--max-old-space-size=${EXPORT_HEAP:-2800}" \
   ./node_modules/.bin/next build
 
-# ---- 3) 还原 API 路由（越早越好） ----
+# ---- 3) 还原（api 路由越早越好） ----
 restore_api
+restore_next_patch
 trap - EXIT
 
 # ---- 4) 产物校验 ----

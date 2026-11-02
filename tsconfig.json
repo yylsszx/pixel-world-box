@@ -40,6 +40,8 @@
   ],
   "exclude": [
     "node_modules",
-    "examples"
+    "examples",
+    "third_party",
+    "skills"
   ]
 }
