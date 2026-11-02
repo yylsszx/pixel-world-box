@@ -674,6 +674,16 @@ namespace PixelWorldBox.Wb
 
         // ---------------- 引擎态 ----------------
         public WbLaws laws = new WbLaws();
+        /// <summary>engine.ts L633/L923 agentLaws（M-U28：Agent 法则系统 v2 结算面——槽 60 消费端；
+        /// 构造器装配 = 蓝本构造器 L923 赋值同相）</summary>
+        public WbAgentLaws agentLaws;
+
+        /// <summary>engine.ts 构造器 L923 同相（M-U28：agentLaws 构造期入位）</summary>
+        public WbWorld()
+        {
+            agentLaws = new WbAgentLaws(this);
+        }
+
         public uint rngA;
         public int tickCount;
         public long frameCount;          // engine this.frameCount（L2669 DAY_FRAMES=2400 / L2672-2674 dayPhase 消费 / L2706 frame(dtMs) 帧推进——update 域不推进恒夹具值；M-U7x 字段只加）
@@ -892,7 +902,7 @@ namespace PixelWorldBox.Wb
 
         public static bool IsFxMinor(string kind) => FxMinorSet.Contains(kind);
 
-        /// engine.ts addEvent L13995-14013（unshift + 80 上限；onEvent/agentLaws 回调宿主侧，不入 C# 态）
+        /// engine.ts addEvent L13995-14013（unshift + 80 上限 + agentLaws onEvent 钩子 L14047-14049 M-U28 接线）
         public void AddEvent(string kind, string text, string colorHex = null, double? x = null, double? y = null)
         {
             var ev = new WbEv
@@ -907,6 +917,9 @@ namespace PixelWorldBox.Wb
             };
             worldEvents.Insert(0, ev);
             if (worldEvents.Count > WORLD_EVENTS_CAP) worldEvents.RemoveRange(WORLD_EVENTS_CAP, worldEvents.Count - WORLD_EVENTS_CAP);
+            // v41：机制热插拔事件总线——event 型机制在此感应世界脉动（engine.ts L14047-14049；
+            // 零法则零开销；firing 重入保护在 OnEvent 内——fire 里的神力会再 addEvent，防无限递归）
+            if (agentLaws != null && agentLaws.laws.Count > 0) agentLaws.OnEvent(kind, x, y);
         }
 
         /// engine.ts toast L13990-13992（onToast 回调收集）

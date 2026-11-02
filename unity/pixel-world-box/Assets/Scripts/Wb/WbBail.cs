@@ -1176,7 +1176,7 @@ namespace PixelWorldBox.Wb
         }
 
         /// engine ignite L1072-1078 —— 点燃（FLAMMABLE=[GRASS,FOREST] constants.ts L65 / 建筑格；fire=150+floor(rng×90)）
-        private static void IgniteE(WbWorld w, int i)
+        internal static void IgniteE(WbWorld w, int i)   // M-U28：private→internal 可见性放宽——agentLaws fire 动作 L849 消费；M-U7k 先例，语义零改动
         {
             byte t = w.terrain[i];                                                                                             // L1073
             if (w.fire[i] > 0) return;                                                                                          // L1074
@@ -4031,7 +4031,7 @@ namespace PixelWorldBox.Wb
         }
 
         // ================= nuke（engine L12255-12260 机械翻译：核打击入口——missile 核支 L10306 消费） =================
-        private static void Nuke(WbWorld w, double x, double y, double power = 1)                                    // L12255
+        internal static void Nuke(WbWorld w, double x, double y, double power = 1)                                    // L12255（M-U28：private→internal 可见性放宽——agentLaws fire nuke 动作消费；M-U7k SpawnUnit 先例，语义零改动）
         {
             w.statNukes++;                                                                                           // L12256（成就计数：蘑菇云升起）
             // 当量可调：爆炸半径 7 → 最高 24（蓝本注释 21 为旧值——min 钳 24 机械保持）
@@ -5529,7 +5529,7 @@ namespace PixelWorldBox.Wb
         }
 
         // isHerbivoreRace L2120-2128（猎物链底层判定：静态八种 + dynRaces 递归母族）
-        private static bool IsHerbivoreRace(WbWorld w, int race)
+        internal static bool IsHerbivoreRace(WbWorld w, int race)   // M-U28：private→internal 可见性放宽——agentLaws buildStats L604 消费；M-U7k 先例，语义零改动
         {
             if (race == R_SHEEP || race == R_DEER || race == R_PENGUIN || race == R_CAMEL) return true;     // L2121
             // 八新动物：鸡/猪/兔（陆）与鱼（水）均为猎物链底层（狐猎兔鸡、鲨猎鱼）                        // L2123-2124
