@@ -13,7 +13,8 @@ import { useGameStore, getEngine } from '@/store/gameStore';
 import type { OracleMode, OracleMsg, CondExpr } from '@/lib/game/types';
 import type { AgentChatMessage, AgentToolResult, OracleProviderConfig, ProviderKind } from '@/lib/oracle/types';
 import { runOracleAgentTurn, type AgentTurnResult } from '@/lib/oracle/agent';
-import { runConnectivityTest, validateProviderConfig, runDshSessionTurn } from '@/lib/oracle/direct-client';
+import { runConnectivityTest, validateProviderConfig, runDshSessionTurn, type DshSnapshot } from '@/lib/oracle/direct-client';
+import { executeOracleTool } from '@/lib/oracle/bridge';
 import { loadDshOn, storeDshOn, loadOrCreateSessionId, rotateSessionId } from '@/lib/oracle/session';
 import { renderToolCatalog, AGENT_TOOLS } from '@/lib/oracle/tools';
 import { buildSystemPrompt } from '@/lib/oracle/prompt';
@@ -26,6 +27,10 @@ import {
 } from 'lucide-react';
 
 // ---------------- 基础常量 ----------------
+
+// dsh 桥动作行前缀（server.mjs bridgeLine action-request 恒定前缀）：
+// 每个 {r} 事件恰为一行——OraclePanel 逐行解析后经 executeOracleTool 在活引擎上真执行
+const DSH_ACTION_MARK = '[bridge] 动作待执行 ';
 
 const MODE_ICON: Record<OracleMode, typeof ScrollText> = {
   narrate: ScrollText,
@@ -1024,10 +1029,56 @@ function OracleBody() {
         // 默认面：客户端多轮工具循环（活引擎零延迟执行）
         const sid = sessionId || loadOrCreateSessionId();
         if (sid !== sessionId) setSessionId(sid);
+        // 挂账②：dsh 面每回合喂世界快照（wb_world_digest/wb_query_chronicle 真实数据源，
+        // 仅文本叙事 digest≤1200 字+纪事≤8 行，禁 dump 结构化对象）；引擎未就绪则省略（服务端工具回未接入引导）
+        const eng = getEngine();
+        let snapshot: DshSnapshot | undefined;
+        if (eng) {
+          const dg = executeOracleTool(eng, 'get_world_digest', {});
+          const ev = executeOracleTool(eng, 'get_events', { limit: 8 });
+          const chronicle =
+            ev.ok && ev.data && Array.isArray((ev.data as { events?: unknown }).events)
+              ? ((ev.data as { events: Array<{ year?: number; text?: string; at?: string | null }> }).events)
+                  .map((e) => `${e.year != null ? `第${e.year}年 ` : ''}${e.text ?? ''}${e.at ? `（${e.at}）` : ''}`.trim())
+                  .filter((t) => t.length > 0)
+                  .slice(0, 8)
+              : [];
+          const digest = dg.ok && dg.data && typeof (dg.data as { digest?: unknown }).digest === 'string'
+            ? ((dg.data as { digest: string }).digest).slice(0, 1200)
+            : '';
+          if (digest || chronicle.length) snapshot = { digest: digest || undefined, chronicle: chronicle.length ? chronicle : undefined };
+        }
+        // {r} 动作行真执行：wb_spawn/wb_weather 受理的动作经桥下达，逐行解析后在活引擎上执行，
+        // 结果以工具卡入流（失败以 ✗ 摘要呈现——与默认面工具卡同形状，非静默）
+        const runDshAction = (line: string) => {
+          if (!eng) return;
+          const rest = line.slice(DSH_ACTION_MARK.length);
+          const sp = rest.indexOf(' ');
+          if (sp <= 0) return;
+          const name = rest.slice(0, sp).trim();
+          let args: Record<string, unknown> = {};
+          try {
+            args = JSON.parse(rest.slice(sp + 1)) as Record<string, unknown>;
+          } catch {
+            return;
+          }
+          const r = executeOracleTool(eng, name, args);
+          setLive((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  phase: 'invoke',
+                  invoking: name,
+                  tools: [...prev.tools, { name, args, ok: r.ok, summary: briefResult(r) }],
+                }
+              : prev,
+          );
+        };
         const res: AgentTurnResult = dshOn
           ? await runDshSessionTurn(provider, sid, userText, {
               signal: ac.signal,
-              onDelta: (d) =>
+              onDelta: (d) => {
+                if (d.reason?.startsWith(DSH_ACTION_MARK)) runDshAction(d.reason);
                 setLive((prev) =>
                   prev
                     ? {
@@ -1037,8 +1088,9 @@ function OracleBody() {
                         reason: prev.reason + (d.reason ?? ''),
                       }
                     : prev,
-                ),
-            }).then((r) => ({
+                );
+              },
+            }, snapshot).then((r) => ({
               // dsh 面结果归一为回合形状：工具轮在服务端执行，前端零工具事件（桥过程已随 {r} 入思考流）
               content: r.content,
               toolEvents: [],

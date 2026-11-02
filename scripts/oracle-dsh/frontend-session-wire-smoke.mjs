@@ -4,6 +4,7 @@
 //   ② 默认面字节守卫：无 extras 时 body 无 dsh 键、messages 原样透传
 //   ③ 非 relay 场景 extras 静默忽略（builtin → 离线文案，不崩不漏）
 //   ④ session.ts 形状面：sessionId 恒匹配服务端守卫正则（[A-Za-z0-9._-]{1,64}）
+//   ⑤ 挂账② snapshot 透传：body.dsh={sessionId,snapshot}（无快照时恒 {sessionId}）
 // 运行：oracle-server/dsh-runtime/node_modules/.bin/tsx scripts/oracle-dsh/frontend-session-wire-smoke.mjs
 import http from 'node:http';
 import assert from 'node:assert/strict';
@@ -87,6 +88,16 @@ assert.equal(loadDshOn(), false);
 assert.equal(isValidSessionId('x'.repeat(65)), false, '65 字符拒（服务端 400 同规）');
 assert.equal(isValidSessionId('s-abc-123'), true);
 ok('session.ts 形状面：200 随机全合法 + 轮换互异 + 开关往返 + 越界拒绝');
+
+// ⑤ 挂账② snapshot 透传：runDshSessionTurn 带 snapshot → body.dsh={sessionId,snapshot}；
+//   无 snapshot 时 body.dsh 恒为 {sessionId}（步骤①deepEqual 已守）；无 relay 场景零泄漏不变（步骤③已守）
+const snap = { digest: '第 42 年：三国鼎立。', chronicle: ['人类建成第二村落'] };
+const r5 = await runDshSessionTurn(relayProvider, sid, '带快照提问', {}, snap);
+const b5 = captured[captured.length - 1];
+assert.deepEqual(b5.dsh, { sessionId: sid, snapshot: snap }, 'body.dsh={sessionId,snapshot} 透传（字节面）');
+assert.equal(b5.messages.length, 1, '带快照仍仅末条 user');
+assert.equal(r5.content, '回答', '快照面 SSE 泵不受影响');
+ok(`snapshot 透传：body.dsh={sessionId,snapshot}（digest ${snap.digest.length} 字+纪事 ${snap.chronicle.length} 行）`);
 
 server.close();
 console.log(`\nFRONTEND SESSION WIRE SMOKE: ${step} 步 ALL PASS`);

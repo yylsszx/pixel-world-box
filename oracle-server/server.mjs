@@ -454,6 +454,17 @@ function bridgeLine(ev) {
   if (ev.type === 'turn-start') return '[bridge] 回合开始';
   if (ev.type === 'tool-round') return `[bridge] 工具轮 ${ev.round}: ${(ev.tools ?? []).join(',') || '（无）'}`;
   if (ev.type === 'turn-end') return `[bridge] 回合结束（${ev.rounds ?? 0} 轮）`;
+  // 挂账②：动作请求行——浏览器 OraclePanel 逐行解析此后缀并经 executeOracleTool 真执行
+  //   （每 {r} 事件恰为一行，前缀恒定 `[bridge] 动作待执行 `；行 ≤400 字符）
+  //   形状：action.tool=浏览器工具名（spawn_creatures/god_power），其余字段=该工具实参
+  if (ev.type === 'action-request' && ev.action && typeof ev.action === 'object') {
+    const tool = typeof ev.action.tool === 'string' ? ev.action.tool : '';
+    if (!tool) return null;
+    try {
+      const { tool: _t, ...args } = ev.action;
+      return `[bridge] 动作待执行 ${tool} ${JSON.stringify(args)}`.slice(0, 400);
+    } catch { return null; }
+  }
   return null;
 }
 

@@ -25,10 +25,22 @@ export interface RouteCallbacks {
   signal?: AbortSignal;
 }
 
+/**
+ * dsh 快照面（挂账②）：前端每回合喂给 oracle-server 的紧凑世界实况——
+ * 服务端 pwbContext.setSnapshot/pushChronicle 摄入，wb_world_digest/wb_query_chronicle 读真数据。
+ * 只传文本叙事（digest ≤1200 字 + 纪事行 ≤8 条），禁 dump 结构化世界对象（体积/隐私双红线）。
+ */
+export interface DshSnapshot {
+  /** 世界实况一段式摘要（buildOracleContext 同源文本） */
+  digest?: string;
+  /** 纪事行（世界事件流尾部，每行 ≤200 字） */
+  chronicle?: string[];
+}
+
 /** 路由附加选项（可选，缺省=行为与 v6 完全一致） */
 export interface RouteExtras {
-  /** dsh 持久会话面：仅中继通道生效——body.dsh={sessionId}，历史由 oracle-server 事件日志权威投影 */
-  dsh?: { sessionId: string };
+  /** dsh 持久会话面：仅中继通道生效——body.dsh={sessionId[,snapshot]}，历史由 oracle-server 事件日志权威投影 */
+  dsh?: { sessionId: string; snapshot?: DshSnapshot };
 }
 
 const TIMEOUT_MS = 120_000;
@@ -563,13 +575,15 @@ export async function runDshSessionTurn(
   sessionId: string,
   userText: string,
   cb: RouteCallbacks = {},
+  snapshot?: DshSnapshot,
 ): Promise<ModelCallResult> {
   return routeCallModel(
     provider,
     [{ role: 'user', content: userText }],
     false,
     cb,
-    { dsh: { sessionId } },
+    // 挂账②：snapshot 仅在有值时附加（无快照时 body.dsh 恒为 {sessionId}——线协议字节不变）
+    { dsh: snapshot ? { sessionId, snapshot } : { sessionId } },
   );
 }
 
