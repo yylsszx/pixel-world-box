@@ -552,9 +552,9 @@ namespace PixelWorldBox.Wb
                 if (w.Rng() < 0.5)
                 {
                     string k = WbWorld.PairKey(civId, o);
-                    int cur;
+                    double cur = 0;
                     w.tension.TryGetValue(k, out cur);
-                    w.tension[k] = System.Math.Min(80, cur + 2);
+                    w.tension[k] = System.Math.Min(80, cur + 2);   // M-U32：tension f64 改型同型（蓝本 L1751 number 域）
                 }
             }
         }

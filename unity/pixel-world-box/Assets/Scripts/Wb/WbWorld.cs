@@ -301,6 +301,9 @@ namespace PixelWorldBox.Wb
         public int? winner;
         public string endText = "";
         public int emerged;               // engine WorldWarState.emerged L1144（涌现武器发射计数——fireEmergent L9365/L9391 写面；M-U31 加入；存档面 WbSave2 st JSON 已有键）
+        // —— M-U32 大战域计数面（engine WorldWarState L6919 IDLE 形状——字段只加）——
+        public System.Collections.Generic.Dictionary<int, int> pop0 = new System.Collections.Generic.Dictionary<int, int>();   // engine pop0: Record<number, number>（Object.fromEntries——开战人口快照；civ.id → pop）
+        public int nukes, lasers, drones, orbitals, plasmas, antimatters;       // engine 计数器六件（wwWeaponsTick 写面）
     }
     public class WbWwFallen { public int id; public string name; public string colorHex; }
 
@@ -465,7 +468,7 @@ namespace PixelWorldBox.Wb
 
         // ---------------- 外交层 ----------------
         public Dictionary<string, double> rel = new Dictionary<string, double>();   // f64（蓝本 rel.set 存 20+rr/3 小数）
-        public Dictionary<string, int> tension = new Dictionary<string, int>();
+        public Dictionary<string, double> tension = new Dictionary<string, double>();   // engine L471 Map<string, number>（f64 域——M-U32 改型 int→double：warTick 衰减面 19.3/18.656 小数；M-U3c 原型 int 为既有消费者整值近似，旧黄金零依赖 tension 值面）
         public HashSet<string> met = new HashSet<string>();
 
         // ---------------- 事件流（引擎侧效应与宿主解耦 —— WbNature 先例纪律③） ----------------
@@ -643,6 +646,13 @@ namespace PixelWorldBox.Wb
         public List<WbCorpse> corpses = new List<WbCorpse>();      // engine corpses（L2871 addCorpse）
         public List<WbBlood> blood = new List<WbBlood>();          // engine blood（L2865 addBlood——M-U7q 字段只加）
         public WbWorldWar worldWar = new WbWorldWar();
+        // —— M-U32 大战域（engine L238-246/L473/L6927 字段只加）——
+        public Dictionary<string, long> wwTruce = new Dictionary<string, long>();   // engine L240 wwTruce Map<string, number>（pairKey → 休战截止 tick）
+        public long wwLastNukeTick = -600;                 // engine L242 wwLastNukeTick = -600（核全局冷却 15 年）
+        public long wwLastAntiTick = -1200;                // engine L244 wwLastAntiTick = -1200（反物质全局冷却 30 年）
+        public long wwFrenzyAnnounced = -1;                // engine L246 wwFrenzyAnnounced = -1（终局狂热播报去重——记大战 startTick）
+        public long wwIgniteTick = -400;                   // engine L6927 wwIgniteTick = -400（自然引燃独立计时器——%400 会与 30 错拍）
+        public Dictionary<int, long> lastDeclareAt = new Dictionary<int, long>();   // engine L473 lastDeclareAt Map<number, number>（400 节奏阀——每文明十年内至多一场新战争）
         public Dictionary<int, int> allianceOf = new Dictionary<int, int>();                // civId → allianceId
         public Dictionary<int, long> allianceWarCd = new Dictionary<int, long>();
         public int allianceSeq = 1;         // engine L553 allianceSeq = 1（M-U3d 修复：0 起始会使 FormAlliance id/颜色 off-by-one）
