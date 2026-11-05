@@ -4039,14 +4039,13 @@ namespace PixelWorldBox.Wb
             Explode(w, x, y, r, true, true, true);                                                                   // L12259（{terrain:true, lava:true, nuke:true}——M-U10c 全译件复用；核域支 radSet/radiate/MarkDirty 随件）
         }
 
-        // ================= emergentPayload（engine L9397-9436 桩形——发射面 M-U31 待译） =================
-        //   M-U30 起铸造域已译（WbArmory——forge/fuse/divine/forgeTick/armoryTick 全件），
-        //   但 fireEmergent L9317-9396 未译 → 无 fx 携 wid 落点 → L9398 get(e.wid ?? -1) 恒 undefined
-        //   → L9399 早退即全语义（killCredit 同理恒 null——WbCivSim.WwCountKill 桩注释同步）。
-        //   w.rad/w.terra/w.morale 躯干（辐射环 40%/奇点焦土 55%/士气崩落）随发射面入链按锚补译（M-U31）。
+        // ================= emergentPayload（engine L9397-9436——M-U31 解桩转发 WbArmory 实装） =================
+        //   M-U30 起铸造域已译（WbArmory——forge/fuse/divine/forgeTick/armoryTick 全件）；
+        //   M-U31 发射面入链：fireEmergent 已译 → fx 携 wid 落点 → L9398 get(e.wid ?? -1) 真路径
+        //   （killCredit 同步解桩 WbCivSim——w.kills++/学说漂移/q[0] 上行）。
         private static void EmergentPayload(WbWorld w, WbFx e)                                                       // L9397
         {
-            // const w = this.emergentWeapons.get(e.wid ?? -1)（L9398）——发射面未译无 wid 携带；if (!w) return（L9399）早退即全语义
+            WbArmory.EmergentPayload(w, e);                                                                          // 转发（域家族归 WbArmory——五处调用点零改动）
         }
 
         // ================= regrowTick L2830-2840（M-U8b regrow 域核心——sim 域切片） =================

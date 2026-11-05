@@ -79,6 +79,7 @@ namespace PixelWorldBox.Wb
         public int? wid;                    // engine Effect.wid（涌现武器 id——shell/missile 命中结算 killCredit 归属 + emergentPayload 门；M-U10d L10297/L10299 消费——JS undefined ≡ false）
         public double? nuke;                // engine Effect.nuke（核弹头当量——missile 核支门 nuke>0；M-U10d L10304 消费）
         public int? fire;                   // engine Effect.fire（弹体纵火 0/1——shell !!e.fire 门；M-U10d L10298 消费——JS undefined ≡ false；蓝本生成面恒 0/1 L9467）
+        public string col;                  // engine Effect.col（装药专属弹道色——fireEmergent L9389 消费 PAYLOAD_FX[clamp(pl,0,6)]；M-U31）
     }
 
     /// 地面物品 —— engine items.push L5388 结构（tryPickup L5225 消费；M-U3h 第五批）
@@ -299,6 +300,7 @@ namespace PixelWorldBox.Wb
         public List<WbWwFallen> fallen = new List<WbWwFallen>();
         public int? winner;
         public string endText = "";
+        public int emerged;               // engine WorldWarState.emerged L1144（涌现武器发射计数——fireEmergent L9365/L9391 写面；M-U31 加入；存档面 WbSave2 st JSON 已有键）
     }
     public class WbWwFallen { public int id; public string name; public string colorHex; }
 

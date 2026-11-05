@@ -841,6 +841,203 @@ namespace PixelWorldBox.Wb
         }
 
         // ============================================================
+        // 发射面（M-U31：fireEmergent L9317-9400 + emergentPayload L9403-9442
+        //   + wwCountKill 反馈支路 WbCivSim 解桩）
+        // ============================================================
+
+        /// <summary>装药弹道视觉签名色 L8735（v3：动能白/高爆橙/铝热红/电脉青/生化绿/聚变金/反物质紫）</summary>
+        public static readonly string[] PayloadFx =
+        {
+            "#e8e2d5", "#ff9b2d", "#ff5f3d", "#7df9ff", "#8fd66f", "#ffd93d", "#c98fff",
+        };
+
+        /// <summary>动态物种标记色板 L8737（头顶 1px 突变点——发射面随件入账）</summary>
+        public static readonly string[] DynTints =
+        {
+            "#ff5fd2", "#5fe8ff", "#c9ff5f", "#ff9e5f", "#b45fff", "#7df9ff", "#ffb35f", "#a0ff8f",
+        };
+
+        /// <summary>engine fireEmergent L9317-9400 —— 发射一件涌现武器（v2 架构化）：
+        /// 点防拦截判定 → 制导散射 → 装甲减伤 → 弹道特效；每一次交手都在改写双方的学说与防御。
+        /// 掷序：foes 选 1 → army 门 0.4（有敌军团时）→ army 选（门命中时）→ building 选（回退时）
+        ///   → 拦截 1 → missA 1 → fire 纵火 1 → fx 内 seed/dir 2（M-U30 教训 a：fx 掷数预算必计 2）。
+        /// 整数计数写入 (int) 保型（JSON Integer——M-U30 教训 f 同族：kills/fired/inter 递增禁 Float 化）。</summary>
+        public static void FireEmergent(WbWorld w, WbCiv c, JObject wep)
+        {
+            var foes = new List<WbCiv>();                                                                    // L9318
+            foreach (var o in w.civs)
+                if (o.alive && o.id != c.id && AtWar(w, c.id, o.id)) foes.Add(o);
+            if (foes.Count == 0) return;                                                                     // L9319
+            var foe = foes[(int)Math.Floor(w.Rng() * foes.Count)];                                           // L9320（foes 选掷——无条件）
+            // 目标选择器：优先敌军团（nearer 高价值）→ 首都 → 随机建筑
+            double tx = -1, ty = -1;                                                                         // L9322-9323
+            var foeArmies = new List<WbArmy>();                                                              // L9324
+            foreach (var a in w.armies) if (a.civ == foe.id) foeArmies.Add(a);
+            if (foeArmies.Count > 0 && w.Rng() < 0.4)                                                        // L9325（army 门掷——短路：无军团零掷）
+            {
+                var a = foeArmies[(int)Math.Floor(w.Rng() * foeArmies.Count)];                               // L9326（army 选掷）
+                WbU m = a.members.Count > 0 && w.unitById.TryGetValue(a.members[0], out var mm) ? mm : null;  // L9327（members[0] != null ? unitById.get : null）
+                if (m != null && m.dead == 0) { tx = m.x; ty = m.y; }                                         // L9328（m && !m.dead）
+            }
+            if (tx < 0 && foe.capital >= 0) { tx = WbWorld.TileX(foe.capital) + 0.5; ty = WbWorld.TileY(foe.capital) + 0.5; }   // L9330
+            if (tx < 0)                                                                                      // L9331
+            {
+                var fb = new List<WbBuilding>();                                                             // L9322
+                foreach (var b in w.buildings) if (b.civ == foe.id) fb.Add(b);
+                if (fb.Count > 0) { var b = fb[(int)Math.Floor(w.Rng() * fb.Count)]; tx = b.x + 0.5; ty = b.y + 0.5; }   // L9333（building 选掷）
+            }
+            if (tx < 0) return;                                                                              // L9335（无任何目标）
+            double sx = WbCivSim.CivCenterX(w, c);                                                           // L9336
+            double sy = WbCivSim.CivCenterY(w, c);                                                           // L9337
+            var P = WcPayloads[(int)JNullish(wep, "pl", 1)];                                                 // L9338
+            var D = WcDeliveries[(int)JNullish(wep, "dl", 0)];                                               // L9339
+            var G = WcGuides[(int)JNullish(wep, "gd", 1)];                                                   // L9340
+            double q1 = JQNullish(wep, "q", 1, 1), q2 = JQNullish(wep, "q", 2, 1);                          // L9341（q ?? [1,1,1,1] 槽位消费）
+            var doc = DoctrineOf(w, c.id);                                                                    // L9342
+            var def = DefenseOf(w, foe.id);                                                                   // L9343
+            double defCap = DefenseCap(w, foe.id);                                                            // L9344
+            wep["fired"] = (int)JNullish(wep, "fired", 0) + 1;                                                // L9345（w.fired++ 整型保型）
+            // —— 拦截判定：点防 × (1-投送速度) × (1-饱和压制) ——
+            double speed = D.speed * q1;                                                                      // L9347
+            double sat = Math.Min(0.75, D.sat + G.sat);                                                      // L9348
+            double pInt = (def.point / 100) * (1 - speed * 0.75) * (1 - sat);                                 // L9349（高速 speed>4/3 → 负值恒突防——蓝本语义）
+            if (w.Rng() < pInt)                                                                              // L9350（拦截掷）
+            {
+                // 中段拦截：弹道中点炸成烟花，无伤害
+                double mx = (sx + tx) / 2, my = (sy + ty) / 2;                                                 // L9352-9353
+                w.Fx("explosion", mx, my, 16, optR: 1.8);                                                     // L9354（2 掷 seed/dir）
+                w.Fx("spark", mx, my, 10);                                                                    // L9355（2 掷）
+                wep["inter"] = (int)JNullish(wep, "inter", 0) + 1;                                             // L9356（整型保型）
+                // 反馈回路：守方点防强化 + 攻方学说转向饱和/隐身投送 + 投送品质被否证
+                def.point = Math.Min(defCap, def.point + 1.5);                                                 // L9358
+                doc.saturation = Math.Min(0.95, doc.saturation + 0.025);                                      // L9359
+                doc.precision = Math.Max(0.05, doc.precision - 0.012);                                        // L9360
+                var qArr = wep["q"] as JArray;                                                                // L9361（if (w.q) w.q[1] = max(0.6, ·-0.02)）
+                if (qArr != null) qArr[1] = Math.Max(0.6, qArr[1].Value<double>() - 0.02);
+                int interNow = (int)JNullish(wep, "inter", 0);                                                 // L9362（inter===1 || %5===0 播报门）
+                if (interNow == 1 || interNow % 5 == 0)
+                    w.AddEvent("superweapon", $"「{foe.name}」的点防御网在半途撕碎了「{wep.Value<string>("name")}」——第 {interNow} 次拦截成功", foe.colorHex, mx, my);   // L9363
+                if (w.worldWar.phase == "running" && w.worldWar.belligerents.Contains(c.id)) w.worldWar.emerged++;   // L9365
+                return;                                                                                       // L9366（拦截后 return——无散射/纵火掷）
+            }
+            // —— 制导散射：有效精度 vs 疏散诱饵（诱饵抵抗高的制导不吃疏散）——
+            double effAcc = G.acc * q2 * (1 - Math.Min(0.55, (def.evade / 100) * (1 - G.decoyRes)));   // L9369
+            double missR = (1 - effAcc) * (3.5 + wep.Value<double>("radius") * 1.4);                          // L9370
+            double missA = w.Rng() * Math.PI * 2;                                                             // L9371（missA 掷）
+            double ax = tx + WbMath.FdCos(missA) * missR;                                                     // L9372（FdCos 位级）
+            double ay = ty + WbMath.FdSin(missA) * missR;                                                     // L9373（FdSin 位级）
+            // —— 装甲减伤：破甲能力抵消装甲（穿甲/钻地/电脉天生克制重甲）——
+            double pen = Math.Min(0.85, P.pen + D.pen);                                                       // L9375
+            double armorMit = Math.Max(0.35, 1 - (def.armor / 100) * (1 - pen));                              // L9376
+            double dmgOut = wep.Value<double>("dmg") * armorMit;                                              // L9377
+            double radiusOut = wep.Value<double>("radius") * (0.72 + 0.28 * armorMit);                         // L9378
+            double dist = WbMath.FdHypot(ax - sx, ay - sy);                                                   // L9379
+            double ttl = Math.Max(30, Math.Min(140, WbMath.JsRound(dist * 1.3)));                             // L9380（JsRound 位级——Math.round half-up）
+            int fireVal = w.Rng() < wep.Value<double>("fire") ? 1 : 0;                                        // L9387（fire 纵火掷——JS opts 字面量求值先于 fx 调用）
+            var fx = w.Fx(D.fx, ax, ay, ttl, optR: radiusOut, optColorHex: PayloadFx[Math.Max(0, Math.Min(6, (int)JNullish(wep, "pl", 1)))], optX0: sx, optY0: sy, optDmg: dmgOut);   // L9381-9390（fx 2 掷；col = PAYLOAD_FX[钳 0-6]——v3 装药专属弹道色）
+            fx.src = c.id;                                                                                    // opts.src（后赋——WbFx 字段段）
+            fx.fire = fireVal;                                                                               // opts.fire（0/1）
+            fx.wid = wep.Value<int>("id");                                                                    // opts.wid（命中结算 killCredit 归属 + emergentPayload 门）
+            if (w.worldWar.phase == "running" && w.worldWar.belligerents.Contains(c.id)) w.worldWar.emerged++;   // L9391
+            // —— 挨打反馈：守方防御按攻击剖面成长（点防小涨/装甲大涨/疏散中涨）——
+            def.point = Math.Min(defCap, def.point + 0.5);                                                     // L9393
+            def.armor = Math.Min(defCap, def.armor + 1.6 * (1 - pen * 0.5));                                   // L9394
+            def.evade = Math.Min(defCap, def.evade + 1.1);                                                     // L9395
+            // 首射/奇迹武器入纪事（常规发射由命中结算播报，防刷屏）
+            int firedNow = (int)JNullish(wep, "fired", 0);                                                     // L9397
+            if (firedNow == 1 || JTruthy(wep["wonder"]))
+                w.AddEvent("emerge", $"「{c.name}」的涌现武器「{wep.Value<string>("name")}」首次开火——{(effAcc > 0.7 ? "制导锁定" : "弹道解算")}完毕，目标：「{foe.name}」", c.colorHex, ax, ay);   // L9398
+        }
+
+        /// <summary>engine emergentPayload L9403-9442 —— 涌现武器命中附加结算：
+        /// 辐射污染（rad 环 40%：radiate=40 + radSet tick+2400 + markDirty）/ 地形湮灭（terra 环 55%：
+        /// rng&lt;0.7 掷/tile、山地板留、BURNT 落地）/ 军团士气打击（morale&gt;0：r+2.5 内敌军团
+        /// max(5, ·-w.morale)、src 国豁免）。WbBail 五处命中结算 killCredit 接线消费（M-U10d/e/h 预埋）。
+        /// DIVERGENCE：①e.r ?? w.radius 的 undefined 态生产面不可达（fx 构造 r 恒数字——WbFx.r
+        /// 非 null 直用）；②a.morale ?? 60 同理（armies 构建面恒写 morale——WbArmy.morale 非 null）。</summary>
+        public static void EmergentPayload(WbWorld w, WbFx e)
+        {
+            var wep = e.wid.HasValue ? WeaponGet(w, e.wid.Value) : null;                                      // L9404（get(e.wid ?? -1)——null 恒 miss 等价）
+            if (wep == null) return;                                                                          // L9405
+            double r = e.r;                                                                                    // L9406（e.r ?? w.radius——DIVERGENCE-1 直用）
+            if (JTruthy(wep["rad"]))                                                                          // L9407
+            {
+                // 辐射污染：落点半径 40% 内 tile 染辐射（radSet 到期自动衰减）
+                int rr = Math.Max(1, (int)WbMath.JsRound(r * 0.4));                                            // L9409
+                for (int yy = (int)Math.Floor(e.y - rr); yy <= e.y + rr; yy++)                                  // L9410（上界 e.y+rr 非整——JS 同形）
+                {
+                    for (int xx = (int)Math.Floor(e.x - rr); xx <= e.x + rr; xx++)                              // L9411
+                    {
+                        if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                   // L9412
+                        if (WbMath.FdHypot(xx + 0.5 - e.x, yy + 0.5 - e.y) > rr) continue;                      // L9413
+                        int i = yy * WbWorld.W + xx;                                                            // L9414（idx）
+                        if (WbWorld.IsLand(w.terrain[i]))                                                      // L9415
+                        {
+                            w.radiate[i] = 40;                                                                  // L9416
+                            w.radSet[i] = w.tickCount + 2400;                                                  // L9417（Map.set 覆写幂等）
+                            w.MarkDirty(i);                                                                     // L9418
+                        }
+                    }
+                }
+            }
+            if (JTruthy(wep["terra"]))                                                                        // L9423
+            {
+                // 奇点湮灭：中心焦土化（不动山——保留地质）
+                int rr = Math.Max(1, (int)WbMath.JsRound(r * 0.55));                                           // L9425
+                for (int yy = (int)Math.Floor(e.y - rr); yy <= e.y + rr; yy++)                                  // L9426
+                {
+                    for (int xx = (int)Math.Floor(e.x - rr); xx <= e.x + rr; xx++)                              // L9427
+                    {
+                        if (xx < 0 || yy < 0 || xx >= WbWorld.W || yy >= WbWorld.H) continue;                   // L9428
+                        if (WbMath.FdHypot(xx + 0.5 - e.x, yy + 0.5 - e.y) > rr) continue;                      // L9429
+                        int i = yy * WbWorld.W + xx;                                                            // L9430
+                        if (WbWorld.IsLand(w.terrain[i]) && w.terrain[i] != WbConstants.T_MOUNTAIN && w.Rng() < 0.7)   // L9431（terra 掷/tile）
+                            WbBailRelay.SetTerrain(w, i, WbConstants.T_BURNT);
+                    }
+                }
+            }
+            double morale = JNullish(wep, "morale", 0);                                                        // L9435（w.morale > 0）
+            if (morale > 0)
+            {
+                // 军团士气打击（EMP/恐慌波）：半径 + 2 内敌军团士气崩落
+                foreach (var a in w.armies)                                                                    // L9437
+                {
+                    if (e.src.HasValue && a.civ == e.src.Value) continue;                                      // L9438（e.src !== undefined && a.civ === e.src）
+                    if (WbMath.FdHypot(a.x - e.x, a.y - e.y) < r + 2.5)                                        // L9439
+                        a.morale = Math.Max(5, a.morale - morale);                                              // L9439（a.morale ?? 60——DIVERGENCE-2；max(5, ·-w.morale)）
+                }
+            }
+        }
+
+        /// <summary>engine wwCountKill killCredit 反馈支路 L8697-8715 —— 击杀验证架构：
+        /// w.kills++ → 攻方学说向武器剖面漂移（P.rad|terra→terror / D.sat+G.sat>0.3→saturation /
+        /// G.acc>0.7→precision / G.acc<0.5∧pw≤1→attrition，均钳 0.95）→ q[0] 装药品质上行钳 1.4。
+        /// WbCivSim.WwCountKill 头部调用（域家族归铸域——JNullish/JTruthy 私有助手同文件消费）。</summary>
+        public static void WwKillFeedback(WbWorld w)
+        {
+            if (!w.killCredit.HasValue) return;                                                                // L8698（killCredit != null）
+            var wep = WeaponGet(w, w.killCredit.Value);                                                        // L8699
+            if (wep == null) return;                                                                          // L8700（if (w)）
+            wep["kills"] = (int)JNullish(wep, "kills", 0) + 1;                                                  // L8701（w.kills++ 整型保型）
+            // 武器架构 v2 反馈：击杀验证架构 → 攻方学说向该武器剖面漂移 + 装药品质进化
+            int wciv = wep.Value<int>("civ");                                                                  // L8703
+            WbCiv attacker = wciv >= 0 && wciv < w.civs.Count ? w.civs[wciv] : null;                           // L8703（this.civs[w.civ] 越界 = undefined）
+            if (attacker != null && attacker.alive)
+            {
+                var doc = DoctrineOf(w, wciv);                                                                 // L8705
+                var P = WcPayloads[(int)JNullish(wep, "pl", 1)];                                                // L8706
+                var G = WcGuides[(int)JNullish(wep, "gd", 1)];                                                  // L8707
+                var D = WcDeliveries[(int)JNullish(wep, "dl", 0)];                                              // L8708
+                if (P.rad || P.terra) doc.terror = Math.Min(0.95, doc.terror + 0.006);                           // L8709
+                if ((D.sat + G.sat) > 0.3) doc.saturation = Math.Min(0.95, doc.saturation + 0.006);              // L8710
+                if (G.acc > 0.7) doc.precision = Math.Min(0.95, doc.precision + 0.006);                         // L8711
+                if (G.acc < 0.5 && JNullish(wep, "pw", 0) <= 1) doc.attrition = Math.Min(0.95, doc.attrition + 0.006);   // L8712
+            }
+            var q = wep["q"] as JArray;                                                                        // L8714（if (w.q) w.q[0] = min(1.4, ·+0.012)）
+            if (q != null) q[0] = Math.Min(1.4, q[0].Value<double>() + 0.012);
+        }
+
+        // ============================================================
         // 存档行面（L15287-15291 serialize / L15605-15620 applySave）
         // ============================================================
 

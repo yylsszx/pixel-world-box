@@ -4127,11 +4127,14 @@ namespace PixelWorldBox.Wb
             if (w.corpses.Count > CORPSE_MAX) w.corpses.RemoveRange(0, w.corpses.Count - CORPSE_MAX);
         }
 
-        /// engine wwCountKill L8690-8713 —— 击杀记账（killCredit 涌现武器域军团域恒 null；worldWar idle 直退）
+        /// engine wwCountKill L8695-8719 —— 击杀记账（M-U31 解桩：killCredit 涌现武器反馈支路
+        ///   委托 WbArmory.WwKillFeedback——w.kills++/学说四漂移钳 0.95/q[0] 上行钳 1.4；
+        ///   尾部 worldWar 计数：phase=running 且 victim.civ ∈ belligerents → kills++）
         public static void WwCountKill(WbWorld w, WbU victim)
         {
-            // killCredit == null（涌现武器战绩归属——M-U 后续切片；军团域恒 null 直跳）
-            // worldWar.phase !== 'running' || victim.civ < 0 → return（M-U3c 起世界大战域恒 idle）
+            WbArmory.WwKillFeedback(w);                                                       // L8697-8716（killCredit 反馈支路——域家族归铸域 WbArmory）
+            if (w.worldWar.phase != "running" || victim.civ < 0) return;                      // L8717
+            if (w.worldWar.belligerents.Contains(victim.civ)) w.worldWar.kills++;              // L8718
         }
     }
 }
