@@ -249,6 +249,9 @@ function buildScenario(spec, opts = {}) {
         eng.endWorldWar(op.winner === null ? null : eng.civs[op.winner], !!op.divine);
         break;
       case 'devww': eng.devUltimateWar(); break;                              // devUltimateWar L8395
+      case 'devtruce': eng.devWwTruce(op.years ?? 12); break;                  // devWwTruce L8649（M-U34）
+      case 'devresume': eng.devWwResume(); break;                              // devWwResume L8670（M-U34）
+      case 'devend': eng.devWwEnd(); break;                                    // devWwEnd L8689（M-U34）
       case 'wwalive': eng.wwAliveBelligerents(); break;                       // 纯读——快照面校验
       case 'fire':                                                            // fireEmergent（S6 内嵌面）
         eng.fireEmergent(eng.civs[op.civ], eng.emergentWeapons.get(op.wid));
@@ -272,7 +275,7 @@ function buildScenario(spec, opts = {}) {
     }
     // 每步快照（canonical）
     steps.push({
-      op: op.op + (op.fn ? `:${op.fn}` : '') + (op.wid !== undefined ? `:${op.wid}` : '') + (op.winner !== undefined ? `:${op.winner}` : ''),
+      op: op.op + (op.fn ? `:${op.fn}` : '') + (op.wid !== undefined ? `:${op.wid}` : '') + (op.winner !== undefined ? `:${op.winner}` : '') + (op.years !== undefined ? `:${op.years}` : ''),
       rngA: (eng.rngA >>> 0).toString(16).padStart(8, '0'),
       rel: [...eng.rel.entries()].map(([k, v]) => [k, f64hex(v)]),
       tension: [...eng.tension.entries()].map(([k, v]) => [k, v]),
@@ -686,6 +689,103 @@ scenarios.push({
   ],
   ops: [{ op: 'wwt' }, { op: 'wwt' }],
   sanity: (eng) => eng.worldWar.nukes === 1 && eng.effects.length >= 2,
+});
+
+// ============================================================================
+// M-U34 devWw 面板三件（L8648-8693）—— 快照协议零扩展（wwTruce/shake/truces/gold/
+//   warData/rel/warHistory/totalWars/lastDeclareAt 全在既有快照面）
+// ============================================================================
+
+// S19 devWwTruce 双调（3 参战国全对交战 → 3 对停战 makePeace(10)+wwTruce 5480+
+//   truces++；第二调 atWar 全假 → 仅 wwTruce 覆写 + truces++）——零掷
+scenarios.push({
+  key: 'S19', name: 'devww-truce',
+  baseSeed: 32119, seed: 0x1A00114, yearF: 80.25, tickCount: 5000,
+  worldWar0: WW_RUN({ belligerents: [0, 1, 2], pop0: { 0: 20, 1: 15, 2: 12 } }),
+  civs: [
+    { id: 0, name: '焰邦', colorHex: '#ff5f3d', pop: 20, gold: 40, capital: -1, tiles: [4840], militarism: 30 },
+    { id: 1, name: '岚国', colorHex: '#5fe8ff', pop: 15, gold: 6, capital: -1, tiles: [12060], militarism: 30 },
+    { id: 2, name: '岩国', colorHex: '#c0c0c0', pop: 12, gold: 10, capital: -1, tiles: [20000], militarism: 30 },
+  ],
+  rel: [['0-1', -40], ['0-2', -40], ['1-2', -40]],
+  warData0: [
+    { key: '0-1', a: 0, b: 1, goal: 0, aggressor: 0, popA0: 20, popB0: 15 },
+    { key: '0-2', a: 0, b: 2, goal: 0, aggressor: 0, popA0: 20, popB0: 12 },
+    { key: '1-2', a: 1, b: 2, goal: 0, aggressor: 1, popA0: 15, popB0: 12 },
+  ],
+  ops: [{ op: 'devtruce', years: 12 }, { op: 'devtruce', years: 12 }],
+  allowZeroDraws: true,
+  // 覆写交互面：调1 每对 makePeace(isWwPair) 覆写 wwTruce→5600 且 truces++（1+3=4）；
+  //   调2 无交战 → wwTruce 覆写回 5480 + truces++=5
+  sanity: (eng) => eng.warData.size === 0 && eng.wwTruce.size === 3
+    && [...eng.wwTruce.values()].every((v) => v === 5480) && eng.worldWar.truces === 5
+    && eng.rel.get('0-1') === 10 && eng.rel.get('0-2') === 10 && eng.rel.get('1-2') === 10,
+});
+
+// S20 idle 三门（phase idle → truce/resume/end 全早退 0/0/false 零效应）——零掷
+scenarios.push({
+  key: 'S20', name: 'devww-idle-gates',
+  baseSeed: 32120, seed: 0x1A00115, yearF: 80.25, tickCount: 5000, wwIdle: true,
+  civs: [
+    { id: 0, name: '焰邦', colorHex: '#ff5f3d', pop: 20, gold: 40, capital: -1, tiles: [4840], militarism: 30 },
+    { id: 1, name: '岚国', colorHex: '#5fe8ff', pop: 15, gold: 6, capital: -1, tiles: [12060], militarism: 30 },
+  ],
+  rel: [['0-1', -40]],
+  ops: [{ op: 'devtruce', years: 5 }, { op: 'devresume' }, { op: 'devend' }],
+  allowZeroDraws: true,
+  sanity: (eng) => eng.worldWar.phase === 'idle' && eng.worldWar.truces === 0
+    && eng.wwTruce.size === 0 && eng.warData.size === 0 && eng.shake === 0
+    && eng.worldEvents.length === 0,
+});
+
+// S21 devWwResume 混合面（0-1/1-2 交战 skip；0-2 停战态 → wwTruce 清 + declareWar
+//   annex force·total·quiet → warData 建档 total+giveUpAt 8600+warHistory+gold-9+
+//   rel=min(10,-90)=-90+statWars 1；shake 8）——零掷（declareWar quiet 零掷面）
+scenarios.push({
+  key: 'S21', name: 'devww-resume',
+  baseSeed: 32121, seed: 0x1A00116, yearF: 80.25, tickCount: 5000,
+  worldWar0: WW_RUN({ belligerents: [0, 1, 2], pop0: { 0: 20, 1: 15, 2: 12 } }),
+  civs: [
+    { id: 0, name: '焰邦', colorHex: '#ff5f3d', pop: 20, gold: 40, capital: -1, tiles: [4840], militarism: 30 },
+    { id: 1, name: '岚国', colorHex: '#5fe8ff', pop: 15, gold: 6, capital: -1, tiles: [12060], militarism: 30 },
+    { id: 2, name: '岩国', colorHex: '#c0c0c0', pop: 12, gold: 10, capital: -1, tiles: [20000], militarism: 30 },
+  ],
+  rel: [['0-1', -40], ['1-2', -40], ['0-2', 10]],
+  wwTruce0: [['0-2', 9999]],
+  warData0: [
+    { key: '0-1', a: 0, b: 1, goal: 0, aggressor: 0, popA0: 20, popB0: 15 },
+    { key: '1-2', a: 1, b: 2, goal: 0, aggressor: 1, popA0: 15, popB0: 12 },
+  ],
+  ops: [{ op: 'devresume' }],
+  allowZeroDraws: true,
+  sanity: (eng) => eng.wwTruce.size === 0 && eng.warData.has('0-2')
+    && eng.warData.get('0-2').total === true && eng.warData.get('0-2').giveUpAt === 8600
+    && eng.totalWars.has('0-2') && eng.rel.get('0-2') === -90
+    && eng.warHistory.length === 1 && eng.statWars === 1 && eng.shake === 8
+    && eng.civs[0].gold === 31,
+});
+
+// S22 devWwEnd 神谕终局（running → endWorldWar(null, true)：phase ended/winner null/
+//   endText 神谕文/wwTruce 清/shake 8；statsTick 双侧不记 no-op）——零掷
+scenarios.push({
+  key: 'S22', name: 'devww-end',
+  baseSeed: 32122, seed: 0x1A00117, yearF: 80.25, tickCount: 5000,
+  worldWar0: WW_RUN({ belligerents: [0, 1, 2], pop0: { 0: 20, 1: 15, 2: 12 } }),
+  civs: [
+    { id: 0, name: '焰邦', colorHex: '#ff5f3d', pop: 20, gold: 40, capital: -1, tiles: [4840], militarism: 30 },
+    { id: 1, name: '岚国', colorHex: '#5fe8ff', pop: 15, gold: 6, capital: -1, tiles: [12060], militarism: 30 },
+    { id: 2, name: '岩国', colorHex: '#c0c0c0', pop: 12, gold: 10, capital: -1, tiles: [20000], militarism: 30 },
+  ],
+  rel: [['0-1', -40], ['0-2', -40], ['1-2', -40]],
+  warData0: [
+    { key: '0-1', a: 0, b: 1, goal: 0, aggressor: 0, popA0: 20, popB0: 15 },
+  ],
+  wwTruce0: [['0-1', 6000]],
+  ops: [{ op: 'devend' }],
+  allowZeroDraws: true,
+  sanity: (eng) => eng.worldWar.phase === 'ended' && eng.worldWar.winner === null
+    && eng.worldWar.endText.includes('神谕') && eng.wwTruce.size === 0
+    && eng.worldWar.endTick === 5000 && eng.shake === 8,
 });
 
 // ============================================================================

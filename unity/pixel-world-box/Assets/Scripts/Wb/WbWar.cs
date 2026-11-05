@@ -7,8 +7,8 @@
 //   launchDroneSwarm L9524 / launchOrbital L9533 / launchPlasma L9539 / launchAntimatter L9548；
 //   M-U33 settleFront L7370 / sustainOf L7085 / warGoalNow L7117 / warGoalMet L7151 /
 //   concludeGoalWar L7156 / warInfoTick L7399 / concludeByScore L7672 / touchesOwner L7711
-// 切片边界（挂账注记）：devWwTruce/devWwResume/devWwEnd L8648-8693（开发者面板件——M-U33
-//   makePeace→settleFront 依赖已出清，解锁钥匙就位，随 devWw 面板域切片）；statsTick
+// 切片边界（挂账注记）：devWwTruce/devWwResume/devWwEnd L8648-8693（M-U34 已译——开发者
+//   面板直调件，无槽无生产者，NUnit 直调消费）；statsTick
 //   L13568（worldWarTick→statsTick 调用点——TickOrch.cs L9 双侧不记协议 no-op）；WBB.touchMeta
 //   （槽 59 前半 no-op——warTick L7967/worldWarTick L8442 调用点注记）；launchMech L9557
 //   （非 wwWeaponsTick callee——机甲域挂账）；setFrozen L7401（宿主 UI 态 no-op——M-U33）。
@@ -1064,6 +1064,67 @@ namespace PixelWorldBox.Wb
             if (y > 0 && w.owner[t - WbWorld.W] == civId) return true;                                                        // L7716
             if (y < WbWorld.H - 1 && w.owner[t + WbWorld.W] == civId) return true;                                            // L7717
             return false;                                                                                                 // L7718
+        }
+
+        // ---------------- devWw 面板三件（engine L8648-8693）—— M-U34 ----------------
+        // 纪律②铁证：gen-war.mjs 扩列 S19-S22（18→22 场景，S1-S18 零漂移 PASS，war.json
+        //   md5 762cb94b）先行落盘，parity 红证 Test54/55 Failed 2（哨兵爆点）→ 本全译复绿。
+        // 无槽无生产者（开发者面板直调件——TickOrch 无装配面，NUnit 直调消费）。
+
+        /// <summary>engine devWwTruce L8649-8667 —— 开发者：大战强制全球停战 N 年（战火仅是暂息——到期自动重燃）</summary>
+        public static int DevWwTruce(WbWorld w, double years = 12)
+        {
+            if (w.worldWar.phase != "running") return 0;                                                                        // L8650
+            var alive = WwAliveBelligerents(w);                                                                                  // L8651
+            int n = 0;                                                                                                          // L8652
+            for (int i = 0; i < alive.Count; i++)                                                                                // L8653
+            {
+                for (int j = i + 1; j < alive.Count; j++)                                                                         // L8654
+                {
+                    string key = WbWorld.PairKey(alive[i].id, alive[j].id);                                                       // L8655
+                    w.wwTruce[key] = w.tickCount + (int)System.Math.Max(40, WbMath.JsRound(years * WbConstants.YEAR_TICKS));        // L8656（N 年→tick；max 40 下限）
+                    if (WbCivSim.AtWar(w, alive[i].id, alive[j].id))                                                               // L8657
+                    {
+                        // makePeace isWwPair 面：wwTruce 覆写 WW_TRUCE_TICKS=600 + truces++（交互序见 S19）
+                        WbCivSim.MakePeace(w, alive[i].id, alive[j].id, $"全球停战令：「{alive[i].name}」与「{alive[j].name}」收兵入营，枕戈待旦", 10);   // L8658
+                    }
+                    n++;                                                                                                          // L8660
+                }
+            }
+            w.worldWar.truces++;                                                                                                 // L8663
+            w.AddEvent("worldwar", $"全球停战令下达——战火暂息 {years} 年（大战并未结束，战端将自动重燃）", "#ffd93d");                      // L8664
+            w.Toast($"大战暂息 {years} 年（到期自动重启）", "peace");                                                                              // L8665
+            return n;                                                                                                            // L8666
+        }
+
+        /// <summary>engine devWwResume L8670-8686 —— 开发者：撕毁全部停战协议，立即重启战端</summary>
+        public static int DevWwResume(WbWorld w)
+        {
+            if (w.worldWar.phase != "running") return 0;                                                                        // L8671
+            var alive = WwAliveBelligerents(w);                                                                                  // L8672
+            w.wwTruce.Clear();                                                                                                   // L8673
+            int n = 0;                                                                                                          // L8674
+            for (int i = 0; i < alive.Count; i++)                                                                                // L8675
+            {
+                for (int j = i + 1; j < alive.Count; j++)                                                                         // L8676
+                {
+                    if (WbCivSim.AtWar(w, alive[i].id, alive[j].id)) continue;                                                    // L8677
+                    WbCivSim.DeclareWar(w, alive[i].id, alive[j].id, "annex", true, 0, true, true);                                // L8678（force/total/quiet——devUltimateWar L8430 同参先例）
+                    n++;                                                                                                          // L8679
+                }
+            }
+            w.AddEvent("worldwar", $"停战协议被尽数撕毁，战端全线重燃——杀戮继续", "#ff4d4d");                                                // L8682-8684
+            w.Toast("战端全线重燃", "war");
+            w.shake = System.Math.Max(w.shake, 8);
+            return n;                                                                                                            // L8685
+        }
+
+        /// <summary>engine devWwEnd L8689-8693 —— 开发者：神谕终止大战（无胜者）</summary>
+        public static bool DevWwEnd(WbWorld w)
+        {
+            if (w.worldWar.phase != "running") return false;                                                                     // L8690
+            EndWorldWar(w, null, true);                                                                                          // L8691（divine 神谕文——M-U32 译件；statsTick 双侧不记 no-op）
+            return true;                                                                                                         // L8692
         }
     }
 }

@@ -389,6 +389,15 @@ namespace PixelWorldBox.Tests
                         break;
                     }
                     case "devww": WbWar.DevUltimateWar(w); stepName = "devww"; break;
+                    case "devtruce":
+                    {
+                        double years = op.Value<double?>("years") ?? 12;
+                        WbWar.DevWwTruce(w, years);
+                        stepName = $"devtruce:{years}";
+                        break;
+                    }
+                    case "devresume": WbWar.DevWwResume(w); stepName = "devresume"; break;
+                    case "devend": WbWar.DevWwEnd(w); stepName = "devend"; break;
                     case "wwalive": WbWar.WwAliveBelligerents(w); stepName = "wwalive"; break;
                     case "fire":
                         WbArmory.FireEmergent(w, w.civs[op.Value<int>("civ")], WbArmory.WeaponGet(w, op.Value<int>("wid")));
@@ -430,7 +439,7 @@ namespace PixelWorldBox.Tests
         {
             var root = JObject.Parse(System.IO.File.ReadAllText(FindGolden()));
             var manifest = (JArray)root["meta"]["manifest"];
-            Assert.That(manifest.Count, Is.EqualTo(18), "场景数（S1-S18）");
+            Assert.That(manifest.Count, Is.EqualTo(22), "场景数（S1-S22）");
             var scenarios = (JArray)root["scenarios"];
             for (int i = 0; i < manifest.Count; i++)
             {
@@ -515,6 +524,53 @@ namespace PixelWorldBox.Tests
                 Assert.That(e.r, Is.EqualTo(0.0), "核弹头 r=0");
                 Assert.That(e.dmg.Value, Is.EqualTo(0.0), "核弹头 dmg=0");
                 Assert.That(e.nuke.Value, Is.EqualTo(1.8), "nuke 当量透传");
+            }
+            // S19 devWwTruce：3 对停战 + makePeace isWwPair 覆写面（truces 1+3=4）+
+            //   二调 wwTruce 覆写回 5480 + truces 5 + warData 双删
+            {
+                var w = BuildScenario((JObject)scenarios["S19"]);
+                WbWar.DevWwTruce(w, 12);
+                Assert.That(w.worldWar.truces, Is.EqualTo(4), "S19 调1 truces 1+3");
+                Assert.That(w.warData.Count, Is.EqualTo(0), "S19 三对停战删档");
+                WbWar.DevWwTruce(w, 12);
+                Assert.That(w.worldWar.truces, Is.EqualTo(5), "S19 调2 truces++");
+                Assert.That(w.wwTruce.Count, Is.EqualTo(3), "S19 三对 wwTruce");
+                Assert.That(w.wwTruce.Values.All(v => v == 5480L), Is.True, "S19 调2 覆写 5480");
+                Assert.That(w.rel["0-1"], Is.EqualTo(10.0), "S19 postRel 10");
+            }
+            // S20 idle 三门：全早退零效应
+            {
+                var w = BuildScenario((JObject)scenarios["S20"]);
+                Assert.That(WbWar.DevWwTruce(w, 5), Is.EqualTo(0), "S20 idle truce 0");
+                Assert.That(WbWar.DevWwResume(w), Is.EqualTo(0), "S20 idle resume 0");
+                Assert.That(WbWar.DevWwEnd(w), Is.False, "S20 idle end false");
+                Assert.That(w.worldEvents, Is.Empty, "S20 零事件");
+            }
+            // S21 devWwResume：wwTruce 清 + declareWar annex force·total·quiet 建档
+            {
+                var w = BuildScenario((JObject)scenarios["S21"]);
+                int n = WbWar.DevWwResume(w);
+                Assert.That(n, Is.EqualTo(1), "S21 仅 0-2 重燃");
+                Assert.That(w.wwTruce, Is.Empty, "S21 wwTruce 清");
+                Assert.That(w.warData["0-2"].total, Is.True, "S21 annex total");
+                Assert.That(w.warData["0-2"].giveUpAt, Is.EqualTo(8600), "S21 giveUpAt+3600");
+                Assert.That(w.totalWars.Contains("0-2"), Is.True, "S21 totalWars");
+                Assert.That(w.rel["0-2"], Is.EqualTo(-90.0), "S21 CASUS_LEVEL annex");
+                Assert.That(w.warHistory, Is.EqualTo(new List<int> { 5000 }), "S21 宣战流水");
+                Assert.That(w.statWars, Is.EqualTo(1), "S21 statWars");
+                Assert.That(w.shake, Is.EqualTo(8.0), "S21 shake 8");
+                Assert.That(w.civs[0].gold.Value, Is.EqualTo(31.0), "S21 动员开销 40-9");
+            }
+            // S22 devWwEnd：神谕终局（phase ended/winner null/wwTruce 清/shake 8）
+            {
+                var w = BuildScenario((JObject)scenarios["S22"]);
+                Assert.That(WbWar.DevWwEnd(w), Is.True, "S22 返 true");
+                Assert.That(w.worldWar.phase, Is.EqualTo("ended"), "S22 ended");
+                Assert.That(w.worldWar.winner.HasValue, Is.False, "S22 winner null");
+                Assert.That(w.worldWar.endText, Does.Contain("神谕"), "S22 神谕文");
+                Assert.That(w.worldWar.endTick, Is.EqualTo(5000), "S22 endTick");
+                Assert.That(w.wwTruce, Is.Empty, "S22 wwTruce 清");
+                Assert.That(w.shake, Is.EqualTo(8.0), "S22 shake 8");
             }
         }
     }
