@@ -2584,11 +2584,82 @@ namespace PixelWorldBox.Wb
             }
         }
 
-        /// makePeace 哨兵（engine L7607-7663）—— settleFront/割地/阵营停战依赖（M-U3e 战争结算域）
-        /// 位等价保障：golden CVT36 rel=10 ≥ -20 恒走 else 支路；本桩可达即爆 = 桩域外行为不可静默漂移
+        /// makePeace（engine L7613-7669）—— 停战统一入口：纪事 + 战败耻辱记忆 + 未竟战争旨意提前结算。
+        ///  postRel：战后关系（25=常态；10=冷和平；5=心怀怨怼；40=神谕和解）—— M-U33 哨兵出清（settleFront/战线域随件）
         public static void MakePeace(WbWorld w, int a, int b, string text, int postRel = 25)
         {
-            throw new System.NotImplementedException("TODO(M-U3e): makePeace/settleFront 未翻译 —— golden 场景恒不可达（哨兵）");
+            string key = WbWorld.PairKey(a, b);                                                                                 // L7614
+            // —— 动态战线停战结算：高强度占领成既成事实（割让），低强度归还 ——
+            var fr = WbWar.SettleFront(w, a, b);                                                                                 // L7616
+            if (fr.ceded > 0)                                                                                                   // L7617
+            {
+                var taker = (a < w.civs.Count && w.civs[a] != null && w.civs[a].alive) ? w.civs[a] : (b < w.civs.Count ? w.civs[b] : null);   // L7618
+                if (taker != null) w.AddEvent("occupy", $"停战协议承认既成事实：{fr.ceded} 格战占领土正式易帜", taker.colorHex);                // L7619
+            }
+            // —— 终极世界大战：参战国之间的和平只是休战（停战到期战端自动重燃）——
+            bool isWwPair = WbWar.WwIsBelligerent(w, a) && WbWar.WwIsBelligerent(w, b);                                         // L7622
+            WbWarData wd = w.warData.TryGetValue(key, out var wd0) ? wd0 : null;                                                 // L7623
+            if (wd != null)
+            {
+                // 战败耻辱记忆（复仇战争的种子）
+                WbCiv loser = wd.scoreA == wd.scoreB ? null                                                                     // L7626
+                    : wd.scoreA > wd.scoreB ? (wd.b < w.civs.Count ? w.civs[wd.b] : null)
+                    : (wd.a < w.civs.Count ? w.civs[wd.a] : null);
+                if (loser != null && loser.alive) w.warShame[key] = loser.id;                                                    // L7627
+                // 未竟的战争旨意随停战提前失败（灭国/攻城令半途而废——目标未成则失败）
+                foreach (var d in w.directives)                                                                                 // L7629
+                {
+                    if (d.status != "active") continue;
+                    if (!((d.civ == a && d.target == b) || (d.civ == b && d.target == a))) continue;                             // L7631
+                    int dt = d.target ?? -1;
+                    if (d.kind == "annihilate" && dt >= 0 && dt < w.civs.Count && w.civs[dt] != null && w.civs[dt].alive)          // L7632
+                    {
+                        FinishDirective(w, d, "failed", "停战使灭国宏图半途而废");                                                  // L7633
+                    }
+                    else if (d.kind == "conquer")                                                                                // L7634
+                    {
+                        double s = wd.a == d.civ ? wd.scoreA : wd.scoreB;                                                        // L7635-7636
+                        if (s < 45) FinishDirective(w, d, "failed", "停战使攻城宏图半途而废");
+                    }
+                }
+            }
+            w.rel[key] = postRel;                                                                                               // L7640-7642
+            w.totalWars.Remove(key);
+            w.warData.Remove(key);
+            // —— 种族关系：种族间王国的和平让两个种族缓一口气 ——
+            if (a < w.civs.Count && b < w.civs.Count && w.civs[a] != null && w.civs[b] != null)                                  // L7644
+                w.ShiftRaceRel(w.civs[a].race, w.civs[b].race, 1);
+            // —— 阵营停战：盟约战争的参战方停战 → 盟友跟随（75%）或拒绝（凝聚力 -10 各自为政）——
+            if (wd != null && wd.reason == "alliance")                                                                           // L7646
+            {
+                foreach (int side in new[] { a, b })                                                                             // L7647
+                {
+                    var al = AllianceOfCiv(w, side);                                                                             // L7648
+                    if (al == null) continue;
+                    int enemy = side == a ? b : a;                                                                               // L7650
+                    foreach (int m in new List<int>(al.members))                                                                  // L7651（[...members] 快照——递归停战安全）
+                    {
+                        if (m == side || m >= w.civs.Count || w.civs[m] == null || !w.civs[m].alive) continue;                    // L7652
+                        if (!AtWar(w, m, enemy)) continue;                                                                       // L7653
+                        if (w.Rng() < 0.75)                                                                                      // L7654
+                        {
+                            MakePeace(w, m, enemy, $"阵营停战：「{(m < w.civs.Count && w.civs[m] != null ? w.civs[m].name : "undefined")}」随盟退出战争", 18);   // L7655（?? name → "undefined" 怪癖镜像——civs[m] 恒在域面）
+                        }
+                        else
+                        {
+                            al.cohesion = System.Math.Max(0, al.cohesion - 10);                                                  // L7657
+                        }
+                    }
+                }
+            }
+            w.AddEvent("peace", text, a < w.civs.Count ? w.civs[a]?.colorHex : null);                                             // L7662
+            w.Toast($"「{(a < w.civs.Count && w.civs[a] != null ? w.civs[a].name : "undefined")}」与「{(b < w.civs.Count && w.civs[b] != null ? w.civs[b].name : "undefined")}」停战了", "peace");   // L7663（?.name → "undefined" 怪癖镜像）
+            // 大战休战令：记录停战协议（15 年后战端自动重燃）
+            if (isWwPair)                                                                                                       // L7665
+            {
+                w.wwTruce[key] = w.tickCount + WbWar.WW_TRUCE_TICKS;                                                             // L7666-7667
+                w.worldWar.truces++;
+            }
         }
 
         /// 旨意进度评估（每 30 tick）（engine L7838-7852）

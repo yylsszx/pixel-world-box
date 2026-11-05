@@ -161,6 +161,7 @@ namespace PixelWorldBox.Host
             Orch.D[PixelWorldBox.Wb.WbTickOrch.ARMORY] = () => PixelWorldBox.Wb.WbArmory.ArmoryTick(World);                           // M-U30：armoryTick 已译域真调（头部武装 + 尾 emergentForgeTick——蓝本 L12219-12264 %240===13；tier<1/gold<2 顶层跳过安全）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.WAR] = () => PixelWorldBox.Wb.WbWar.WarTick(World);                                     // M-U32：warTick 已译域真调（met 空 Set 零进 + emergentWeapons 空 0 掷早退——蓝本 L7966-8053 %200===0）
             Orch.D[PixelWorldBox.Wb.WbTickOrch.WORLD_WAR] = () => PixelWorldBox.Wb.WbWar.WorldWarTick(World);                           // M-U32：worldWarTick 已译域真调（phase!=running 引燃门早退——蓝本 L8441-8526 %30===0；fireEmergent 生产者接线 M-U31 挂账出清）
+            Orch.D[PixelWorldBox.Wb.WbTickOrch.WAR_INFO] = () => PixelWorldBox.Wb.WbWar.WarInfoTick(World);                             // M-U33：warInfoTick 已译域真调（财政/建档/停战裁决/签名/厌战/承受力——蓝本 L7399-7609 %100===0；TickOrch 38→39/61 槽）
         }
 
         /// <summary>applyTool 大分发器宿主门（M-U14 切片一——Unity 输入域后续接位；事件驱动非 tick 槽。

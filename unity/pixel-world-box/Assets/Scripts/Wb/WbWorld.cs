@@ -240,6 +240,8 @@ namespace PixelWorldBox.Wb
         public int occA, occB;
         public int popA0, popB0;
         public int lastActiveTick;
+        public double? sigMark;          // engine L7474 wd.sigMark（战事活跃签名水位——transient 不入档：
+                                         //   normalizeWarInfo L7186 不回填，读档后首 tick 重定基——M-U33 加字段）
     }
 
     /// Army 最小 POCO —— M-U3c mergeCivs/disbandArmy/finishDirective 可达子集（黄金场景恒空，结构保留）
