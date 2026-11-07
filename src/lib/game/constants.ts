@@ -414,6 +414,11 @@ export const ICONS: Record<string, string[]> = {
     'tttttttt', 'tf....ft', 'tf.ww.ft', 'ttfwwftt',
     '.ttwwtt.', '..twwt..', '..t..t..', '.tt..tt.',
   ],
+  // —— 生命绽放：破土新芽与花（向上生长的春意）——
+  bloom: [
+    '..v.y...', '.evyv...', '..vGyv..', '...G....',
+    '..eGg...', '..gGe...', '.Gg.gG..', '..G..G..',
+  ],
   // —— 超级武器神力（2：等离子炮/湮灭之光——wwWeaponsTick 同源特效的玩家施放面）——
   plasma: [
     '...tt...', '..t..t..', '...tt...', 'tttwwttt',
@@ -731,6 +736,10 @@ export const TOOLS: ToolDef[] = [
   ] },
   { id: 'chrono', label: '时之凝滞', desc: '时间琥珀：穹顶下时间流速骤降——生灵深度迟缓、箭矢悬停半空、火焰熄止蔓延；凝滞深处生灵完全静止（半径/持续可调）', tab: 'powers', icon: 'chrono', single: true, params: [
     { key: 'radius', label: '凝滞半径', min: 4, max: 14, step: 1, def: 5 },
+    { key: 'duration', label: '持续', min: 100, max: 600, step: 50, def: 300, fmt: 'sec' },
+  ] },
+  { id: 'bloom', label: '生命绽放', desc: '春神苏醒：翠绿穹顶内焦土回春、荒漠生草、草原成林，生灵沐浴愈伤脱饿，乃至无中生有地诞生新生命（半径/持续可调）', tab: 'powers', icon: 'bloom', single: true, params: [
+    { key: 'radius', label: '绽放半径', min: 4, max: 14, step: 1, def: 5 },
     { key: 'duration', label: '持续', min: 100, max: 600, step: 50, def: 300, fmt: 'sec' },
   ] },
   { id: 'plasmacannon', label: '等离子炮', desc: '电浆光球坠地：大威力爆破 + 电磁脉冲——周遭生物麻痹硬直、军团士气崩落（威力可调）', tab: 'powers', icon: 'plasma', single: true, params: [

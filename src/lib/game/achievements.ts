@@ -31,7 +31,7 @@ export const TIER_META: Record<AchTier, { label: string; cls: string; ring: stri
   legend: { label: '传说', cls: 'border-fuchsia-400/60 bg-fuchsia-400/10 text-fuchsia-300', ring: 'ring-fuchsia-400/40' },
 };
 
-/** 41 项成就（文明/战争/科技/传奇/天灾/神力/进化/联盟/季节/时间疆域） */
+/** 43 项成就（文明/战争/科技/传奇/天灾/神力/进化/联盟/季节/时间疆域/生命绽放） */
 export const ACHIEVEMENTS: AchievementDef[] = [
   // —— 文明史诗 ——
   {
@@ -227,6 +227,18 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     id: 'amber-stasis', name: '琥珀纪元', desc: '让时之凝滞同时笼罩 50 个生灵', tier: 'silver', icon: 'clock',
     check: (e) => e.units.filter((u) => !u.dead && (u.stasis ?? 0) > 0).length >= 50,
     progress: (e) => e.units.filter((u) => !u.dead && (u.stasis ?? 0) > 0).length, goal: 50,
+  },
+  // —— v0.52 生命绽放组（2）——
+  {
+    id: 'bloom-awakening', name: '万物复苏', desc: '让生命绽放穹顶同时庇护 60 个生灵', tier: 'silver', icon: 'sprout',
+    check: (e) => e.effects.some((ef) => ef.kind === 'bloom' && e.units.filter((u) => !u.dead && (u.x - ef.x) * (u.x - ef.x) + (u.y - ef.y) * (u.y - ef.y) <= ef.r * ef.r).length >= 60),
+    progress: (e) => Math.max(0, ...e.effects.filter((ef) => ef.kind === 'bloom').map((ef) => e.units.filter((u) => !u.dead && (u.x - ef.x) * (u.x - ef.x) + (u.y - ef.y) * (u.y - ef.y) <= ef.r * ef.r).length), 0),
+    goal: 60,
+  },
+  {
+    id: 'bloom-greening', name: '不毛再无', desc: '用生命绽放累计复苏 300 格焦土、荒漠与雪原', tier: 'gold', icon: 'leaf',
+    check: (e) => e.statBloomTiles >= 300,
+    progress: (e) => e.statBloomTiles, goal: 300,
   },
 ];
 

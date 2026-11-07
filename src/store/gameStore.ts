@@ -49,6 +49,7 @@ export const EVENT_CATEGORY: Record<WorldEventKind, Exclude<EventFilter, 'all'>>
   rain: 'world', sandstorm: 'disaster', typhoon: 'disaster', sinkhole: 'disaster',
   iceage: 'disaster', famine: 'disaster', blackhole: 'disaster', wrath: 'disaster',
   chrono: 'world', // 时之凝滞：神力/世界类（与唤雨同策）
+  bloom: 'world', // 生命绽放：神力/世界类（与时之凝滞同策）
   // —— 生物进化与生态竞争 ——
   evolve: 'world', eco: 'world',
   river: 'world', oasis: 'world',

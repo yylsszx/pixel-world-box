@@ -3403,6 +3403,64 @@ function drawWorldEffect(engine: GameEngine, e: Effect, wc: CanvasRenderingConte
       }
       break;
     }
+    case 'bloom': {
+      // 生命绽放：春神穹顶（翠绿双层穹体 + 正向生长弧 + 袅袅上升的光尘花絮 + 中心生命之柱）
+      const R = e.r * 2;
+      const fade = t > 0.85 ? Math.max(0, 1 - (t - 0.85) / 0.15) : 1;
+      const fc = engine.frameCount;
+      // 双层春穹（外层深绿 + 内层嫩芽绿，缓慢呼吸 —— 大地脉动的生机隐喻）
+      const breathe = 0.2 + 0.05 * Math.sin(fc * 0.03);
+      wc.globalAlpha = breathe * fade;
+      wc.fillStyle = '#2c5e24';
+      wc.beginPath();
+      wc.arc(px, py, R, 0, Math.PI * 2);
+      wc.fill();
+      wc.globalAlpha = (breathe + 0.08) * fade;
+      wc.fillStyle = '#9ad06a';
+      wc.beginPath();
+      wc.arc(px, py - R * 0.15, R * 0.68, 0, Math.PI * 2);
+      wc.fill();
+      wc.globalAlpha = 1;
+      // 穹顶描边（细金绿线勾勒穹界 —— 与琥珀穹顶同构的领域可读性）
+      wc.strokeStyle = `rgba(154,208,106,${0.5 * fade})`;
+      wc.lineWidth = 1;
+      wc.beginPath();
+      wc.arc(px, py, R, 0, Math.PI * 2);
+      wc.stroke();
+      // 正向生长弧（三道正向缓旋的藤蔓弧 —— 与时之凝滞的逆行钟摆相反：生命永远向前生长）
+      for (let arm = 0; arm < 3; arm++) {
+        const a0 = fc * 0.007 + (arm / 3) * Math.PI * 2;
+        wc.strokeStyle = `rgba(122,190,80,${0.45 * fade})`;
+        wc.lineWidth = 1.5;
+        wc.beginPath();
+        wc.arc(px, py, R * (0.45 + 0.12 * (arm & 1)), a0, a0 + 0.9);
+        wc.stroke();
+      }
+      // 上升花絮（确定性散布的光点缓缓升起 —— 与圣光下坠/凝滞悬停相反：春意向上）
+      for (let k = 0; k < 14; k++) {
+        const h = ((e.seed * 2654435761 + k * 197) >>> 0) % 991;
+        const ang = (h / 991) * Math.PI * 2;
+        const rr = Math.sqrt(h % 97) / 9.85 * R * 0.9;
+        const rise = 12 - ((fc * 0.4 + (h & 7)) % 12);
+        wc.fillStyle = (h & 1) ? `rgba(154,208,106,${0.8 * fade})` : `rgba(240,250,220,${0.6 * fade})`;
+        wc.fillRect(Math.round(px + Math.cos(ang) * rr), Math.round(py + Math.sin(ang) * rr * 0.7 - rise), 1, 1);
+      }
+      // 点缀花黄（零星暖黄花粉 —— 春穹内的第二色温，稀疏不喧宾）
+      for (let k = 0; k < 5; k++) {
+        const h = ((e.seed * 40503 + k * 331) >>> 0) % 997;
+        const ang = (h / 997) * Math.PI * 2;
+        const rr = Math.sqrt(h % 89) / 9.43 * R * 0.8;
+        const rise = 10 - ((fc * 0.3 + (h & 11)) % 10);
+        wc.fillStyle = `rgba(255,217,61,${0.7 * fade})`;
+        wc.fillRect(Math.round(px + Math.cos(ang) * rr), Math.round(py + Math.sin(ang) * rr * 0.7 - rise), 1, 1);
+      }
+      // 中心生命之柱（半透翠柱 —— 与时之柱/圣光柱同构的领域图腾；消散前收束）
+      if (t > 0.7) {
+        wc.fillStyle = `rgba(154,208,106,${0.28 * fade})`;
+        wc.fillRect(Math.round(px) - 1, Math.round(py - R), 2, Math.round(R * 1.2));
+      }
+      break;
+    }
     case 'sandstorm': {
       // 沙尘暴：土黄云体 + 旋转沙粒
       const R = e.r * 2;

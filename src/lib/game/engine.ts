@@ -232,6 +232,10 @@ export class GameEngine {
   statMeteorShowers = 0;
   statPlasmas = 0;
   statAnnihilations = 0;
+  /** 生命绽放累计复苏格数（成就：不毛再无 —— 与超级武器计数器同构的临时世界内计数） */
+  statBloomTiles = 0;
+  /** 天穹庆典累计绽放轮数（成就：盛世华章 —— 单世界 session 计数，与超级武器计数器同构） */
+  statFestivals = 0;
 
   // ---------------- 终极世界大战（Ultimate World War · 开发者模式引燃） ----------------
   /** 大战状态（idle 未打响 / running 战火燃烧 / ended 已终战；随存档持久化） */
@@ -851,6 +855,8 @@ export class GameEngine {
     this.statMeteorShowers = 0;
     this.statPlasmas = 0;
     this.statAnnihilations = 0;
+    this.statBloomTiles = 0;
+    this.statFestivals = 0;
     this.achProgressCache = {};
     // 终极世界大战重置（新世界无战火）
     this.worldWar = GameEngine.IDLE_WORLD_WAR();
@@ -2532,6 +2538,7 @@ export class GameEngine {
     if (this.tickCount % 5 === 0) { this.rebuildCivBuildCounts(); this.civsTick(); }
     const tM = performance.now();
     this.effectsTick();
+    this.fireworksTick();
     const tE = performance.now();
     // 密度热力图：单位会移动，每 30 tick（2 年）刷新一次覆盖层
     if (this.overlayMode === 'density' && this.tickCount % 30 === 0) this.overlayDirty = true;
@@ -5076,6 +5083,15 @@ export class GameEngine {
         c.culture = (c.culture ?? 0) - 20;
         c.stability = Math.min(100, (c.stability ?? 70) + 3);
         this.addEvent('festival', `「${c.name}」举国欢庆丰年祭，鼓乐与篝火彻夜不息`, { colorHex: c.colorHex, x: this.civCenterX(c), y: this.civCenterY(c) });
+        // —— v0.52 天穹庆典：丰年祭烟花秀（编年史之外的可感知庆祝）——
+        this.fireworkSalvo(this.civCenterX(c), this.civCenterY(c) - 2, 5);
+      }
+      // —— v0.52 人口里程碑：破百/破五百等档位首达时举国烟花 + 纪事（popMilestone 单调推进，旧档缺字段按 0）——
+      const msNext = GameEngine.CIV_POP_MILESTONES[c.popMilestone ?? 0];
+      if (msNext !== undefined && c.pop >= msNext) {
+        c.popMilestone = (c.popMilestone ?? 0) + 1;
+        this.fireworkSalvo(this.civCenterX(c), this.civCenterY(c) - 2, 7);
+        this.addEvent('festival', `「${c.name}」人口突破 ${msNext} —— 天穹绽放庆典烟花，万民欢呼`, { colorHex: c.colorHex, x: this.civCenterX(c), y: this.civCenterY(c) });
       }
       // —— v3：涌现理念采纳（文化丰盈时酝酿新思想 / 异邦思想传入） ——
       if ((c.ideas ?? []).length < 3 && (c.culture ?? 0) > 60 && this.rng() < 0.15) {
@@ -6868,6 +6884,9 @@ export class GameEngine {
     a.morale = triumph ? Math.min(100, a.morale + 10) : tactical ? Math.max(45, a.morale) : Math.max(30, a.morale);
     if (triumph) {
       this.addEvent('army', `${a.name} 大获全胜，凯旋归国（斩获 ${a.kills}，损失 ${a.losses}）`, { colorHex: this.civs[a.civ]?.colorHex, x: a.x, y: a.y });
+      // —— v0.52 凯旋烟花：王都上空的胜利庆典 ——
+      const vc = this.civs[a.civ];
+      if (vc && vc.alive) this.fireworkSalvo(this.civCenterX(vc), this.civCenterY(vc) - 2, 4);
     } else if (tactical) {
       // 战术撤退（战术 AI 驱动）：保存建制，择机再战
       this.addEvent('army', `${a.name} 审时度势，战术转移后撤——保存建制，择机再战`, { colorHex: this.civs[a.civ]?.colorHex, x: a.x, y: a.y });
@@ -9811,6 +9830,40 @@ export class GameEngine {
     return e;
   }
 
+  /** 人口里程碑档位：首达时天穹绽放烟花（civ.popMilestone 记录已达成的最高档索引 + 1） */
+  static readonly CIV_POP_MILESTONES = [100, 250, 500, 1000, 2500, 5000] as const;
+
+  /** 烟花待发队列（错帧升空；transient 不入档 —— 重启丢一轮烟花无碍） */
+  private fwQueue: { x: number; y: number; delay: number; seed: number; r: number }[] = [];
+
+  /** 天穹庆典：向 (x,y) 上空发射 n 发烟花（错帧升空 + 随机色相；一次 salvo 计一轮成就并奏一声礼炮） */
+  private fireworkSalvo(x: number, y: number, n: number): void {
+    for (let i = 0; i < n; i++) {
+      const hue = Math.floor(this.rng() * 360);
+      // seed 编码：高位存色相（render 取 hue = seed>>8），低 8 位存炸裂样式随机数
+      this.fwQueue.push({
+        x: x + (this.rng() - 0.5) * 7,
+        y,
+        delay: i * 9 + Math.floor(this.rng() * 5),
+        seed: ((hue << 8) | Math.floor(this.rng() * 256)) >>> 0,
+        r: 2.2 + this.rng() * 1.6,
+      });
+    }
+    this.statFestivals++;
+    this.onSound?.('firework');
+  }
+
+  /** 烟花队列消费：每 tick 检查待发烟花，到帧的发射（单特效全生命周期 —— 升空/炸裂/余晖都在 render 侧按 t 分阶段绘制，不占引擎特效配额） */
+  private fireworksTick(): void {
+    if (this.fwQueue.length === 0) return;
+    for (let i = this.fwQueue.length - 1; i >= 0; i--) {
+      const f = this.fwQueue[i];
+      if (f.delay > 0) { f.delay--; continue; }
+      this.fx('firework', f.x, f.y, 52 + (f.seed & 15), { r: f.r, seed: f.seed });
+      this.fwQueue.splice(i, 1);
+    }
+  }
+
   effectsTick() {
     for (let i = this.effects.length - 1; i >= 0; i--) {
       const e = this.effects[i];
@@ -10123,6 +10176,84 @@ export class GameEngine {
         }
         if (n > 0 && this.tickCount % 90 === 0) {
           this.onSound?.('chrono'); // 琥珀嗡鸣：低频回响提醒领域仍在（每 ~3 秒一次）
+        }
+      } else if (e.kind === 'bloom') {
+        // 生命绽放：春神穹顶 —— 极缓漂移，四重生机：
+        // ① 大地回春：焦土/荒漠/雪原逐格复苏为草原、草原深处成林（沙暴/酸雨侵蚀的逆向对称）；
+        // ② 生灵沐春：域内单位持续愈伤（0.25/tick，快于圣光甘霖）+ 驱瘟 + 饱食（捕食者在春域不必猎杀）；
+        // ③ 涤净：穹内火焰止燃（与圣光风暴同策）+ 辐射洗净；
+        // ④ 无中生有：绿意深处偶有小生命破土诞生（兔/鸡/羊/鹿，生态预算内卷入 spawnUnit 自律）。
+        e.dir += (this.rng() - 0.5) * 0.08;
+        e.x = Math.max(2, Math.min(W - 3, e.x + Math.cos(e.dir) * 0.04));
+        e.y = Math.max(2, Math.min(H - 3, e.y + Math.sin(e.dir) * 0.04));
+        // —— 大地回春：每 tick 两次极坐标采样（与酸雨腐蚀同频 —— 复苏与侵蚀等速，天道对称）
+        for (let s = 0; s < 2; s++) {
+          const ang = this.rng() * Math.PI * 2;
+          const rr = this.rng() * e.r;
+          const j = idx(Math.floor(e.x + Math.cos(ang) * rr), Math.floor(e.y + Math.sin(ang) * rr));
+          if (j >= 0 && j < W * H) {
+            const bt = this.terrain[j];
+            if (bt === T.BURNT || bt === T.SAND || bt === T.SNOW) {
+              this.setTerrain(j, T.GRASS); // 焦土回春：荒漠与雪原也要让位于绿意
+              this.statBloomTiles++;
+              if (this.fxPrefs.ambience && this.rng() < 0.5) this.fx('bless', (j % W) + 0.5, ((j / W) | 0) + 0.5, 16);
+            } else if (bt === T.GRASS && this.rng() < 0.22) {
+              this.setTerrain(j, T.FOREST); // 草原成林：绿意疯长
+              this.statBloomTiles++;
+            }
+          }
+        }
+        // —— 生灵沐春：愈伤 + 驱瘟 + 饱食（春域内无猎杀之必要 —— 丰饶本身即是和平）
+        const br2 = e.r * e.r;
+        let bn = 0;
+        for (const u of this.units) {
+          if (u.dead) continue;
+          const bdx = u.x - e.x;
+          const bdy = u.y - e.y;
+          if (bdx * bdx + bdy * bdy >= br2) continue;
+          bn++;
+          if (u.hp < u.maxHp) {
+            u.hp = Math.min(u.maxHp, u.hp + 0.25); // 春风愈体：快于圣光甘霖（0.15）—— 生命本源之力
+            if (this.rng() < 0.05) this.fx('bless', u.x, u.y - 0.4, 18);
+          }
+          if (u.infected) { u.infected = false; this.fx('bless', u.x, u.y - 0.4, 22); } // 春息驱瘟
+          const bdef = RACES[u.race];
+          if (bdef.predator && !bdef.undead) u.food = Math.min(160, (u.food ?? 70) + 2.5); // 丰饶饱腹
+        }
+        // —— 涤净：穹内火焰即刻止燃 + 辐射洗净（与圣光风暴同源善力采样）
+        const fx0 = Math.max(0, Math.floor(e.x - e.r)); const fx1 = Math.min(W - 1, Math.ceil(e.x + e.r));
+        const fy0 = Math.max(0, Math.floor(e.y - e.r)); const fy1 = Math.min(H - 1, Math.ceil(e.y + e.r));
+        for (let yy = fy0; yy <= fy1; yy++) {
+          for (let xx = fx0; xx <= fx1; xx++) {
+            const ddx = xx + 0.5 - e.x, ddy = yy + 0.5 - e.y;
+            if (ddx * ddx + ddy * ddy >= br2) continue;
+            const j = yy * W + xx;
+            if (this.fire[j] > 0) {
+              this.fire[j] = 0; // 春雨润物：火焰在生命穹顶内失去燃烧的资格
+              this.fireSet.delete(j);
+              if (this.fxPrefs.ambience && this.rng() < 0.3) this.fx('water', xx + 0.5, yy + 0.5, 14);
+            }
+            if (this.radiate[j] > 0) { this.radiate[j] = 0; this.radSet.delete(j); this.markDirty(j); } // 春息化辐射
+          }
+        }
+        // —— 无中生有：每 ~24 tick 尝试一次破土诞生（生态预算 spawnUnit 自律 —— 满额静默失败）
+        if (e.age % 24 === 0 && this.rng() < 0.5) {
+          const ang = this.rng() * Math.PI * 2;
+          const rr = this.rng() * (e.r - 0.5);
+          const sx = Math.floor(e.x + Math.cos(ang) * rr);
+          const sy = Math.floor(e.y + Math.sin(ang) * rr);
+          const j = idx(sx, sy);
+          if (j >= 0 && j < W * H && (this.terrain[j] === T.GRASS || this.terrain[j] === T.FOREST)) {
+            const race = [R.RABBIT, R.CHICKEN, R.SHEEP, R.DEER][(this.rng() * 4) | 0];
+            const nu = this.spawnUnit(race, sx + 0.5, sy + 0.5, { silent: true });
+            if (nu) {
+              this.fx('spawn', nu.x, nu.y - 0.3, 22);
+              if (this.rng() < 0.35) this.onSound?.('bloom'); // 新生啼鸣：偶发提醒领域仍在
+            }
+          }
+        }
+        if (bn > 0 && e.age % 120 === 0) {
+          this.onSound?.('bloom'); // 春息低回：每 ~4 秒一次
         }
       } else if (e.kind === 'sandstorm') {
         // 沙尘暴：游荡沙暴 —— 草被沙埋、生物迷失风中
@@ -11006,6 +11137,18 @@ export class GameEngine {
     this.fx('chrono', x, y, ttl, { r: rr });
     this.addEvent('chrono', '时间在琥珀中凝固——箭矢悬停于半空，火焰失去了蔓延的资格', { x, y });
     this.onSound?.('chrono');
+  }
+
+  /** 生命绽放：春神穹顶 —— 翠绿领域内四重生机（大地回春/生灵沐春/涤净/无中生有），
+ *  与时之凝滞构成对偶神力：一个停驻时间，一个催发生命。焦土荒漠回草原、草原疯长成林、
+ *  生灵愈伤驱瘟饱食，乃至绿意深处直接诞生小生命（兔/鸡/羊/鹿 —— 生态预算内自律）。 */
+  bloomField(x: number, y: number, r: number, ttl = 300) {
+    const rr = Math.max(4, Math.min(14, r));
+    const count = this.effects.filter((e) => e.kind === 'bloom').length;
+    if (count >= 3) return; // 上限防刷屏（与时之凝滞同策）
+    this.fx('bloom', x, y, ttl, { r: rr });
+    this.addEvent('bloom', '翠绿的春之穹顶降临大地——焦土回春、荒漠生草，生命在绿意中疯长', { x, y });
+    this.onSound?.('bloom');
   }
 
   /** 神力·等离子炮（玩家施放面：wwWeaponsTick launchPlasma 同源特效——无阵营豁免，
@@ -13496,6 +13639,9 @@ export class GameEngine {
       case 'chrono':
         this.chronoField(wx, wy, Math.max(4, r), durationP);
         break;
+      case 'bloom':
+        this.bloomField(wx, wy, Math.max(4, r), durationP);
+        break;
       // —— 超级武器神力（玩家施放面：wwWeaponsTick 同源特效直达） ——
       case 'plasmacannon':
         this.plasmaCannon(wx, wy, powerP);
@@ -15562,6 +15708,7 @@ export class GameEngine {
       income: c.income ?? 0,
       expense: c.expense ?? 0,
       festivalCd: c.festivalCd ?? 0,
+      popMilestone: c.popMilestone ?? 0,
       ideas: c.ideas ?? [],
       tiles: [...c.tiles],
       frontier: [...c.frontier],

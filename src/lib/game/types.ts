@@ -586,6 +586,8 @@ export interface Civ {
   expense?: number;
   /** 文化积累纪元（用于节日/播报节奏） */
   festivalCd?: number;
+  /** 已达成的人口里程碑档位索引（POP_MILESTONES；0 = 未达成任何档，旧档缺字段按 0 处理） */
+  popMilestone?: number;
   // ---------------- 涌现社会理念（Infinite Ideas） ----------------
   /** 已采纳的涌现理念 key 列表（上限 3；效果由 engine.ideaModsOf 汇总） */
   ideas?: string[];
@@ -847,6 +849,7 @@ export type EffectKind =
   | 'wrath'
   | 'holystorm'
   | 'chrono'
+  | 'bloom'
   // —— 天灾扩充（6）——
   | 'sandstorm'
   | 'typhoon'
@@ -865,7 +868,9 @@ export type EffectKind =
   | 'orbital'
   | 'mech'
   | 'plasma'
-  | 'antimatter';
+  | 'antimatter'
+  // —— 天穹庆典（v0.52：丰年祭/人口里程碑/凯旋的烟花秀）——
+  | 'firework';
 
 export interface Effect {
   kind: EffectKind;
@@ -912,7 +917,7 @@ export type WorldEventKind =
   // —— 科技研发与社会体系 ——
   | 'tech' | 'gov' | 'riot' | 'festival' | 'fireOut' | 'repair'
   // —— 神力/天灾扩充 ——
-  | 'rain' | 'sandstorm' | 'typhoon' | 'sinkhole' | 'iceage' | 'famine' | 'blackhole' | 'wrath' | 'chrono'
+  | 'rain' | 'sandstorm' | 'typhoon' | 'sinkhole' | 'iceage' | 'famine' | 'blackhole' | 'wrath' | 'chrono' | 'bloom'
   // —— 生物进化与生态竞争 ——
   | 'evolve' | 'eco'
   // —— 成就系统（跨世界元进度）——
@@ -1498,7 +1503,7 @@ export interface ToastMsg {
 }
 
 /** 音效事件类型 — 引擎通过回调上报，由 WebAudio 模块合成（爆炸/雷击/放置/UI 等） */
-export type SoundKind = 'boom' | 'nuke' | 'thunder' | 'distantThunder' | 'place' | 'quake' | 'heal' | 'volcano' | 'blizzard' | 'tsunami' | 'horn' | 'achieve' | 'era' | 'dragon' | 'shield' | 'coin' | 'hydra' | 'phoenix' | 'ent' | 'chrono';
+export type SoundKind = 'boom' | 'nuke' | 'thunder' | 'distantThunder' | 'place' | 'quake' | 'heal' | 'volcano' | 'blizzard' | 'tsunami' | 'horn' | 'achieve' | 'era' | 'dragon' | 'shield' | 'coin' | 'hydra' | 'phoenix' | 'ent' | 'chrono' | 'bloom' | 'firework';
 
 /** 地图覆盖模式（顶栏切换）：无 / 政治（王国版图） / 温度 / 湿度 / 人口密度 / 生物群落 */
 export type OverlayMode = 'none' | 'political' | 'temperature' | 'moisture' | 'density' | 'biome' | 'alliance';

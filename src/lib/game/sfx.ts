@@ -261,6 +261,7 @@ export class SfxEngine {
       case 'phoenix': this.phoenixCall(); break;
       case 'ent': this.ent(); break;
       case 'chrono': this.chrono(); break;
+      case 'bloom': this.bloom(); break;
     }
   }
 
@@ -1211,6 +1212,39 @@ export class SfxEngine {
     hum.connect(humGain).connect(this.sfxGain!);
     hum.start(t);
     hum.stop(t + 0.7);
+  }
+
+  /** 生命绽放：五声上行琶音 C5→E5→G5→C6（铃质正弦，破土生长的声音意象 —— 与时之凝滞的下行琉璃互为镜像）
+ *  尾部附一声高八度泛音（春穹降临时花苞绽开的「叮」意）。 */
+  private bloom(): void {
+    const ctx = this.ctx!;
+    const t = ctx.currentTime;
+    // 四音上行琶音：C5 → E5 → G5 → C6（大调三和弦上行 —— 生命拔节生长的方向）
+    const notes = [523.25, 659.25, 783.99, 1046.5];
+    for (let i = 0; i < notes.length; i++) {
+      const st = t + i * 0.1;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = notes[i];
+      gain.gain.setValueAtTime(0.001, st);
+      gain.gain.linearRampToValueAtTime(0.085, st + 0.035);
+      gain.gain.exponentialRampToValueAtTime(0.001, st + 0.8);
+      osc.connect(gain).connect(this.sfxGain!);
+      osc.start(st);
+      osc.stop(st + 0.9);
+    }
+    // 绽放泛音：C7 高频正弦渐强后轻收（花苞绽开的光感）
+    const hum = ctx.createOscillator();
+    const humGain = ctx.createGain();
+    hum.type = 'sine';
+    hum.frequency.value = 2093; // C7
+    humGain.gain.setValueAtTime(0.001, t + 0.3);
+    humGain.gain.linearRampToValueAtTime(0.04, t + 0.75);
+    humGain.gain.exponentialRampToValueAtTime(0.001, t + 0.95);
+    hum.connect(humGain).connect(this.sfxGain!);
+    hum.start(t + 0.3);
+    hum.stop(t + 1.0);
   }
 
   /** 树人木语：低沉三角波短哼（220→165Hz，树皮嗓音）+ 枝叶窸窣（高频带通噪声短脉冲）—— 森林守护者的吱吟 */
