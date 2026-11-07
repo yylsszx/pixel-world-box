@@ -5115,3 +5115,4 @@ Stage Summary:
 **验证**: lint exit 0 零告警；agent-browser 实机全链 QA——工具按钮/参数面板（半径 5/持续 20.0s）✓、UI 真实施放入参 ✓、领域生命周期（age/ttl/过期）✓、r=14 密集处 149 单位同凝滞 ✓、穹内火焰即刻止熄 ✓、箭矢 age 冻结悬停 ✓、穹顶视觉截图验收 ✓、成就殿堂「琥珀纪元」渲染 ✓、console 零报错 ✓。
 
 **推送**: push-web.sh 执行（见下条 CI 回查）。
+  → **CI failure 修复补记**：fa3f7a7 静态导出被 tsc 门禁拦下——新增 WorldEventKind 'chrono' 后三处全量映射表缺项（Chronicle.tsx KIND_META / gameStore.ts EVENT_CATEGORY / agentLaws.ts EVENT_KIND_TABLE satisfies 穷举表）+ engine.ts stasis 可选链自减类型错。已全部补齐：Chronicle +Hourglass 图标（text-teal-300）、分类 world（与唤雨同策）、注册表 chrono: true、u.stasis 显式非空自减。本地 export-static 复跑通过（out/ 4.2M 48 文件），lint exit 0。

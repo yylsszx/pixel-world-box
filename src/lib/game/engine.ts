@@ -3466,7 +3466,7 @@ export class GameEngine {
     // —— 时之凝滞：时间琥珀中的生灵完全静止（不老/不饿/不接战/不恐慌 —— 时间对它们失去意义）——
     //    凝滞解除后剩余 tick 自然耗尽即恢复；内核镜像路径的野生单位由 chill 减速通道同步凝滞
     if ((u.stasis ?? 0) > 0) {
-      u.stasis -= 2;
+      u.stasis = (u.stasis ?? 0) - 2;
       if (this.fxPrefs.ambience && this.rng() < 0.04) this.fx('frost', u.x, u.y, 14); // 冻尘微粒（minor 可逐出）
       return;
     }

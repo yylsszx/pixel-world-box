@@ -6,7 +6,7 @@ import { useGameStore, EVENT_CATEGORY, type EventFilter } from '@/store/gameStor
 import type { WorldEvent, WorldEventKind } from '@/lib/game/types';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { ScrollText, X, Flag, Swords, Handshake, Skull, Crown, Flame, Award, Biohazard, Radiation, Sparkles, Star, Ship, Home, Waves, Castle, CloudLightning, Trophy, Mountain, Droplets, Sword, Ghost, Flame as FlameIcon, Zap as ZapIcon, Hammer, Landmark, Coins, Gem, CloudRain, Snowflake, Bug, Sun, MountainSnow, Cloudy, Sparkle, PersonStanding, Eye, FlagTriangleRight, Swords as SwordsIcon, TrendingDown, Map, Landmark as LandmarkIcon, Scroll, BadgeCheck, BadgeX, Lightbulb, TriangleAlert, PartyPopper, Megaphone, CloudDrizzle, Dna, Orbit, Wind, Tornado, CircleDot, Snowflake as SnowIcon, Wheat, Leaf, FlaskConical, Route, Users, HeartCrack, Network, Wand2, TreePine } from 'lucide-react';
+import { ScrollText, X, Flag, Swords, Handshake, Skull, Crown, Flame, Award, Biohazard, Radiation, Sparkles, Star, Ship, Home, Waves, Castle, CloudLightning, Trophy, Mountain, Droplets, Sword, Ghost, Flame as FlameIcon, Zap as ZapIcon, Hammer, Landmark, Coins, Gem, CloudRain, Snowflake, Bug, Sun, MountainSnow, Cloudy, Sparkle, PersonStanding, Eye, FlagTriangleRight, Swords as SwordsIcon, TrendingDown, Map, Landmark as LandmarkIcon, Scroll, BadgeCheck, BadgeX, Lightbulb, TriangleAlert, PartyPopper, Megaphone, CloudDrizzle, Dna, Orbit, Wind, Tornado, CircleDot, Snowflake as SnowIcon, Wheat, Leaf, FlaskConical, Route, Users, HeartCrack, Network, Wand2, TreePine, Hourglass } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 /** 事件类型的图标与主题色 */
@@ -88,6 +88,7 @@ export const KIND_META: Record<WorldEventKind, { icon: LucideIcon; color: string
   famine: { icon: Wheat, color: 'text-yellow-700' },
   blackhole: { icon: Orbit, color: 'text-violet-400' },
   wrath: { icon: CloudLightning, color: 'text-yellow-300' },
+  chrono: { icon: Hourglass, color: 'text-teal-300' },
   // —— 生物进化与生态竞争 ——
   evolve: { icon: Dna, color: 'text-lime-300' },
   eco: { icon: Leaf, color: 'text-green-400' },
