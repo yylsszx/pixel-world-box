@@ -5056,3 +5056,26 @@ Stage Summary:
 - 版本机制确认：src/lib/game/version.ts（GAME_VERSION + CHANGELOG 数组，标题屏徽章/设置中心关于页消费）。
 
 **验证**: push-web.sh 实跑：TLS 瞬断一败后重试成功（SYNC_OK 16 文件）→ CI main@036079a success + gh-pages@7a269e3 success → 线上 200。lint 未触碰 src 零告警门态继承。
+
+## [2026-11-07 21:12 网关异常处置] cron 任务丢失重建（2931742→2931985）+ dev server 恢复
+
+**事件**: 用户发现定时任务消失。核实：v2 任务 2931742（18:12 建）已被 cron 网关侧丢失（任务列表清空，非本方删除）。18:25 台账后至 21:11 零轮次活动（worklog/git 双证），无在途工作损失。已重建同配置任务 2931985（0 */5 * * * ?，priority 10，任务卡片全量保留：强制推送/版本升级/凭证自愈/防撞车）。dev server 沙箱回收后掉线，已恢复 3000 端口。若任务再次消失，按本条目与任务卡片原样重建即可。
+
+## [2026-11-07 21:30 打磨轮 #1 · Job 2932240] 新手首次引导强化（TitleScreen 三件）+ 全链 QA
+
+**QA**: agent-browser 实机走查（主菜单→进世界→console）——console 零 error/warn/exception，世界正常运转（9 年/春），CHANGELOG 消费面（TopBar/HelpDialog）与存档槽逻辑在位。
+
+**改动**（src/components/game/TitleScreen.tsx）:
+- 无存档新玩家态：「新手教程」按钮加「首次推荐」琥珀角标（wbRise 0.7s 延迟淡入）+ 边框微高亮（border-amber-500/50→hover amber-400）+ aria-label「（首次游玩推荐）」——无障碍同步。
+- 页脚无存档文案升级：「暂无存档 · 建议先体验「新手教程」再开始造物之旅」（原来是纯静态陈述）。
+- 老玩家态（有存档）：零视觉变化（角标与高亮均不渲染——latestSave 门控）。
+- 存档兼容：零引擎改动，纯展示层，localStorage 语义不变。
+
+**验证**: lint exit 0 零告警；agent-browser 双态实证（有存档→按钮原样「新手教程」；清 localStorage→角标+aria+页脚引导三件齐）。
+
+## [2026-11-07 21:27 根因修复] 任务消失真因：webDevReview 类型是隔离单次运行——换 agentTurn 后真实循环
+
+**根因**: 前两轮创建的任务（2931685/2931742/2931985）用的是 payload.kind=webDevReview——该类型语义为「隔离单次审查运行」：创建即触发一次、随后被网关自动清除，不按 schedule 循环。表现为「创建成功→列表可见→几分钟后消失」。
+**修复**: 重建为 agentTurn 类型（与稳定运行 41 轮的旧 Unity 任务同型）。新任务 **2932240**（PWB 网页版极致打磨轮 v3，0 */5 * * * ?，任务卡片内容不变）。
+**实证存活**: 21:21 创建 → 21:25:00 准点第 2 次触发（run_count 2）→ next_run_time 自动推进 21:30 → dev.log 出现 QA 流量。真实循环确认。
+**后续轮次注意**: 若发现任务再次从列表消失，先查本条目——用 agentTurn 类型原样重建即可（卡片内容在本条目时代的对话与 push-web.sh 注释中）。

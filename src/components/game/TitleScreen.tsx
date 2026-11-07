@@ -264,10 +264,16 @@ export function TitleScreen() {
               restartOnboarding();
               enterWorld();
             }}
-            className="h-12 gap-2.5 rounded-none border-2 border-zinc-600 bg-zinc-900/80 text-sm font-bold text-zinc-200 shadow-[4px_4px_0_rgba(0,0,0,0.45)] transition-transform hover:translate-x-[2px] hover:translate-y-[2px] hover:border-amber-400/70 hover:text-amber-200 hover:shadow-[2px_2px_0_rgba(0,0,0,0.45)] active:translate-x-[4px] active:translate-y-[4px] active:shadow-none"
+            aria-label={latestSave ? '新手教程' : '新手教程（首次游玩推荐）'}
+            className={`h-12 gap-2.5 rounded-none border-2 bg-zinc-900/80 text-sm font-bold text-zinc-200 shadow-[4px_4px_0_rgba(0,0,0,0.45)] transition-transform hover:translate-x-[2px] hover:translate-y-[2px] hover:text-amber-200 hover:shadow-[2px_2px_0_rgba(0,0,0,0.45)] active:translate-x-[4px] active:translate-y-[4px] active:shadow-none ${latestSave ? 'border-zinc-600 hover:border-amber-400/70' : 'border-amber-500/50 hover:border-amber-400'}`}
           >
             <CircleHelp className="h-5 w-5 text-amber-300" aria-hidden />
             新手教程
+            {!latestSave && (
+              <span className="ml-auto animate-[wbRise_0.6s_ease-out_backwards] rounded-sm border border-amber-400/50 bg-amber-400/10 px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-wide text-amber-300" style={{ animationDelay: '0.7s' }}>
+                首次推荐
+              </span>
+            )}
           </Button>
         </nav>
       ) : (
@@ -354,7 +360,7 @@ export function TitleScreen() {
       <footer className="relative mt-8 flex flex-col items-center gap-1 text-center font-mono text-[10px] text-zinc-400 sm:mt-10">
         <span>纯前端运行 · 无需安装 · 存档保存在浏览器本地</span>
         <span className="text-zinc-500">
-          {slotMetas.length > 0 ? `${slotMetas.length} 个存档槽待续` : '暂无存档 · 每个世界都从零开始'}
+          {slotMetas.length > 0 ? `${slotMetas.length} 个存档槽待续` : '暂无存档 · 建议先体验「新手教程」再开始造物之旅'}
         </span>
       </footer>
     </div>
