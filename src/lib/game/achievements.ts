@@ -31,7 +31,7 @@ export const TIER_META: Record<AchTier, { label: string; cls: string; ring: stri
   legend: { label: '传说', cls: 'border-fuchsia-400/60 bg-fuchsia-400/10 text-fuchsia-300', ring: 'ring-fuchsia-400/40' },
 };
 
-/** 40 项成就（文明/战争/科技/传奇/天灾/神力/进化/联盟/季节/时间疆域） */
+/** 41 项成就（文明/战争/科技/传奇/天灾/神力/进化/联盟/季节/时间疆域） */
 export const ACHIEVEMENTS: AchievementDef[] = [
   // —— 文明史诗 ——
   {
@@ -221,6 +221,12 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     id: 'doom-survivor', name: '浩劫余生', desc: '世界累计经历 10 次超级天灾（核弹/黑洞/陨石雨/湮灭）', tier: 'legend', icon: 'shield',
     check: (e) => e.statNukes + e.statBlackholes + e.statMeteorShowers + e.statAnnihilations >= 10,
     progress: (e) => e.statNukes + e.statBlackholes + e.statMeteorShowers + e.statAnnihilations, goal: 10,
+  },
+  // —— v0.51 时之凝滞扩充组 ——
+  {
+    id: 'amber-stasis', name: '琥珀纪元', desc: '让时之凝滞同时笼罩 50 个生灵', tier: 'silver', icon: 'clock',
+    check: (e) => e.units.filter((u) => !u.dead && (u.stasis ?? 0) > 0).length >= 50,
+    progress: (e) => e.units.filter((u) => !u.dead && (u.stasis ?? 0) > 0).length, goal: 50,
   },
 ];
 

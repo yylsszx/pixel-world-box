@@ -3463,6 +3463,13 @@ export class GameEngine {
     if (u.hurt > 0) u.hurt--;
     // —— 神之手指：被抓起/掷飞/落地的眩晕单位暂停 AI（免疫地面伤害），由 beginGrab/moveGrab/endGrab 驱动 ——
     if ((u.grab ?? 0) > 0) { this.grabbedTick(u); return; }
+    // —— 时之凝滞：时间琥珀中的生灵完全静止（不老/不饿/不接战/不恐慌 —— 时间对它们失去意义）——
+    //    凝滞解除后剩余 tick 自然耗尽即恢复；内核镜像路径的野生单位由 chill 减速通道同步凝滞
+    if ((u.stasis ?? 0) > 0) {
+      u.stasis -= 2;
+      if (this.fxPrefs.ambience && this.rng() < 0.04) this.fx('frost', u.x, u.y, 14); // 冻尘微粒（minor 可逐出）
+      return;
+    }
     // 殖民船：独立的航海逻辑（不参战/不覆水伤害）
     if (u.boat) {
       this.updateBoat(u);
@@ -10071,6 +10078,52 @@ export class GameEngine {
           }
           // 敌对自然巨兽（狼/熊/克拉肯等）：既不审判也不治愈 —— 圣光只针对超自然黑暗
         }
+      } else if (e.kind === 'chrono') {
+        // 时之凝滞：时间琥珀穹顶 —— 极缓漂移，跨路径三重凝滞：
+        // ① 生灵深度迟缓：JS 路径单位由 updateUnit stasis 门完全静止（不老/不饿/不接战），
+        //    内核镜像路径的野生单位由 chill 减速通道同步凝滞（Rust 侧同 ×0.55，两侧互补）；
+        // ② 箭矢悬停：弹道特效（arrow/bullet/missile/shell）在穹内 age 回拨——弹道冻结半空，出穹/穹散即恢复；
+        // ③ 火焰止熄：穹内燃烧格逐 tick 压熄——火焰失去蔓延的资格。
+        e.dir += (this.rng() - 0.5) * 0.08;
+        e.x = Math.max(2, Math.min(W - 3, e.x + Math.cos(e.dir) * 0.04));
+        e.y = Math.max(2, Math.min(H - 3, e.y + Math.sin(e.dir) * 0.04));
+        const cr2 = e.r * e.r;
+        let n = 0;
+        for (const u of this.units) {
+          if (u.dead) continue;
+          const cdx = u.x - e.x;
+          const cdy = u.y - e.y;
+          if (cdx * cdx + cdy * cdy >= cr2) continue;
+          u.stasis = 6; // 持续充能：JS 路径完全静止；离域后剩余 tick 自然耗尽即恢复
+          u.chill = Math.max(u.chill ?? 0, 8); // 内核路径减速通道（Rust 侧自带衰减，无泄漏）
+          n++;
+          if (this.fxPrefs.ambience && this.rng() < 0.03) this.fx('frost', u.x, u.y, 20);
+        }
+        // —— 箭矢悬停：穹内弹道特效 age 回拨（effectsTick 头部已 age++，此处回拨 1 净零 → 弹道冻结）
+        for (const p of this.effects) {
+          if (p.kind !== 'arrow' && p.kind !== 'bullet' && p.kind !== 'missile' && p.kind !== 'shell') continue;
+          const pdx = p.x - e.x, pdy = p.y - e.y;
+          if (pdx * pdx + pdy * pdy >= cr2) continue;
+          if (p.age > 0 && p.age < p.ttl) p.age--;
+        }
+        // —— 火焰止熄：穹内燃烧格逐 tick 压熄（0.6/tick，熄灭时小股白烟回执）
+        const x0 = Math.max(0, Math.floor(e.x - e.r)); const x1 = Math.min(W - 1, Math.ceil(e.x + e.r));
+        const y0 = Math.max(0, Math.floor(e.y - e.r)); const y1 = Math.min(H - 1, Math.ceil(e.y + e.r));
+        for (let yy = y0; yy <= y1; yy++) {
+          for (let xx = x0; xx <= x1; xx++) {
+            const ddx = xx + 0.5 - e.x, ddy = yy + 0.5 - e.y;
+            if (ddx * ddx + ddy * ddy >= cr2) continue;
+            const j = yy * W + xx;
+            if (this.fire[j] > 0) {
+              this.fire[j] = 0; // 琥珀止熄：火焰在凝滞域内即刻失去燃烧的资格（与圣光风暴同策）
+              this.fireSet.delete(j);
+              if (this.fxPrefs.ambience && this.rng() < 0.3) this.fx('smoke', xx + 0.5, yy + 0.5, 16);
+            }
+          }
+        }
+        if (n > 0 && this.tickCount % 90 === 0) {
+          this.onSound?.('chrono'); // 琥珀嗡鸣：低频回响提醒领域仍在（每 ~3 秒一次）
+        }
       } else if (e.kind === 'sandstorm') {
         // 沙尘暴：游荡沙暴 —— 草被沙埋、生物迷失风中
         e.dir += (this.rng() - 0.5) * 0.25;
@@ -10940,6 +10993,19 @@ export class GameEngine {
     this.fx('holystorm', x, y, ttl, { r: rr });
     this.addEvent('holystorm', '金色的圣云自天际涌来，圣光将审判黑暗、治愈无辜', { x, y });
     this.onSound?.('shield');
+  }
+
+  /** 时之凝滞：时间琥珀神力 —— 半透明青珀穹顶笼罩大地，域内生灵陷入深度凝滞：
+   *  JS 路径单位完全静止（不老/不饿/不接战，updateUnit stasis 门提前返回），
+   *  内核镜像路径的野生单位由 chill 减速通道同步凝滞（Rust 侧同语义 ×0.55，两侧互补）。
+   *  凝滞 ≠ 无敌：单位仍可被伤害 —— 时间对它们失去意义，但世界没有。 */
+  chronoField(x: number, y: number, r: number, ttl = 300) {
+    const rr = Math.max(4, Math.min(14, r));
+    const count = this.effects.filter((e) => e.kind === 'chrono').length;
+    if (count >= 3) return; // 上限防刷屏（与天罚/圣光风暴同策）
+    this.fx('chrono', x, y, ttl, { r: rr });
+    this.addEvent('chrono', '时间在琥珀中凝固——箭矢悬停于半空，火焰失去了蔓延的资格', { x, y });
+    this.onSound?.('chrono');
   }
 
   /** 神力·等离子炮（玩家施放面：wwWeaponsTick launchPlasma 同源特效——无阵营豁免，
@@ -13426,6 +13492,9 @@ export class GameEngine {
         break;
       case 'holystorm':
         this.holyStorm(wx, wy, Math.max(4, r), durationP);
+        break;
+      case 'chrono':
+        this.chronoField(wx, wy, Math.max(4, r), durationP);
         break;
       // —— 超级武器神力（玩家施放面：wwWeaponsTick 同源特效直达） ——
       case 'plasmacannon':

@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.50-preview';
+export const GAME_VERSION = 'v0.51-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.51-preview',
+    date: '2026-11-07',
+    items: [
+      '全新神力「时之凝滞」：时间琥珀穹顶笼罩大地——时间流速骤降，生灵深度迟缓、箭矢悬停半空、火焰熄止蔓延，凝滞深处生灵完全静止（半径/持续可调，最多 3 域并存）',
+      '凝滞表现三件套：青珀双层穹顶+逆行钟摆弧+悬停冻结光尘的专属视觉，玻璃质下行琶音的专属音色，与暴风雪寒霜通道同源的内核级减速',
+      '新成就「琥珀纪元」（白银）：让时之凝滞同时笼罩 50 个生灵——成就殿堂扩至 41 项',
+    ],
+  },
   {
     ver: 'v0.50-preview',
     date: '2026-11-07',

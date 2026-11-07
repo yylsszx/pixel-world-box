@@ -5095,3 +5095,23 @@ Stage Summary:
 
 **推送**: push-web.sh 执行（见下条 CI 回查结果）。
   → **推送完成**：SYNC_OK 1692dfc → CI main@1692dfc success → gh-pages@37358e2 success → Pages 线上 200。v0.50 已上线。
+
+## [2026-11-07 22:1x 打磨轮 #3 · Job 2932240] v0.51：全新神力「时之凝滞」——时间琥珀穹顶（第 12 种神力）
+
+**上轮补记**: 开工核对——3fdd712 台账与远端快照 aee1371 内容零差（快照机制已同步），无需补推；CI 双绿、Pages 200。
+
+**QA（开工时）**: agent-browser 实机走查——标题屏 v0.50 正常、世界渲染正常、教程弹窗/工具栏齐全、console 零 error/warn。
+
+**本轮改动（第 12 种神力：时之凝滞 chrono）**:
+- 玩法定义：时间琥珀穹顶（single 工具，凝滞半径 4-14/持续 100-600 tick 可调，至多 3 域并存防刷屏）。跨路径三重凝滞语义：
+  ① 生灵深度迟缓——JS 路径单位 updateUnit stasis 门完全静止（不老/不饿/不接战/不恐慌，提前 return）；内核镜像路径野生单位复用 chill 减速列（Rust 侧 ×0.55 同语义，units.rs:1687 移动/2234 衰减双确认，无泄漏）。
+  ② 箭矢悬停——穹内弹道特效（arrow/bullet/missile/shell）age 回拨净零：弹道冻结半空，出穹/穹散即恢复（实测 age 冻结于 0）。
+  ③ 火焰止熄——穹内燃烧格即刻熄灭（与圣光风暴同策，实测穹内火全灭）。
+- 涉及文件：types.ts（EffectKind/Unit.stasis 瞬态不入档/WorldEventKind/SoundKind 四处注册）+ constants.ts（工具定义+8×8 青珀沙漏图标）+ engine.ts（chronoField/effectsTick 三重凝滞块/applyTool 分发/updateUnit stasis 门）+ render.ts（青珀双层穹体+逆行钟摆弧+悬停冻结光尘+时之柱）+ sfx.ts（玻璃质下行琶音 A5→G4+E6 悬停泛音）。
+- 内核限制如实记录：Rust 批内核接管时 updateUnit 仅接手 bail 单位（完整静止只覆盖 JS 兼容路径），内核路径以 chill 深度减速呈现；wasm 重建（加 OFF_USTASIS 列）因沙箱无 cargo 不可行，本轮以跨路径互补语义收口。
+- 成就 +1：「琥珀纪元」（白银·同时笼罩 50 生灵，进度条）→ 殿堂 41 项；AchievementsPanel 图标映射 +Clock。
+- version.ts：v0.51-preview + CHANGELOG 三条（文案为跨路径诚实语义）。
+
+**验证**: lint exit 0 零告警；agent-browser 实机全链 QA——工具按钮/参数面板（半径 5/持续 20.0s）✓、UI 真实施放入参 ✓、领域生命周期（age/ttl/过期）✓、r=14 密集处 149 单位同凝滞 ✓、穹内火焰即刻止熄 ✓、箭矢 age 冻结悬停 ✓、穹顶视觉截图验收 ✓、成就殿堂「琥珀纪元」渲染 ✓、console 零报错 ✓。
+
+**推送**: push-web.sh 执行（见下条 CI 回查）。

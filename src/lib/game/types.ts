@@ -428,6 +428,9 @@ export interface Unit {
   bless?: number;
   /** 神罚诅咒剩余 tick：移速 ×0.75 + 持续失血 + 紫霾 */
   curse?: number;
+  /** 时之凝滞剩余 tick（时间琥珀领域；JS 路径单位完全静止：不老/不饿/不接战 —— 瞬态不入档，
+   *  内核镜像路径的野生单位由 chill 减速通道同步凝滞，两侧语义互补） */
+  stasis?: number;
   /** 捕食者饥饿账本（仅 predator 野生动物）：击杀猎物得食、随时间消耗；归零开始饿死，充盈才可繁衍 —— Lotka-Volterra 迟滞 */
   food?: number;
   // ---------------- 寻路自愈（瞬态不入档：山体/水域隔断的直线追击死锁） ----------------
@@ -835,7 +838,7 @@ export type EffectKind =
   | 'hammer'
   // —— 冰霜（Task 102：湖泽封冻瞬间的冰晶星芒）——
   | 'frost'
-  // —— 神力扩充（7）——
+  // —— 神力扩充（8）——
   | 'rainstorm'
   | 'bless'
   | 'curse'
@@ -843,6 +846,7 @@ export type EffectKind =
   | 'spark'
   | 'wrath'
   | 'holystorm'
+  | 'chrono'
   // —— 天灾扩充（6）——
   | 'sandstorm'
   | 'typhoon'
@@ -908,7 +912,7 @@ export type WorldEventKind =
   // —— 科技研发与社会体系 ——
   | 'tech' | 'gov' | 'riot' | 'festival' | 'fireOut' | 'repair'
   // —— 神力/天灾扩充 ——
-  | 'rain' | 'sandstorm' | 'typhoon' | 'sinkhole' | 'iceage' | 'famine' | 'blackhole' | 'wrath'
+  | 'rain' | 'sandstorm' | 'typhoon' | 'sinkhole' | 'iceage' | 'famine' | 'blackhole' | 'wrath' | 'chrono'
   // —— 生物进化与生态竞争 ——
   | 'evolve' | 'eco'
   // —— 成就系统（跨世界元进度）——
@@ -1494,7 +1498,7 @@ export interface ToastMsg {
 }
 
 /** 音效事件类型 — 引擎通过回调上报，由 WebAudio 模块合成（爆炸/雷击/放置/UI 等） */
-export type SoundKind = 'boom' | 'nuke' | 'thunder' | 'distantThunder' | 'place' | 'quake' | 'heal' | 'volcano' | 'blizzard' | 'tsunami' | 'horn' | 'achieve' | 'era' | 'dragon' | 'shield' | 'coin' | 'hydra' | 'phoenix' | 'ent';
+export type SoundKind = 'boom' | 'nuke' | 'thunder' | 'distantThunder' | 'place' | 'quake' | 'heal' | 'volcano' | 'blizzard' | 'tsunami' | 'horn' | 'achieve' | 'era' | 'dragon' | 'shield' | 'coin' | 'hydra' | 'phoenix' | 'ent' | 'chrono';
 
 /** 地图覆盖模式（顶栏切换）：无 / 政治（王国版图） / 温度 / 湿度 / 人口密度 / 生物群落 */
 export type OverlayMode = 'none' | 'political' | 'temperature' | 'moisture' | 'density' | 'biome' | 'alliance';

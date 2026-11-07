@@ -3354,6 +3354,55 @@ function drawWorldEffect(engine: GameEngine, e: Effect, wc: CanvasRenderingConte
       }
       break;
     }
+    case 'chrono': {
+      // 时之凝滞：时间琥珀穹顶（青珀双层穹体 + 逆行钟摆弧 + 悬停不落的冻结光尘 + 中心时之柱）
+      const R = e.r * 2;
+      const fade = t > 0.85 ? Math.max(0, 1 - (t - 0.85) / 0.15) : 1;
+      const fc = engine.frameCount;
+      // 双层琥珀穹体（外层青珀 + 内层冰晶白，缓慢呼吸 —— 时间变得粘稠的视觉隐喻）
+      const breathe = 0.2 + 0.05 * Math.sin(fc * 0.03);
+      wc.globalAlpha = breathe * fade;
+      wc.fillStyle = '#2e8f86';
+      wc.beginPath();
+      wc.arc(px, py, R, 0, Math.PI * 2);
+      wc.fill();
+      wc.globalAlpha = (breathe + 0.08) * fade;
+      wc.fillStyle = '#bfeee8';
+      wc.beginPath();
+      wc.arc(px, py - R * 0.15, R * 0.68, 0, Math.PI * 2);
+      wc.fill();
+      wc.globalAlpha = 1;
+      // 穹顶描边（细青线勾勒穹界 —— 玩家可读的领域边界）
+      wc.strokeStyle = `rgba(94,214,197,${0.5 * fade})`;
+      wc.lineWidth = 1;
+      wc.beginPath();
+      wc.arc(px, py, R, 0, Math.PI * 2);
+      wc.stroke();
+      // 逆行钟摆弧（三道反向缓旋的表盘刻度弧 —— 时钟倒转的凝滞感）
+      for (let arm = 0; arm < 3; arm++) {
+        const a0 = -fc * 0.006 + (arm / 3) * Math.PI * 2;
+        wc.strokeStyle = `rgba(63,181,163,${0.45 * fade})`;
+        wc.lineWidth = 1.5;
+        wc.beginPath();
+        wc.arc(px, py, R * (0.45 + 0.12 * (arm & 1)), a0, a0 + 0.9);
+        wc.stroke();
+      }
+      // 悬停光尘（确定性散布的冻结光点 —— 不下落，只微幅颤动：被冻在时间里的尘埃）
+      for (let k = 0; k < 12; k++) {
+        const h = ((e.seed * 40503 + k * 331) >>> 0) % 997;
+        const ang = (h / 997) * Math.PI * 2;
+        const rr = Math.sqrt(h % 89) / 9.43 * R * 0.88;
+        const quiver = Math.sin(fc * 0.05 + k) * 0.5;
+        wc.fillStyle = (h & 1) ? `rgba(160,240,225,${0.8 * fade})` : `rgba(220,250,245,${0.6 * fade})`;
+        wc.fillRect(Math.round(px + Math.cos(ang) * rr + quiver), Math.round(py + Math.sin(ang) * rr * 0.75), 1, 1);
+      }
+      // 中心时之柱（半透青立柱 —— 与圣光柱同构的领域图腾；消散前收束）
+      if (t > 0.7) {
+        wc.fillStyle = `rgba(127,222,205,${0.28 * fade})`;
+        wc.fillRect(Math.round(px) - 1, Math.round(py - R), 2, Math.round(R * 1.2));
+      }
+      break;
+    }
     case 'sandstorm': {
       // 沙尘暴：土黄云体 + 旋转沙粒
       const R = e.r * 2;

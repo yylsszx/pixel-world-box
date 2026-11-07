@@ -260,6 +260,7 @@ export class SfxEngine {
       case 'hydra': this.hydra(); break;
       case 'phoenix': this.phoenixCall(); break;
       case 'ent': this.ent(); break;
+      case 'chrono': this.chrono(); break;
     }
   }
 
@@ -1178,6 +1179,38 @@ export class SfxEngine {
     src.connect(bp).connect(ng).connect(this.sfxGain!);
     src.start(t);
     src.stop(t + 0.95);
+  }
+
+  /** 时之凝滞：玻璃质下行琶音（时间变稠）+ 高频泛音反向渐强（琥珀凝结）—— 逆流的时间感 */
+  private chrono(): void {
+    const ctx = this.ctx!;
+    const t = ctx.currentTime;
+    // 四音下行琶音：A5 → E5 → C5 → G4（玻璃质正弦，长尾释放 —— 时间放缓的声音意象）
+    const notes = [880, 659.25, 523.25, 392];
+    for (let i = 0; i < notes.length; i++) {
+      const st = t + i * 0.11;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = notes[i];
+      gain.gain.setValueAtTime(0.001, st);
+      gain.gain.linearRampToValueAtTime(0.09, st + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, st + 0.85);
+      osc.connect(gain).connect(this.sfxGain!);
+      osc.start(st);
+      osc.stop(st + 0.95);
+    }
+    // 悬停泛音：高频正弦反向渐强后骤收（琥珀封存瞬间的「咔」意）
+    const hum = ctx.createOscillator();
+    const humGain = ctx.createGain();
+    hum.type = 'sine';
+    hum.frequency.value = 1318.5; // E6
+    humGain.gain.setValueAtTime(0.001, t);
+    humGain.gain.linearRampToValueAtTime(0.05, t + 0.5);
+    humGain.gain.exponentialRampToValueAtTime(0.001, t + 0.62);
+    hum.connect(humGain).connect(this.sfxGain!);
+    hum.start(t);
+    hum.stop(t + 0.7);
   }
 
   /** 树人木语：低沉三角波短哼（220→165Hz，树皮嗓音）+ 枝叶窸窣（高频带通噪声短脉冲）—— 森林守护者的吱吟 */

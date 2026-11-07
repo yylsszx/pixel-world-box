@@ -409,6 +409,11 @@ export const ICONS: Record<string, string[]> = {
     '..ffff..', '.ffyyf..', 'ffyyyyf.', 'fyywyyf.',
     '.fyyyyf.', '..ffyf..', '...w.w..', '....w...',
   ],
+  // —— 时之凝滞：青珀沙漏（时间在琥珀中静止）——
+  chrono: [
+    'tttttttt', 'tf....ft', 'tf.ww.ft', 'ttfwwftt',
+    '.ttwwtt.', '..twwt..', '..t..t..', '.tt..tt.',
+  ],
   // —— 超级武器神力（2：等离子炮/湮灭之光——wwWeaponsTick 同源特效的玩家施放面）——
   plasma: [
     '...tt...', '..t..t..', '...tt...', 'tttwwttt',
@@ -723,6 +728,10 @@ export const TOOLS: ToolDef[] = [
   { id: 'holystorm', label: '圣光风暴', desc: '金色圣云游荡：审判亡灵恶魔巨龙，治愈无辜生灵，浇灭火焰复苏焦土（半径可调）', tab: 'powers', icon: 'holystorm', single: true, params: [
     { key: 'radius', label: '圣域半径', min: 4, max: 14, step: 1, def: 5 },
     { key: 'duration', label: '持续', min: 60, max: 300, step: 10, def: 200, fmt: 'sec' },
+  ] },
+  { id: 'chrono', label: '时之凝滞', desc: '时间琥珀：穹顶下时间流速骤降——生灵深度迟缓、箭矢悬停半空、火焰熄止蔓延；凝滞深处生灵完全静止（半径/持续可调）', tab: 'powers', icon: 'chrono', single: true, params: [
+    { key: 'radius', label: '凝滞半径', min: 4, max: 14, step: 1, def: 5 },
+    { key: 'duration', label: '持续', min: 100, max: 600, step: 50, def: 300, fmt: 'sec' },
   ] },
   { id: 'plasmacannon', label: '等离子炮', desc: '电浆光球坠地：大威力爆破 + 电磁脉冲——周遭生物麻痹硬直、军团士气崩落（威力可调）', tab: 'powers', icon: 'plasma', single: true, params: [
     { key: 'power', label: '威力', min: 40, max: 160, step: 10, def: 90 },
