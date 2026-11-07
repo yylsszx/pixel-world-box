@@ -5046,3 +5046,13 @@ Stage Summary:
 **VibeHub 发布挂账**: 用户浏览器授权未完成（CLI v0.3.3 已装 + 物料就绪 /home/z/.vibehub-tmp/：description.txt/note.txt/生产截图×5/cover）。用户提及时续做。
 
 **环境**: dev server 3000 端口已恢复（3999 静态服务已撤）。GitHub 远端 2c3153c 与本地一致。
+
+## [2026-11-07 18:25 打磨轮基建] 推送链全通 + 定时任务 v2（5min/强制推送/Pages 同步/凭证自愈）
+
+**交付**:
+- scripts/push-web.sh 统一推送链（幂等：未提交改动→提交→sync-github.sh 白名单推远端 main→CI 状态回查）。
+- 全链路实测通过：本地提交 → 推送 036079a → CI 构建 success → gh-pages 7a269e3 → Pages 线上 200。凭证修复：credential.helper store 升全局（staging 克隆可读）+ ~/.git-credentials 重写。
+- 定时任务 v2：删 2931685（15min 版，已自动跑 2 轮），建 2931742（0 */5 * * * ?，priority 10）。任务卡片含：每轮强制 push-web.sh 推送+CI 回查、版本号适时升级协议（version.ts GAME_VERSION+CHANGELOG 头插）、GitHub 凭证自愈协议（沙箱回收后重写）、并行轮防撞车（5min 间隔<单轮耗时的让位协议）、CI failure 最高优先修复。
+- 版本机制确认：src/lib/game/version.ts（GAME_VERSION + CHANGELOG 数组，标题屏徽章/设置中心关于页消费）。
+
+**验证**: push-web.sh 实跑：TLS 瞬断一败后重试成功（SYNC_OK 16 文件）→ CI main@036079a success + gh-pages@7a269e3 success → 线上 200。lint 未触碰 src 零告警门态继承。
