@@ -5034,3 +5034,15 @@ Stage Summary:
 
 风险建议: ①主线 A 下一站按序：**toolsTick 收尾长尾四前置支**（chest/chest2/chest3 L13253+ITEM_TOOL L13259+cre: L13264+RACE_TOOL L13278——物品/造物/种族域）或 **directiveTick/techTick/societyTick/allianceTick 槽 29-32 梯队**（%30===0 L2571 起四连——DirectiveTick 已译件随件）；②war 域残余挂账：statsTick L13568（双侧不记）/launchMech L9557（机甲域）/WBB.touchMeta（槽 59 前半）/ep() 参数域；③主线 B 挂账①②③外部依赖维持（沙箱内无待办）；④out/ 门态继承（src/ 零触碰）；⑤Unity Test Runner 用户侧首跑（NUnit 330 背书）；⑥R2 stash 留档（stash@{0}）确认无用可清。
 提示词迭代 v18→v19：主线 A M-U34 devWw 面板三件出清入档（war.json 22 场景/S1-S18 零漂移/NUnit 330/war 域全景收官态——槽 25/26/28+launch 八件+sustainOf/settleFront/makePeace/devWw 三件全在册）+ 下一站梯队刷新（toolsTick 四前置支升首位）+ push 注记刷新（1a00209+131c6bc）+ M-U34 教训一条入册——恒定段逐字未动，节奏 0 30 * * * ? 维持。Job 2928673→2928681。（另注：本轮开工系 v17 重复触发窗 00:30 竞态——v17 已于上轮 delete，本 firing 为网关在途派发；R2 判定接管后按 v18 实况推进，无撞车。）
+
+## [2026-11-07 18:10 用户指令转向] 定时任务全面切换：Unity 迁移暂停 → 网页版极致打磨迭代
+
+**决策**: 用户明确指示「先把定时任务全面转向 web 版（GitHub 部署的网页版）的全面极致打磨和迭代，目前的任务后期再搞」。已执行：
+- 删除 cron job 2928681（Pixel World Box 开发轮 v19，Unity 机械翻译主线，累计 41 轮收官——M-U1~M-U34 全部成果在库，NUnit 330 全绿，TickOrch 39/61 槽。恢复方式见本台账 v19 条目）。
+- 创建 cron job **2931685「PWB 网页版极致打磨轮」**（kind=webDevReview，节奏 0 */15 * * * ? 每 15 分钟，Asia/Shanghai）：每轮 agent-browser QA → 修 bug / 新需求 → 样式细节+功能增量 → lint + export-static 门禁 → worklog 台账。
+
+**打磨主战场**: src/（GameShell/面板/HUD/工具栏/engine.ts 玩法面）——网页版从「冻结蓝本」转为「活的迭代主体」。铁律不变：api/oracle/* 勿动、export-static 必须过、旧存档兼容、lint 零告警。
+
+**VibeHub 发布挂账**: 用户浏览器授权未完成（CLI v0.3.3 已装 + 物料就绪 /home/z/.vibehub-tmp/：description.txt/note.txt/生产截图×5/cover）。用户提及时续做。
+
+**环境**: dev server 3000 端口已恢复（3999 静态服务已撤）。GitHub 远端 2c3153c 与本地一致。
