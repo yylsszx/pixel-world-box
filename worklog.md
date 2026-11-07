@@ -5116,3 +5116,5 @@ Stage Summary:
 
 **推送**: push-web.sh 执行（见下条 CI 回查）。
   → **CI failure 修复补记**：fa3f7a7 静态导出被 tsc 门禁拦下——新增 WorldEventKind 'chrono' 后三处全量映射表缺项（Chronicle.tsx KIND_META / gameStore.ts EVENT_CATEGORY / agentLaws.ts EVENT_KIND_TABLE satisfies 穷举表）+ engine.ts stasis 可选链自减类型错。已全部补齐：Chronicle +Hourglass 图标（text-teal-300）、分类 world（与唤雨同策）、注册表 chrono: true、u.stasis 显式非空自减。本地 export-static 复跑通过（out/ 4.2M 48 文件），lint exit 0。
+  → **推送完成（CI 修复）**：SYNC_OK c4d1159 → CI main@c4d1159 success → gh-pages@ca27e4f success → Pages 线上 200。v0.51 已上线，本轮全链闭环。
+  → **线上实机终验**：agent-browser 打开 https://yylsszx.github.io/pixel-world-box/ —— 标题屏徽章 **v0.51**、菜单齐全（进入世界/重铸新世界/新手教程+首次推荐角标）、无存档引导文案正常。v0.51「时之凝滞」全链闭环上线。
