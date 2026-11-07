@@ -234,6 +234,10 @@ export class GameEngine {
   statAnnihilations = 0;
   /** 生命绽放累计复苏格数（成就：不毛再无 —— 与超级武器计数器同构的临时世界内计数） */
   statBloomTiles = 0;
+  /** 时之奔流累计加速心跳数（成就：光阴似箭 —— 域内生灵数 × tick 累计） */
+  statHasteBeats = 0;
+  /** 时之奔流单域同时加速生灵峰值（成就：白驹过隙） */
+  statHastePeak = 0;
   /** 天穹庆典累计绽放轮数（成就：盛世华章 —— 单世界 session 计数，与超级武器计数器同构） */
   statFestivals = 0;
 
@@ -856,6 +860,8 @@ export class GameEngine {
     this.statPlasmas = 0;
     this.statAnnihilations = 0;
     this.statBloomTiles = 0;
+    this.statHasteBeats = 0;
+    this.statHastePeak = 0;
     this.statFestivals = 0;
     this.achProgressCache = {};
     // 终极世界大战重置（新世界无战火）
@@ -3121,6 +3127,9 @@ export class GameEngine {
   uprof = { pack2: 0, batch: 0, replay: 0, wb: 0, js: 0 };
   /** TEMP-48: bail 类型诊断直方图（1=船 2=涌现 3=建筑摧毁 4=商队 5=殖民建城） */
   bailKinds: Record<number, number> = {};
+  /** 本 tick 单位是否由 wasm 批内核接管（effectsTick 时域补偿的门控：内核接管时 JS 主循环不跑，
+   *  热列直写是内核路径唯一的时间通道；batch 未就绪/回退 JS 时为 false —— 避免 JS 双心跳+热列双重叠加） */
+  private _kernelTick = false;
   unitsTick() {
     const parity = this.tickCount % 2;
     const wbOn = WB.active();
@@ -3132,6 +3141,7 @@ export class GameEngine {
       WBB.pack2(this); // 首次 pack 建立镜像并置 batchReady；失败则回退 JS
       const uT1 = performance.now();
       if (WBB.active() && WBB.batchReady) {
+        this._kernelTick = true; // 本 tick 单位由内核接管（effectsTick 时域补偿门控）
         this._wbBatch = true;
         let from = 0;
         let guard = 0;
@@ -3212,9 +3222,12 @@ export class GameEngine {
       }
     }
     const jsT0 = performance.now();
+    this._kernelTick = false; // JS 路径接管（双心跳生效，热列补偿关闭）
     for (const u of this.units) {
       if (u.parity === parity && !u.dead) {
         this.updateUnit(u);
+        // —— 时之奔流：奔涌时域中的生灵获得第二次心跳（移动/战斗/成长/衰老 ×2 —— 岁月飞逝的双刃剑）——
+        if ((u.haste ?? 0) > 0 && !u.dead) this.updateUnit(u);
         // WASM 镜像收口：水单位自身变异（移动/死亡/恐慌衰减）回写 —— 后续单位的扫描读到活值
         if (wbOn) WB.syncAfterUpdate(u);
       }
@@ -3477,6 +3490,9 @@ export class GameEngine {
       if (this.fxPrefs.ambience && this.rng() < 0.04) this.fx('frost', u.x, u.y, 14); // 冻尘微粒（minor 可逐出）
       return;
     }
+    // —— 时之奔流：时域充能自然耗尽（凝滞压倒奔流：stasis 门先返回期间本行不执行 —— 余韵在凝滞解除后续跑；
+    //    置于船门之前：船单位同受充能且可自然耗尽，不滞留。双心跳下每次调用 -2 → 域内充电 6/tick 恒满，离域 ~3 心跳耗尽）——
+    if (u.haste) u.haste -= 2;
     // 殖民船：独立的航海逻辑（不参战/不覆水伤害）
     if (u.boat) {
       this.updateBoat(u);
@@ -10255,6 +10271,72 @@ export class GameEngine {
         if (bn > 0 && e.age % 120 === 0) {
           this.onSound?.('bloom'); // 春息低回：每 ~4 秒一次
         }
+      } else if (e.kind === 'haste') {
+        // 时之奔流：时间金流穹顶 —— 极缓漂移，三重奔涌（与时之凝滞的三重凝滞互为镜像）：
+        // ① 生灵疾行：域内单位 haste 充能 —— JS 路径由主循环第二次 updateUnit 获得 ×2 心跳
+        //    （移动/战斗/成长/衰老全面提速，岁月飞逝的双刃剑）；wasm 批内核接管时 Rust 不知时域，
+        //    JS 侧直写热列补偿（age +1/tick 岁月快进 + cd -1/tick 攻速提升 —— 热列每 tick 由 pack2 携带入核，写入即生效）；
+        // ② 火焰燎原：穹内燃烧格概率引燃随机邻格（网格为两侧共享真相，跨路径生效 —— 与凝滞「止燃」反向对称）；
+        // ③ 万象快进：穹内其他领域/云团特效 age 快进 +2 —— 风暴走完命数只需一半时间
+        //    （凝滞「弹道冻结」的镜像；弹道不参与 —— 箭矢半空消失读作 bug 而非时序）。
+        e.dir += (this.rng() - 0.5) * 0.08;
+        e.x = Math.max(2, Math.min(W - 3, e.x + Math.cos(e.dir) * 0.04));
+        e.y = Math.max(2, Math.min(H - 3, e.y + Math.sin(e.dir) * 0.04));
+        const hr2 = e.r * e.r;
+        const kernel = this._kernelTick; // 内核接管时 JS 主循环不跑 —— 热列直写是内核路径唯一的时间通道
+        let hn = 0;
+        for (const u of this.units) {
+          if (u.dead) continue;
+          const hdx = u.x - e.x;
+          const hdy = u.y - e.y;
+          if (hdx * hdx + hdy * hdy >= hr2) continue;
+          u.haste = 6; // 持续充能：JS 路径第二次心跳；离域后剩余 tick 自然耗尽即恢复
+          hn++;
+          if (kernel) {
+            // —— 内核热列补偿：age/cd 是每 tick JS→wasm 打包源（unitsTick 先于 effectsTick，
+            //    此处写在 writeback 之后 —— 下一 tick pack2 携带入核， rust 从加速值继续）——
+            u.age += 1 / YEAR_TICKS; // 岁月快进：内核基准之上再 +1/tick ≈ 整体 ×2 衰老（双刃剑）
+            if (u.cd > 0) u.cd = Math.max(0, u.cd - 1); // 攻速快进：冷却加速见底
+          }
+          if (this.fxPrefs.ambience && this.rng() < 0.03) this.fx('timedust', u.x, u.y, 18); // 时尘流烁
+        }
+        this.statHasteBeats += hn;
+        if (hn > this.statHastePeak) this.statHastePeak = hn;
+        // —— 万象快进：穹内其他领域/云团 age+2（命数加速烧完；弹道除外 —— 箭矢不参与）
+        for (const p of this.effects) {
+          if (p === e || p.age >= p.ttl) continue;
+          let domain = false;
+          switch (p.kind) {
+            case 'rainstorm': case 'wrath': case 'holystorm': case 'chrono': case 'bloom': case 'haste':
+            case 'sandstorm': case 'typhoon': case 'tornado': case 'blizzard': case 'locust':
+            case 'drought': case 'iceage': case 'famine': case 'blackhole':
+              domain = true; break;
+          }
+          if (!domain) continue;
+          const pdx = p.x - e.x, pdy = p.y - e.y;
+          if (pdx * pdx + pdy * pdy < hr2) p.age += 2;
+        }
+        // —— 火焰燎原：穹内燃烧格概率引燃随机邻格（ignite 自带可燃/未燃校验）
+        const hx0 = Math.max(0, Math.floor(e.x - e.r)); const hx1 = Math.min(W - 1, Math.ceil(e.x + e.r));
+        const hy0 = Math.max(0, Math.floor(e.y - e.r)); const hy1 = Math.min(H - 1, Math.ceil(e.y + e.r));
+        for (let yy = hy0; yy <= hy1; yy++) {
+          for (let xx = hx0; xx <= hx1; xx++) {
+            const ddx = xx + 0.5 - e.x, ddy = yy + 0.5 - e.y;
+            if (ddx * ddx + ddy * ddy >= hr2) continue;
+            const j = yy * W + xx;
+            if (this.fire[j] > 0 && this.rng() < 0.3) {
+              const nx = xx + (((this.rng() * 3) | 0) - 1);
+              const ny = yy + (((this.rng() * 3) | 0) - 1);
+              if (nx >= 0 && ny >= 0 && nx < W && ny < H) {
+                const nj = ny * W + nx;
+                if (this.fire[nj] === 0) this.ignite(nj);
+              }
+            }
+          }
+        }
+        if (hn > 0 && this.tickCount % 90 === 0) {
+          this.onSound?.('haste'); // 金铃急鸣：高频回响提醒领域仍在（每 ~3 秒一次）
+        }
       } else if (e.kind === 'sandstorm') {
         // 沙尘暴：游荡沙暴 —— 草被沙埋、生物迷失风中
         e.dir += (this.rng() - 0.5) * 0.25;
@@ -11149,6 +11231,20 @@ export class GameEngine {
     this.fx('bloom', x, y, ttl, { r: rr });
     this.addEvent('bloom', '翠绿的春之穹顶降临大地——焦土回春、荒漠生草，生命在绿意中疯长', { x, y });
     this.onSound?.('bloom');
+  }
+
+  /** 时之奔流：时间金流神力 —— 与时之凝滞互为镜像的琥珀金穹顶，域内时间奔涌：
+ *  JS 路径单位由主循环第二次 updateUnit 全面 ×2（移动/战斗/成长/衰老 —— 岁月飞逝的双刃剑）；
+ *  wasm 批内核接管时 Rust 不知时域，由 effectsTick 直写热列（age/cd）补偿岁月与攻速快进；
+ *  火焰在穹内燎原更烈（网格共享，跨路径生效），其他领域云团命数加速烧尽（万象快进）。
+ *  奔流 ≠ 永恒：时间对谁都公平 —— 穹顶散去，万物回到原来的节律。 */
+  hasteField(x: number, y: number, r: number, ttl = 300) {
+    const rr = Math.max(4, Math.min(14, r));
+    const count = this.effects.filter((e) => e.kind === 'haste').length;
+    if (count >= 3) return; // 上限防刷屏（与时之凝滞/生命绽放同策）
+    this.fx('haste', x, y, ttl, { r: rr });
+    this.addEvent('haste', '时间化作金色的奔流——生灵疾行、火焰燎原，风暴在加速的岁月里走完一生', { x, y });
+    this.onSound?.('haste');
   }
 
   /** 神力·等离子炮（玩家施放面：wwWeaponsTick launchPlasma 同源特效——无阵营豁免，
@@ -13641,6 +13737,9 @@ export class GameEngine {
         break;
       case 'bloom':
         this.bloomField(wx, wy, Math.max(4, r), durationP);
+        break;
+      case 'haste':
+        this.hasteField(wx, wy, Math.max(4, r), durationP);
         break;
       // —— 超级武器神力（玩家施放面：wwWeaponsTick 同源特效直达） ——
       case 'plasmacannon':

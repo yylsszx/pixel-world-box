@@ -262,6 +262,7 @@ export class SfxEngine {
       case 'ent': this.ent(); break;
       case 'chrono': this.chrono(); break;
       case 'bloom': this.bloom(); break;
+      case 'haste': this.haste(); break;
     }
   }
 
@@ -1212,6 +1213,41 @@ export class SfxEngine {
     hum.connect(humGain).connect(this.sfxGain!);
     hum.start(t);
     hum.stop(t + 0.7);
+  }
+
+  /** 时之奔流：五音急升跑动 G4→C5→E5→G5→C6（短促密集，快节奏冲刺的声音意象 ——
+ *  与时之凝滞的缓下行琉璃互为镜像：一个把时间拉长，一个把时间叠紧）
+ *  尾部附一道自低向高的频率扫掠（时间从耳畔呼啸而过的「嗖」意）。 */
+  private haste(): void {
+    const ctx = this.ctx!;
+    const t = ctx.currentTime;
+    // 五音急升跑动：G4 → C5 → E5 → G5 → C6（大三和弦冲刺上行，间距减半、尾音减半 —— 快！）
+    const notes = [392, 523.25, 659.25, 783.99, 1046.5];
+    for (let i = 0; i < notes.length; i++) {
+      const st = t + i * 0.055;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = notes[i];
+      gain.gain.setValueAtTime(0.001, st);
+      gain.gain.linearRampToValueAtTime(0.08, st + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.001, st + 0.38);
+      osc.connect(gain).connect(this.sfxGain!);
+      osc.start(st);
+      osc.stop(st + 0.42);
+    }
+    // 时间呼啸：自低向高的频率扫掠（正弦 220→1760Hz，0.45s —— 时间洪流掠过耳畔）
+    const swoosh = ctx.createOscillator();
+    const swGain = ctx.createGain();
+    swoosh.type = 'sine';
+    swoosh.frequency.setValueAtTime(220, t);
+    swoosh.frequency.exponentialRampToValueAtTime(1760, t + 0.45);
+    swGain.gain.setValueAtTime(0.001, t);
+    swGain.gain.linearRampToValueAtTime(0.045, t + 0.18);
+    swGain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+    swoosh.connect(swGain).connect(this.sfxGain!);
+    swoosh.start(t);
+    swoosh.stop(t + 0.55);
   }
 
   /** 生命绽放：五声上行琶音 C5→E5→G5→C6（铃质正弦，破土生长的声音意象 —— 与时之凝滞的下行琉璃互为镜像）

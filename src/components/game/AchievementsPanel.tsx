@@ -1,12 +1,12 @@
 'use client';
 // ============ Achievements Panel: 成就墙（桌面左侧栏 + 移动端底部抽屉） ============
-// 跨世界元进度：43 项成就（文明/战争/科技/传奇/天灾/进化/季节/时间疆域/生命绽放），青铜→传说四档稀有度
+// 跨世界元进度：45 项成就（文明/战争/科技/传奇/天灾/进化/季节/时间疆域/生命绽放/时之奔流），青铜→传说四档稀有度
 // 解锁 → 纪事播报 + 本面板亮灯 + localStorage 永久保存；未解锁展示进度条
 import { useGameStore } from '@/store/gameStore';
 import { ACHIEVEMENTS, TIER_META, type AchievementDef } from '@/lib/game/achievements';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Trophy, X, Lock, Flag, Castle, Users, Crown, Skull, Swords, Lightbulb, Scroll, Landmark, Biohazard, Droplets, Hammer, Radiation, Orbit, Sparkles, Dna, Flame, Handshake, Sun, Ghost, Zap, Atom, Hourglass, Leaf, Bird, Gem, Snowflake, Network, Map, Shield, Clock, Sprout } from 'lucide-react';
+import { Trophy, X, Lock, Flag, Castle, Users, Crown, Skull, Swords, Lightbulb, Scroll, Landmark, Biohazard, Droplets, Hammer, Radiation, Orbit, Sparkles, Dna, Flame, Handshake, Sun, Ghost, Zap, Atom, Hourglass, Leaf, Bird, Gem, Snowflake, Network, Map, Shield, Clock, Sprout, Gauge, Timer } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 /** 成就图标映射（definitions 用字符串键，UI 侧映射 lucide 组件） */
@@ -19,7 +19,7 @@ const ICONS: Record<string, LucideIcon> = {
   zap: Zap, atom: Atom,
   hourglass: Hourglass, leaf: Leaf, bird: Bird, gem: Gem,
   snowflake: Snowflake, network: Network, map: Map, shield: Shield, clock: Clock,
-  sprout: Sprout,
+  sprout: Sprout, gauge: Gauge, timer: Timer,
 };
 
 /** 稀有度排序权重（解锁优先，其次按稀有度降序） */

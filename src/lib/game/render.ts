@@ -3461,6 +3461,65 @@ function drawWorldEffect(engine: GameEngine, e: Effect, wc: CanvasRenderingConte
       }
       break;
     }
+    case 'haste': {
+      // 时之奔流：时间金流穹顶（琥珀金双层穹体 + 顺行疾旋弧 + 坠落飞速的时尘流光 + 中心奔流之柱）
+      const R = e.r * 2;
+      const fade = t > 0.85 ? Math.max(0, 1 - (t - 0.85) / 0.15) : 1;
+      const fc = engine.frameCount;
+      // 双层金穹（外层琥珀金 + 内层暖白，急促呼吸 —— 时间被压缩的视觉隐喻，与时之凝滞的粘稠缓息相反）
+      const breathe = 0.2 + 0.06 * Math.sin(fc * 0.09);
+      wc.globalAlpha = breathe * fade;
+      wc.fillStyle = '#8f6e14';
+      wc.beginPath();
+      wc.arc(px, py, R, 0, Math.PI * 2);
+      wc.fill();
+      wc.globalAlpha = (breathe + 0.08) * fade;
+      wc.fillStyle = '#f5e6b0';
+      wc.beginPath();
+      wc.arc(px, py - R * 0.15, R * 0.68, 0, Math.PI * 2);
+      wc.fill();
+      wc.globalAlpha = 1;
+      // 穹顶描边（细金线勾勒穹界 —— 与琥珀/翠绿穹顶同构的领域可读性）
+      wc.strokeStyle = `rgba(240,196,60,${0.55 * fade})`;
+      wc.lineWidth = 1;
+      wc.beginPath();
+      wc.arc(px, py, R, 0, Math.PI * 2);
+      wc.stroke();
+      // 顺行疾旋弧（三道正向快旋的表盘刻度弧 —— 时钟顺转且加速：与凝滞的逆行缓旋互为镜像，转速 ×3）
+      for (let arm = 0; arm < 3; arm++) {
+        const a0 = fc * 0.02 + (arm / 3) * Math.PI * 2;
+        wc.strokeStyle = `rgba(230,180,60,${0.5 * fade})`;
+        wc.lineWidth = 1.5;
+        wc.beginPath();
+        wc.arc(px, py, R * (0.45 + 0.12 * (arm & 1)), a0, a0 + 1.2);
+        wc.stroke();
+      }
+      // 坠落时尘（确定性散布的金色光点高速下坠 —— 与凝滞「悬停不落」互为镜像：时间在流动，而且很快）
+      for (let k = 0; k < 14; k++) {
+        const h = ((e.seed * 40503 + k * 331) >>> 0) % 997;
+        const ang = (h / 997) * Math.PI * 2;
+        const rr = Math.sqrt(h % 89) / 9.43 * R * 0.88;
+        const fall = (fc * 1.6 + (h & 15)) % 14;
+        wc.fillStyle = (h & 1) ? `rgba(255,196,40,${0.85 * fade})` : `rgba(255,240,180,${0.6 * fade})`;
+        wc.fillRect(Math.round(px + Math.cos(ang) * rr), Math.round(py + Math.sin(ang) * rr * 0.7 + fall - 7), 1, 2); // 1×2 竖条：坠落的运动残影
+      }
+      // 中心奔流之柱（半透金柱 —— 与时之柱/生命之柱同构的领域图腾；消散前收束）
+      if (t > 0.7) {
+        wc.fillStyle = `rgba(255,208,74,${0.28 * fade})`;
+        wc.fillRect(Math.round(px) - 1, Math.round(py - R), 2, Math.round(R * 1.2));
+      }
+      break;
+    }
+    case 'timedust': {
+      // 时尘流烁：时之奔流穹内生灵的时序残影（金色短拖尾 —— 被时间推着走的光屑，与凝滞冻尘互为镜像）
+      const a = 1 - t;
+      const drift = t * 4;
+      wc.fillStyle = `rgba(255,206,66,${a})`;
+      wc.fillRect(Math.round(px), Math.round(py - 3 + drift), 1, 2);
+      wc.fillStyle = `rgba(255,240,180,${a * 0.7})`;
+      wc.fillRect(Math.round(px + 1), Math.round(py - 1 + drift * 0.7), 1, 1);
+      break;
+    }
     case 'sandstorm': {
       // 沙尘暴：土黄云体 + 旋转沙粒
       const R = e.r * 2;

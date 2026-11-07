@@ -31,7 +31,7 @@ export const TIER_META: Record<AchTier, { label: string; cls: string; ring: stri
   legend: { label: '传说', cls: 'border-fuchsia-400/60 bg-fuchsia-400/10 text-fuchsia-300', ring: 'ring-fuchsia-400/40' },
 };
 
-/** 43 项成就（文明/战争/科技/传奇/天灾/神力/进化/联盟/季节/时间疆域/生命绽放） */
+/** 45 项成就（文明/战争/科技/传奇/天灾/神力/进化/联盟/季节/时间疆域/生命绽放/时之奔流） */
 export const ACHIEVEMENTS: AchievementDef[] = [
   // —— 文明史诗 ——
   {
@@ -239,6 +239,17 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     id: 'bloom-greening', name: '不毛再无', desc: '用生命绽放累计复苏 300 格焦土、荒漠与雪原', tier: 'gold', icon: 'leaf',
     check: (e) => e.statBloomTiles >= 300,
     progress: (e) => e.statBloomTiles, goal: 300,
+  },
+  // —— v0.53 时之奔流组（2）——
+  {
+    id: 'time-rush', name: '白驹过隙', desc: '让时之奔流同时加速 60 个生灵', tier: 'silver', icon: 'gauge',
+    check: (e) => (e.statHastePeak ?? 0) >= 60,
+    progress: (e) => e.statHastePeak ?? 0, goal: 60,
+  },
+  {
+    id: 'time-torrent', name: '光阴似箭', desc: '时之奔流累计注入 30000 次加速心跳', tier: 'gold', icon: 'timer',
+    check: (e) => (e.statHasteBeats ?? 0) >= 30000,
+    progress: (e) => e.statHasteBeats ?? 0, goal: 30000,
   },
 ];
 

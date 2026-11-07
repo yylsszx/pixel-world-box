@@ -419,6 +419,11 @@ export const ICONS: Record<string, string[]> = {
     '..v.y...', '.evyv...', '..vGyv..', '...G....',
     '..eGg...', '..gGe...', '.Gg.gG..', '..G..G..',
   ],
+  // —— 时之奔流：金色快进双三角（时间向前奔涌）——
+  haste: [
+    'y...y...', 'yy..yy..', 'yyy.yyy.', 'yyyyyyyy',
+    'yyyyyyyy', 'yyy.yyy.', 'yy..yy..', 'y...y...',
+  ],
   // —— 超级武器神力（2：等离子炮/湮灭之光——wwWeaponsTick 同源特效的玩家施放面）——
   plasma: [
     '...tt...', '..t..t..', '...tt...', 'tttwwttt',
@@ -740,6 +745,10 @@ export const TOOLS: ToolDef[] = [
   ] },
   { id: 'bloom', label: '生命绽放', desc: '春神苏醒：翠绿穹顶内焦土回春、荒漠生草、草原成林，生灵沐浴愈伤脱饿，乃至无中生有地诞生新生命（半径/持续可调）', tab: 'powers', icon: 'bloom', single: true, params: [
     { key: 'radius', label: '绽放半径', min: 4, max: 14, step: 1, def: 5 },
+    { key: 'duration', label: '持续', min: 100, max: 600, step: 50, def: 300, fmt: 'sec' },
+  ] },
+  { id: 'haste', label: '时之奔流', desc: '时间金流：穹顶下时间奔涌——生灵疾行（战斗/成长/衰老皆快，岁月飞逝的双刃剑）、火焰燎原更烈、域内风暴云团命数加速烧尽（与时之凝滞互为镜像；半径/持续可调）', tab: 'powers', icon: 'haste', single: true, params: [
+    { key: 'radius', label: '奔流半径', min: 4, max: 14, step: 1, def: 5 },
     { key: 'duration', label: '持续', min: 100, max: 600, step: 50, def: 300, fmt: 'sec' },
   ] },
   { id: 'plasmacannon', label: '等离子炮', desc: '电浆光球坠地：大威力爆破 + 电磁脉冲——周遭生物麻痹硬直、军团士气崩落（威力可调）', tab: 'powers', icon: 'plasma', single: true, params: [
