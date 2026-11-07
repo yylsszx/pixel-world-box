@@ -51,6 +51,8 @@ export const EVENT_CATEGORY: Record<WorldEventKind, Exclude<EventFilter, 'all'>>
   chrono: 'world', // 时之凝滞：神力/世界类（与唤雨同策）
   bloom: 'world', // 生命绽放：神力/世界类（与时之凝滞同策）
   haste: 'world', // 时之奔流：神力/世界类（时间三神力同策）
+  terraform: 'kingdom', // 地形工程：文明改天换地（王国类）
+  naval: 'war', // 海战：舰队遭遇/拦截/岸防（战争类）
   // —— 生物进化与生态竞争 ——
   evolve: 'world', eco: 'world',
   river: 'world', oasis: 'world',

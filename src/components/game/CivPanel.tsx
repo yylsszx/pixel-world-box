@@ -12,7 +12,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import {
   X, Crown, Users, Landmark, Home, Coins, BookOpen, Swords, Crosshair, FlaskConical,
   Lightbulb, Lock, Check, ChevronRight, Scale, Coins as CoinsIcon, Palette, Shield,
-  TrendingUp, TrendingDown, Sparkles, PartyPopper, Scroll, Castle, TriangleAlert, Sword,
+  TrendingUp, TrendingDown, Sparkles, PartyPopper, Scroll, Castle, TriangleAlert, Sword, Wheat,
 } from 'lucide-react';
 
 interface CivInfo {
@@ -27,6 +27,7 @@ interface CivInfo {
   kingName: string;
   gold: number;
   knowledge: number;
+  food: number;
   army: number;
   builds: { kind: number; n: number }[];
   wars: string[];
@@ -393,6 +394,11 @@ function OverviewTab({ civ, onJumpCapital }: { civ: CivInfo; onJumpCapital: () =
         <span className="flex items-center gap-1"><Coins className="h-3 w-3 text-zinc-500" aria-hidden />国库 <b className="font-mono text-yellow-300">{civ.gold}</b></span>
         <span className="flex items-center gap-1"><BookOpen className="h-3 w-3 text-zinc-500" aria-hidden />知识 <b className="font-mono text-sky-300">{civ.knowledge}</b></span>
         <span className="flex items-center gap-1"><Swords className="h-3 w-3 text-zinc-500" aria-hidden />常备军 <b className="font-mono text-red-300">{civ.army}</b></span>
+        <span className="col-span-2 flex items-center gap-1" title="农田需农民耕作、渔场需渔民出海——粮仓见底则饥荒（停止繁衍/士气下滑/饿殍）">
+          <Wheat className="h-3 w-3 text-zinc-500" aria-hidden />粮仓
+          <b className={`font-mono ${civ.food > 40 ? 'text-lime-300' : civ.food > 0 ? 'text-amber-300' : 'text-red-400'}`}>{Math.floor(civ.food)}</b>
+          <span className="text-zinc-600">（在岗农民#农田与出海渔场供给）</span>
+        </span>
       </div>
 
       {/* 当前研究速览 */}

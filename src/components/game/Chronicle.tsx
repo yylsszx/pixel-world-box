@@ -6,7 +6,7 @@ import { useGameStore, EVENT_CATEGORY, type EventFilter } from '@/store/gameStor
 import type { WorldEvent, WorldEventKind } from '@/lib/game/types';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { ScrollText, X, Flag, Swords, Handshake, Skull, Crown, Flame, Award, Biohazard, Radiation, Sparkles, Star, Ship, Home, Waves, Castle, CloudLightning, Trophy, Mountain, Droplets, Sword, Ghost, Flame as FlameIcon, Zap as ZapIcon, Hammer, Landmark, Coins, Gem, CloudRain, Snowflake, Bug, Sun, MountainSnow, Cloudy, Sparkle, PersonStanding, Eye, FlagTriangleRight, Swords as SwordsIcon, TrendingDown, Map, Landmark as LandmarkIcon, Scroll, BadgeCheck, BadgeX, Lightbulb, TriangleAlert, PartyPopper, Megaphone, CloudDrizzle, Dna, Orbit, Wind, Tornado, CircleDot, Snowflake as SnowIcon, Wheat, Leaf, FlaskConical, Route, Users, HeartCrack, Network, Wand2, TreePine, Hourglass, Sprout, FastForward } from 'lucide-react';
+import { ScrollText, X, Flag, Swords, Handshake, Skull, Crown, Flame, Award, Biohazard, Radiation, Sparkles, Star, Ship, Home, Waves, Castle, CloudLightning, Trophy, Mountain, Droplets, Sword, Ghost, Flame as FlameIcon, Zap as ZapIcon, Hammer, Landmark, Coins, Gem, CloudRain, Snowflake, Bug, Sun, MountainSnow, Cloudy, Sparkle, PersonStanding, Eye, FlagTriangleRight, Swords as SwordsIcon, TrendingDown, Map, Landmark as LandmarkIcon, Scroll, BadgeCheck, BadgeX, Lightbulb, TriangleAlert, PartyPopper, Megaphone, CloudDrizzle, Dna, Orbit, Wind, Tornado, CircleDot, Snowflake as SnowIcon, Wheat, Leaf, FlaskConical, Route, Users, HeartCrack, Network, Wand2, TreePine, Hourglass, Sprout, FastForward, Anchor } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 /** 事件类型的图标与主题色 */
@@ -103,6 +103,9 @@ export const KIND_META: Record<WorldEventKind, { icon: LucideIcon; color: string
   emerge: { icon: FlaskConical, color: 'text-fuchsia-300' },
   // —— 自然引擎（板块地震/造山/气旋/火山冬） ——
   geo: { icon: Mountain, color: 'text-teal-300' },
+  // —— 地形工程（文明改天换地）与海战 ——
+  terraform: { icon: MountainSnow, color: 'text-orange-300' },
+  naval: { icon: Anchor, color: 'text-cyan-300' },
   // —— 深度打磨：道路修筑/国际贸易商队 ——
   road: { icon: Route, color: 'text-amber-200' },
   trade: { icon: Coins, color: 'text-yellow-200' },

@@ -746,6 +746,63 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       ctx.fillRect(px - 2, py + 10, 18, 2);
       return;
     }
+    case 12: {
+      // fishery：渔场（临水高脚屋 + 晾晒渔网 + 收获鱼获 + 系泊小舟）
+      // 支柱（水岸高脚）
+      ctx.fillStyle = '#5c3a1c';
+      ctx.fillRect(px, py + 8, 2, 6);
+      ctx.fillRect(px + 12, py + 8, 2, 6);
+      ctx.fillStyle = '#3a2812';
+      ctx.fillRect(px, py + 12, 2, 2);
+      ctx.fillRect(px + 12, py + 12, 2, 2);
+      // 平台甲板
+      ctx.fillStyle = '#9c6a3c';
+      ctx.fillRect(px - 1, py + 6, 16, 4);
+      ctx.fillStyle = '#7a4f2a';
+      ctx.fillRect(px - 1, py + 9, 16, 1);
+      // 木屋（晾网棚）
+      ctx.fillStyle = '#b3835a';
+      ctx.fillRect(px + 1, py + 1, 10, 6);
+      ctx.fillStyle = '#8a5c34';
+      ctx.fillRect(px + 1, py + 5, 10, 2);
+      // 屋顶（茅草双坡）
+      ctx.fillStyle = '#d9b44a';
+      ctx.fillRect(px, py - 2, 12, 3);
+      ctx.fillStyle = '#b8912f';
+      ctx.fillRect(px, py, 12, 1);
+      ctx.fillStyle = '#d9b44a';
+      ctx.fillRect(px - 1, py - 3, 14, 1);
+      // 门洞
+      ctx.fillStyle = '#14100c';
+      ctx.fillRect(px + 5, py + 3, 3, 4);
+      // 晾晒渔网（斜挂网纹）
+      ctx.fillStyle = 'rgba(230,230,220,0.75)';
+      ctx.fillRect(px + 10, py + 1, 1, 1);
+      ctx.fillRect(px + 11, py + 2, 1, 1);
+      ctx.fillRect(px + 12, py + 3, 1, 1);
+      ctx.fillRect(px + 10, py + 3, 1, 1);
+      ctx.fillRect(px + 12, py + 1, 1, 1);
+      // 甲板上的鱼获（银蓝闪鳞）
+      ctx.fillStyle = '#9db8d4';
+      ctx.fillRect(px + 2, py + 7, 3, 1);
+      ctx.fillStyle = '#d8e6f2';
+      ctx.fillRect(px + 3, py + 7, 1, 1);
+      ctx.fillStyle = '#9db8d4';
+      ctx.fillRect(px + 6, py + 7, 2, 1);
+      // 系泊小舟（泊在平台旁）
+      ctx.fillStyle = '#7a4f2a';
+      ctx.fillRect(px + 12, py + 11, 4, 2);
+      ctx.fillStyle = '#5c3a1c';
+      ctx.fillRect(px + 12, py + 13, 4, 1);
+      ctx.fillStyle = '#3a342c';
+      ctx.fillRect(px + 14, py + 9, 1, 2); // 小桅
+      // 国旗
+      ctx.fillStyle = '#3a342c';
+      ctx.fillRect(px - 2, py - 4, 1, 5);
+      ctx.fillStyle = rgb(color);
+      ctx.fillRect(px - 1, py - 4, 3, 2);
+      return;
+    }
   }
   // ---- house(1) / capital(2)：科技阶位外观（0 茅屋 / 1 石屋 / 2 堡垒宅 / 3 哥特庄园） ----
   const big = b.kind === 2;
@@ -935,20 +992,27 @@ export function drawSnake(ctx: CanvasRenderingContext2D, u: Unit, frame: number)
   ctx.fillRect(px + 1 * f, py - 1, 1, 1);
 }
 
-/** 殖民船：木壳 + 桅杆 + 王国色船帆，随浪起伏 + 船尾白色尾迹 */
+/** 殖民船：木壳 + 桅杆 + 王国色船帆，随浪起伏 + 三层尾迹 + 船艏浪花 + 水手剪影（v0.54 精密度升级） */
 export function drawBoat(ctx: CanvasRenderingContext2D, u: Unit, civColor: [number, number, number] | null, frame: number) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
   const f = u.flip ? -1 : 1;
-  // 随浪起伏：每 9 帧船体抬升 1px
+  // 随浪起伏：每 9 帧船体抬升 1px（海浪节律）
   const bob = Math.floor(frame / 9) % 2;
   const oy = py - bob;
-  // 尾迹（船后两段白色像素，位置随帧摆动模拟水花）
+  // —— 尾迹三层（近浪浓 / 中浪摆 / 远浪淡——扩散的 V 形波纹随帧呼吸）——
   const wk = Math.floor(frame / 5) % 2;
   ctx.fillStyle = 'rgba(240,248,255,0.65)';
   ctx.fillRect(px - 5 * f, py + 1, 3, 1);
   ctx.fillStyle = 'rgba(240,248,255,0.40)';
   ctx.fillRect(px - (wk ? 9 : 8) * f, py + 1, 3, 1);
+  ctx.fillStyle = 'rgba(240,248,255,0.22)';
+  ctx.fillRect(px - (wk ? 13 : 12) * f, py + (wk ? 0 : 1), 2, 1);
+  // —— 船艏浪花（行进向劈开的白沫，两帧交替溅起）——
+  ctx.fillStyle = 'rgba(240,248,255,0.55)';
+  ctx.fillRect(px + 3 * f, oy + 1 + (wk ? 0 : 1), 1, 1);
+  ctx.fillStyle = 'rgba(240,248,255,0.35)';
+  ctx.fillRect(px + 4 * f, oy + (wk ? 1 : 2), 1, 1);
   // 船体（木壳：下深上浅两层，宽 5px）
   ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#6e4a2b';
   ctx.fillRect(px - 2, oy + 1, 5, 1);
@@ -968,6 +1032,11 @@ export function drawBoat(ctx: CanvasRenderingContext2D, u: Unit, civColor: [numb
   // 桅顶小旗（王国色 1px）
   ctx.fillStyle = civColor ? rgb(civColor) : '#ffd93d';
   ctx.fillRect(px, oy - 4, 1, 1);
+  // —— 甲板水手剪影（艉部操舵的小人：头 + 王国色斗篷躯干，随浪轻晃）——
+  ctx.fillStyle = '#2e2a24';
+  ctx.fillRect(px - 2 * f, oy - 1 - bob, 1, 1); // 头
+  ctx.fillStyle = civColor ? rgb(civColor) : '#f2ead8';
+  ctx.fillRect(px - 2 * f, oy - bob, 1, 1); // 斗篷躯干（一抹王国色）
   // 低血量警示（与人员一致的红色血条）
   if (u.hp < u.maxHp * 0.4) {
     ctx.fillStyle = '#cf3f2e';

@@ -31,7 +31,7 @@ export const TIER_META: Record<AchTier, { label: string; cls: string; ring: stri
   legend: { label: '传说', cls: 'border-fuchsia-400/60 bg-fuchsia-400/10 text-fuchsia-300', ring: 'ring-fuchsia-400/40' },
 };
 
-/** 45 项成就（文明/战争/科技/传奇/天灾/神力/进化/联盟/季节/时间疆域/生命绽放/时之奔流） */
+/** 47 项成就（文明/战争/科技/传奇/天灾/神力/进化/联盟/季节/时间疆域/生命绽放/时之奔流/地形工程/海战） */
 export const ACHIEVEMENTS: AchievementDef[] = [
   // —— 文明史诗 ——
   {
@@ -250,6 +250,17 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     id: 'time-torrent', name: '光阴似箭', desc: '时之奔流累计注入 30000 次加速心跳', tier: 'gold', icon: 'timer',
     check: (e) => (e.statHasteBeats ?? 0) >= 30000,
     progress: (e) => e.statHasteBeats ?? 0, goal: 30000,
+  },
+  // —— v0.54 地形工程与海战组（2）——
+  {
+    id: 'terraform-20', name: '改天换地', desc: '见证文明累计完成 20 次地形工程（凿山开道/开凿运河/填海造陆）', tier: 'gold', icon: 'mountain',
+    check: (e) => e.statTerraform >= 20,
+    progress: (e) => e.statTerraform, goal: 20,
+  },
+  {
+    id: 'naval-supremacy', name: '制海权', desc: '海战累计击沉 8 艘敌舰（舰队遭遇战/拦截殖民船）', tier: 'silver', icon: 'anchor',
+    check: (e) => e.statNavalKills >= 8,
+    progress: (e) => e.statNavalKills, goal: 8,
   },
 ];
 

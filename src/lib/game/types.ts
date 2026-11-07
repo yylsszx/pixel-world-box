@@ -335,12 +335,13 @@ export const BUILDING_DEFS: BuildingDef[] = [
   { key: 'market', name: '集市', hp: 100, cost: 12, desc: '每年产出财富' },
   { key: 'temple', name: '神殿', hp: 140, cost: 22, needKnowledge: 10, desc: '治疗光环庇佑周边单位' },
   { key: 'wall', name: '城墙', hp: 200, cost: 2, desc: '环都城防：敌方陆行单位不可逾越，守军借墙而战' },
+  { key: 'fishery', name: '渔场', hp: 70, popCap: 2, cost: 14, needKnowledge: 6, desc: '邻海而建：渔民出海捕捞产出粮食——海洋资源的唯一入口' },
 ];
 export const BUILD_KINDS = {
-  HOUSE: 1, CAPITAL: 2, TOWER: 3, FARM: 4, BARRACKS: 5, CASTLE: 6, PORT: 7, LIBRARY: 8, MARKET: 9, TEMPLE: 10, WALL: 11,
+  HOUSE: 1, CAPITAL: 2, TOWER: 3, FARM: 4, BARRACKS: 5, CASTLE: 6, PORT: 7, LIBRARY: 8, MARKET: 9, TEMPLE: 10, WALL: 11, FISHERY: 12,
 } as const;
 /** 可被占领（易帜而非摧毁）的建筑 */
-export const CAPTURABLE = new Set<number>([BUILD_KINDS.HOUSE, BUILD_KINDS.FARM, BUILD_KINDS.MARKET, BUILD_KINDS.BARRACKS, BUILD_KINDS.PORT]);
+export const CAPTURABLE = new Set<number>([BUILD_KINDS.HOUSE, BUILD_KINDS.FARM, BUILD_KINDS.MARKET, BUILD_KINDS.BARRACKS, BUILD_KINDS.PORT, BUILD_KINDS.FISHERY]);
 
 export interface Unit {
   id: number;
@@ -558,6 +559,10 @@ export interface Civ {
   gold?: number;
   /** 知识（图书馆生成，解锁高阶建筑） */
   knowledge?: number;
+  /** 粮仓存量（农田#在岗农民产出-人口消耗；见底则饥荒：停止繁衍/稳定度下滑/饿殍） */
+  food?: number;
+  /** 地形工程冷却（凿山/运河/填海共享的国祚节流） */
+  terraformCd?: number;
   /** 下一次允许组建军团的 tick（军队方阵冷却） */
   armyCd?: number;
   /** 总动员截止 tick（期间平民全部武装为战士） */
@@ -669,6 +674,8 @@ export interface Army {
   reinforced?: number;
   /** 补给线吃紧警示已播报（去重用） */
   supplyWarned?: boolean;
+  /** 海战接战冷却（舰队交战/拦截的节流；瞬态） */
+  navalCd?: number;
 }
 
 // ---------------- 战争理由（Casus Belli）体系 ----------------
@@ -950,8 +957,12 @@ export type WorldEventKind =
   | 'angel' | 'phoenix' | 'ent' | 'lich' | 'hydra'
   // —— 圣光风暴（光明阵营神力）——
   | 'holystorm'
-  // —— v40：神谕 Agent（法则书写/宣告/热改参数） ——
+  // —— 神谕 Agent（法则书写/宣告/热改参数） ——
   | 'oracle'
+  // —— 地形工程（文明改天换地：凿山/运河/填海） ——
+  | 'terraform'
+  // —— 海战（舰队遭遇战/拦截/海岸防御） ——
+  | 'naval'
   // —— 季节 × 万物（换季宣告/生物节律） ——
   | 'season';
 

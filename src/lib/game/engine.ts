@@ -240,6 +240,12 @@ export class GameEngine {
   statHastePeak = 0;
   /** 天穹庆典累计绽放轮数（成就：盛世华章 —— 单世界 session 计数，与超级武器计数器同构） */
   statFestivals = 0;
+  /** 地形工程累计次数（丌山/运河/填海；成就：改天换地） */
+  statTerraform = 0;
+  /** 海战累计击沉数（舰队互轰/拦截/岸防；成就：制海权） */
+  statNavalKills = 0;
+  /** 近期弹着点记忆（flat [x,y,...] 环形 32 点：炮击策略性——近期轰过的区域降权，火刀不再围着一个坑打） */
+  shellMemory: number[] = [];
 
   // ---------------- 终极世界大战（Ultimate World War · 开发者模式引燃） ----------------
   /** 大战状态（idle 未打响 / running 战火燃烧 / ended 已终战；随存档持久化） */
@@ -863,6 +869,9 @@ export class GameEngine {
     this.statHasteBeats = 0;
     this.statHastePeak = 0;
     this.statFestivals = 0;
+    this.statTerraform = 0;
+    this.statNavalKills = 0;
+    this.shellMemory.length = 0;
     this.achProgressCache = {};
     // 终极世界大战重置（新世界无战火）
     this.worldWar = GameEngine.IDLE_WORLD_WAR();
@@ -1632,12 +1641,32 @@ export class GameEngine {
     if (cap >= 0) {
       this.buildBuilding(cap, 2, civ.id);
       civ.capital = cap;
+      civ.food = 80; // 建国粮车（开仓 80 石——够第一个十年的口粮）
     }
     // seed territory — 以首都为圆心（比点击点更可靠）；找不到首都再退回原点
     const anchor = cap >= 0 ? cap : idx(Math.floor(x), Math.floor(y));
     const cx = anchor % W;
     const cy = (anchor / W) | 0;
     this.seedTerritory(civ, cx, cy);
+    // v0.54 立国之田：新王国在王都旁恳一块起始农田（定居者携农具而来——农业是文明的第一个脚印；须在 seedTerritory 之后：田要落在自家地界）
+    if (cap >= 0) {
+      const fx0 = cap % W;
+      const fy0 = (cap / W) | 0;
+      outer2: for (let r = 1; r <= 3; r++) {
+        for (let dy = -r; dy <= r; dy++) {
+          for (let dx = -r; dx <= r; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+            const xx = fx0 + dx, yy = fy0 + dy;
+            if (xx < 1 || yy < 1 || xx >= W - 1 || yy >= H - 1) continue;
+            const fi = idx(xx, yy);
+            if (this.terrain[fi] === T.GRASS && this.building[fi] === 0 && this.owner[fi] === civ.id) {
+              this.buildBuilding(fi, BUILD_KINDS.FARM, civ.id);
+              break outer2;
+            }
+          }
+        }
+      }
+    }
     this.toast(`${RACES[race].name}王国「${name}」建立了`, 'good');
     this.addEvent('found', `${RACES[race].name}王国「${name}」建立了，国王 ${civ.kingName} 加冕`, { colorHex: civ.colorHex, x: cap >= 0 ? this.tileX(cap) : x, y: cap >= 0 ? this.tileY(cap) : y });
     return civ.id;
@@ -1972,10 +2001,10 @@ export class GameEngine {
     this.fx('smoke', b.x, b.y, 36, { r: 1.5 });
   }
 
-  /** 建筑选址：领土内随机采样，按类别约束（港口需邻水/农田允许密排） */
+  /** 建筑选址：领土内随机采样，按类别约束（港口/渔场需邻水/农田允许密排） */
   tryBuildBuilding(civ: Civ, kind: number): boolean {
-    const needWater = kind === BUILD_KINDS.PORT;
-    const spacing = kind === BUILD_KINDS.FARM ? 2 : 3;
+    const needWater = kind === BUILD_KINDS.PORT || kind === BUILD_KINDS.FISHERY;
+    const spacing = kind === BUILD_KINDS.FARM || kind === BUILD_KINDS.FISHERY ? 2 : 3;
     for (let attempt = 0; attempt < 24; attempt++) {
       if (civ.tiles.length === 0) return false;
       const i = civ.tiles[Math.floor(this.rng() * civ.tiles.length)];
@@ -2004,8 +2033,8 @@ export class GameEngine {
       if (!ok) continue;
       this.buildBuilding(i, kind, civ.id);
       this.fx('smoke', x, y, 26, { r: 1 });
-      // 高阶建筑落成播报（城堡/神殿/图书馆/港口）
-      if (kind === BUILD_KINDS.CASTLE || kind === BUILD_KINDS.TEMPLE || kind === BUILD_KINDS.LIBRARY || kind === BUILD_KINDS.PORT) {
+      // 高阶建筑落成播报（城堡/神殿/图书馆/港口/渔场）
+      if (kind === BUILD_KINDS.CASTLE || kind === BUILD_KINDS.TEMPLE || kind === BUILD_KINDS.LIBRARY || kind === BUILD_KINDS.PORT || kind === BUILD_KINDS.FISHERY) {
         this.addEvent('build', `「${civ.name}」建成${BUILDING_DEFS[kind].name}，国力日盛`, { colorHex: civ.colorHex, x, y });
       }
       return true;
@@ -2578,6 +2607,8 @@ export class GameEngine {
     if (this.tickCount % 30 === 0) this.worldWarTick();
     // —— 军团方阵体系：状态机每 5 tick 推进（集结/行军/会战/围城/溃退）——
     if (this.tickCount % 5 === 0) this.armyTick();
+    // —— 地形工程体系：文明改造自然（凿山/运河/填海；错峰扫描）——
+    if (this.tickCount % 60 === 12) this.terraformTick();
     // —— 战争体系升级：战争分数结算/割地/亡乏（每 100 tick）——
     if (this.tickCount % 100 === 0) this.warInfoTick();
     // —— 文明旨意：进度评估/成功/失败（每 30 tick）——
@@ -4324,7 +4355,9 @@ export class GameEngine {
       if ((!def.predator || (u.food ?? 0) > 40) && this.rng() < boost) {
         if (def.isCiv) {
           const civ = this.civs[u.civ];
-          if (civ && civ.alive && civ.pop < this.popCapOf(civ) + 6 && this.units.length < MAX_UNITS) {
+          // 粮食门槛：粮仓见底的国家不再添丁（饿着肚子没有新生命——资源不凭空产生）
+          const foodOk = (civ?.food ?? 60) > -30;
+          if (civ && civ.alive && foodOk && civ.pop < this.popCapOf(civ) + 6 && this.units.length < MAX_UNITS) {
             // v3：文明子代也遗传基因（±变异 + 环境选择压力）—— 文明种族在代代繁衍中演化
             const cg = this.childGene(u);
             const traitKey = this.tryEmergentTrait(u, cg);
@@ -4886,7 +4919,245 @@ export class GameEngine {
       // 知识优先投入研究（科技研发体系），余量入国库知识存量（解锁建筑）
       const spent = this.fundResearch(c, knowGain);
       c.knowledge = (c.knowledge ?? 0) + (knowGain - spent);
+      // —— 粮食经济（资源不凭空产生）：农田要有农民耕作、渔场要有渔民出海，人口张嘴吃饭 ——
+      this.foodTick(c, counts);
     }
+  }
+
+  /** 粮食账本：产出（在岗农民×农田 + 出海渔民×渔场）- 消耗（人口），见底则饥荒连锁 */
+  foodTick(c: Civ, counts: number[]) {
+    const farms = counts[BUILD_KINDS.FARM] ?? 0;
+    const fisheries = counts[BUILD_KINDS.FISHERY] ?? 0;
+    // 旧档引导：首次结算时按存量建筑补一笔开仓粮（不追溯惩罚旧王国）
+    if (c.food == null) c.food = 60 + farms * 12 + fisheries * 10;
+    // —— 在岗农民清点（职农 job 1；一处 6 格内即视作在田/在港劳作）——
+    const farmers: Unit[] = [];
+    for (const u of this.units) {
+      if (u.dead || u.civ !== c.id || u.job !== 1) continue;
+      farmers.push(u);
+      if (farmers.length >= 40) break; // 清点上限（超大帝国抽样足够）
+    }
+    let workedFarms = 0;
+    let workedFisheries = 0;
+    if (farmers.length > 0) {
+      for (const b of this.buildings) {
+        if (b.civ !== c.id) continue;
+        if (b.kind !== BUILD_KINDS.FARM && b.kind !== BUILD_KINDS.FISHERY) continue;
+        let staffed = false;
+        for (const f of farmers) {
+          if (Math.abs(f.x - b.x) <= 6 && Math.abs(f.y - b.y) <= 6) { staffed = true; break; }
+        }
+        if (staffed) { if (b.kind === BUILD_KINDS.FARM) workedFarms++; else workedFisheries++; }
+      }
+    }
+    // —— 采集基线（文明黎明期）：无田无渔的小部落靠采集渔猎糊口（人口 ≤ 8 的温饱线）——
+    // 采猎经济供养不起大国：人口超过小部落规模后必须恳田建渔场，否则粮仓见底（农业革命的历史必然）
+    const forage = farms + fisheries === 0 ? Math.min(c.pop, 8) * 0.46 : 0;
+    // 产出：耕作农田 ×1.45 / 出海渔场 ×1.25（农业科技与种族勤勉加成；冬季休耕 ×0.85）
+    const tm = this.techModsOf(c.id);
+    const rpF = RACES[c.race];
+    const winterF = this.nature.season === 3 ? 0.85 : 1;
+    const foodProd = (forage + workedFarms * 1.45 + workedFisheries * 1.25) * tm.repro * (0.85 + (rpF?.industry ?? 0.5) * 0.3) * winterF;
+    // —— 职业再平衡：有田无农 → 每期劝课农桑（平民转职农民，自然 staffing 之外的保险）——
+    if (farms + fisheries > 0 && workedFarms + workedFisheries < farms + fisheries) {
+      for (const u of this.units) {
+        if (u.dead || u.civ !== c.id || (u.job ?? 0) !== 0 || u.army != null) continue;
+        this.setJob(u, 1);
+        break; // 每期一人（渐进转职，不冲击社会结构）
+      }
+    }
+    // 消耗：每 3 年一结的人口口粮（一田养四口；兵额加成——行军打仗吃得多）
+    let armyMouths = 0;
+    for (const a of this.armies) if (a.civ === c.id && a.state !== 'retreat') armyMouths += a.members.length;
+    const foodEat = c.pop * 0.36 + armyMouths * 0.15;
+    c.food = Math.max(-240, Math.min(720, c.food + foodProd - foodEat));
+    // —— 饥荒连锁（粮仓见底：田养不活人）——
+    if (c.food <= 0) {
+      const sev = c.food <= -120 ? 2 : c.food <= -50 ? 1 : 0;
+      c.stability = Math.max(0, (c.stability ?? 70) - (1.5 + sev));
+      // 断粮行军：前线军团士气滑落
+      for (const a of this.armies) {
+        if (a.civ === c.id) a.morale = Math.max(0, a.morale - (0.8 + sev * 0.6));
+      }
+      // 深度饥荒：饿殍（每期至多 2 人倒下；优先饿死离粮仓最远的无职者——赤地千里）
+      if (sev >= 1 && this.rng() < 0.45 + sev * 0.2) {
+        let starved = 0;
+        const cap = c.capital >= 0 ? { x: c.capital % W, y: (c.capital / W) | 0 } : null;
+        const victims: { u: Unit; d: number }[] = [];
+        for (const u of this.units) {
+          if (u.dead || u.civ !== c.id || u.army != null || u.job === 2 || u.job === 3) continue;
+          const d = cap ? Math.hypot(u.x - cap.x, u.y - cap.y) : this.rng() * 20;
+          victims.push({ u, d });
+        }
+        victims.sort((p, q) => q.d - p.d); // 最偏远者先挨饿
+        for (const v of victims) {
+          if (starved >= 1 + sev) break;
+          v.u.hp = 0;
+          v.u.dead = true;
+          this.addCorpse(v.u.x, v.u.y, false, false);
+          collectUnitDead(v.u.id, true);
+          starved++;
+        }
+        if (starved > 0) this.addEvent('famine', `「${c.name}」粮仓见底，赤地千里——${starved} 人倒毙于饥馑（农田与渔场供养不足）`, { colorHex: c.colorHex, x: cap?.x ?? 0, y: cap?.y ?? 0 });
+      } else if (this.rng() < 0.06) {
+        this.addEvent('famine', `「${c.name}」闹起粮荒——仓廪空虚，民有饥色（垦农田、建渔场方能止饥）`, { colorHex: c.colorHex });
+      }
+    }
+  }
+
+  // ================== 地形工程体系（文明改造自然：凿山/运河/填海） ==================
+  /** 地形工程节流：每项工程之间的国祚冷却（tick）——改天换地不是朝夕之功 */
+  static readonly TERRAFORM_CD = 560;
+
+  /** 地形工程调度：每 60 tick 扫描各国（石匠凿山 → 机械运河 → 蒸汽填海，科技逐级解锁） */
+  terraformTick() {
+    for (const civ of this.civs) {
+      if (!civ.alive || civ.pop <= 0) continue;
+      if (this.tickCount < (civ.terraformCd ?? 0)) continue;
+      const techs = new Set(civ.techs ?? []);
+      const gold = civ.gold ?? 0;
+      // —— 一、凿山开道（石匠工艺）：版图被山锁死 → 在山体上凿出丘隘 ——
+      if (techs.has('masonry') && gold >= 12 && civ.frontier.length < 8 && this.carveMountainPass(civ)) continue;
+      // —— 二、开凿运河（机械装置）：环水王国 → 在最窄地峡凿通航路（两岸通航 + 舰队捷径）——
+      if (techs.has('machinery') && gold >= 20 && this.rng() < 0.6 && this.digCanal(civ)) continue;
+      // —— 三、填海造陆（蒸汽机）：人稠地窄 → 向浅海要地（桥位优先：填出海路）——
+      if (techs.has('steam') && gold >= 28 && this.reclaimLand(civ)) continue;
+    }
+  }
+
+  /** 凿山开道：版图内山体凿为丘隘（选邻接己方可通行领地者——山隘才有路的价值） */
+  carveMountainPass(civ: Civ): boolean {
+    // 采样版图（大帝国随机抽 60 格防全表扫描）
+    const n = civ.tiles.length;
+    const samples = Math.min(n, 60);
+    for (let s = 0; s < samples; s++) {
+      const i = civ.tiles[Math.floor(this.rng() * n)];
+      if (this.terrain[i] !== T.MOUNTAIN) continue;
+      const x = i % W;
+      const y = (i / W) | 0;
+      if (this.owner[i] !== civ.id) continue;
+      // 山隘价值：四邻至少一格是己方可通行领地（凿的是「挡路的山」而非「边境的山」）
+      let opensTo = false;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+        const j = yy * W + xx;
+        if (this.owner[j] === civ.id && walkable(this.terrain[j])) { opensTo = true; break; }
+      }
+      if (!opensTo) continue;
+      // 工程实施：山 → 丘陵（可通行）
+      this.setTerrain(i, T.HILL);
+      civ.gold = (civ.gold ?? 0) - 12;
+      civ.terraformCd = this.tickCount + GameEngine.TERRAFORM_CD;
+      this.statTerraform++;
+      this.fx('dust', x + 0.5, y + 0.5, 40, { r: 2 });
+      this.fx('smoke', x + 0.5, y - 0.5, 30, { r: 1.5 });
+      this.onSound?.('quake');
+      this.addEvent('terraform', `「${civ.name}」的石匠凿穿山体，开出一条丘隘（耗费 12 金）——天堑变通途`, { colorHex: civ.colorHex, x, y });
+      return true;
+    }
+    return false;
+  }
+
+  /** 开凿运河：找「两侧都是海」的地峡陆格凿为水面（连通水系——舰队与商船的捷径） */
+  digCanal(civ: Civ): boolean {
+    // 动机校验：有港口的海洋国家才凿运河（内陆国无此需求）
+    const counts = this.civBuildCounts.get(civ.id);
+    if (!counts || (counts[BUILD_KINDS.PORT] ?? 0) < 1) return false;
+    const n = civ.tiles.length;
+    const samples = Math.min(n, 80);
+    for (let s = 0; s < samples; s++) {
+      const i = civ.tiles[Math.floor(this.rng() * n)];
+      if (this.owner[i] !== civ.id) continue;
+      const t = this.terrain[i];
+      if (t !== T.GRASS && t !== T.SAND && t !== T.HILL) continue; // 只凿土方（山体另走凿山）
+      if (this.building[i] > 0 || this.road[i] > 0) continue; // 建筑与官道不可毁
+      const x = i % W;
+      const y = (i / W) | 0;
+      // 地峡判定：东西两侧皆水 或 南北两侧皆水（凿通后两片海连成一体）
+      const wE = x > 0 && x < W - 1 && isWater(this.terrain[i - 1]) && isWater(this.terrain[i + 1]);
+      const wN = y > 0 && y < H - 1 && isWater(this.terrain[i - W]) && isWater(this.terrain[i + W]);
+      if (!wE && !wN) continue;
+      // 安全净空：格上及周边 1 格无陆行单位（不把活人凿进海里）
+      let busy = false;
+      for (const u of this.units) {
+        if (u.dead || u.boat) continue;
+        if (Math.abs(u.x - x - 0.5) <= 1.2 && Math.abs(u.y - y - 0.5) <= 1.2) { busy = true; break; }
+      }
+      if (busy) continue;
+      // 工程实施：陆地 → 普通水（setTerrain 自动弃领地/拆路/刷新水深）
+      this.setTerrain(i, T.WATER);
+      civ.gold = (civ.gold ?? 0) - 20;
+      civ.terraformCd = this.tickCount + GameEngine.TERRAFORM_CD;
+      this.statTerraform++;
+      this.fx('water', x + 0.5, y + 0.5, 44, { r: 2 });
+      this.onSound?.('place');
+      this.addEvent('terraform', `「${civ.name}」动用机械开凿运河，地峡化为水道（耗费 20 金）——两岸商船与舰队自此通航`, { colorHex: civ.colorHex, x, y });
+      return true;
+    }
+    return false;
+  }
+
+  /** 填海造陆：向邻陆浅海要地（桥位优先——两块陆之间的海填出路来：填海造路） */
+  reclaimLand(civ: Civ): boolean {
+    // 动机校验：人稠地窄（人口逼近容量 或 领土供养不足）
+    const pressured = civ.pop > this.popCapOf(civ) * 0.75 || civ.tiles.length < civ.pop * 2.5;
+    if (!pressured) return false;
+    // 扫描己方领地边缘的邻接浅海
+    const n = civ.tiles.length;
+    const samples = Math.min(n, 80);
+    let fallback = -1; // 普通填海候选（无桥位时的退路）
+    for (let s = 0; s < samples; s++) {
+      const i = civ.tiles[Math.floor(this.rng() * n)];
+      if (this.owner[i] !== civ.id || !isLand(this.terrain[i])) continue;
+      const x = i % W;
+      const y = (i / W) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const xx = x + dx, yy = y + dy;
+        if (xx < 1 || yy < 1 || xx >= W - 1 || yy >= H - 1) continue;
+        const j = yy * W + xx;
+        if (this.terrain[j] !== T.WATER || this.waterTier[j] > 1) continue; // 只填浅海（近岸/浅礁）
+        if (this.building[j] > 0) continue;
+        // 桥位判定：目标水格的对面（跨过己方陆格再往前）还是陆——填出跨海之路
+        const ox = xx + dx, oy = yy + dy;
+        const j2 = oy * W + ox;
+        if (ox >= 1 && oy >= 1 && ox < W - 1 && oy < H - 1 && isLand(this.terrain[j2]) && this.owner[j2] >= 0) {
+          this.doReclaim(civ, j, true);
+          return true;
+        }
+        if (fallback < 0 && this.rng() < 0.4) fallback = j;
+      }
+    }
+    if (fallback >= 0) { this.doReclaim(civ, fallback, false); return true; }
+    return false;
+  }
+
+  /** 填海实施：浅海 → 沙洲新陆（桥位铺路 = 填海造路） */
+  doReclaim(civ: Civ, j: number, bridge: boolean) {
+    const x = j % W;
+    const y = (j / W) | 0;
+    // 净空：不活埋船只与鱼群
+    for (const u of this.units) {
+      if (u.dead) continue;
+      if (Math.abs(u.x - x - 0.5) <= 1.5 && Math.abs(u.y - y - 0.5) <= 1.5) {
+        // 轻推离场（海豚被请离填海区）
+        const s = this.nearestStandable(x + (this.rng() * 6 | 0) - 3, y + (this.rng() * 6 | 0) - 3);
+        u.x = s.x + 0.5; u.y = s.y + 0.5; u.lx = u.x; u.ly = u.y;
+        u.boat = 0; u.boatTTL = 0;
+      }
+    }
+    this.setTerrain(j, T.SAND);
+    this.claimTile(j, civ.id); // 花钱填的地直接入版图
+    civ.gold = (civ.gold ?? 0) - 28;
+    civ.terraformCd = this.tickCount + Math.round(GameEngine.TERRAFORM_CD * 1.2);
+    this.statTerraform++;
+    if (bridge) this.road[j] = 1; // 填海造路：桥位即官道
+    this.fx('smoke', x + 0.5, y + 0.5, 44, { r: 2.5 });
+    this.fx('dust', x + 0.5, y - 0.5, 30, { r: 1.5 });
+    this.onSound?.('place');
+    this.addEvent('terraform', bridge
+      ? `「${civ.name}」填海造路——浅海化为通衢，一条跨海官道连接两岸（耗费 28 金）`
+      : `「${civ.name}」填海造陆——浅海升起一片新沙洲，疆域向大海延展（耗费 28 金）`, { colorHex: civ.colorHex, x, y });
   }
 
   // ---------------- 科技研发体系（Tech Research Engine） ----------------
@@ -5949,8 +6220,14 @@ export class GameEngine {
     const cands: { kind: number; w: number }[] = [];
     // 住宅：人口压力的基本解
     cands.push({ kind: BUILD_KINDS.HOUSE, w: buildDir ? 30 : 10 });
-    // 农田：供养扩张（每 3 人需要 1 农田支撑）
-    if (c(BUILD_KINDS.FARM) * 3 < pop / 3 + 2) cands.push({ kind: BUILD_KINDS.FARM, w: 9 });
+    // 农田：供养扩张（v0.54 粮食经济：一田养四口——按人口比例恳田；粮荒时权重飙到最高）
+    const foodStock = civ.food ?? 60;
+    const nFed = c(BUILD_KINDS.FARM) + c(BUILD_KINDS.FISHERY);
+    if (nFed < Math.ceil(pop * 0.27)) cands.push({ kind: BUILD_KINDS.FARM, w: foodStock < 30 ? 34 : foodStock < 90 ? 14 : 7 });
+    // 渔场：向海要粮（仅沿海国候选——预检领土采样，避免内陆国浪费建筑档位）
+    if (know >= (BUILDING_DEFS[BUILD_KINDS.FISHERY].needKnowledge ?? 6) && c(BUILD_KINDS.FISHERY) < 2 + houses / 7 && this.civHasCoast(civ)) {
+      cands.push({ kind: BUILD_KINDS.FISHERY, w: foodStock < 40 ? 16 : foodStock < 90 ? 8 : 5 });
+    }
     // 兵营：战时军备
     if (atWar && c(BUILD_KINDS.BARRACKS) < 1 + houses / 10) cands.push({ kind: BUILD_KINDS.BARRACKS, w: 8 });
     // 箭塔：战争防御
@@ -5973,6 +6250,26 @@ export class GameEngine {
     let r = this.rng() * total;
     for (const x of pool) { r -= x.w; if (r <= 0) return x.kind; }
     return BUILD_KINDS.HOUSE;
+  }
+
+  /** 王国是否临海（渔场候选预检：领土采样 14 格，任一格 2 格内有水即沿海） */
+  civHasCoast(civ: Civ): boolean {
+    const n = civ.tiles.length;
+    if (n === 0) return false;
+    const samples = Math.min(n, 14);
+    for (let s = 0; s < samples; s++) {
+      const i = civ.tiles[Math.floor(this.rng() * n)];
+      const x = i % W;
+      const y = (i / W) | 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const xx = x + dx, yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+          if (isWater(this.terrain[yy * W + xx])) return true;
+        }
+      }
+    }
+    return false;
   }
 
   civsTick() {
@@ -6027,9 +6324,13 @@ export class GameEngine {
         this.claimTile(i, civ.id);
       }
       // housing & building variety：按人口压力/战争/财富/知识选择建造目标
+      // v0.54：粮压也触发建造（一田养三口——仓廪不足就恳田建渔场，不等住房拥挤）
       if (this.tickCount % 120 === 0 && civ.pop > 0) {
         const cap = this.popCapOf(civ);
-        if (civ.pop > cap - 2) {
+        const cnt = this.civBuildCounts.get(civ.id);
+        const nFarms = cnt ? (cnt[BUILD_KINDS.FARM] ?? 0) + (cnt[BUILD_KINDS.FISHERY] ?? 0) : 0;
+        const foodPressure = (civ.food ?? 60) < 150 && nFarms < Math.ceil(civ.pop * 0.27);
+        if (civ.pop > cap - 2 || foodPressure) {
           const kind = this.pickBuildingKind(civ);
           const cost = BUILDING_DEFS[kind].cost ?? 0;
           if ((civ.gold ?? 0) >= cost) {
@@ -6037,6 +6338,10 @@ export class GameEngine {
           } else {
             // 财富不足 → 退而建免费住宅
             this.tryBuildBuilding(civ, BUILD_KINDS.HOUSE);
+          }
+          // —— 应急恳荒：粮荒中的国家加紧垦田（同一建造窗口再恳一块田——饿肚子的国家动作更快）——
+          if (foodPressure && (civ.food ?? 60) < 60 && (civ.gold ?? 0) >= (BUILDING_DEFS[BUILD_KINDS.FARM].cost ?? 5)) {
+            if (this.tryBuildBuilding(civ, BUILD_KINDS.FARM)) civ.gold = (civ.gold ?? 0) - (BUILDING_DEFS[BUILD_KINDS.FARM].cost ?? 5);
           }
         }
       }
@@ -6334,6 +6639,8 @@ export class GameEngine {
         this.routArmy(a, true);
         continue;
       }
+      // —— 海战体系：行军中的舰队评估遭遇战/拦截/岸防（远洋不再是法外之地）——
+      if (a.naval && a.state === 'march') this.navalWarfare(a, civ);
       switch (a.state) {
         case 'rally': this.armyRally(a, civ); break;
         case 'march': this.armyMarch(a, civ); break;
@@ -6381,10 +6688,36 @@ export class GameEngine {
     }
   }
 
-  /** 行军目标：敌国王都优先，回退最近敌建筑 */
+  /** 行军目标（v0.54 分进合击）：王都 45% / 最近敌边境要冲 30% / 敌野战军团 25%
+   *  （多军团各自择路——不再全员扎堆直冲王都的一窝蜂打法） */
   armyMarchTarget(a: Army): { x: number; y: number } | null {
     const e = this.civs[a.targetCiv];
     if (!e?.alive) return null;
+    const roll = this.rng();
+    // —— 25%：寻求会战——压向敌国最大的野战军团（围点打援 / 决战歼灭）——
+    if (roll < 0.25) {
+      let bestArmy: Army | null = null;
+      let bestSize = 0;
+      for (const o of this.armies) {
+        if (o.civ !== e.id || o.state === 'retreat' || o.members.length <= bestSize) continue;
+        bestSize = o.members.length;
+        bestArmy = o;
+      }
+      if (bestArmy) return { x: bestArmy.x, y: bestArmy.y };
+    }
+    // —— 30%：边境要冲——最近的敌国防御工事群（箭塔/城堡——拔钉子开突破口）——
+    if (roll < 0.55) {
+      let best: Building | null = null;
+      let bestD = Infinity;
+      for (const b of this.buildings) {
+        if (b.civ !== e.id) continue;
+        if (b.kind !== BUILD_KINDS.TOWER && b.kind !== BUILD_KINDS.CASTLE && b.kind !== BUILD_KINDS.BARRACKS) continue;
+        const d = Math.hypot(b.x - a.x, b.y - a.y);
+        if (d < bestD) { bestD = d; best = b; }
+      }
+      if (best) return { x: best.x, y: best.y };
+    }
+    // —— 45%：兵锋直指王都（斩首仍是战争的主旋律）——
     if (e.capital >= 0) return { x: this.tileX(e.capital), y: this.tileY(e.capital) };
     let best: Building | null = null;
     let bestD = Infinity;
@@ -6566,8 +6899,8 @@ export class GameEngine {
         this.fx('bullet', foe.x + this.rng() * 2 - 1, foe.y + this.rng() * 2 - 1, 5, { x0: a.x, y0: a.y, src: a.civ, r: 0, dmg: 0 });
       }
     }
-    // —— 战线阵列（Task 35）：近战前排压向敌旗 2.4 格列横队，弓手后排距敌 5.5 格展开 ——
-    // （沿战线垂直方向排开，各就各位——不再一窝蜂乱冲锋的鸟合之众）
+    // —— 战线阵列（Task 35 + v0.54 预备队编制）：近战前排压向敌旗 2.4 格列横队，
+    //    弓手后排距敌 5.5 格展开，1/3 近战留作预备队殿后——战局吃紧方投入（复杂编制而非一窝蜂） ——
     const fAng = Math.atan2(foe.y - a.y, foe.x - a.x);
     const ppx = -Math.sin(fAng);
     const ppy = Math.cos(fAng);
@@ -6582,8 +6915,13 @@ export class GameEngine {
       if (r) rCount++;
       else mCount++;
     }
+    // —— 预备队投入判定（v0.54 三线编制）：士气 < 62 或前排折损过三成 → 预备队压上 ——
+    const bs0r = a.battleSize0 ?? a.members.length;
+    const commitReserve = a.morale < 62 || a.members.length < bs0r * 0.68;
+    const reserveN = commitReserve ? 0 : Math.max(0, Math.floor(mCount / 3));
     let mi = 0;
     let ri = 0;
+    let vi = 0;
     for (let k = 0; k < a.members.length; k++) {
       const u = this.unitById.get(a.members[k]);
       if (!u) continue;
@@ -6593,13 +6931,23 @@ export class GameEngine {
         ri++;
         u.tx = Math.max(0.5, Math.min(W - 0.5, a.x - Math.cos(fAng) * 2.6 + ppx * off));
         u.ty = Math.max(0.5, Math.min(H - 0.5, a.y - Math.sin(fAng) * 2.6 + ppy * off));
+      } else if (vi < reserveN) {
+        // 预备队（第三线）：本旗后方 5.2 格整队待命——生力军压阵，战线不稳时投入
+        const off = (vi - (reserveN - 1) / 2) * 1.1;
+        vi++;
+        u.tx = Math.max(0.5, Math.min(W - 0.5, a.x - Math.cos(fAng) * 5.2 + ppx * off));
+        u.ty = Math.max(0.5, Math.min(H - 0.5, a.y - Math.sin(fAng) * 5.2 + ppy * off));
       } else {
         // 近战前排：压向敌旗 2.4 格接触线（横队展开）
-        const off = (mi - (mCount - 1) / 2) * 1.05;
+        const off = (mi - (mCount - reserveN - 1) / 2) * 1.05;
         mi++;
         u.tx = Math.max(0.5, Math.min(W - 0.5, foe.x - Math.cos(fAng) * 2.4 + ppx * off));
         u.ty = Math.max(0.5, Math.min(H - 0.5, foe.y - Math.sin(fAng) * 2.4 + ppy * off));
       }
+    }
+    // 预备队投入的战场播报（会战转折点：原本留有预备队、此刻战局吃紧压上）
+    if (mCount >= 3 && commitReserve && a.members.length >= 8 && this.rng() < 0.08) {
+      this.addEvent('clash', `${a.name} 战线吃紧——预备队压上，生力军投入接战`, { colorHex: civ.colorHex, x: a.x, y: a.y });
     }
     // —— 齐射（Task 35）：后排按口令集火敌阵（弹道预测 + 同时开火 —— 组织化杀伤力）——
     if (foes.length > 0 && this.tickCount % 15 === 0) {
@@ -6889,6 +7237,157 @@ export class GameEngine {
     }
     a.morale = Math.min(100, a.morale + 5); // 成功登陆士气大振
     if (landed > 0) this.addEvent('army', `${a.name} 的远征军抢滩登陆（${landed} 人上岸）`, { colorHex: this.civs[a.civ]?.colorHex, x: a.x, y: a.y });
+  }
+
+  // ================== 海战体系（制海权：遭遇战/拦截/岸防/还击） ==================
+  /** 海战齐射：视觉弹幕 + 对目标舰队的随机杀伤（返回击杀数） */
+  navalVolley(sx: number, sy: number, tx: number, ty: number, civ: number, tm: { dmg: number }, target?: Army): number {
+    const modern = tm.dmg > 1.35; // 火器时代起：炮弹弹幕（此前箭矢交火）
+    const kind = modern ? 'shell' : 'arrow';
+    const n = modern ? 3 : 4;
+    for (let k = 0; k < n; k++) {
+      const ox = tx + this.rng() * 2.4 - 1.2;
+      const oy = ty + this.rng() * 2.4 - 1.2;
+      this.fx(kind, Math.max(0.5, Math.min(W - 0.5, ox)), Math.max(0.5, Math.min(H - 0.5, oy)), 14 + (this.rng() * 6 | 0), { x0: sx, y0: sy, src: civ, r: 0, dmg: 0 });
+    }
+    if (!target || target.members.length === 0) return 0;
+    const shots = Math.min(4, 1 + ((target.members.length / 6) | 0));
+    let kills = 0;
+    for (let k = 0; k < shots; k++) {
+      if (this.rng() > 0.42 + tm.dmg * 0.18) continue; // 命中率随军备提升
+      const u = this.unitById.get(target.members[(this.rng() * target.members.length) | 0]);
+      if (!u || u.dead) continue;
+      u.hp -= (13 + this.rng() * 11) * tm.dmg;
+      u.hurt = 20;
+      if (u.hp <= 0) {
+        u.dead = true;
+        this.addCorpse(u.x, u.y, false, false);
+        collectUnitDead(u.id, false);
+        this.wwCountKill(u);
+        const ix = target.members.indexOf(u.id);
+        if (ix >= 0) target.members.splice(ix, 1);
+        target.losses++;
+        kills++;
+      }
+    }
+    target.morale = Math.max(0, target.morale - kills * 2.6 - 1.2);
+    return kills;
+  }
+
+  /** 海战调度：行军中的舰队每 5 tick 评估（追猎殖民船 → 舰队遭遇战 → 岸防交火） */
+  navalWarfare(a: Army, civ: Civ) {
+    if (this.tickCount < (a.navalCd ?? 0)) return;
+    // —— 一、拦截：敌方殖民船闯入防卫圈（9 格）→ 追猎击沉（舰队从此可被拦截）——
+    //    （u.army != null 排除敌舰队战舰——那是遭遇战分支的对手，不是猎物）
+    let prey: Unit | null = null;
+    let preyD = 9;
+    for (const u of this.units) {
+      if (u.dead || !u.boat || u.army != null || u.civ < 0 || !this.atWar(a.civ, u.civ)) continue;
+      const d = Math.hypot(u.x - a.x, u.y - a.y);
+      if (d < preyD) { preyD = d; prey = u; }
+    }
+    if (prey) {
+      a.tx = prey.x; a.ty = prey.y; // 军旗直指猎物（追猎航向）
+      if (preyD < 3.2) {
+        const tm = this.techModsOf(a.civ);
+        this.navalVolley(a.x, a.y, prey.x, prey.y, a.civ, tm);
+        const firepow = a.members.length * (0.55 + tm.dmg * 0.4);
+        if (this.rng() < 0.16 + firepow * 0.012) {
+          prey.dead = true;
+          collectUnitDead(prey.id, false);
+          this.fx('explosion', prey.x, prey.y, 24, { r: 1.5 });
+          this.statNavalKills++;
+          const preyCiv = this.civs[prey.civ];
+          this.addEvent('naval', `「${civ.name}」的舰队在海上拦截并击沉了「${preyCiv?.name ?? '未知'}」的殖民船——制海权从不免费`, { colorHex: civ.colorHex, x: prey.x, y: prey.y });
+          this.onSound?.('boom');
+        }
+        a.navalCd = this.tickCount + 15;
+      }
+      return; // 追猎期间不他顾
+    }
+    // —— 二、舰队遭遇战：敌对舰队进入 8.5 格 → 对进炮战（海上会战）——
+    let foe: Army | null = null;
+    let foeD = 8.5;
+    for (const o of this.armies) {
+      if (o === a || !o.naval || o.civ === a.civ || o.state === 'retreat' || !this.atWar(a.civ, o.civ)) continue;
+      const d = Math.hypot(o.x - a.x, o.y - a.y);
+      if (d < foeD) { foeD = d; foe = o; }
+    }
+    if (foe) {
+      const tmA = this.techModsOf(a.civ);
+      const tmB = this.techModsOf(foe.civ);
+      // 对进接战：军旗互指（两支舰队逼近炮战距离）
+      a.tx = foe.x; a.ty = foe.y;
+      foe.tx = a.x; foe.ty = a.y;
+      const killsA = this.navalVolley(a.x, a.y, foe.x, foe.y, a.civ, tmA, foe); // 我方齐射
+      const killsB = this.navalVolley(foe.x, foe.y, a.x, a.y, foe.civ, tmB, a); // 敌方还击
+      this.statNavalKills += killsA;
+      // 战损入账（战争档案）
+      const wd = this.warData.get(pairKey(a.civ, foe.civ));
+      if (wd) {
+        if (a.civ === wd.a) { wd.casB += killsA; wd.casA += killsB; wd.scoreA += killsA * 0.8; wd.scoreB += killsB * 0.8; }
+        else { wd.casA += killsA; wd.casB += killsB; wd.scoreB += killsA * 0.8; wd.scoreA += killsB * 0.8; }
+      }
+      a.morale = Math.min(100, a.morale + killsA * 1.5 - killsB * 1.2);
+      foe.morale = Math.min(100, foe.morale + killsB * 1.5 - killsA * 1.2);
+      if (this.rng() < 0.3) {
+        this.addEvent('naval', `海上遭遇战——「${civ.name}」与「${this.civs[foe.civ]?.name ?? ''}」的舰队炮火互轰（${killsA}:${killsB}）`, { colorHex: civ.colorHex, x: (a.x + foe.x) / 2, y: (a.y + foe.y) / 2 });
+      }
+      this.onSound?.('boom');
+      // 溃败判定：弱势方舰队脱离（海军溃退 = 弃船上岸撤退）
+      const aStr = a.members.length * tmA.dmg * (a.morale / 60);
+      const bStr = foe.members.length * tmB.dmg * (foe.morale / 60);
+      if (a.morale < 36 || a.members.length < 4 || aStr < bStr * 0.35) {
+        this.addEvent('naval', `${a.name} 舰队不支，弃船登岸撤退`, { colorHex: civ.colorHex, x: a.x, y: a.y });
+        this.armyDisembark(a);
+        this.routArmy(a);
+      } else if (foe.morale < 36 || foe.members.length < 4 || bStr < aStr * 0.35) {
+        this.addEvent('naval', `${foe.name} 舰队不支，弃船登岸撤退`, { colorHex: this.civs[foe.civ]?.colorHex, x: foe.x, y: foe.y });
+        this.armyDisembark(foe);
+        this.routArmy(foe);
+      }
+      a.navalCd = this.tickCount + 20;
+      foe.navalCd = this.tickCount + 20;
+      return;
+    }
+    // —— 三、岸防交火：驶入敌国海岸工事射程 → 吃岸炮（舰队可被岸防拦截）——
+    let fort: Building | null = null;
+    let fortD = 6.5;
+    for (const b of this.buildings) {
+      if (b.civ < 0 || !this.atWar(a.civ, b.civ)) continue;
+      if (b.kind !== BUILD_KINDS.TOWER && b.kind !== BUILD_KINDS.CASTLE && b.kind !== BUILD_KINDS.PORT) continue;
+      const d = Math.hypot(b.x - a.x, b.y - a.y);
+      if (d < fortD) { fortD = d; fort = b; }
+    }
+    if (fort) {
+      // 岸炮射击舰队
+      const dmg = fort.kind === BUILD_KINDS.CASTLE ? 15 : fort.kind === BUILD_KINDS.TOWER ? 9 : 6;
+      if (a.members.length > 0 && this.rng() < 0.5) {
+        const u = this.unitById.get(a.members[(this.rng() * a.members.length) | 0]);
+        if (u && !u.dead) {
+          this.fx('arrow', u.x, u.y, 10, { x0: fort.x + 0.5, y0: fort.y + 0.5, src: fort.civ, r: 0, dmg });
+          u.hp -= dmg;
+          u.hurt = 20;
+          if (u.hp <= 0) {
+            u.dead = true;
+            this.addCorpse(u.x, u.y, false, false);
+            collectUnitDead(u.id, false);
+            const ix = a.members.indexOf(u.id);
+            if (ix >= 0) a.members.splice(ix, 1);
+            a.losses++;
+            a.morale = Math.max(0, a.morale - 3);
+          }
+        }
+      }
+      // 舰队还击岸防（炮击工事——舰队本身会攻击）
+      const tmF = this.techModsOf(a.civ);
+      if (tmF.dmg > 1.35) {
+        this.fx('shell', fort.x + 0.5 + this.rng() - 0.5, fort.y + 0.5 + this.rng() - 0.5, 18, { x0: a.x, y0: a.y, src: a.civ, r: 1.2, dmg: 18 + this.rng() * 8, fire: this.rng() < 0.3 ? 1 : 0 });
+      } else {
+        this.fx('arrow', fort.x + 0.5, fort.y + 0.5, 12, { x0: a.x, y0: a.y, src: a.civ, r: 0, dmg: 0 });
+      }
+      a.navalCd = this.tickCount + 25;
+    }
   }
 
   /** 溃退（triumph = 凯旋归国；重复调用去重——同一军团不重复播报） */
@@ -8584,40 +9083,44 @@ export class GameEngine {
       const foes = alive.filter((o) => o.id !== c.id);
       if (foes.length === 0) continue;
       const foe = foes[Math.floor(this.rng() * foes.length)];
-      const tgtTile = foe.capital >= 0 ? foe.capital : foe.tiles[0] ?? -1;
+      // —— 战略目标（v0.54 炮击策略性）：不再永远藤啸敌国王都——各武器按画像选真目标
+      //    （反炮兵打野战军团 / 空袭打兵营与经济 / 核弹偏爱王都但也知釜底抽薪 / 弹着记忆避让）
+      const capTile = foe.capital >= 0 ? foe.capital : foe.tiles[0] ?? -1;
+      const tgt = this.strategicTargetOf(c, foe, 'arty');
+      const nukeTgt = this.strategicTargetOf(c, foe, 'nuke');
+      const airTgt = this.strategicTargetOf(c, foe, 'air');
+      const droneTgt = this.strategicTargetOf(c, foe, 'drone');
       // —— 反物质打击（天启：仅终局狂热阶段解禁，全局冷却 30 年）——
-      if (tm.antiMatter > 0 && frenzy && tgtTile >= 0 && this.tickCount - this.wwLastAntiTick > GameEngine.WW_ANTI_CD && this.rng() < 0.12) {
+      if (tm.antiMatter > 0 && frenzy && nukeTgt && this.tickCount - this.wwLastAntiTick > GameEngine.WW_ANTI_CD && this.rng() < 0.12) {
         this.wwLastAntiTick = this.tickCount;
         this.worldWar.antimatters++;
-        const tx = this.tileX(tgtTile) + 0.5;
-        const ty = this.tileY(tgtTile) + 0.5;
+        const tx = nukeTgt.x;
+        const ty = nukeTgt.y;
         this.launchAntimatter(c, tx, ty);
-        this.addEvent('superweapon', `⚠ 湮灭警报——「${c.name}」的反物质弹升空，目标：「${foe.name}」的心脏，接触即湮灭`, { colorHex: c.colorHex, x: tx, y: ty });
+        this.addEvent('superweapon', `⚠ 湮灭警报——「${c.name}」的反物质弹升空，目标：「${foe.name}」的${nukeTgt.label}，接触即湮灭`, { colorHex: c.colorHex, x: tx, y: ty });
         continue;
       }
       // —— 轨道天罚（天基动能钨棒：大威力爆破 + 地形焦化）——
-      if (tm.orbital > 0 && tgtTile >= 0 && this.rng() < 0.08 * rate) {
+      if (tm.orbital > 0 && (tgt || capTile >= 0) && this.rng() < 0.08 * rate) {
         this.worldWar.orbitals++;
-        const tx = this.tileX(tgtTile) + 0.5;
-        const ty = this.tileY(tgtTile) + 0.5;
+        const tx = tgt ? tgt.x : this.tileX(capTile) + 0.5;
+        const ty = tgt ? tgt.y : this.tileY(capTile) + 0.5;
         this.launchOrbital(c, tx, ty);
-        this.addEvent('superweapon', `「${c.name}」的轨道天基平台亮起——钨棒脱离轨道，坠向「${foe.name}」`, { colorHex: c.colorHex, x: tx, y: ty });
+        this.addEvent('superweapon', `「${c.name}」的轨道天基平台亮起——钨棒脱离轨道，坠向「${foe.name}」的${tgt ? tgt.label : '腹地'}`, { colorHex: c.colorHex, x: tx, y: ty });
         continue;
       }
       // —— 等离子炮（大威力 + 电磁脉冲击溃士气）——
-      if (tm.plasma > 0 && tgtTile >= 0 && this.rng() < 0.12 * rate) {
+      if (tm.plasma > 0 && tgt && this.rng() < 0.12 * rate) {
         this.worldWar.plasmas++;
-        const tx = this.tileX(tgtTile) + 0.5;
-        const ty = this.tileY(tgtTile) + 0.5;
-        this.launchPlasma(c, tx, ty);
-        this.addEvent('superweapon', `「${c.name}」的等离子炮充能完毕——电浆光球划破长空`, { colorHex: c.colorHex, x: tx, y: ty });
+        this.launchPlasma(c, tgt.x, tgt.y);
+        this.addEvent('superweapon', `「${c.name}」的等离子炮充能完毕——电浆光球划破长空，射向${tgt.label}`, { colorHex: c.colorHex, x: tgt.x, y: tgt.y });
         continue;
       }
       // —— 无人机蜂群（自主游猎扫射）——
-      if (tm.drone > 0 && tgtTile >= 0 && this.rng() < 0.16 * rate) {
+      if (tm.drone > 0 && droneTgt && this.rng() < 0.16 * rate) {
         this.worldWar.drones++;
-        this.launchDroneSwarm(c, this.tileX(tgtTile) + 0.5, this.tileY(tgtTile) + 0.5);
-        this.addEvent('superweapon', `「${c.name}」的无人机蜂群升空——自主游猎，杀向「${foe.name}」纵深`, { colorHex: c.colorHex });
+        this.launchDroneSwarm(c, droneTgt.x, droneTgt.y);
+        this.addEvent('superweapon', `「${c.name}」的无人机蜂群升空——自主游猎，杀向「${foe.name}」的${droneTgt.label}`, { colorHex: c.colorHex });
         continue;
       }
       // —— 激光炮台（高频精确狙杀，无冷却限制）——
@@ -8626,24 +9129,22 @@ export class GameEngine {
         this.launchLaser(c, foe);
         continue;
       }
-      // —— 核打击（终局武器：全局冷却 15 年 + 概率发射）——
-      if (tm.nukeCap > 0 && tgtTile >= 0 && this.tickCount - this.wwLastNukeTick > GameEngine.WW_TRUCE_TICKS && this.rng() < 0.06 * rate) {
+      // —— 核打击（终局武器：全局冷却 15 年 + 概率发射；斩首优先但集团军同样致命）——
+      if (tm.nukeCap > 0 && nukeTgt && this.tickCount - this.wwLastNukeTick > GameEngine.WW_TRUCE_TICKS && this.rng() < 0.06 * rate) {
         this.wwLastNukeTick = this.tickCount;
         this.worldWar.nukes++;
-        const tx = this.tileX(tgtTile) + 0.5;
-        const ty = this.tileY(tgtTile) + 0.5;
-        this.launchMissile(c, tx, ty, 1.8);
-        this.addEvent('worldwar', `「${c.name}」的核导弹拖着尾焰升空——目标：「${foe.name}」的心脏`, { colorHex: c.colorHex, x: tx, y: ty });
+        this.launchMissile(c, nukeTgt.x, nukeTgt.y, 1.8);
+        this.addEvent('worldwar', `「${c.name}」的核导弹拖着尾焰升空——目标：「${foe.name}」的${nukeTgt.label}`, { colorHex: c.colorHex, x: nukeTgt.x, y: nukeTgt.y });
         continue;
       }
       // —— 常规导弹打击（现代军备级）——
-      if (tm.arty > 0 && this.armamentOf(c) >= 5 && tgtTile >= 0 && this.rng() < 0.06 * rate) {
-        this.launchMissile(c, this.tileX(tgtTile) + 0.5, this.tileY(tgtTile) + 0.5, 0);
+      if (tm.arty > 0 && this.armamentOf(c) >= 5 && tgt && this.rng() < 0.06 * rate) {
+        this.launchMissile(c, tgt.x, tgt.y, 0);
         continue;
       }
-      // —— 空袭轰炸 ——
-      if (tm.bomber > 0 && tgtTile >= 0 && this.rng() < 0.08 * rate) {
-        this.launchAirstrike(c, this.tileX(tgtTile) + 0.5, this.tileY(tgtTile) + 0.5);
+      // —— 空袭轰炸（斩断兵源与经济命脉）——
+      if (tm.bomber > 0 && airTgt && this.rng() < 0.08 * rate) {
+        this.launchAirstrike(c, airTgt.x, airTgt.y);
         continue;
       }
       // —— 火炮轰击（对敌境建筑与军队）——
@@ -9485,21 +9986,59 @@ export class GameEngine {
 
   // ================== 现代武器体系（工业时代军备） ==================
 
-  /** 火炮轰击：从己方前线建筑向敌国目标发射炮弹（抛物线弹道 + 落点爆破） */
-  launchArtillery(c: Civ, foe: Civ) {
-    // 目标：敌国随机建筑（无建筑则打敌军单位）
-    let tx = -1;
-    let ty = -1;
-    const foeBuilds = this.buildings.filter((b) => b.civ === foe.id);
-    if (foeBuilds.length > 0) {
-      const b = foeBuilds[Math.floor(this.rng() * foeBuilds.length)];
-      tx = b.x + 0.5;
-      ty = b.y + 0.5;
-    } else {
-      const tu = this.units.find((u) => !u.dead && u.civ === foe.id);
-      if (tu) { tx = tu.x; ty = tu.y; }
+  /** 战略目标选择（炮击策略性核心）：按武器画像加权挑真目标——敌野战军团/防御工事/生产建筑/王都，
+   *  并对近期弹着邻域降权（火刀不再围着同一个坑打）。返回 null = 无合法目标。 */
+  strategicTargetOf(c: Civ, foe: Civ, profile: 'arty' | 'nuke' | 'air' | 'drone' | 'beam'): { x: number; y: number; label: string } | null {
+    type Cand = { x: number; y: number; w: number; label: string };
+    const cands: Cand[] = [];
+    // —— 敌野战军团（反炮兵/装甲集群——最高战术价值）——
+    for (const o of this.armies) {
+      if (o.civ !== foe.id || o.state === 'retreat' || o.members.length < 4) continue;
+      let w = profile === 'arty' ? 6 : profile === 'drone' ? 7 : profile === 'beam' ? 5 : 3.5;
+      if (profile === 'nuke') w = 4; // 核弹也炸集团军（釜底抽薪）
+      cands.push({ x: o.x, y: o.y, w: w * Math.min(2, o.members.length / 8), label: o.name });
     }
-    if (tx < 0) return;
+    // —— 敌建筑分类（工事优先压制 / 生产削弱 / 王都斩首）——
+    for (const b of this.buildings) {
+      if (b.civ !== foe.id) continue;
+      let w = 0;
+      let label = BUILDING_DEFS[b.kind]?.name ?? '建筑';
+      if (b.kind === BUILD_KINDS.TOWER || b.kind === BUILD_KINDS.CASTLE) w = profile === 'arty' ? 5 : 3; // 工事压制
+      else if (b.kind === BUILD_KINDS.BARRACKS) w = profile === 'air' ? 5 : 3.5; // 兵营（斩断兵源）
+      else if (b.kind === BUILD_KINDS.MARKET || b.kind === BUILD_KINDS.LIBRARY || b.kind === BUILD_KINDS.FISHERY || b.kind === BUILD_KINDS.FARM) w = profile === 'air' ? 4 : 2.5; // 经济命脉
+      else if (b.kind === BUILD_KINDS.PORT) w = 2;
+      else if (b.kind === BUILD_KINDS.CAPITAL) w = profile === 'nuke' ? 7 : profile === 'air' ? 2.5 : 1.2; // 斩首（核弹偏爱王都）
+      else if (b.kind === BUILD_KINDS.HOUSE) w = 0.8;
+      if (w > 0) cands.push({ x: b.x + 0.5, y: b.y + 0.5, w, label });
+    }
+    if (cands.length === 0) return null;
+    // —— 近期弹着降权：目标 6 格内有近期弹着 → 权重 ×0.3（打过的地方歇一歇）——
+    const mem = this.shellMemory;
+    for (const cd of cands) {
+      for (let m = 0; m < mem.length; m += 2) {
+        if (Math.hypot(cd.x - mem[m], cd.y - mem[m + 1]) < 6) { cd.w *= 0.3; break; }
+      }
+    }
+    // —— 加权抽签 ——
+    let total = 0;
+    for (const cd of cands) total += cd.w;
+    if (total <= 0) return null;
+    let r = this.rng() * total;
+    for (const cd of cands) {
+      r -= cd.w;
+      if (r <= 0) return { x: cd.x, y: cd.y, label: cd.label };
+    }
+    return cands[cands.length - 1] ? { x: cands[cands.length - 1].x, y: cands[cands.length - 1].y, label: cands[cands.length - 1].label } : null;
+  }
+
+  /** 火炮轰击：从己方前线建筑向敌国战略目标发射炮弹（抛物线弹道 + 落点散布 + 落点爆破） */
+  launchArtillery(c: Civ, foe: Civ) {
+    // 目标：战略画像选取（野战军团/工事/生产建筑加权 + 弹着记忆避让——不再无脑抽随机建筑）
+    const tgt = this.strategicTargetOf(c, foe, 'arty');
+    if (!tgt) return;
+    // 落点散布（真实火炮的 CEP：±1.4 格高斯感散布——不再精确砸同一格）
+    const tx = tgt.x + (this.rng() + this.rng() - 1) * 1.4;
+    const ty = tgt.y + (this.rng() + this.rng() - 1) * 1.4;
     // 炮位：己方距目标最近的建筑（前线炮兵阵地）
     let sx = this.civCenterX(c);
     let sy = this.civCenterY(c);
@@ -9641,6 +10180,9 @@ export class GameEngine {
 
   /** 弹体落点爆破（炮弹/炸弹/常规导弹）：伤害衰减 + 建筑损毁 + 可选纵火 */
   shellBurst(x: number, y: number, r: number, dmg: number, fire = false, src = -1) {
+    // 弹着记忆（炮击策略性核心）：环形 16 点——后续选目标时对近期弹着邻域降权，火炮不再围着同一个坑打
+    if (this.shellMemory.length >= 32) this.shellMemory.splice(0, 2);
+    this.shellMemory.push(Math.round(x * 10) / 10, Math.round(y * 10) / 10);
     for (const u of this.units) {
       if (u.dead) continue;
       const d = Math.hypot(u.x - x, u.y - y);
@@ -14852,6 +15394,7 @@ export class GameEngine {
       houseCap: this.popCapOf(c),
       gold: Math.floor(c.gold ?? 0),
       knowledge: Math.floor(c.knowledge ?? 0),
+      food: Math.floor(c.food ?? 60),
       army,
       armedRate: popN > 0 ? Math.round((armedN / popN) * 100) : 0, // 持械率（军备时代 ≠ 全民国兵——真实兑现度一目了然）
       ideas: (c.ideas ?? []).map((k) => this.emIdeas.get(k)?.name ?? k), // 已采纳的涌现理念（CivPanel 徽章列）
