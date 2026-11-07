@@ -5118,3 +5118,26 @@ Stage Summary:
   → **CI failure 修复补记**：fa3f7a7 静态导出被 tsc 门禁拦下——新增 WorldEventKind 'chrono' 后三处全量映射表缺项（Chronicle.tsx KIND_META / gameStore.ts EVENT_CATEGORY / agentLaws.ts EVENT_KIND_TABLE satisfies 穷举表）+ engine.ts stasis 可选链自减类型错。已全部补齐：Chronicle +Hourglass 图标（text-teal-300）、分类 world（与唤雨同策）、注册表 chrono: true、u.stasis 显式非空自减。本地 export-static 复跑通过（out/ 4.2M 48 文件），lint exit 0。
   → **推送完成（CI 修复）**：SYNC_OK c4d1159 → CI main@c4d1159 success → gh-pages@ca27e4f success → Pages 线上 200。v0.51 已上线，本轮全链闭环。
   → **线上实机终验**：agent-browser 打开 https://yylsszx.github.io/pixel-world-box/ —— 标题屏徽章 **v0.51**、菜单齐全（进入世界/重铸新世界/新手教程+首次推荐角标）、无存档引导文案正常。v0.51「时之凝滞」全链闭环上线。
+
+## [2026-11-07 23:30 打磨轮 #4 · Job 2932240] v0.52：全新神力「生命绽放」——春神翠绿穹顶（第 16 种神力）
+
+**开工核对**: 上轮 v0.51 已全链闭环（远端 main 与本地一致、CI 双绿、Pages 200）；无并行轮在制（开工距上轮台账约 30 分钟，无活跃开发进程、无 index.lock）。
+
+**QA（开工时）**: 拉起本地 dev（沙箱重启后 3000 未跑）→ agent-browser 实机走查：标题屏 v0.51 徽章正常、进入世界渲染正常、工具栏/教程/面板齐全、console 零 error/warn。线上 Pages 200。
+
+**本轮改动（第 16 种神力：生命绽放 bloom，与时之凝滞构成对偶——一个停驻时间，一个催发生命）**:
+- 玩法定义：春神翠绿穹顶（single 工具，绽放半径 4-14 / 持续 100-600 tick 可调，至多 3 域并存防刷屏）。域内四重生机：
+  ① 大地回春——焦土/荒漠/雪原逐格复苏为草原（与酸雨/沙暴腐蚀同频采样、等速逆向，天道对称），草原 22% 概率疯长成林；statBloomTiles 计数器累计复苏格数。
+  ② 生灵沐春——域内单位持续愈伤（0.25/tick，快于圣光甘霖 0.15）+ 驱瘟 + 捕食者饱食（food +2.5/tick 封顶 160，春域内无猎杀之必要）。
+  ③ 涤净——穹内燃烧格即刻止熄（与圣光风暴同策）+ 辐射格洗净。
+  ④ 无中生有——每 ~24 tick 概率在域内草地/森林格诞生小生命（兔/鸡/羊/鹿随机，spawnUnit 生态预算 MAX_WILDLIFE 自律满额静默）。
+- 涉及文件：types.ts（EffectKind/WorldEventKind/SoundKind 三处注册）+ constants.ts（工具定义+8x8 破土新芽图标）+ engine.ts（bloomField/effectsTick 绽放块/applyTool 分发/statBloomTiles 声明与重置）+ render.ts（翠绿双层穹体+正向生长藤蔓弧——与逆行钟摆相反+袅袅上升花絮光尘——与圣光下坠/凝滞悬停相反+零星花黄第二色温+中心生命之柱）+ sfx.ts（五声上行琶音 C5→E5→G5→C6+C7 绽放泛音，与时之凝滞下行琉璃互为镜像）。
+- 三处全量映射表（轮#3 CI 教训前置补齐）：Chronicle.tsx KIND_META +Sprout（text-green-400）/ gameStore.ts EVENT_CATEGORY bloom:'world'（与时之凝滞同策）/ agentLaws.ts EVENT_KIND_TABLE bloom:true。
+- 成就 +2：「万物复苏」（白银·穹顶同庇 60 生灵，含多域 max 取值进度条）+「不毛再无」（黄金·累计复苏 300 格不毛之地，statBloomTiles 进度条）→ 殿堂 43 项；AchievementsPanel +Sprout 图标、计数注释 41→43。
+- version.ts：v0.52-preview + CHANGELOG 四条玩家视角要点。
+
+**验证**: bun run lint exit 0 零告警；export-static 本地门禁通过（out/ 4.2M 48 文件，tsc 全量过）；agent-browser 实机全链 QA——工具按钮/参数面板（绽放半径 5/持续 20.0s）✓、真实 CDP 点击施放后 VLM 截图实证（翠绿半透明穹顶+内部植被更绿更鲜亮+细小上升光点+参数面板吻合）✓、纪事事件「翠绿的春之穹顶降临大地——焦土回春、荒漠生草，生命在绿意中疯长」入列（大地类+点击跳转坐标）✓、成就殿堂 8/43 两张新卡渲染+「不毛再无」进度实测 210/300（地形复苏计数器工作中）✓、console 零 error/warn ✓。注：合成 PointerEvent 施放不可靠（offsetX/Y 等），改用 agent-browser 真实 CDP 点击后全通；高速时序下事件洪流会把置顶事件冲出 80 条窗口，验证需施放后立即查看。
+
+**推送**: push-web.sh 执行（TLS 一次重试自愈）。
+  → **推送完成**：SYNC_OK 492ddc8 → CI main@492ddc8 success → Pages deployment f044e70 success。v0.52 已上线。
+  → **线上实机终验**：agent-browser 打开 https://yylsszx.github.io/pixel-world-box/ —— 标题屏徽章 **v0.52**、主菜单齐全。v0.52「生命绽放」全链闭环上线。
