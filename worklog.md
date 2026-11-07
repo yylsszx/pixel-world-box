@@ -5141,3 +5141,28 @@ Stage Summary:
 **推送**: push-web.sh 执行（TLS 一次重试自愈）。
   → **推送完成**：SYNC_OK 492ddc8 → CI main@492ddc8 success → Pages deployment f044e70 success。v0.52 已上线。
   → **线上实机终验**：agent-browser 打开 https://yylsszx.github.io/pixel-world-box/ —— 标题屏徽章 **v0.52**、主菜单齐全。v0.52「生命绽放」全链闭环上线。
+
+## [2026-11-08 00:2x 打磨轮 #5 · Job 2932240] v0.53：全新神力「时之奔流」——时间金流穹顶（第 17 种神力，时间三神力集齐）
+
+**开工核对**: 上轮 v0.52 已全链闭环（远端 main 与本地一致、CI 双绿、Pages 200）；无并行轮在制（无活跃开发进程、无 index.lock）。Cron 网关悬案解除：Job 2932240（5min 打磨轮）运行正常（累计 28 次），此前"消失"的 2931742/2931985 未再复现。
+
+**QA（开工时）**: 沙箱重启后 dev server 未跑 → 重新拉起（Ready in 700ms）→ agent-browser 走查：标题屏 v0.52 徽章正常、进入世界渲染正常、console 零 error/warn。上轮 CI 双绿（7bb6e63 Deploy success + a6f4109 pages build success）、Pages 200，无遗留债务。
+
+**本轮改动（第 17 种神力：时之奔流 haste，与时之凝滞构成完整时间对偶——凝滞/绽放/奔流三神力集齐）**:
+- 玩法定义：时间金流穹顶（single 工具，奔流半径 4-14 / 持续 100-600 tick 可调，至多 3 域并存）。三重奔涌（凝滞三重凝滞的镜像）：
+  ① 生灵疾行——JS 路径单位由主循环第二次 updateUnit 获得 ×2 心跳（移动/战斗/成长/衰老全面提速，岁月飞逝的双刃剑）；wasm 批内核接管时 Rust 不知时域，JS 侧直写热列补偿（age +1/tick + cd -1/tick——unitsTick 先于 effectsTick，写在 writeback 之后、下一 tick pack2 携带入核，实测穹内衰老精确 ×2.01）；新增 _kernelTick 门控避免双心跳+热列双重叠加。
+  ② 火焰燎原——穹内燃烧格 30%/tick 概率引燃随机邻格（ignite 自带可燃校验；网格两侧共享，跨路径生效；与凝滞「止燃」反向对称）。
+  ③ 万象快进——穹内其他领域/云团特效（rainstorm/wrath/holystorm/chrono/bloom/sandstorm/typhoon/tornado/blizzard/locust/drought/iceage/famine/blackhole 白名单）age +2/tick：风暴走完命数只需一半时间（实测双穹叠加 5/tick 自洽；弹道不参与——箭矢半空消失读作 bug 而非时序）。
+- 跨路径诚实语义：凝滞压倒奔流（stasis 门先返回时保留 haste 充能，凝滞解除后余韵续跑）；船单位置于衰减之后同受充能；u.haste 瞬态不入档，旧存档兼容。
+- 涉及文件：types.ts（EffectKind+'haste'/'timedust'、WorldEventKind、SoundKind、Unit.haste）+ constants.ts（工具定义+8x8 金色快进双三角图标）+ engine.ts（statHasteBeats/statHastePeak 计数器、effectsTick haste 分支、JS 主循环双倍心跳、updateUnit haste 衰减、hasteField()、applyTool 分发、_kernelTick 门控）+ render.ts（琥珀金双层穹体+顺行疾旋弧×3转速+坠落时尘流光 1×2 竖条残影+中心奔流之柱+timedust 时尘特效）+ sfx.ts（五音急升跑动 G4→C5→E5→G5→C6 间距减半+220→1760Hz 时间呼啸扫掠，与凝滞缓下行琉璃互为镜像）。
+- 三处全量映射表（轮#3 CI 教训前置补齐）：Chronicle.tsx KIND_META +FastForward（text-amber-300）/ gameStore.ts EVENT_CATEGORY haste:'world'（时间三神力同策）/ agentLaws.ts EVENT_KIND_TABLE haste:true。
+- 成就 +2：「白驹过隙」（白银·同时加速 60 生灵，statHastePeak 进度条）+「光阴似箭」（黄金·累计 30000 次加速心跳，statHasteBeats 进度条）→ 殿堂 45 项；AchievementsPanel +Gauge/+Timer 图标、计数注释 43→45。
+- version.ts：v0.53-preview + CHANGELOG 四条玩家视角要点。
+
+**验证**: bun run lint exit 0 零告警；export-static 本地门禁通过（out/ 4.2M 48 文件，tsc 全量过）；agent-browser 实机全链 QA——工具按钮/参数面板（奔流半径 5/持续 20.0s）✓、CDP 真实点击施放（合成 click 不可靠，与轮#4 同教训）✓、领域生命周期（age/ttl/过期/3 域上限）✓、密集簇施放峰值 280 单位同充能 ✓、内核年龄倍率实测 2.01×（5 样本穹内对照穹外）✓、万象快进实测双穹 5/tick ✓、纪事事件「时间化作金色的奔流——生灵疾行、火焰燎原，风暴在加速的岁月里走完一生」入环（80 条环在高倍速模拟下秒级冲出，需施放后立即查）✓、成就「白驹过隙」实测解锁（peak 74≥60，localStorage wb_ach 落盘）✓、成就殿堂 5/45 双新卡渲染 ✓、VLM 截图验收（金色半透明穹体+金色圆环描边+光尘+弧线痕迹，参数面板同框可读）✓、console 零 error（仅存量 shadcn aria 提示）✓。
+
+**推送**: push-web.sh 首跑遇凭证缺失（沙箱回收吞 ~/.git-credentials）→ 凭证自愈协议重写 → 二跑超时（TLS 连接失败重试中）→ sync-github.sh 单独续跑：push retry 1 失败后 retry 2 成功。
+  → **推送完成**：SYNC_OK efb1ea5 → CI efb1ea5 Deploy success + 8d900b5 pages build success → Pages 线上 200。v0.53 已上线。
+  → **线上实机终验**：agent-browser 打开 https://yylsszx.github.io/pixel-world-box/ —— 标题屏徽章 **v0.53**、主菜单齐全（进入世界/重铸新世界/新手教程+首次推荐角标）、无存档引导文案正常。v0.53「时之奔流」全链闭环上线。
+
+**Cron 指令执行**: 按本轮会话用户指令，追加创建 15 分钟周期 webDevReview 定时任务（与既有 5min agentTurn 打磨轮并存，payload 为指令规定的中文任务描述）。
