@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.49-preview';
+export const GAME_VERSION = 'v0.50-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.50-preview',
+    date: '2026-11-07',
+    items: [
+      '成就殿堂大扩充：新增 8 项成就——千秋万代/生灵乐园/群龙聚首/战利品满地/雪人不夜城/合纵连横/万里疆土/浩劫余生，总数达 40 项',
+      '新成就开拓五大新维度：世界存续时间、全域生灵生态、大地宝物存量、王国领土规模、超级天灾经历，全部带进度条可视化',
+      '传说级新挑战：存续 100 年的「千秋万代」与经历 10 次超级天灾的「浩劫余生」——老玩家终局目标+2',
+    ],
+  },
   {
     ver: 'v0.49-preview',
     date: '2026-10-25',

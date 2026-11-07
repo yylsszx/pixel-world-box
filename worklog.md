@@ -5079,3 +5079,18 @@ Stage Summary:
 **修复**: 重建为 agentTurn 类型（与稳定运行 41 轮的旧 Unity 任务同型）。新任务 **2932240**（PWB 网页版极致打磨轮 v3，0 */5 * * * ?，任务卡片内容不变）。
 **实证存活**: 21:21 创建 → 21:25:00 准点第 2 次触发（run_count 2）→ next_run_time 自动推进 21:30 → dev.log 出现 QA 流量。真实循环确认。
 **后续轮次注意**: 若发现任务再次从列表消失，先查本条目——用 agentTurn 类型原样重建即可（卡片内容在本条目时代的对话与 push-web.sh 注释中）。
+
+## [2026-11-07 21:40 打磨轮 #2 · Job 2932240] v0.50：成就殿堂扩至 40 项（新成就 8 枚）+ 上轮推送状态补记
+
+**上轮补记**: 打磨轮 #1 的推送实际已成功（worklog 当时未及记录）：remote main b702e01 于 21:27:16 推送（含 TitleScreen 引导三件）→ CI success → gh-pages 3a52ae8 success。全链闭环无遗留。
+
+**QA**: agent-browser 实机走查——标题屏版本徽章已显示 v0.50；进入世界 console 零 error/warn/exception；成就殿堂侧卡「3 / 40」计数正确；40 项全渲染、稀有度排序正确（传说档优先）。
+
+**改动**:
+- src/lib/game/achievements.ts：新增 8 项成就（v0.50 扩充组）——千秋万代（传说·存续 100 年）/生灵乐园（黄金·全域生灵 1500）/群龙聚首（白银·3 巨龙同世）/战利品满地（青铜·大地 12 宝物）/雪人不夜城（白银·雪人 60 座）/合纵连横（白银·3 联盟并存）/万里疆土（黄金·单一王国 800 地块）/浩劫余生（传说·累计 10 次超级天灾）；全部零引擎改动、只读现有状态（yearF/units/items/snowmanN/alliances/civs.tiles/statNukes 等），全部带 progress+goal 进度条；过期注释 27→40 修正。
+- src/components/game/AchievementsPanel.tsx：ICONS 映射新增 8 枚 lucide 图标（hourglass/leaf/bird/gem/snowflake/network/map/shield），注释同步。
+- src/lib/game/version.ts：GAME_VERSION v0.49→v0.50-preview + CHANGELOG 头插三条玩家视角要点。
+
+**验证**: bun run lint exit 0 零告警；agent-browser 实机成就殿堂 3/40 消费实证 + 截图核验（四季轮回黄金亮灯、新成就全渲染）。
+
+**推送**: push-web.sh 执行（见下条 CI 回查结果）。

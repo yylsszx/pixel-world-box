@@ -31,7 +31,7 @@ export const TIER_META: Record<AchTier, { label: string; cls: string; ring: stri
   legend: { label: '传说', cls: 'border-fuchsia-400/60 bg-fuchsia-400/10 text-fuchsia-300', ring: 'ring-fuchsia-400/40' },
 };
 
-/** 27 项成就（文明/战争/科技/传奇/天灾/进化/季节七大类） */
+/** 40 项成就（文明/战争/科技/传奇/天灾/神力/进化/联盟/季节/时间疆域） */
 export const ACHIEVEMENTS: AchievementDef[] = [
   // —— 文明史诗 ——
   {
@@ -180,6 +180,47 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     id: 'summer-wildfire', name: '盛夏燎原', desc: '夏季一场野火同时蔓延 40 个地块', tier: 'bronze', icon: 'flame',
     check: (e) => e.nature.season === 1 && e.fireSet.size >= 40,
     progress: (e) => (e.nature.season === 1 ? e.fireSet.size : 0), goal: 40,
+  },
+  // —— 时间 · 生态 · 宝物 · 疆域（v0.50 打磨轮扩充，全部零引擎改动只读现有状态）——
+  {
+    id: 'century', name: '千秋万代', desc: '一个世界存续满 100 年', tier: 'legend', icon: 'hourglass',
+    check: (e) => e.yearF >= 100,
+    progress: (e) => e.yearF, goal: 100,
+  },
+  {
+    id: 'all-alive', name: '生灵乐园', desc: '世界生灵（含野生动物）同时达到 1500', tier: 'gold', icon: 'leaf',
+    check: (e) => e.units.filter((u) => !u.dead).length >= 1500,
+    progress: (e) => e.units.filter((u) => !u.dead).length, goal: 1500,
+  },
+  {
+    id: 'dragon-court', name: '群龙聚首', desc: '同时 3 头巨龙翱翔于世', tier: 'silver', icon: 'bird',
+    check: (e) => e.units.filter((u) => !u.dead && u.race === R.DRAGON).length >= 3,
+    progress: (e) => e.units.filter((u) => !u.dead && u.race === R.DRAGON).length, goal: 3,
+  },
+  {
+    id: 'treasure-hoard', name: '战利品满地', desc: '大地同时散落 12 件宝物', tier: 'bronze', icon: 'gem',
+    check: (e) => e.items.length >= 12,
+    progress: (e) => e.items.length, goal: 12,
+  },
+  {
+    id: 'winter-snowmen', name: '雪人不夜城', desc: '雪人累计堆到 60 座', tier: 'silver', icon: 'snowflake',
+    check: (e) => e.snowmanN >= 60,
+    progress: (e) => e.snowmanN, goal: 60,
+  },
+  {
+    id: 'web-of-pacts', name: '合纵连横', desc: '同时存在 3 个联盟', tier: 'silver', icon: 'network',
+    check: (e) => e.alliances.length >= 3,
+    progress: (e) => e.alliances.length, goal: 3,
+  },
+  {
+    id: 'vast-territory', name: '万里疆土', desc: '单一王国领土达到 800 地块', tier: 'gold', icon: 'map',
+    check: (e) => e.civs.some((c) => c.alive && c.tiles.length >= 800),
+    progress: (e) => Math.max(0, ...e.civs.map((c) => (c.alive ? c.tiles.length : 0)), 0), goal: 800,
+  },
+  {
+    id: 'doom-survivor', name: '浩劫余生', desc: '世界累计经历 10 次超级天灾（核弹/黑洞/陨石雨/湮灭）', tier: 'legend', icon: 'shield',
+    check: (e) => e.statNukes + e.statBlackholes + e.statMeteorShowers + e.statAnnihilations >= 10,
+    progress: (e) => e.statNukes + e.statBlackholes + e.statMeteorShowers + e.statAnnihilations, goal: 10,
   },
 ];
 
