@@ -5094,3 +5094,4 @@ Stage Summary:
 **验证**: bun run lint exit 0 零告警；agent-browser 实机成就殿堂 3/40 消费实证 + 截图核验（四季轮回黄金亮灯、新成就全渲染）。
 
 **推送**: push-web.sh 执行（见下条 CI 回查结果）。
+  → **推送完成**：SYNC_OK 1692dfc → CI main@1692dfc success → gh-pages@37358e2 success → Pages 线上 200。v0.50 已上线。
