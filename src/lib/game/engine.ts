@@ -2699,6 +2699,11 @@ export class GameEngine {
     if (this.tickCount % 600 === 61) this.wildlifeReboundTick();
     // —— 猎手扑杀（引擎级通道：内核捕食者追不上猎物的能量链补环 —— 每 20 tick 一轮扑杀窗口）——
     if (this.tickCount % 20 === 7) this.predatorHuntTick();
+    // —— 文明狩猎（引擎级通道：生态×文明联系第二笔 —— 猎物繁荣期猎获归仓，衰退期自动收弓）——
+    if (this.tickCount % 20 === 17) this.civHuntTick();
+    // —— 肉块扫掠（引擎级通道：批内核下 rust try_pickup 只识装备档，肉块拾取链在内核主路径静默死亡 ——
+    //     实测 30 年世界地面 194/200 全是滞留肉块，拾取经济停摆且宝物掉落仓位被挤占搁浅）——
+    if (this.tickCount % 20 === 9) this.meatSweepTick();
     // —— 鲨群繁衍辅助（引擎级通道：低种群地板机制 —— 肥鲨诞崽，<8 启动；内核繁衍率救不回震荡期）——
     if (this.tickCount % 240 === 13) this.sharkBreedTick();
     // —— 深时引擎：动态温度场（每 120 tick：纬度+海拔+大陆度+灰烬+洋流异常耦合）——
@@ -14280,6 +14285,125 @@ export class GameEngine {
       }
       p.food = Math.min(400, (p.food ?? 0) + 25); // 扑杀即刻进食（腐食回充再补一口）
       if ((p.food ?? 0) >= 380) break; // 吃饱了就收手 —— 满仓过杀只会浪费猎物（能量随尸体蒸发）
+    }
+  }
+
+  /** 文明狩猎（引擎级通道 —— 生态×文明联系第二笔）：猎物繁荣期，村野猎手对闯入射程的野味出手，
+   *  猎获归仓（直接折市易之利 2-6 金，与肉块拾取同口径；猎物尸体仍走既有落肉通道归于荒野食物网
+   *  —— 食腐捕食者循血腥而来，能量链不因狩猎断流）。猎物衰退期自动收弓（保护期）：猎场吃穿是
+   *  历史亡训，采猎不竭泽而渔——崩溃期的迁徙重建要 3.3 年起步。生态丰欠由此有了文明两面：
+   *  繁荣期猎获归仓（收益），崩溃期兽患叩门（predatorHuntTick 进犯通道，压力）——同一根
+   *  Lotka-Volterra 弦的两端都绷在文明身上。内核路径安全：纯引擎级结算，不依赖单位行走。 */
+  private civHuntTick() {
+    // 猎场普查（陆生野味 O(n) 每 20 tick 一次）：渔场已抽象近海渔业，此通道只管陆猎
+    let preyAlive = 0;
+    for (const q of this.units) {
+      if (q.dead || (q.grab ?? 0) > 0) continue;
+      const qd = RACES[q.race];
+      if (qd.isCiv || qd.aquatic || !this.isHerbivoreRace(q.race)) continue;
+      preyAlive++;
+    }
+    if (preyAlive < 400) return; // 保护期：猎物承压即收弓（LV 崩盘线 150 的 2.6 倍余量，繁荣期才开猎）
+    // 秋储加成：秋粮入仓前的传统猎季（冬季休耕前的肉干储备——季节节律的另一条文明侧回声）
+    const roll = this.nature.season === 2 ? 0.4 : 0.2;
+    let kills = 0;
+    for (const c of this.civs) {
+      if (!c || !c.alive || kills >= 2) continue; // 全局上限：狩猎是村野副业，不是经济支柱
+      if (this.rng() >= roll) continue; // 掷签门：并非每轮都开猎（单国年均 ≈2-4 次）
+      // 猎手/野味配对（猎手≤16/国 × 野味全量收集≤900 —— 野物预算硬帽兜底，O(16×900) 每 20 tick 可忽略；
+      // 勿抽样：步进抽样会系统性漏掉数组尾段的新繁衍/新迁入个体——恰是村边猎物，QA 实证教训）
+      const hu: Unit[] = [];
+      const pr: Unit[] = [];
+      for (const u of this.units) {
+        if (u.dead || (u.grab ?? 0) > 0) continue; // 神明手中之物不入册
+        const ud = RACES[u.race];
+        if (ud.isCiv) {
+          // 猎手资格：本国民、非熟睡、非行军、非国王、非伤员——弓手即猎手（远程射程更远）
+          if (u.civ !== c.id || u.sleep || u.army != null || u.job === 7 || (u.hurt ?? 0) > 0) continue;
+          if (hu.length < 16) hu.push(u);
+        } else if (!ud.aquatic && this.isHerbivoreRace(u.race)) {
+          pr.push(u);
+        }
+      }
+      // 巡猎缰绳：猎物畏人，贴身窗口（r≤2.5）在真实世界永不闭合（实测繁荣期猎手-猎物最近对 8.1 格）——
+      // 猎手离村巡猎至猎场边缘取物（引擎级 leash 抽象，先例=水捕 r=14 深海突袭）；弓手（job 3）巡得更远
+      let bu: Unit | null = null;
+      let bp: Unit | null = null;
+      let bd2 = Infinity;
+      for (const u of hu) {
+        const reach2 = u.job === 3 ? 144 : 64;
+        for (const q of pr) {
+          const dx = q.x - u.x, dy = q.y - u.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < reach2 && d2 < bd2) { bd2 = d2; bu = u; bp = q; }
+        }
+      }
+      if (!bp || !bu) continue; // 猎场太远：村庄周边无野味可猎（猎物密度 × 村庄位置的联合概率）
+      bp.dead = true;
+      WB.syncDead(bp); // WASM 镜像：后续扫描即刻跳过亡者
+      this.fx('blood', bp.x, bp.y, 12);
+      c.gold = (c.gold ?? 0) + 2 + Math.floor(this.rng() * 4); // 猎获归仓：肉干皮毛折市易之利（2-6，拾取同口径）
+      this.fx('coin', bp.x, bp.y - 1, 16); // 猎获就地打包（巡猎抽象：猎手在猎场边取物）
+      kills++;
+      if (this.rng() < 0.3) this.addEvent('eco', `「${c.name}」的猎队满载而归——猎获入仓，市易得金`, { colorHex: c.colorHex, x: bp.x, y: bp.y });
+    }
+  }
+
+  /** 肉块扫掠（引擎级通道）：批内核模式下 rust try_pickup 只识装备档（肉块 kind=-1 直通跳过）——
+   *  村民俯身拾肉的通道在内核主路径静默死亡：实测 30 年世界地面 194/200 全是滞留肉块，
+   *  拾取经济（肉块→国库）停摆，宝物掉落仓位（与肉块共享 200 预算）被挤占搁浅。此通道与
+   *  JS tryPickup 同口径补环（文明/强盗优先拾取，捕食者食腐回充 +45），0.9 格判定窗与桶
+   *  检索同源。JS 路径上 tryPickup 本就会结算——两通道同 tick 先后执行、物品即拾即删，
+   *  天然不重账。另：肉块会腐坏——落肉供给（野物死亡 85%×1-3 块）远大于拾取需求，
+   *  荒野无主之肉限时腐坏归土（每 20 tick 一龄，八龄即朽），地面物品预算不再被陈年肉块
+   *  永久锁死——能量回到大地，宝物掉落重见天日。腐坏龄为瞬态不入档（旧档零兼容风险）。 */
+  private meatSweepTick() {
+    if (this.items.length === 0) return;
+    for (let i = this.items.length - 1; i >= 0; i--) {
+      const it = this.items[i];
+      if (it.kind !== 'meat') continue;
+      it.age = (it.age ?? 0) + 1;
+      if (it.age >= 8) { this.items.splice(i, 1); continue; } // 腐坏归土：荒野无主之肉的归宿
+      const cx = Math.min(this.bw - 1, Math.max(0, (it.x / 4) | 0));
+      const cy = Math.min(this.bh - 1, Math.max(0, (it.y / 4) | 0));
+      let taken = false;
+      for (let by = Math.max(0, cy - 1); by <= Math.min(this.bh - 1, cy + 1) && !taken; by++) {
+        for (let bx = Math.max(0, cx - 1); bx <= Math.min(this.bw - 1, cx + 1) && !taken; bx++) {
+          const cell = this.buckets[by * this.bw + bx];
+          if (!cell || cell.length === 0) continue;
+          // 文明优先：肉块→国库是拾取经济的本道，俯身拾取先于食腐（两段扫描，桶小可忽略）
+          let eater: Unit | null = null;
+          for (const u of cell) {
+            if (u.dead || u.sleep || (u.grab ?? 0) > 0) continue; // 熟睡与神明手中之物不拾
+            if (Math.abs(it.x - u.x) > 0.9 || Math.abs(it.y - u.y) > 0.9) continue;
+            const ud = RACES[u.race];
+            if (ud.isCiv || u.race === R.BANDIT) { eater = u; break; }
+          }
+          if (!eater) {
+            for (const u of cell) {
+              if (u.dead || u.sleep || (u.grab ?? 0) > 0) continue;
+              if (Math.abs(it.x - u.x) > 0.9 || Math.abs(it.y - u.y) > 0.9) continue;
+              const ud = RACES[u.race];
+              if (ud.predator && !ud.undead) { eater = u; break; }
+            }
+          }
+          if (!eater) continue;
+          {
+            const u = eater;
+            const ud = RACES[u.race];
+            if (ud.predator && !ud.undead) {
+              u.food = Math.min(160, (u.food ?? 0) + 45); // 饱食回充（与 tryPickup 同款）
+              if (this.fxPrefs.dmgNumbers) this.fx('dmg', u.x, u.y - 1, 22, { text: '饱' });
+            } else if (u.civ >= 0 && this.civs[u.civ]) {
+              this.civs[u.civ].gold = (this.civs[u.civ].gold ?? 0) + 2; // 入国库：食物储备（集市经济口径）
+              this.fx('coin', u.x, u.y - 1, 20);
+            }
+            this.fx('heart', u.x, u.y - 0.8, 18);
+            this.items.splice(i, 1);
+            taken = true;
+          }
+        }
+      }
     }
   }
 

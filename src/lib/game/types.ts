@@ -1594,6 +1594,8 @@ export interface GroundItem {
   kind: _ItemKind | string;
   x: number;
   y: number;
+  /** 腐坏龄（瞬态不入档）：肉块扫掠每 20 tick 一龄，八龄即朽归土——荒野无主之肉的归宿 */
+  age?: number;
 }
 
 /** 血迹残留（地面 decal：受击/死亡血溅 — 瞬态不入档，随时间淡出） */
