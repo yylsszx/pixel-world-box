@@ -4971,6 +4971,21 @@ export class GameEngine {
   /** 每年一次：和平且拥有市场的文明向伙伴派出实体商队（交战国停摆） */
   tradeTick() {
     WBB.touchMeta(); // Stage 3：商队 spawn 后 caravan/maxAge 赋值收口
+    // —— 商路随护：己方军舰在海上商船 14 格内则周期重瞄随行（护航舰闻商而动）——
+    //    与护航拦截（navalWarfare 私掠分支）首尾相接成完整防线：随行 → 私掠舰近身 → 转攻护航舰 → 商船趁隙突围
+    //    纯瞬态重瞄（tx/ty 不入档零兼容风险）；溃退/接战中舰队不打断——护航不误征战；
+    //    14 格半径本身即门槛：远离商路的远征舰队不会被选中，近岸舰队就近护航（战后闲置舰队有了新差事）
+    for (const u of this.units) {
+      if (u.dead || !u.boat || (u.caravan ?? 0) <= 0) continue;
+      let best: Army | null = null;
+      let bd = 14;
+      for (const o of this.armies) {
+        if (!o.naval || o.civ !== u.civ || o.state === 'retreat' || o.clashWith != null) continue;
+        const dc = Math.hypot(o.x - u.x, o.y - u.y);
+        if (dc < bd) { bd = dc; best = o; }
+      }
+      if (best) { best.tx = u.x; best.ty = u.y; }
+    }
     if (this.units.length >= MAX_UNITS) return;
     let active = 0;
     for (const u of this.units) if ((u.caravan ?? 0) > 0) active++;
