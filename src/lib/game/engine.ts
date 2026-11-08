@@ -3234,10 +3234,27 @@ export class GameEngine {
         if (nd > 0 && this.dangerNear(u)) { u.sleep = undefined; continue; }
         const h = this.homeOf.get(u.id);
         if (h != null) this.bedCnt.set(h, (this.bedCnt.get(h) ?? 0) + 1);
+        // —— 睡眠恢复（#34 钦定）：睡眠是恢复时刻而非消耗——熟睡缓回气血、岁月放缓一半（安睡者延年益寿）。
+        //    内核镜像不识 sleep（age/hp 在 Rust 侧照常结算），恢复单点收口于此每 4 tick 结算（双路径一致）——
+        //    hp+0.3 ≈ 一晚回四成血（轻伤一两晚痊愈）；age−0.05 恰抵熟睡期间一半岁月（夜占一昼三成，终生 ≈ +16% 寿数）。
+        //    新伤疼痛不合眼（hurt>0 由分桶段受扰即醒）、惊魂未定难入深层睡眠（panic>0.2）——夜袭折损的村庄恢复更慢。
+        if (u.hurt <= 0 && (u.panic ?? 0) <= 0.2 && u.hp > 0 && u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + 0.3);
+        u.age -= 0.05;
       }
       if (((u.id + bucket) & 3) !== 0) continue; // 1/4 分桶：错落扫描摊平开销
       if (u.sleep) {
         if (u.hurt > 0 || (u.panic ?? 0) > 0.2) u.sleep = undefined; // 受扰即醒（夜袭/惊吓）
+        else {
+          // —— 熟睡锚定（#34）：内核 AI 不识 sleep（实测熟睡单位位移 3-5 格——挂名躺平实际游走）；
+          //    软停摆：目标钉回枕边（复用归途纠偏同款遥控——1/4 分桶频率即 #20 实机有效频率）；
+          //    同步重置卡死自愈锚点——否则「钉在枕边不动」会触发 stk>36 逃生重掷（±9 格），锚定被自愈反噬
+          const hb = this.homeOf.get(u.id);
+          if (hb != null) {
+            u.tx = (hb % W) + 0.5 + this.rng() * 0.6 - 0.3;
+            u.ty = ((hb / W) | 0) + 0.5 + this.rng() * 0.6 - 0.3;
+            u.stk = 0; u.sxk = u.x; u.syk = u.y;
+          }
+        }
         continue;
       }
       if (u.goHome != null) {
@@ -3254,7 +3271,7 @@ export class GameEngine {
       if (u.boat || u.army != null || u.king) continue; // 航海者/军团在编/国王不眠
       const jobN = u.job ?? 0;
       if (jobN === 2 || jobN === 3) continue; // 战士/弓手：夜巡与守土
-      if (u.hurt > 0 || (u.panic ?? 0) > 0 || u.hp <= u.maxHp * 0.5 || u.cd > 0 || (nd > 0 && this.dangerNear(u))) continue; // 伤/恐/弱/战火不入睡；敌在院中不熄灯
+      if (u.hurt > 0 || (u.panic ?? 0) > 0 || u.hp <= u.maxHp * 0.25 || u.cd > 0 || (nd > 0 && this.dangerNear(u))) continue; // 伤/恐/濒死/战火不入睡；敌在院中不熄灯（#34：弱不入睡放宽 0.5→0.25——重伤员也有安睡疗伤的通道，气若游丝仍需警觉）
       if (this.rng() < 0.02) {
         // 归家机制：有自家住宅且不在家门口 → 动身回家（户籍派房）；家门口/无家可归 → 原地入眠（流浪者野外躺平）
         const home = this.homeFor(u);
@@ -3960,6 +3977,7 @@ export class GameEngine {
 
     // —— 昼夜节律：夜晚民用单位就地入眠（村庄灯火阑珊人影归寂 —— 世界睡了） ——
     //    睡眠者跳过索敌/AI/移动（环境伤害/饥饿账本仍照常结算 —— 火灾不放过熟睡者）；
+    //    熟睡的恢复收益（回血+衰老减半）在 sleepTick 单点收口（#34——内核镜像不识 sleep，此处仅兜底 bail 单位）；
     //    守卫职业（战士/弓手）与国王夜巡不眠；受击/恐慌/白天自愈唤醒 —— 每帧校验保证旧档零兼容风险；
     //    野生动物不眠（生态永续活跃），海船渔民在 updateUnit 早段的 boat 分支不受此 gate 影响（夜渔连轴转）。
     if (def.isCiv && u.civ >= 0) {
@@ -3984,7 +4002,7 @@ export class GameEngine {
       } else if (night && !u.army && !u.king) {
         const jobN = u.job ?? 0;
         const guard = jobN === 2 || jobN === 3; // 战士/弓手：夜巡与守土
-        if (!guard && u.hurt <= 0 && (u.panic ?? 0) <= 0 && u.hp > u.maxHp * 0.5 && u.cd <= 0 && !this.dangerNear(u) && this.rng() < 0.02) {
+        if (!guard && u.hurt <= 0 && (u.panic ?? 0) <= 0 && u.hp > u.maxHp * 0.25 && u.cd <= 0 && !this.dangerNear(u) && this.rng() < 0.02) {
           const home = this.homeFor(u);
           if (home >= 0) {
             const hx = (home % W) + 0.5, hy = ((home / W) | 0) + 0.5;
