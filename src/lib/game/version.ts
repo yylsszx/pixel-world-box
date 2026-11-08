@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.62-preview';
+export const GAME_VERSION = 'v0.63-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.63-preview',
+    date: '2026-11-09',
+    items: [
+      '睡眠是恢复而非煎熬：安睡者气血缓缓回复、岁月也放慢半拍——安稳的村庄延年益寿，重伤员也能睡下疗伤；夜袭惊魂的村庄恢复更慢',
+      '民心与战争相连：城破的民怨、饥荒与重税压垮的民心会拖垮战争意志——民心低迷之国更快签下城下之盟；和平年代民心思定，战后重建一代人恢复元气',
+    ],
+  },
   {
     ver: 'v0.62-preview',
     date: '2026-11-09',

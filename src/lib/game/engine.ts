@@ -5976,7 +5976,9 @@ export class GameEngine {
       // —— 稳定度：战争损耗 / 领土过大 / 税负 vs 神殿安抚 / 文化繁荣 / 科技治理 ——
       let stab = c.stability ?? 70;
       const atWar = this.civAtWar(c.id);
-      stab += atWar ? -1.2 : 0.6;
+      // —— 和平重建红利（#35）：民心低迷（<60）的和平国恢复 ×3.3——战后重建/灾后复原是恢复加速期，一代人回元气
+      //    （旧速率 +0.6/轮，战后从 30 回 60 要 83 年——战争损耗 10 倍速差让民心一蹘不振）；健康国不被推高（自然上限）
+      stab += atWar ? -1.2 : stab < 60 ? 2.0 : 0.6;
       if (c.tiles.length > 120) stab -= 0.4; // 过度扩张
       stab += temples * 0.15 + (c.culture ?? 0) * 0.001;
       stab += tm2.stab / 50; // 法律/共和科技的治理红利
@@ -9020,6 +9022,11 @@ export class GameEngine {
    *  postRel：战后关系（25=常态；10=冷和平；5=心怀怨咀；40=神谕和解） */
   makePeace(a: number, b: number, text: string, postRel = 25) {
     const key = pairKey(a, b);
+    // —— 签约宽慰（#35）：停战如释重负——双方民心小幅振作（战争阴霾散去的一刻）
+    for (const id of [a, b]) {
+      const cv = this.civs[id];
+      if (cv?.alive) cv.stability = Math.min(100, (cv.stability ?? 70) + 2);
+    }
     // —— 动态战线停战结算：高强度占领成既成事实（割让），低强度归还 ——
     const fr = this.settleFront(a, b);
     if (fr.ceded > 0) {
