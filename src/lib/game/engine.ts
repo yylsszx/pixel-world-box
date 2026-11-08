@@ -1363,6 +1363,12 @@ export class GameEngine {
     if (def.isCiv && civ < 0) {
       civ = this.findCivNear(race, x, y);
       if (civ < 0) civ = this.createCiv(race, x, y);
+      else if (!opts?.silent) {
+        // 立国密度调和（#32）：吸收圈（同种族首都 42 格）内的无主部落落地即融入既有王国——
+        // 神明播种不再是静默消失：玩家至少知道「为什么没立国、人去了哪」（被吸收是合并而非抹除）
+        const host = this.civs[civ];
+        if (host?.alive) this.toast(`流浪的${RACES[race].name}部落未立新国——融入了「${host.name}」治下`, 'info');
+      }
     }
 
     const trait = opts?.trait !== undefined ? (opts.trait || null) : (this.rng() < 0.15 ? this.rollTrait() : null);
@@ -6397,12 +6403,22 @@ export class GameEngine {
     const capX = this.tileX(civ.capital);
     const capY = this.tileY(civ.capital);
     // 找距首都最远的本国建筑作为叛乱策源地（至少 14 格）
+    // 立国密度调和（#32）：策源地还须距任何 alive 外国首都 ≥24 格——「城下不立国」。
+    // 神明播种受吸收圈（42 格并入）约束、容量极限 ≈7.5 国；自然裂变不受并入圈约束（人口压力阀，
+    // 13 国实证健康），但叛军也不会在敌国首都眼皮底下立国——外交圈 24 格给裂变产物保底国间距
+    // （256×160 世界理论上限 ≈41 国，只防碎裂不封顶动力学）；全部候选点贴国界则本轮作罢
     let anchor: Building | null = null;
     let bestD = 14;
     for (const b of this.buildings) {
       if (b.civ !== civ.id) continue;
       const d = Math.hypot(b.x - capX, b.y - capY);
-      if (d > bestD) { bestD = d; anchor = b; }
+      if (d <= bestD) continue;
+      let tooClose = false;
+      for (const c of this.civs) {
+        if (!c.alive || c.id === civ.id || c.capital < 0) continue;
+        if (Math.hypot(this.tileX(c.capital) - b.x, this.tileY(c.capital) - b.y) < 24) { tooClose = true; break; }
+      }
+      if (!tooClose) { bestD = d; anchor = b; }
     }
     if (!anchor) return;
     // 建立叛军王国（同种族新王国，createCiv 自带建国播报）

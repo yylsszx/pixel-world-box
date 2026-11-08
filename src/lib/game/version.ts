@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.61-preview';
+export const GAME_VERSION = 'v0.62-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.62-preview',
+    date: '2026-11-09',
+    items: [
+      '破城之痛入账：城墙被攻破会引发国民恐慌（口子越久开民心越痛、守军堵口的伤亡记入战账）；一朝被蛇咬——破过城的国家战后抓紧赶工补墙、还懂得加建箭塔，被狼袭过的村庄也学会了设防',
+      '立国有了规矩：放置的流浪部落若离既有王国太近会主动融入并明说去向，不再无声无息消失；叛乱新王国不再在敌国首都城下立国——裂变的国度保有体面的国间距',
+    ],
+  },
   {
     ver: 'v0.61-preview',
     date: '2026-11-09',
