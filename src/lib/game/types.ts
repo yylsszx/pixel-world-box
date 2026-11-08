@@ -883,7 +883,11 @@ export type EffectKind =
   | 'plasma'
   | 'antimatter'
   // —— 天穹庆典（v0.52：丰年祭/人口里程碑/凯旋的烟花秀）——
-  | 'firework';
+  | 'firework'
+  // —— 海战残骸（v0.55：击沉/弃船留下的沉船——倾斜船体随时间没入海面 + 漂木 + 气泡）——
+  | 'wreck'
+  // —— 施工场地（v0.55：地形工程脚手架——凿山/运河/填海的肉眼可见施工过程）——
+  | 'site';
 
 export interface Effect {
   kind: EffectKind;

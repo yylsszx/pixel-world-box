@@ -3853,6 +3853,7 @@ export class GameEngine {
               WB.syncDead(enemy); // WASM 镜像：后续扫描即刻跳过亡者
               enemy.boat = 0;
               this.fx('explosion', enemy.x, enemy.y, 16, { r: 1.6 });
+              this.fx('wreck', enemy.x, enemy.y, 380, { src: enemy.civ }); // 沉船残骸（拖入深渊的视觉余韵）
               this.addEvent('shipwreck', `「${enemy.name}」的航船被克拉肯拖入了深渊`, { x: enemy.x, y: enemy.y });
             } else {
               this.fx('tsunami', enemy.x, enemy.y, 12, { r: 2.5, quiet: true });
@@ -5050,6 +5051,7 @@ export class GameEngine {
       civ.gold = (civ.gold ?? 0) - 12;
       civ.terraformCd = this.tickCount + GameEngine.TERRAFORM_CD;
       this.statTerraform++;
+      this.fx('site', x + 0.5, y + 0.5, 96, { src: civ.id }); // 施工脚手架（凿山工程的可见过程）
       this.fx('dust', x + 0.5, y + 0.5, 40, { r: 2 });
       this.fx('smoke', x + 0.5, y - 0.5, 30, { r: 1.5 });
       this.onSound?.('quake');
@@ -5090,6 +5092,7 @@ export class GameEngine {
       civ.gold = (civ.gold ?? 0) - 20;
       civ.terraformCd = this.tickCount + GameEngine.TERRAFORM_CD;
       this.statTerraform++;
+      this.fx('site', x + 0.5, y + 0.5, 96, { src: civ.id }); // 施工脚手架（运河开凿的可见过程）
       this.fx('water', x + 0.5, y + 0.5, 44, { r: 2 });
       this.onSound?.('place');
       this.addEvent('terraform', `「${civ.name}」动用机械开凿运河，地峡化为水道（耗费 20 金）——两岸商船与舰队自此通航`, { colorHex: civ.colorHex, x, y });
@@ -5152,6 +5155,7 @@ export class GameEngine {
     civ.terraformCd = this.tickCount + Math.round(GameEngine.TERRAFORM_CD * 1.2);
     this.statTerraform++;
     if (bridge) this.road[j] = 1; // 填海造路：桥位即官道
+    this.fx('site', x + 0.5, y + 0.5, 110, { src: civ.id }); // 施工脚手架（填海造陆的可见过程）
     this.fx('smoke', x + 0.5, y + 0.5, 44, { r: 2.5 });
     this.fx('dust', x + 0.5, y - 0.5, 30, { r: 1.5 });
     this.onSound?.('place');
@@ -5935,6 +5939,7 @@ export class GameEngine {
       if ((u.boatTTL ?? 0) <= -600) {
         u.dead = true;
         this.fx('skull', u.x, u.y, 46);
+        this.fx('wreck', u.x, u.y, 420, { src: u.civ }); // 海难残骸（漂了太久的空船终于沉了）
         this.addEvent('shipwreck', '一艘殖民船连同它的船员葬身了大海', { x: u.x, y: u.y });
         return;
       }
@@ -7219,6 +7224,10 @@ export class GameEngine {
 
   /** 舰队登陆：全员弃船上岸 */
   armyDisembark(a: Army) {
+    // 弃船点先留一具空壳残骸（无主无旗：被丢弃的登陆舰在海面上渐渐沉没）
+    if (isWater(this.terrain[idx(Math.floor(a.x), Math.floor(a.y))])) {
+      this.fx('wreck', a.x, a.y, 340, { src: a.civ });
+    }
     a.naval = false;
     const land = this.nearestStandable(Math.floor(a.x), Math.floor(a.y));
     a.x = land.x; a.y = land.y;
@@ -7296,6 +7305,7 @@ export class GameEngine {
           prey.dead = true;
           collectUnitDead(prey.id, false);
           this.fx('explosion', prey.x, prey.y, 24, { r: 1.5 });
+          this.fx('wreck', prey.x, prey.y, 400, { src: prey.civ }); // 沉船残骸（海面留下的战争证据）
           this.statNavalKills++;
           const preyCiv = this.civs[prey.civ];
           this.addEvent('naval', `「${civ.name}」的舰队在海上拦截并击沉了「${preyCiv?.name ?? '未知'}」的殖民船——制海权从不免费`, { colorHex: civ.colorHex, x: prey.x, y: prey.y });

@@ -500,8 +500,10 @@ export function drawDragon(ctx: CanvasRenderingContext2D, u: Unit, frame: number
 }
 
 // ---------- buildings (houses 6x6 px, capital 8x8, tower 2x4, farm 6x4, castle 10x8 …) ----------
-export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: [number, number, number], tier = 0, hpRatio = 1) {
-  // —— 超细粒度建筑（4px/格基准）：所有结构细节翻倍 ——
+export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: [number, number, number], tier = 0, hpRatio = 1, fc = 0) {
+  // —— 超细粒度建筑（4px/格基准）：所有结构细节翻倍；fc = 全局帧计数（旗帜飘动/麦浪风摆等微动画驱动）——
+  const flap = (fc >> 3) & 1; // 8 帧一摆的旗帜相位
+  const sway = ((fc >> 4) & 1) === 0 ? 0 : 1; // 16 帧一换的麦浪相位
   const px = b.x * 4 - 4;
   const py = b.y * 4 - 8;
   switch (b.kind) {
@@ -516,7 +518,9 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       ctx.fillStyle = '#6e6e72';
       ctx.fillRect(px + 3, py + 3, 6, 1);
       ctx.fillStyle = rgb(color);
-      ctx.fillRect(px + 4, py, 2, 4);
+      // 塔旗：两段式飘动（旗根固定 + 旗尾随相位下探 1px，旗尖透空缺口制造波动感）
+      ctx.fillRect(px + 4, py, 1, 3);
+      ctx.fillRect(px + 5, py + flap, 1, 2);
       ctx.fillStyle = '#14100c';
       ctx.fillRect(px + 6, py + 10, 2, 4);
       // 塔基
@@ -535,12 +539,16 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       ctx.fillRect(px - 2, py, 2, 12);
       ctx.fillRect(px + 12, py, 2, 12);
       ctx.fillRect(px - 2, py, 16, 2);
-      // 成熟的麦穗点缀
+      // 成熟的麦穗点缀（风摆：奇偶相位横向偏移 1px —— 整片麦田随风起伏）
       ctx.fillStyle = '#ffd93d';
-      ctx.fillRect(px + 2, py + 3, 1, 1);
-      ctx.fillRect(px + 5, py + 3, 1, 1);
-      ctx.fillRect(px + 8, py + 6, 1, 1);
-      ctx.fillRect(px + 3, py + 6, 1, 1);
+      const sw1 = sway, sw2 = 1 - sway;
+      ctx.fillRect(px + 2 + sw1, py + 3 - sw1, 1, 1);
+      ctx.fillRect(px + 5 + sw2, py + 3 - sw2, 1, 1);
+      ctx.fillRect(px + 8 + sw1, py + 6 - sw1, 1, 1);
+      ctx.fillRect(px + 3 + sw2, py + 6 - sw2, 1, 1);
+      // 麦浪高光行（垄间亮线随风横扫）
+      ctx.fillStyle = `rgba(255,240,160,${sw1 ? 0.45 : 0.22})`;
+      ctx.fillRect(px + 1, py + 4 + sw1 * 2, 10, 1);
       // 麦垛
       ctx.fillStyle = '#c9a84a';
       ctx.fillRect(px + 10, py + 10, 3, 2);
@@ -601,11 +609,14 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       ctx.fillRect(cx + 4, cy + 4, 2, 2);
       ctx.fillRect(cx + 8, cy + 4, 2, 2);
       ctx.fillRect(cx + 12, cy + 4, 2, 2);
-      // 王旗
+      // 王旗（旗根固定 + 旗尾两段波状飘动）
       ctx.fillStyle = '#3a342c';
       ctx.fillRect(cx + 8, cy - 4, 2, 6);
       ctx.fillStyle = rgb(color);
-      ctx.fillRect(cx + 10, cy - 4, 6, 4);
+      ctx.fillRect(cx + 10, cy - 4, 3, 2);
+      ctx.fillRect(cx + 13, cy - 4 + flap, 3, 2);
+      ctx.fillStyle = rgb(mix(color, [255, 255, 255], 0.25));
+      ctx.fillRect(cx + 13, cy - 3 + (1 - flap), 1, 1); // 旗尖高光随摆闪烁
       // 城门
       ctx.fillStyle = '#14100c';
       ctx.fillRect(cx + 8, cy + 12, 4, 6);
@@ -670,11 +681,15 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       ctx.fillRect(px + 6, py, 4, 4);
       ctx.fillStyle = '#a06a3c';
       ctx.fillRect(px + 6, py + 2, 4, 2);
-      // 旗帜
+      // 旗帜（码头旗：旗尾随相位下探）
       ctx.fillStyle = rgb(color);
-      ctx.fillRect(px + 10, py - 4, 4, 4);
+      ctx.fillRect(px + 10, py - 4, 2, 2);
+      ctx.fillRect(px + 12, py - 4 + flap, 2, 2);
+      // 吊架吊索轻晃（相位交替 1px —— 码头作业的活感）
+      ctx.fillStyle = 'rgba(58,52,44,0.8)';
+      ctx.fillRect(px + 8 + flap, py, 1, 3);
       ctx.fillStyle = '#3a342c';
-      ctx.fillRect(px + 10, py - 4, 2, 4);
+      ctx.fillRect(px + 10, py - 4, 1, 4);
       return;
     }
     case 8: {
@@ -775,13 +790,18 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       // 门洞
       ctx.fillStyle = '#14100c';
       ctx.fillRect(px + 5, py + 3, 3, 4);
-      // 晾晒渔网（斜挂网纹）
-      ctx.fillStyle = 'rgba(230,230,220,0.75)';
+      // 晾晒渔网（斜挂网纹 + 偶发银光反射：湿网在阳光下闪烁 —— 相位与建筑 id 错开，各渔场不同步）
+      const netFlick = ((fc + (b.i & 7) * 5) >> 4) & 1;
+      ctx.fillStyle = netFlick ? 'rgba(240,248,255,0.95)' : 'rgba(230,230,220,0.75)';
       ctx.fillRect(px + 10, py + 1, 1, 1);
       ctx.fillRect(px + 11, py + 2, 1, 1);
       ctx.fillRect(px + 12, py + 3, 1, 1);
       ctx.fillRect(px + 10, py + 3, 1, 1);
       ctx.fillRect(px + 12, py + 1, 1, 1);
+      if (netFlick) { // 反光高光点（斜闪一颗）
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.fillRect(px + 11, py + 2, 1, 1);
+      }
       // 甲板上的鱼获（银蓝闪鳞）
       ctx.fillStyle = '#9db8d4';
       ctx.fillRect(px + 2, py + 7, 3, 1);
@@ -789,18 +809,20 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       ctx.fillRect(px + 3, py + 7, 1, 1);
       ctx.fillStyle = '#9db8d4';
       ctx.fillRect(px + 6, py + 7, 2, 1);
-      // 系泊小舟（泊在平台旁）
+      // 系泊小舟（泊在平台旁：随波轻晃 —— 舟体上下 1px + 小桅反向摆，浪感十足）
+      const bob = (fc >> 3) & 1;
       ctx.fillStyle = '#7a4f2a';
-      ctx.fillRect(px + 12, py + 11, 4, 2);
+      ctx.fillRect(px + 12, py + 11 - bob, 4, 2);
       ctx.fillStyle = '#5c3a1c';
-      ctx.fillRect(px + 12, py + 13, 4, 1);
+      ctx.fillRect(px + 12, py + 13 - bob, 4, 1);
       ctx.fillStyle = '#3a342c';
-      ctx.fillRect(px + 14, py + 9, 1, 2); // 小桅
-      // 国旗
+      ctx.fillRect(px + 14 + bob, py + 9 - bob, 1, 2); // 小桅（随浪微倾）
+      // 国旗（旗尾飘动 + 桅杆轻晃）
       ctx.fillStyle = '#3a342c';
       ctx.fillRect(px - 2, py - 4, 1, 5);
       ctx.fillStyle = rgb(color);
-      ctx.fillRect(px - 1, py - 4, 3, 2);
+      ctx.fillRect(px - 1, py - 4, 2, 2);
+      ctx.fillRect(px + 1, py - 4 + flap, 1, 2);
       return;
     }
   }

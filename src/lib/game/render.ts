@@ -1356,7 +1356,7 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
     const bhp = engine.bHp.get(b.i);
     const bMax = BUILDING_DEFS[b.kind]?.hp ?? 70;
     const bRatio = bhp != null ? bhp / bMax : 1;
-    drawBuilding(wc, b, civ.color, engine.houseTierOf(civ), bRatio);
+    drawBuilding(wc, b, civ.color, engine.houseTierOf(civ), bRatio, frameCount);
     // —— 原子级：受损建筑冒烟（耐久 <60% 轻烟，<30% 浓烟 + 火点）——
     if (bhp != null) {
       const ratio = bRatio;
@@ -3693,6 +3693,100 @@ function drawWorldEffect(engine: GameEngine, e: Effect, wc: CanvasRenderingConte
       wc.beginPath();
       wc.arc(px, py, core + 0.5, 0, Math.PI * 2);
       wc.stroke();
+      break;
+    }
+    case 'wreck': {
+      // —— 海战残骸：三阶段沉没叙事（倾斜冒烟 → 半没漂木气泡 → 渐隐消散）——
+      const fc = engine.frameCount;
+      const ex = Math.round(px);
+      const ey = Math.round(py);
+      const dir = e.seed & 1 ? 1 : -1; // 朝向镜像（seed 决定）
+      const sink = Math.min(1, t * 1.6); // 沉没进度（前 60% 生命完成主体下沉）
+      const fade = t > 0.8 ? Math.max(0, 1 - (t - 0.8) / 0.2) : 1; // 末段渐隐
+      const wciv = e.src != null && e.src >= 0 ? engine.civs[e.src] : null;
+      // 1. 残余船体（阶梯错位像素模拟倾斜；随 sink 下移变短）
+      if (t < 0.7) {
+        const drop = Math.round(sink * 3);
+        const hull = Math.max(1, 4 - Math.round(sink * 3));
+        wc.fillStyle = `rgba(78,52,30,${0.9 * fade})`;
+        for (let k = 0; k < hull; k++) {
+          wc.fillRect(ex - 2 + k * dir + drop * dir, ey + 1 + drop + (k === 0 ? 0 : 1), 2, 1);
+        }
+        // 折断桅杆（斜插，随沉没变矮）
+        const mastH = Math.max(2, 6 - Math.round(sink * 4));
+        wc.fillStyle = `rgba(58,52,44,${0.85 * fade})`;
+        for (let k = 0; k < mastH; k++) wc.fillRect(ex + 1 + dir * Math.round(k / 2), ey - k - 1 + drop, 1, 1);
+        // 刚沉还在冒烟（t<0.4：残骸余火与蒸汽）
+        if (t < 0.4) {
+          const sm = (fc >> 2) & 3;
+          wc.fillStyle = `rgba(90,88,84,${(1 - t / 0.4) * 0.7})`;
+          wc.fillRect(ex - 1 + sm, ey - 6 - sm, 2, 2);
+          wc.fillStyle = `rgba(60,58,54,${(1 - t / 0.4) * 0.5})`;
+          wc.fillRect(ex + (sm & 1), ey - 9 - sm, 2, 1);
+        }
+        // 残旗（王国色挂在桅杆折断处——大国荣耀的最后余晖）
+        if (wciv && wciv.alive) {
+          wc.fillStyle = `rgba(${wciv.color[0]},${wciv.color[1]},${wciv.color[2]},${0.8 * fade})`;
+          wc.fillRect(ex + 1 + dir * 2, ey - mastH + drop, 2, 1);
+        }
+      }
+      // 2. 漂浮碎木（3 片：随 t 向外扩散 + 随浪轻晃）
+      for (let k = 0; k < 3; k++) {
+        const h = ((e.seed + k * 37) % 7) - 3;
+        const dist = 3 + t * (5 + k * 2);
+        const wob = ((fc + k * 5) >> 3) & 1;
+        wc.fillStyle = `rgba(122,79,42,${0.85 * fade})`;
+        wc.fillRect(Math.round(ex + h * dir + dist * ((k & 1) ? 1 : -1) * dir), ey + 1 + wob, 2, 1);
+      }
+      // 3. 气泡（下沉引发的气泡上浮——残骸在呼最后一口气）
+      if (t > 0.25 && t < 0.95) {
+        const nBub = t < 0.6 ? 3 : 2;
+        for (let k = 0; k < nBub; k++) {
+          const bp = ((fc + k * 7) % 14) / 14;
+          wc.fillStyle = `rgba(220,238,252,${(1 - bp) * 0.6 * fade})`;
+          wc.fillRect(ex + ((k & 1) ? 2 : -2) * dir, Math.round(ey + 1 - bp * 5), 1, 1);
+        }
+      }
+      break;
+    }
+    case 'site': {
+      // —— 施工场地：木质脚手架（立柱+横梁+交叉桁架+平台）+ 间歇扬尘 + 工程旗 ——
+      const fc = engine.frameCount;
+      const ex = Math.round(px);
+      const ey = Math.round(py);
+      const appear = Math.min(1, e.age / 8); // 搭建进场动画（先柱后梁——真实施工顺序）
+      const fade = t > 0.85 ? Math.max(0, 1 - (t - 0.85) / 0.15) : 1;
+      const A = fade * appear;
+      // 立柱×2（appear>0.3 立柱先起）
+      wc.fillStyle = `rgba(122,79,42,${A})`;
+      if (appear > 0.3) { wc.fillRect(ex - 4, ey - 8, 1, 10); wc.fillRect(ex + 3, ey - 8, 1, 10); }
+      // 顶横梁（appear>0.6 架梁）
+      if (appear > 0.6) wc.fillRect(ex - 4, ey - 8, 8, 1);
+      // 交叉桁架（X 形斜撑——结构强度感）
+      wc.fillStyle = `rgba(92,58,28,${A})`;
+      for (let k = 0; k < 7; k++) {
+        wc.fillRect(ex - 4 + k, ey - 7 + k, 1, 1);
+        wc.fillRect(ex + 3 - k, ey - 7 + k, 1, 1);
+      }
+      // 中层作业平台
+      wc.fillStyle = `rgba(158,113,72,${A})`;
+      wc.fillRect(ex - 4, ey - 3, 8, 1);
+      // 间歇扬尘（每 20 帧喷一阵土——工地上尘土飞扬）
+      if (fc % 20 < 8) {
+        const ph = (fc % 20) / 20;
+        wc.fillStyle = `rgba(140,124,100,${0.5 * (1 - ph) * A})`;
+        wc.fillRect(ex - 2 + ((e.seed % 3) - 1), ey - 2 - Math.round(ph * 3), 3, 2);
+        wc.fillRect(ex + 1, ey - 1 - Math.round(ph * 4), 2, 1);
+      }
+      // 工程旗（王国色 + 随相位摆——这場工程属于谁）
+      const sciv = e.src != null && e.src >= 0 ? engine.civs[e.src] : null;
+      const flap = (fc >> 3) & 1;
+      wc.fillStyle = `rgba(58,52,44,${A})`;
+      wc.fillRect(ex + 3, ey - 11, 1, 3);
+      if (sciv && sciv.alive) {
+        wc.fillStyle = `rgba(${sciv.color[0]},${sciv.color[1]},${sciv.color[2]},${A})`;
+        wc.fillRect(ex + 4, ey - 11 + flap, 2, 2);
+      }
       break;
     }
     default:
