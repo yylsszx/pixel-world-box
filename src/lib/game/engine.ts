@@ -1989,6 +1989,7 @@ export class GameEngine {
       civ.houses--;
       if (b.kind === BUILD_KINDS.CAPITAL) civ.capital = -1;
     }
+    this.homeCacheAt = -99999; // 归家缓存失效：夜归人不再走向废墟
     const last = this.buildings.pop()!;
     if (bi < this.buildings.length) {
       this.buildings[bi] = last;
@@ -3090,9 +3091,10 @@ export class GameEngine {
     const dp = this.dayPhase();
     const night = dp > 0.545 && dp < 0.865;
     if (!night) {
-      // 白昼/黄昏/破晓：全员唤醒（只碰带 sleep 标记的少数单位）
+      // 白昼/黄昏/破晓：全员唤醒（只碰带 sleep/goHome 标记的少数单位——归途也作废，天亮回家睡觉没意义）
       for (const u of this.units) {
         if (u.sleep) u.sleep = undefined;
+        if (u.goHome != null) { u.goHome = undefined; u.goHomeAt = undefined; }
       }
       return;
     }
@@ -3104,12 +3106,64 @@ export class GameEngine {
         if (u.hurt > 0 || (u.panic ?? 0) > 0.2) u.sleep = undefined; // 受扰即醒（夜袭/惊吓）
         continue;
       }
+      if (u.goHome != null) {
+        // 归途通道（内核路径）：纠偏航向 + 到家入睡 + 超时半路倒下
+        if (u.hurt > 0 || (u.panic ?? 0) > 0.2) { u.goHome = undefined; u.goHomeAt = undefined; continue; }
+        const hx = (u.goHome % W) + 0.5, hy = ((u.goHome / W) | 0) + 0.5;
+        const dd = (u.x - hx) * (u.x - hx) + (u.y - hy) * (u.y - hy);
+        if (dd < 3.2) { u.sleep = 1; u.goHome = undefined; u.goHomeAt = undefined; continue; } // 到家门口躺下
+        if (this.tickCount - (u.goHomeAt ?? 0) > 240) { u.sleep = 1; u.goHome = undefined; u.goHomeAt = undefined; continue; } // 走不回家：疲惫至极半路入眠
+        u.tx = hx + this.rng() * 1.4 - 0.7;
+        u.ty = hy + this.rng() * 1.4 - 0.7; // 纠偏（覆盖内核 AI 的游走目标）
+        continue;
+      }
       if (u.boat || u.army != null || u.king) continue; // 航海者/军团在编/国王不眠
       const jobN = u.job ?? 0;
       if (jobN === 2 || jobN === 3) continue; // 战士/弓手：夜巡与守土
       if (u.hurt > 0 || (u.panic ?? 0) > 0 || u.hp <= u.maxHp * 0.5 || u.cd > 0) continue;
-      if (this.rng() < 0.02) u.sleep = 1; // 概率入眠 —— 夜幕落下后自然错落躺下（约数秒内全村归寂）
+      if (this.rng() < 0.02) {
+        // 归家机制：有自家住宅且不在家门口 → 动身回家；家门口/无家可归 → 原地入眠（流浪者野外躺平）
+        const home = this.nearestHomeTile(u.civ, u.x, u.y);
+        if (home >= 0) {
+          const hx = (home % W) + 0.5, hy = ((home / W) | 0) + 0.5;
+          const dd = (u.x - hx) * (u.x - hx) + (u.y - hy) * (u.y - hy);
+          if (dd > 3.2) {
+            u.goHome = home;
+            u.goHomeAt = this.tickCount;
+            u.tx = hx + this.rng() * 1.4 - 0.7;
+            u.ty = hy + this.rng() * 1.4 - 0.7;
+            continue; // 动身回家：本桶 tick 起步入眠旅程
+          }
+        }
+        u.sleep = 1; // 已在家门口 / 无房文明：就地倒下
+      }
     }
+  }
+
+  /** 自家最近住宅 tile 缓存查询（-1 无）：civ → 住宅 tile 列表，300 tick 惰性重建
+   *  （建筑稀疏变更；destroyBuilding 打失效戳即时纠偏，迁都等旁路 12.5 秒自愈）。 */
+  private homeCache: Map<number, number[]> | null = null;
+  private homeCacheAt = -99999;
+  private nearestHomeTile(civ: number, x: number, y: number): number {
+    if (!this.homeCache || this.tickCount - this.homeCacheAt >= 300) {
+      const m = new Map<number, number[]>();
+      for (const b of this.buildings) {
+        if (b.kind !== BUILD_KINDS.HOUSE || b.civ < 0) continue;
+        const a = m.get(b.civ);
+        if (a) a.push(b.i); else m.set(b.civ, [b.i]);
+      }
+      this.homeCache = m;
+      this.homeCacheAt = this.tickCount;
+    }
+    const list = this.homeCache.get(civ);
+    if (!list || list.length === 0) return -1;
+    let best = -1, bd = Infinity;
+    for (const i of list) {
+      const hx = (i % W) + 0.5, hy = ((i / W) | 0) + 0.5;
+      const d = (x - hx) * (x - hx) + (y - hy) * (y - hy);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
   }
 
   /** 冬季雪人（Task 104）：村民雪地堆雪人（装饰瞬态）/ 出冬渐融（每 80 tick，与 iceTick 错峰）。
@@ -3681,14 +3735,39 @@ export class GameEngine {
       const dp = this.dayPhase();
       const night = dp > 0.545 && dp < 0.865;
       if (u.sleep) {
-        if (!night || u.hurt > 0 || (u.panic ?? 0) > 0.2) { u.sleep = undefined; }
+        if (!night || u.hurt > 0 || (u.panic ?? 0) > 0.2) { u.sleep = undefined; u.goHome = undefined; u.goHomeAt = undefined; }
         else return; // 熟睡：本 tick 不索敌不工作不移动
+      } else if (u.goHome != null && !u.army && !u.king) {
+        // 归途通道：夜晚朝自家住宅赶路，到家门口倒头睡；天亮/受扰半途而废；超时疲惫半路入眠
+        if (!night || u.hurt > 0 || (u.panic ?? 0) > 0.2) {
+          u.goHome = undefined; u.goHomeAt = undefined; // 半途而废（天亮该干活了/夜袭逃命要紧——本 tick 继续常规逻辑）
+        } else {
+          const hx = (u.goHome % W) + 0.5, hy = ((u.goHome / W) | 0) + 0.5;
+          const dd = (u.x - hx) * (u.x - hx) + (u.y - hy) * (u.y - hy);
+          if (dd < 3.2) { u.sleep = 1; u.goHome = undefined; u.goHomeAt = undefined; return; } // 到家门口躺下
+          if (this.tickCount - (u.goHomeAt ?? 0) > 240) { u.sleep = 1; u.goHome = undefined; u.goHomeAt = undefined; return; } // 走不回家：倒在半路
+          u.tx = hx + this.rng() * 1.4 - 0.7;
+          u.ty = hy + this.rng() * 1.4 - 0.7;
+          return; // 归途 tick：只赶路不索敌不工作（村庄小道上的夜归人）
+        }
       } else if (night && !u.army && !u.king) {
         const jobN = u.job ?? 0;
         const guard = jobN === 2 || jobN === 3; // 战士/弓手：夜巡与守土
         if (!guard && u.hurt <= 0 && (u.panic ?? 0) <= 0 && u.hp > u.maxHp * 0.5 && u.cd <= 0 && this.rng() < 0.02) {
+          const home = this.nearestHomeTile(u.civ, u.x, u.y);
+          if (home >= 0) {
+            const hx = (home % W) + 0.5, hy = ((home / W) | 0) + 0.5;
+            const dd = (u.x - hx) * (u.x - hx) + (u.y - hy) * (u.y - hy);
+            if (dd > 3.2) {
+              u.goHome = home;
+              u.goHomeAt = this.tickCount;
+              u.tx = hx + this.rng() * 1.4 - 0.7;
+              u.ty = hy + this.rng() * 1.4 - 0.7;
+              return; // 动身回家：今晚睡自家屋檐下
+            }
+          }
           u.sleep = 1;
-          return; // 倒头就睡：本 tick 起进入睡眠
+          return; // 已在家门口 / 无房文明：倒头就睡（流浪者野外躺平）
         }
       }
     }
