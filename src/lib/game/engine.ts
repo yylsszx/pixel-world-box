@@ -2697,6 +2697,8 @@ export class GameEngine {
     this.beachedAquaticTick();
     // —— 百兽迁徙（引擎级通道：灭绝野生动物的低频回归 —— 每 600 tick ≈3.3 年掷签一支迁徙兽群）——
     if (this.tickCount % 600 === 61) this.wildlifeReboundTick();
+    // —— 文明火种（引擎级通道：与百兽迁徙对称的文明侧回迁腿 —— 全文明覆灭后流浪部族重建王国）——
+    if (this.tickCount % 600 === 121) this.civReboundTick();
     // —— 猎手扑杀（引擎级通道：内核捕食者追不上猎物的能量链补环 —— 每 20 tick 一轮扑杀窗口）——
     if (this.tickCount % 20 === 7) this.predatorHuntTick();
     // —— 文明狩猎（引擎级通道：生态×文明联系第二笔 —— 猎物繁荣期猎获归仓，衰退期自动收弓）——
@@ -14598,6 +14600,57 @@ export class GameEngine {
         : `远方的兽群跋涉而来——${def.name}重新踏上了这片大地`;
       this.addEvent('eco', msg, { x: x + 0.5, y: y + 0.5 });
       return; // 每轮至多一支兽群迁入（节奏克制，迁徙是稀客）
+    }
+  }
+
+  /** 文明火种（引擎级通道）：文明灭绝是吸收态 —— 与百兽迁徙回归（wildlifeReboundTick）对称的
+   *  文明侧回迁腿。仅当世界曾有文明（civs 非空）而今全部覆灭时启动：荒野深处的流浪部族循着
+   *  先祖故土的传说跋涉而来，在无主沃土重建王国（createCiv 全套立国流程：建国播报/粮车金袋/
+   *  立国之田市/补冕）。创世空画布（civs.length===0）不在此列——播种生命是神明的第一课，
+   *  不由天命代劳；神明关闭繁衍法则时同样静默。末次灭亡取自 husk 的 popZeroTick（既有持久
+   *  字段，零新增档面）：亡国 ≈19 年的沉寂留白后，每 600 tick（≈13 年）火种试立一次。 */
+  private civReboundTick() {
+    if (!this.laws.reproduction) return; // 神明关闭繁衍法则：世界静寂如死
+    if (this.civs.length === 0) return; // 创世空画布：播种是神明的第一课
+    if (this.civs.some((c) => c.alive)) return; // 尚有文明在世：兴衰与叛乱自会续写历史
+    if (this.units.length >= MAX_UNITS) return; // 人口预算满载：徙民无处安身
+    let lastFall = 0;
+    for (const c of this.civs) if (!c.alive && c.popZeroTick) lastFall = Math.max(lastFall, c.popZeroTick);
+    if (lastFall > 0 && this.tickCount - lastFall < 480) return; // 长夜宽限：亡国后的戏剧留白
+    // 选址：无主草地 + 远离敌性野物（r=8，RACES.hostile 旗标）+ 不贴地图边（空壳国教训：非草地立国即无田之国）
+    let spot = -1;
+    for (let tries = 0; tries < 160 && spot < 0; tries++) {
+      const x = 6 + Math.floor(this.rng() * (W - 12));
+      const y = 6 + Math.floor(this.rng() * (H - 12));
+      const i = y * W + x;
+      if (this.terrain[i] !== T.GRASS) continue;
+      let near = false;
+      for (const u of this.units) {
+        if (u.dead) continue;
+        const rd = RACES[u.race];
+        if (!rd || !rd.hostile) continue;
+        const dx = u.x - x, dy = u.y - y;
+        if (dx * dx + dy * dy < 64) { near = true; break; }
+      }
+      if (!near) spot = i;
+    }
+    if (spot < 0) return;
+    const x = this.tileX(spot) + 0.5, y = this.tileY(spot) + 0.5;
+    const POOL = [R.HUMAN, R.ELF, R.DWARF, R.ORC, R.LIZARD, R.GOBLIN];
+    const race = POOL[Math.floor(this.rng() * POOL.length)];
+    const id = this.createCiv(race, x, y);
+    if (id < 0 || !this.civs[id]) return;
+    let placed = 0;
+    const n = 3 + Math.floor(this.rng() * 3); // 3-5 名定居者（王位由 crownVacantTick 40 tick 内自动补冕）
+    for (let s = 0; s < n; s++) {
+      const jx = Math.max(0.5, Math.min(W - 0.5, x + this.rng() * 2.4 - 1.2));
+      const jy = Math.max(0.5, Math.min(H - 0.5, y + this.rng() * 2.4 - 1.2));
+      const u = this.spawnUnit(race, jx, jy, { civ: id, silent: true });
+      if (u && !isNaN(u.x)) placed++; // NaN 消毒（非法落位不入账）
+    }
+    if (placed > 0) {
+      this.fx('spawn', x, y, 46);
+      this.addEvent('legend', '长夜尽头，流浪的部族循着先祖的传说归来——荒原上重新升起了炊烟', { colorHex: this.civs[id].colorHex, x, y });
     }
   }
 
