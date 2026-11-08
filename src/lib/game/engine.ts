@@ -1645,6 +1645,8 @@ export class GameEngine {
       this.buildBuilding(cap, 2, civ.id);
       civ.capital = cap;
       civ.food = 80; // 建国粮车（开仓 80 石——够第一个十年的口粮）
+      civ.gold = 12; // 建国金（对称建国粮车：携粟帛牲畜立国，以物易物起家）——恰好首座集市成本，
+      // 打破「没钱建集市→零收入→永远没钱」的黎明期经济死锁（旧发现：税基 pop<20 恒 0，无收入源则攒金 108 年）
     }
     // seed territory — 以首都为圆心（比点击点更可靠）；找不到首都再退回原点
     const anchor = cap >= 0 ? cap : idx(Math.floor(x), Math.floor(y));
@@ -1665,6 +1667,27 @@ export class GameEngine {
             if (this.terrain[fi] === T.GRASS && this.building[fi] === 0 && this.owner[fi] === civ.id) {
               this.buildBuilding(fi, BUILD_KINDS.FARM, civ.id);
               break outer2;
+            }
+          }
+        }
+      }
+      // 立国之市（对称立国之田）：黎明期的财富引擎起点——村落必有市集，商业循环从此点火。
+      // （底层审计发现：市场 cost 12 而新国税基 pop<20 恒 0、无任何收入源——「建国金+建造抽签」
+      //   不可靠会漏签回零收入死锁；起点配置直接给，循环必点火。旧档不受影响，仅新建国生效）
+      if (cap >= 0) {
+        const mx0 = cap % W;
+        const my0 = (cap / W) | 0;
+        outer3: for (let r = 1; r <= 3; r++) {
+          for (let dy = -r; dy <= r; dy++) {
+            for (let dx = -r; dx <= r; dx++) {
+              if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+              const xx = mx0 + dx, yy = my0 + dy;
+              if (xx < 1 || yy < 1 || xx >= W - 1 || yy >= H - 1) continue;
+              const mi = idx(xx, yy);
+              if (buildable(this.terrain[mi]) && this.building[mi] === 0 && this.owner[mi] === civ.id) {
+                this.buildBuilding(mi, BUILD_KINDS.MARKET, civ.id);
+                break outer3;
+              }
             }
           }
         }
@@ -5216,56 +5239,65 @@ export class GameEngine {
     return path;
   }
 
+  /** 经济明细账（单一事实源）：economyTick 入账与 CivPanel 报表共用 —— 改公式只改这里，
+   *  两处消费永不漂移；返回全部中间量供报表逐项展示（钱从哪来、花到哪去）*/
+  private ecoBreakdownOf(c: Civ, counts: number[]) {
+    const markets = counts[BUILD_KINDS.MARKET] ?? 0;
+    const libraries = counts[BUILD_KINDS.LIBRARY] ?? 0;
+    const temples = counts[BUILD_KINDS.TEMPLE] ?? 0;
+    const ports = counts[BUILD_KINDS.PORT] ?? 0;
+    // 旨意加成：富国令财富产出 ×2 / 启智令知识产出 ×2（文明自行达成的引擎）
+    const wealthBoost = this.activeDirective(c.id, 'wealth') ? 2 : 1;
+    const wisdomBoost = this.activeDirective(c.id, 'wisdom') ? 2 : 1;
+    // —— 科技/社会加成：税基×tech.tax×政体 / 经济×tech.gold / 知识×tech.know（文化反哺）——
+    const tm = this.techModsOf(c.id);
+    const im = this.ideaModsOf(c.id); // v3：涌现理念加成（经济/知识）
+    const gov = this.govOf(c.id);
+    const cultKnow = 1 + Math.min(0.5, (c.culture ?? 0) * 0.002); // 文化反哺学术（上限 +50%）
+    const govTaxMul = gov === 1 ? 1.1 : gov === 2 ? 1.0 : gov === 3 ? 1.0 : gov === 4 ? 1.05 : 1;
+    // —— 种族互连：勤勉种族的税基更丰厚（矮人的工坊永不熄火）——
+    const rpE = RACES[c.race];
+    const industryMul = 0.8 + (rpE?.industry ?? 0.5) * 0.4;
+    // —— 季节互连：冬季雪封商路，集市与港口收入 ×0.9 ——
+    const winterMul = this.nature.season === 3 ? 0.9 : 1;
+    const taxBase = Math.floor(c.pop * 0.05 * tm.tax * govTaxMul);
+    // —— 财富饱和：囤积低效（官僚损耗随库藏膨胀 → 净入账递减 —— 软上限防数万金通胀） ——
+    // 打仗花钱 → 国库回落 → 入账效率恢复：战争重新成为财政大事而非无关痛痒
+    const hoard = c.gold ?? 0;
+    const drag = 1 / (1 + hoard / 900);
+    // —— 联盟互连：盟友间商贸一体化，关税减免 ×1.15（盟内市场优先繁荣）——
+    const alE = this.allianceOfCiv(c.id);
+    const allyTrade = alE && alE.members.length >= 2 ? (alE.bonded ? 1.25 : 1.15) : 1;
+    const mulTotal = wealthBoost * tm.gold * (gov === 3 ? 1.25 : 1) * (1 + im.gold) * industryMul * winterMul * allyTrade * drag;
+    const income = Math.max(0, Math.round((markets * 3 + temples * 1 + ports * 2 + taxBase) * mulTotal));
+    // —— 军团军饷：现役军团成员人均 0.12 金/tick 段（军国主义高涨的国家咬牙供养）——
+    let upkeepArmy = 0;
+    for (const a of this.armies) {
+      if (a.civ === c.id && a.state !== 'retreat') upkeepArmy += a.members.length * 0.12; // 军饷（战时大军是吞金兽）
+    }
+    const upkeepFort = (counts[BUILD_KINDS.CASTLE] ?? 0) * 0.5 + (counts[BUILD_KINDS.TOWER] ?? 0) * 0.15; // 城防维护
+    const upkeep = upkeepArmy + upkeepFort;
+    return { markets, libraries, temples, ports, wealthBoost, wisdomBoost, tm, im, gov, cultKnow, industryMul, winterMul, taxBase, drag, allyTrade, mulTotal, income, upkeepArmy, upkeepFort, upkeep };
+  }
+
   economyTick() {
     for (const c of this.civs) {
       if (!c.alive || c.pop <= 0) continue;
       const counts = this.civBuildCounts.get(c.id);
       if (!counts) continue;
-      const markets = counts[BUILD_KINDS.MARKET] ?? 0;
-      const libraries = counts[BUILD_KINDS.LIBRARY] ?? 0;
-      const temples = counts[BUILD_KINDS.TEMPLE] ?? 0;
-      const ports = counts[BUILD_KINDS.PORT] ?? 0;
-      // 旨意加成：富国令财富产出 ×2 / 启智令知识产出 ×2（文明自行达成的引擎）
-      const wealthBoost = this.activeDirective(c.id, 'wealth') ? 2 : 1;
-      const wisdomBoost = this.activeDirective(c.id, 'wisdom') ? 2 : 1;
-      // —— 科技/社会加成：税基×tech.tax×政体 / 经济×tech.gold / 知识×tech.know（文化反哺）——
-      const tm = this.techModsOf(c.id);
-      const im = this.ideaModsOf(c.id); // v3：涌现理念加成（经济/知识）
-      const gov = this.govOf(c.id);
-      const cultKnow = 1 + Math.min(0.5, (c.culture ?? 0) * 0.002); // 文化反哺学术（上限 +50%）
-      const govTaxMul = gov === 1 ? 1.1 : gov === 2 ? 1.0 : gov === 3 ? 1.0 : gov === 4 ? 1.05 : 1;
-      // —— 种族互连：勤勉种族的税基更丰厚（矮人的工坊永不熄火）——
-      const rpE = RACES[c.race];
-      const industryMul = 0.8 + (rpE?.industry ?? 0.5) * 0.4;
-      // —— 季节互连：冬季雪封商路，集市与港口收入 ×0.9 ——
-      const winterMul = this.nature.season === 3 ? 0.9 : 1;
-      const taxBase = Math.floor(c.pop * 0.05 * tm.tax * govTaxMul);
-      // —— 财富饱和：囤积低效（官僚损耗随库藏膨胀 → 净入账递减 —— 软上限防数万金通胀） ——
-      // 打仗花钱 → 国库回落 → 入账效率恢复：战争重新成为财政大事而非无关痛痒
-      const hoard = c.gold ?? 0;
-      const drag = 1 / (1 + hoard / 900);
-      // —— 联盟互连：盟友间商贸一体化，关税减免 ×1.15（盟内市场优先繁荣）——
-      const alE = this.allianceOfCiv(c.id);
-      const allyTrade = alE && alE.members.length >= 2 ? (alE.bonded ? 1.25 : 1.15) : 1;
-      const income = Math.max(0, Math.round((markets * 3 + temples * 1 + ports * 2 + taxBase) * wealthBoost * tm.gold * (gov === 3 ? 1.25 : 1) * (1 + im.gold) * industryMul * winterMul * allyTrade * drag));
-      // —— 军团军饷：现役军团成员人均 0.12 金/tick 段（军国主义高涨的国家咬牙供养）——
-      let upkeep = 0;
-      for (const a of this.armies) {
-        if (a.civ === c.id && a.state !== 'retreat') upkeep += a.members.length * 0.12; // 军饷（战时大军是吞金兽）
-      }
-      upkeep += (counts[BUILD_KINDS.CASTLE] ?? 0) * 0.5 + (counts[BUILD_KINDS.TOWER] ?? 0) * 0.15; // 城防维护
-      c.income = income;
-      c.expense = Math.round(upkeep * 10) / 10;
-      c.gold = Math.max(0, (c.gold ?? 0) + income - upkeep);
+      const eco = this.ecoBreakdownOf(c, counts);
+      c.income = eco.income;
+      c.expense = Math.round(eco.upkeep * 10) / 10;
+      c.gold = Math.max(0, (c.gold ?? 0) + eco.income - eco.upkeep);
       // —— 军饷欠饷：国库见底 → 军团士气滑落（帝国过度扩张的代价）——
-      if ((c.gold ?? 0) <= 0 && upkeep > 2) {
+      if ((c.gold ?? 0) <= 0 && eco.upkeep > 2) {
         for (const a of this.armies) {
           if (a.civ === c.id) a.morale = Math.max(0, a.morale - 0.5);
         }
       }
       // —— 知识：种族奥术天赋（精灵的魔法学术）× 冬季蛰居苦读（×1.05 反向补偿）——
-      const arcaneMul = 0.8 + (rpE?.arcane ?? 0.5) * 0.45;
-      const knowGain = Math.round((libraries * 2 + (c.pop > 20 ? 1 : 0)) * wisdomBoost * tm.know * cultKnow * (gov === 2 ? 1.15 : 1) * (1 + im.know) * arcaneMul * (this.nature.season === 3 ? 1.05 : 1));
+      const arcaneMul = 0.8 + (RACES[c.race]?.arcane ?? 0.5) * 0.45;
+      const knowGain = Math.round((eco.libraries * 2 + (c.pop > 20 ? 1 : 0)) * eco.wisdomBoost * eco.tm.know * eco.cultKnow * (eco.gov === 2 ? 1.15 : 1) * (1 + eco.im.know) * arcaneMul * (this.nature.season === 3 ? 1.05 : 1));
       // 知识优先投入研究（科技研发体系），余量入国库知识存量（解锁建筑）
       const spent = this.fundResearch(c, knowGain);
       c.knowledge = (c.knowledge ?? 0) + (knowGain - spent);
@@ -15858,6 +15890,13 @@ export class GameEngine {
       if (oc === c.id) { occPushing++; occPushStr += this.occStr[i]; }
       else if (this.owner[i] === c.id) occLosing++;
     }
+    // —— 经济明细账（与 economyTick 单一事实源 ecoBreakdownOf）：实时计算，
+    //    面板的岁入/岁出同步用实时值（与明细合计自洽；c.income 是上期结算快照，供引擎内部用）——
+    const ecoLive = (() => {
+      const cts = this.civBuildCounts.get(c.id);
+      if (!cts) return null;
+      return this.ecoBreakdownOf(c, cts);
+    })();
     return {
       ...c,
       tiles,
@@ -15876,6 +15915,20 @@ export class GameEngine {
       gold: Math.floor(c.gold ?? 0),
       knowledge: Math.floor(c.knowledge ?? 0),
       food: Math.floor(c.food ?? 60),
+      income: ecoLive ? ecoLive.income : (c.income ?? 0),
+      expense: ecoLive ? Math.round(ecoLive.upkeep * 10) / 10 : (c.expense ?? 0),
+      eco: ecoLive ? {
+        marketGold: ecoLive.markets * 3,
+        templeGold: ecoLive.temples,
+        portGold: ecoLive.ports * 2,
+        taxGold: ecoLive.taxBase,
+        mulTotal: Math.round(ecoLive.mulTotal * 100) / 100,
+        upkeepArmy: Math.round(ecoLive.upkeepArmy * 10) / 10,
+        upkeepFort: Math.round(ecoLive.upkeepFort * 10) / 10,
+        winter: this.nature.season === 3,
+        allyTrade: ecoLive.allyTrade > 1,
+        hoardDrag: ecoLive.drag < 0.95,
+      } : null,
       army,
       armedRate: popN > 0 ? Math.round((armedN / popN) * 100) : 0, // 持械率（军备时代 ≠ 全民国兵——真实兑现度一目了然）
       ideas: (c.ideas ?? []).map((k) => this.emIdeas.get(k)?.name ?? k), // 已采纳的涌现理念（CivPanel 徽章列）
@@ -15894,8 +15947,6 @@ export class GameEngine {
       stability: Math.round(c.stability ?? 70),
       culture: Math.round(c.culture ?? 0),
       militarism: Math.round(c.militarism ?? 30),
-      income: Math.round(c.income ?? 0),
-      expense: Math.round(c.expense ?? 0),
       // —— 军备/房屋阶位（科技深度绑定）——
       armament: this.armamentOf(c),
       armamentName: ['木石时代', '青铜时代', '铁器时代', '钢铁时代', '火器时代', '现代军备', '未来军备'][this.armamentOf(c)],

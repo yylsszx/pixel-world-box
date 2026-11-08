@@ -47,6 +47,19 @@ interface CivInfo {
   militarism: number;
   income: number;
   expense: number;
+  /** 经济明细账（与 economyTick 单一事实源同源；null = 尚无建筑统计） */
+  eco: {
+    marketGold: number;
+    templeGold: number;
+    portGold: number;
+    taxGold: number;
+    mulTotal: number;
+    upkeepArmy: number;
+    upkeepFort: number;
+    winter: boolean;
+    allyTrade: boolean;
+    hoardDrag: boolean;
+  } | null;
   // —— 军备/房屋阶位（科技深度绑定）——
   armament: number;
   armamentName: string;
@@ -313,10 +326,17 @@ function SocietyTab({ civ }: { civ: CivInfo }) {
           <p className={`mt-1 font-mono text-[9px] font-bold ${net >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
             盈余 {net >= 0 ? '+' : ''}{Math.round(net * 10) / 10} 金 / 期
           </p>
-          <p className="mt-1.5 text-[8px] leading-relaxed text-zinc-500">
-            岁入来自税基与集市×{builds.get(9) ?? 0}、港口×{builds.get(7) ?? 0}、神殿×{builds.get(10) ?? 0}；
-            岁出为军团军饷与城堡箭塔维护。国库见底时军团士气滑落。
-          </p>
+          {civ.eco ? (
+            <p className="mt-1.5 font-mono text-[8px] leading-relaxed text-zinc-500" title="经济明细账：岁入各项基础值 × 总乘数；岁出为军团军饷与城防维护">
+              岁入 集市{civ.eco.marketGold}+港口{civ.eco.portGold}+神殿{civ.eco.templeGold}+税基{civ.eco.taxGold}
+              （乘数 ×{civ.eco.mulTotal}{civ.eco.winter ? '·冬 ×0.9' : ''}{civ.eco.allyTrade ? '·盟贸' : ''}{civ.eco.hoardDrag ? '·囤积损耗' : ''}）
+              ｜岁出 军饷{civ.eco.upkeepArmy}+城防{civ.eco.upkeepFort}
+            </p>
+          ) : (
+            <p className="mt-1.5 text-[8px] leading-relaxed text-zinc-500">
+              岁入来自税基与集市、港口、神殿；岁出为军团军饷与城堡箭塔维护。国库见底时军团士气滑落。
+            </p>
+          )}
         </div>
       </section>
 
