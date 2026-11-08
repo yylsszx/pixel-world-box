@@ -1427,7 +1427,9 @@ class WbBatch {
             }
             case 6: {
               const fam = engine.families.get(ea);
-              if (fam) engine.addEvent('lineage', `${RACES[fam.race]?.name ?? ''}「${fam.name}」家族枝繁叶茂 —— 族人已达 ${Math.round(f0)} 口（先祖 ${fam.founder}）`);
+              // 深度打磨：只播文明种族的家族里程碑——野生动物家族静默成长（鸡窝添丁不上世界纪事）。
+              // rust 内核侧 family_milestone 已做同一取舍；桥接端兜底判断，双保险防漏改一侧
+              if (fam && RACES[fam.race]?.isCiv) engine.addEvent('lineage', `${RACES[fam.race]?.name ?? ''}「${fam.name}」家族枝繁叶茂 —— 族人已达 ${Math.round(f0)} 口（先祖 ${fam.founder}）`);
               break;
             }
             case 7: engine.addEvent('fireOut', `「${civN(ea)}」的国民提桶救火，扑灭了蔓延的火势`, { colorHex: engine.civs[ea]?.colorHex, x, y }); break;

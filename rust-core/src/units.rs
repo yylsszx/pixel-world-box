@@ -957,7 +957,7 @@ fn new_family(ctx: &mut Ctx, race: usize, founder_slot: usize) -> i32 {
     id
 }
 
-fn family_milestone(ctx: &mut Ctx, row: usize) {
+fn family_milestone(ctx: &mut Ctx, row: usize, race: usize) {
     // members 已 ++；peak 更新 + 12/24/40 一次性播报
     let members = f64_at(OFF_FMNUM, row * 6);
     let peak = f64_at(OFF_FMNUM, row * 5 + 2);
@@ -967,8 +967,13 @@ fn family_milestone(ctx: &mut Ctx, row: usize) {
     let marks = [12.0f64, 24.0, 40.0];
     let mut ms = f64_at(OFF_FMNUM, row * 5 + 3);
     let mut fired: Vec<f64> = Vec::new();
+    // 深度打磨：只播文明种族的家族里程碑——野生动物家族静默成长（里程碑计数照走）
+    // 与 JS 侧 familyMilestone 同一取舍：鸡窝添丁不上世界纪事，留给文明史诗
+    let broadcast = is_civ(race);
     while (ms as usize) < marks.len() && members >= marks[ms as usize] {
-        fired.push(marks[ms as usize]);
+        if broadcast {
+            fired.push(marks[ms as usize]);
+        }
         ms += 1.0;
     }
     set_f64_at(OFF_FMNUM, row * 6 + 4, ms);
@@ -1989,7 +1994,7 @@ fn spawn_unit(ctx: &mut Ctx, race: usize, x: f64, y: f64, civ: i32, gene: Option
         if row >= 0 {
             let m = f64_at(OFF_FMNUM, row as usize * 6) + 1.0;
             set_f64_at(OFF_FMNUM, row as usize * 6, m);
-            family_milestone(ctx, row as usize);
+            family_milestone(ctx, row as usize, race as usize);
             if let Some(p) = ctx.act_reserve(16) {
                 ctx.act_u8(p, ACT_FAM_MILE);
                 ctx.act_i32(p + 4, fam);

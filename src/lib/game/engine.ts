@@ -1168,6 +1168,9 @@ export class GameEngine {
     const marks = [12, 24, 40];
     while (f.milestones < marks.length && f.members >= marks[f.milestones]) {
       const m = marks[f.milestones++];
+      // 深度打磨：只播文明种族的家族里程碑——野生动物家族静默成长（新世界动物繁衍如潮，
+      // 鸡窝添丁挤掉文明史诗是事件流的信息灾难；世界纪事留给真正重要的事）
+      if (!RACES[f.race]?.isCiv) continue;
       const raceName = RACES[f.race]?.name ?? '';
       this.addEvent('lineage', `${raceName}「${f.name}」家族枝繁叶茂 —— 族人已达 ${m} 口（先祖 ${f.founder}）`);
     }
