@@ -16,6 +16,241 @@ const SKIN: Record<number, [number, number, number]> = {
   19: [79, 158, 58], 20: [127, 169, 60],
 };
 
+// ============ 装备分层（B 重点）：盔/盾/披风/甲层级上绘 —— 属性生效的装备肉眼可见 ============
+// 拾取与军工系统把 7 槽装备全量穿到单位身上（dmg/hp/armor 全生效），旧版却只画武器与
+// 胸甲片——头盔/盾牌/披风在视觉上完全隐形。本组 painter 按「穿层顺序」绘制：
+// 披风（身后，先画）→ 盾（副手）→ 盔（压发，头画完再画）；高帽把头顶职业徽标顶起。
+
+/** 护甲形制表：同是胸前甲片，17 种甲各有底色与一枚细节点（铆钉/鳞纹/流光/滚边） */
+const ARMOR_LOOK: Record<string, { base: string; det?: string; glow?: boolean }> = {
+  armor1: { base: '#b58a5a' },
+  armor2: { base: '#cfd4da' },
+  cloth_robe: { base: '#d8d0c0', det: '#a89e8a' },
+  studded_leather: { base: '#a5773f', det: '#4a3420' },
+  chain_mail: { base: '#9aa4b0', det: '#6e7884' },
+  iron_plate: { base: '#dfe4ea', det: '#9aa4b0' },
+  gold_armor: { base: '#f5c842', det: '#fff3c4', glow: true },
+  dragon_scale: { base: '#4a7a3a', det: '#2c5e24' },
+  mithril_mail: { base: '#cfe8ea', det: '#8fc8cc', glow: true },
+  shadow_cloak: { base: '#2a2433' },
+  berserker_hide: { base: '#8a5a34', det: '#d9b47c' },
+  elf_robe: { base: '#7aa86f', det: '#ffd93d' },
+  bone_armor: { base: '#e8e0d0', det: '#8a8274' },
+  obsidian_shell: { base: '#2a2430', det: '#b56cf0', glow: true },
+  holy_vestment: { base: '#f4f0e0', det: '#f5c842' },
+  emperor_robe: { base: '#7a2ab0', det: '#f5c842' },
+  energy_shield: { base: '#1d3a44', det: '#7df9ff', glow: true },
+};
+
+/** 胸甲片：底色平铺 + 前缘细节点；发光甲每 8 帧呼吸闪烁（秘银/黄金/黑曜石/能量盾） */
+function paintArmorPlate(ctx: CanvasRenderingContext2D, u: Unit, px: number, hY: number, f: number, t: number, wide = 2) {
+  const look = u.arm ? ARMOR_LOOK[u.arm] : undefined;
+  if (!look) return;
+  ctx.fillStyle = look.base;
+  ctx.fillRect(px - 1, hY - 1, wide, 1);
+  // 细节点落在面朝侧前缘（肩位）：披甲的方向感
+  if (look.det) {
+    ctx.fillStyle = look.det;
+    ctx.fillRect(f > 0 ? px + wide - 2 : px - wide + 1, hY - 1, 1, 1);
+  }
+  if (look.glow && ((t >> 3) & 1) === 1) {
+    ctx.fillStyle = look.det ?? '#ffffff';
+    ctx.fillRect(f > 0 ? px - wide + 1 : px + wide - 2, hY - 1, 1, 1); // 后缘流光交替
+  }
+}
+
+/** 披风背饰层（暗影斗篷/帝王华服）：画在身体之前——披在背上，被躯干轮廓压住正面；
+ *  下摆随步频摆动，帝王金线 hem 王国色阶可见 */
+function paintCape(ctx: CanvasRenderingContext2D, u: Unit, px: number, hY: number, f: number, isMoving: boolean, t: number, giant = false) {
+  if (u.arm !== 'shadow_cloak' && u.arm !== 'emperor_robe') return;
+  const royal = u.arm === 'emperor_robe';
+  const backX = giant ? px - 3 * f : px - 2 * f;
+  const flutter = isMoving && ((t >> 3) & 1) === 1 ? 1 : 0;
+  ctx.fillStyle = royal ? '#5a1f8a' : '#241f30';
+  if (giant) {
+    ctx.fillRect(backX, hY - 3, 1, 4);
+    ctx.fillRect(backX - f, hY - 1 + flutter, 1, 3 - flutter);
+  } else {
+    ctx.fillRect(backX, hY - 2, 1, 3);
+    ctx.fillRect(backX - f, hY - 1 + flutter, 1, 2 - flutter);
+  }
+  if (royal) {
+    ctx.fillStyle = '#f5c842'; // 金线 hem
+    ctx.fillRect(backX - f, giant ? hY + 1 - flutter : hY + 1 - flutter, 1, 1);
+  }
+}
+
+/** 盾牌副手层：平时挂于面朝反侧身位；接敌举盾（atk）时前移护身——盾墙朝向敌阵 */
+function paintShield(ctx: CanvasRenderingContext2D, u: Unit, px: number, hY: number, f: number, _t: number, giant = false) {
+  if (!u.shd) return;
+  const brace = (u.atk ?? 0) > 0;
+  const h = giant ? 3 : 2;
+  const top = giant ? hY - 3 : hY - 2;
+  const sx = brace ? px + (giant ? 2 : 1) * f : px - (giant ? 3 : 2) * f;
+  switch (u.shd) {
+    case 'round_shield': // 圆木盾：木底 + 铁钉心
+      ctx.fillStyle = '#8a5a34'; ctx.fillRect(sx, top, 1, h);
+      ctx.fillStyle = '#c0c6cc'; ctx.fillRect(sx, top + (h >> 1), 1, 1);
+      break;
+    case 'wood_shield': // 木盾：深木 + 板缝
+      ctx.fillStyle = '#6e4a2b'; ctx.fillRect(sx, top, 1, h + (giant ? 1 : 0));
+      ctx.fillStyle = '#4a3420'; ctx.fillRect(sx, top + 1, 1, 1);
+      break;
+    case 'kite_shield': // 鸢形盾：蓝钢面 + 金脊
+      ctx.fillStyle = '#5a78a0'; ctx.fillRect(sx, top, 1, h);
+      ctx.fillStyle = '#f5c842'; ctx.fillRect(sx, top, 1, 1);
+      break;
+    case 'spiked_shield': // 刺击盾：木底 + 外向棘刺（举盾时刺向敌向）
+      ctx.fillStyle = '#6e4a2b'; ctx.fillRect(sx, top, 1, h);
+      ctx.fillStyle = '#e8e8e8';
+      ctx.fillRect(brace ? sx + f : sx, top - 1, 1, 1);
+      break;
+    case 'iron_shield': // 铁盾：灰钢 + 铆钉
+      ctx.fillStyle = '#b7bec6'; ctx.fillRect(sx, top, 1, h);
+      ctx.fillStyle = '#6e7884'; ctx.fillRect(sx, top, 1, 1);
+      break;
+    case 'tower_shield': // 塔盾：半身高木墙 + 铁箍横肋
+      ctx.fillStyle = '#8a5a34'; ctx.fillRect(sx, top, giant ? 2 : 1, h + 1);
+      ctx.fillStyle = '#6e7884'; ctx.fillRect(sx, top + 1, giant ? 2 : 1, 1);
+      break;
+    default: // 未知盾：木底兜底（数据先行，视觉不崩）
+      ctx.fillStyle = '#8a5a34'; ctx.fillRect(sx, top, 1, h);
+  }
+}
+
+/** 高帽顶高：法师尖帽/王者之冠比头高一截——头顶职业徽标要跟着抬，不然被帽压住 */
+function hatBadgeLift(u: Unit): number {
+  switch (u.hlm) {
+    case 'wizard_hat': case 'crown_kings': return 2;
+    case 'gold_crown': case 'dragon_skull': case 'horned_helm': case 'viking_helm': case 'archer_cap': return 1;
+    default: return 0;
+  }
+}
+
+/** 头盔层：压着头发画（先头脸后盔）；全覆式盔（骑士/骷髅/术士）接管脸与瞳位，开放盔保留五官 */
+function paintHelmet(ctx: CanvasRenderingContext2D, u: Unit, px: number, headTop: number, faceTop: number, f: number, t: number, giant = false) {
+  const k = u.hlm;
+  if (!k) return;
+  const hw = giant ? 3 : 2;
+  const pc = giant ? px + (f > 0 ? 1 : -2) : px + (f > 0 ? 0 : -1); // 前柱（瞳位）
+  const of_ = giant ? px + (f > 0 ? 2 : -3) : px + (f > 0 ? 1 : -2); // 前外悬（帽檐/吻突）
+  const ob = giant ? px + (f > 0 ? -2 : 2) : px + (f > 0 ? -2 : 1); // 后外悬（翎羽/盔缨）
+  const steel = '#b7bec6', steelL = '#cfd4da', steelD = '#6e7884';
+  switch (k) {
+    case 'leather_cap': // 皮帽：皮革帽顶 + 前伸帽檐
+      ctx.fillStyle = '#8a5a34'; ctx.fillRect(px - 1, headTop, hw, 1);
+      ctx.fillStyle = '#6e4a2b'; ctx.fillRect(of_, headTop, 1, 1);
+      break;
+    case 'archer_cap': // 猎手帽：绿帽 + 后飘红翎
+      ctx.fillStyle = '#4a7a34'; ctx.fillRect(px - 1, headTop, hw, 1);
+      ctx.fillStyle = '#cf3f2e'; ctx.fillRect(ob, headTop - 1, 1, 1);
+      break;
+    case 'iron_helm': // 铁盔：钢顶 + 后颊护
+      ctx.fillStyle = steel; ctx.fillRect(px - 1, headTop, hw, 1);
+      ctx.fillStyle = steelD; ctx.fillRect(f > 0 ? px - 1 : px + (giant ? 2 : 1) - 1, faceTop, 1, 1);
+      break;
+    case 'horned_helm': // 兽角盔：钢顶 + 双角外张
+      ctx.fillStyle = steel; ctx.fillRect(px - 1, headTop, hw, 1);
+      ctx.fillStyle = '#e8dcc8';
+      ctx.fillRect(px - 2, headTop - 1, 1, 1); ctx.fillRect(px + (giant ? 2 : 1), headTop - 1, 1, 1);
+      break;
+    case 'wizard_hat': { // 法师尖帽：3 宽帽檐罩发 + 前倾锥顶 + 星尖闪烁
+      ctx.fillStyle = '#6a3cb0'; ctx.fillRect(px - 1, headTop, giant ? 3 : 2, 1);
+      ctx.fillRect(of_, headTop, 1, 1);
+      ctx.fillStyle = '#7d4bc4'; ctx.fillRect(pc, headTop - 1, 1, 1);
+      if (((t >> 3) & 1) === 1) { ctx.fillStyle = '#7df9ff'; ctx.fillRect(pc, headTop - 2, 1, 1); }
+      break;
+    }
+    case 'knight_helm': // 骑士全盔：钢面覆脸 + 目缝 + 后飘盔缨
+      ctx.fillStyle = steelL;
+      ctx.fillRect(px - 1, headTop, hw, 1);
+      ctx.fillRect(px - 1, faceTop, hw, 1);
+      ctx.fillStyle = '#14100c'; ctx.fillRect(pc, faceTop, 1, 1);
+      ctx.fillStyle = '#cf3f2e'; ctx.fillRect(ob, headTop - 1, 1, 1);
+      break;
+    case 'warlock_hood': // 术士兜帽：罩顶 + 后柱帽沿 + 紫瞳幽光（暴击流）
+      ctx.fillStyle = '#2a2433';
+      ctx.fillRect(px - 1, headTop, hw, 1);
+      ctx.fillRect(f > 0 ? px - 1 : px + (giant ? 2 : 1) - 1, faceTop, 1, 1);
+      ctx.fillStyle = ((t >> 2) & 1) === 1 ? '#b56cf0' : '#8a3fd0'; ctx.fillRect(pc, faceTop, 1, 1);
+      break;
+    case 'viking_helm': // 维京战盔：钢顶 + 双侧白翼
+      ctx.fillStyle = steel; ctx.fillRect(px - 1, headTop, hw, 1);
+      ctx.fillStyle = '#e8e8e8';
+      ctx.fillRect(px - 2, headTop - 1, 1, 1); ctx.fillRect(px + (giant ? 2 : 1), headTop - 1, 1, 1);
+      break;
+    case 'skull_mask': // 骷髅面甲：骨面接管脸 + 眼窝 + 齿线
+      ctx.fillStyle = '#e8e0d0'; ctx.fillRect(px - 1, faceTop, hw, 1);
+      ctx.fillStyle = '#14100c'; ctx.fillRect(pc, faceTop, 1, 1);
+      ctx.fillStyle = '#8a8274'; ctx.fillRect(px - 1, faceTop + 1, hw, 1);
+      break;
+    case 'gold_crown': // 黄金王冠：双齿金冠 + 前齿红宝石
+      ctx.fillStyle = '#f5c842';
+      ctx.fillRect(px - 1, headTop, hw, 1);
+      ctx.fillRect(px - 1, headTop - 1, hw, 1);
+      ctx.fillStyle = '#cf3f2e'; ctx.fillRect(pc, headTop - 1, 1, 1);
+      break;
+    case 'dragon_skull': // 龙骨冠：骨眉 + 后掠双角
+      ctx.fillStyle = '#e8dcc8';
+      ctx.fillRect(px - 1, headTop, hw, 1);
+      ctx.fillRect(ob, headTop - 1, 1, 1);
+      ctx.fillRect(ob - (f > 0 ? 1 : -1), headTop, 1, 1);
+      break;
+    case 'crown_kings': // 王者之冠：金冠三层 + 中尖圣辉闪烁
+      ctx.fillStyle = '#ffd93d';
+      ctx.fillRect(px - 1, headTop, hw, 1);
+      ctx.fillRect(px - 1, headTop - 1, hw, 1);
+      ctx.fillRect(pc, headTop - 2, 1, 1);
+      if (((t >> 3) & 1) === 1) { ctx.fillStyle = '#7df9ff'; ctx.fillRect(pc, headTop - 2, 1, 1); }
+      break;
+    default: // 未知盔：钢盔兜底
+      ctx.fillStyle = steel; ctx.fillRect(px - 1, headTop, hw, 1);
+  }
+}
+
+/** 弓形制：C 形弓臂（上下臂收向身体、弓腹前凸）+ 弦；接敌时搭箭（杆朝面朝方向） */
+function paintBow(ctx: CanvasRenderingContext2D, px: number, hY: number, f: number, atk: boolean) {
+  ctx.fillStyle = '#8a5a34';
+  ctx.fillRect(px + f, hY - 3, 1, 1); // 上弓臂
+  ctx.fillRect(px + 2 * f, hY - 2, 1, 1); // 弓腹（前凸）
+  ctx.fillRect(px + f, hY - 1, 1, 1); // 下弓臂
+  ctx.fillStyle = '#d8d0c0'; ctx.fillRect(px + f, hY - 2, 1, 1); // 弦
+  if (atk) {
+    ctx.fillStyle = '#6e4a2b'; ctx.fillRect(px + 2 * f, hY - 2, 1, 1); // 箭杆
+    ctx.fillStyle = '#e8e8e8'; ctx.fillRect(px + 3 * f, hY - 2, 1, 1); // 箭簇
+  }
+}
+
+/** 杖形制：竖杖身 + 顶珠（学徒/法师/风暴/大魔导师各自宝珠色，高阶呼吸闪烁）；施法时杖顶闪光 */
+function paintStaff(ctx: CanvasRenderingContext2D, u: Unit, px: number, hY: number, f: number, t: number) {
+  const sx = px + 2 * f;
+  ctx.fillStyle = '#6e4a2b'; ctx.fillRect(sx, hY - 3, 1, 3);
+  const orbs: Record<string, [string, boolean]> = {
+    wood_staff: ['#c9873a', false], mage_staff: ['#5ba8e0', false],
+    storm_staff: ['#7df9ff', true], archmage_staff: ['#b56cf0', true],
+  };
+  const orb = orbs[u.wep ?? ''] ?? ['#c9873a', false];
+  ctx.fillStyle = orb[1] && ((t >> 2) & 1) === 1 ? '#ffffff' : orb[0];
+  ctx.fillRect(sx, hY - 4, 1, 1);
+  if ((u.atk ?? 0) > 0) {
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(sx, hY - 5, 1, 1); // 施法闪光
+  }
+}
+
+/** 斧形制：斧柄垂立 + 顶刃；挥砍时刃高举过顶 + 刃光 */
+function paintAxe(ctx: CanvasRenderingContext2D, px: number, hY: number, f: number, atk: boolean) {
+  const hx = px + 2 * f;
+  if (atk) {
+    ctx.fillStyle = '#6e4a2b'; ctx.fillRect(hx, hY - 3, 1, 2);
+    ctx.fillStyle = '#dfe4ea'; ctx.fillRect(hx, hY - 4, 1, 1);
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(hx + f, hY - 4, 1, 1);
+  } else {
+    ctx.fillStyle = '#6e4a2b'; ctx.fillRect(hx, hY - 2, 1, 2);
+    ctx.fillStyle = '#b7bec6'; ctx.fillRect(hx, hY - 3, 1, 1);
+  }
+}
+
+
 /**
  * 精细动态人形（恶魔级身形标准）：多部件身体 —— 地面阴影 / 交替跨步的双腿 /
  * 反相摆动的双臂 / 头部（发色/瞳孔/种族特征：精灵尖耳、矮人胡须、兽人獠牙、
@@ -56,6 +291,8 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
     // 阴影
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.fillRect(px - 2, gy + 3, 5, 1);
+    // 披风背饰层（身后最先画）
+    paintCape(ctx, u, px, gy, f, isMoving, t, true);
     // 头 3x2 + 发
     ctx.fillStyle = hairCol;
     ctx.fillRect(px - 1, gy - 4, 3, 1);
@@ -63,12 +300,18 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
     ctx.fillRect(px - 1, gy - 3, 3, 2);
     ctx.fillStyle = '#14100c';
     ctx.fillRect(px + (u.flip ? -2 : 1), gy - 3, 1, 1);
+    // 头盔装备层（巨盔：压发而绘）
+    paintHelmet(ctx, u, px, gy - 4, gy - 3, f, t, true);
     // 躯干 3x2 + 巨臂
     ctx.fillStyle = u.hurt > 0 ? '#ff3b30' : rgb(cloth);
     ctx.fillRect(px - 1, gy - 1, 3, 2);
     ctx.fillStyle = rgb(skin);
     ctx.fillRect(px - 3, gy - 1, 1, 2);
     ctx.fillRect(px + 2, gy - 1, 1, 2);
+    // 胸甲片（宽甲 3 版：形制分层）
+    paintArmorPlate(ctx, u, px, gy, f, t, 3);
+    // 盾牌副手层（巨盾）
+    paintShield(ctx, u, px, gy, f, t, true);
     // 双腿跨步
     ctx.fillStyle = rgb(pants);
     if (step === 1) {
@@ -101,15 +344,26 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
         }
       }
     } else if (u.wep) {
-      ctx.fillStyle = u.wep === 'sword3' ? '#ffd93d' : u.wep === 'sword2' ? '#e8e8e8' : '#9a8f7a';
-      if ((u.atk ?? 0) > 0) ctx.fillRect(px + 2 * f, gy - 4, 1, 3);
-      else ctx.fillRect(px + 2 * f, gy - 2, 1, 3);
+      const art = ITEM_DEFS[u.wep]?.art;
+      if (art === 'bow') {
+        paintBow(ctx, px, gy - 1, f, (u.atk ?? 0) > 0);
+      } else if (art === 'staff') {
+        paintStaff(ctx, u, px, gy - 1, f, t);
+      } else if (art === 'axe') {
+        paintAxe(ctx, px, gy - 1, f, (u.atk ?? 0) > 0);
+      } else {
+        ctx.fillStyle = u.wep === 'sword3' ? '#ffd93d' : u.wep === 'sword2' ? '#e8e8e8' : '#9a8f7a';
+        if ((u.atk ?? 0) > 0) ctx.fillRect(px + 2 * f, gy - 4, 1, 3);
+        else ctx.fillRect(px + 2 * f, gy - 2, 1, 3);
+      }
     }
   } else {
     // ---- 常规身形（总高 6px：头2 躯干2 腿2；哥布林矮一号） ----
     const hY = goblin ? y + 1 : y; // 哥布林整体压低 1px
     ctx.fillStyle = 'rgba(0,0,0,0.28)';
     ctx.fillRect(px - 1, y + 3, 3, 1);
+    // 披风背饰层（身后最先画：披在背上，被躯干/手臂覆盖正面轮廓）
+    paintCape(ctx, u, px, hY, f, isMoving, t);
     // 双腿：交替跨步（一条全长一条收起）
     ctx.fillStyle = rgb(pants);
     const legH = goblin ? 1 : 2;
@@ -130,12 +384,8 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
     const tx = race === R.DWARF ? px - 1 : px - 1;
     ctx.fillStyle = u.hurt > 0 ? '#ff3b30' : rgb(cloth);
     ctx.fillRect(tx, hY - 1, torsoW, 2);
-    // 护甲：胸前甲片
-    if (u.arm) {
-      ctx.fillStyle = u.arm === 'armor2' ? '#cfd4da' : '#b58a5a';
-      ctx.fillRect(px - 1, hY - 1, 1, 1);
-      ctx.fillRect(px, hY - 1, 1, 1);
-    }
+    // 护甲：胸前甲片（17 种甲形制分层：底色 + 前缘细节点 + 流光呼吸）
+    paintArmorPlate(ctx, u, px, hY, f, t, torsoW);
     // 双臂：反相摆动（僵尸双臂前伸平举）
     ctx.fillStyle = rgb(skin);
     if (zombie) {
@@ -156,6 +406,8 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
       ctx.fillRect(px - 2, hY - 1, 1, 2);
       ctx.fillRect(px + 1, hY - 1, 1, 2);
     }
+    // 盾牌副手层：挂于身侧；接敌举盾前护（盾墙朝向敌阵）
+    paintShield(ctx, u, px, hY, f, t);
     // 头 2x2 + 发
     ctx.fillStyle = hairCol;
     ctx.fillRect(px - 1, hY - 3, 2, 1);
@@ -164,14 +416,16 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
     // 瞳孔（朝向前方一格）
     ctx.fillStyle = race === R.ORC || race === R.GOBLIN ? '#cf3f2e' : race === R.LIZARD ? '#ffd93d' : '#14100c';
     ctx.fillRect(px + (f > 0 ? 0 : -1), hY - 2, 1, 1);
+    // 全覆式盔（骑士/术士/骷髅）接管脸与耳位——尖耳/大耳被盔壳遮住
+    const fullCover = u.hlm === 'knight_helm' || u.hlm === 'warlock_hood' || u.hlm === 'skull_mask';
     // —— 种族特征 ——
-    if (race === R.ELF) {
+    if (race === R.ELF && !fullCover) {
       // 精灵尖耳
       ctx.fillStyle = rgb(skin);
       ctx.fillRect(px - 2, hY - 2, 1, 1);
       ctx.fillRect(px + 1, hY - 2, 1, 1);
-    } else if (race === R.DWARF) {
-      // 矮人：钢盔 + 浓须盖胸
+    } else if (race === R.DWARF && !u.hlm) {
+      // 矮人：钢盔（未戴装备盔时） + 浓须盖胸
       ctx.fillStyle = '#c0c6cc';
       ctx.fillRect(px - 1, hY - 3, 2, 1);
       ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#c96a15';
@@ -181,44 +435,46 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
       ctx.fillStyle = '#f2ead8';
       ctx.fillRect(px - 1, hY, 1, 1);
       ctx.fillRect(px + 1, hY, 1, 1);
-    } else if (race === R.BANDIT) {
-      // 强盗：兜帽罩头（露一眼孔）
+    } else if (race === R.BANDIT && !u.hlm) {
+      // 强盗：兜帽罩头（露一眼孔）；戴了装备盔则盔代帽
       ctx.fillStyle = '#3a342c';
       ctx.fillRect(px - 1, hY - 3, 2, 3);
       ctx.fillStyle = '#cf3f2e';
       ctx.fillRect(px + (f > 0 ? 0 : -1), hY - 2, 1, 1);
     } else if (race === R.LIZARD) {
-      // 蜥蜴人：头冠 + 吻部前伸 + 身后摆尾
-      ctx.fillStyle = '#2c5e24';
-      ctx.fillRect(px - 1, hY - 3, 2, 1);
+      // 蜥蜴人：头冠（未戴盔时） + 吻部前伸 + 身后摆尾
+      if (!u.hlm) {
+        ctx.fillStyle = '#2c5e24';
+        ctx.fillRect(px - 1, hY - 3, 2, 1);
+      }
       ctx.fillStyle = rgb(skin);
       ctx.fillRect(px + 2 * f, hY - 2, 1, 1);
       ctx.fillStyle = '#2c5e24';
       const tailUp = ((t >> 3) & 1) === 1;
       ctx.fillRect(px - 2 * f, hY + 1, 1, 1);
       ctx.fillRect(px - 3 * f, tailUp ? hY : hY + 1, 1, 1);
-    } else if (goblin) {
+    } else if (goblin && !fullCover) {
       // 哥布林：横向大耳
       ctx.fillStyle = rgb(skin);
       ctx.fillRect(px - 2, hY - 2, 1, 1);
       ctx.fillRect(px + 1, hY - 2, 1, 1);
     } else if (vis) {
-      // v3 涌现亚种标记：尖耳/头角/荧光瞳/头冠/条纹 —— 血统写在脸上
-      if (vis.ears === 2) {
+      // v3 涌现亚种标记：尖耳/头角/荧光瞳/头冠/条纹 —— 血统写在脸上（头角/头冠被装备盔遮住）
+      if (vis.ears === 2 && !fullCover) {
         ctx.fillStyle = rgb(skin);
         ctx.fillRect(px - 2, hY - 3, 1, 2);
         ctx.fillRect(px + 1, hY - 3, 1, 2);
-      } else if (vis.ears === 1) {
+      } else if (vis.ears === 1 && !fullCover) {
         ctx.fillStyle = rgb(skin);
         ctx.fillRect(px - 2, hY - 2, 1, 1);
         ctx.fillRect(px + 1, hY - 2, 1, 1);
       }
-      if (vis.horns >= 1) {
+      if (vis.horns >= 1 && !u.hlm) {
         ctx.fillStyle = shiftColor('#e8dcc8', vis, -0.08);
         ctx.fillRect(px - 1, hY - 4, 1, 1);
         if (vis.horns >= 2) ctx.fillRect(px, hY - 4, 1, 1);
       }
-      if (vis.crest) {
+      if (vis.crest && !u.hlm) {
         ctx.fillStyle = shiftColor('#cf3f2e', vis, 0.1);
         ctx.fillRect(px - 1, hY - 4, 2, 1);
       }
@@ -235,7 +491,9 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
         ctx.fillRect(px, hY, 1, 1);
       }
     }
-    // 武器：体侧佩械（攻击时前挥 + 白刃光）/ 火枪（水平枪身 + 枪口爆闪）/ 相位光束枪（青色能量槽）
+    // 头盔装备层：压发而绘（在头脸/种族特征之后 —— 盔壳遮住发型与头饰）
+    paintHelmet(ctx, u, px, hY - 3, hY - 2, f, t);
+    // 武器：按形制分绘（火枪族枪管+枪口焰 / 弓 C 形弓臂搭箭 / 法杖顶珠 / 斧刃 / 刃械）
     if (u.wep === 'musket' || u.wep === 'rifle' || u.wep === 'laser_rifle') {
       const fut = u.wep === 'laser_rifle';
       ctx.fillStyle = fut ? '#1d2b36' : u.wep === 'rifle' ? '#3a3f4a' : '#4a4038';
@@ -270,35 +528,46 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
         }
       }
     } else if (u.wep) {
-      ctx.fillStyle = u.wep === 'sword3' ? '#ffd93d' : u.wep === 'sword2' ? '#e8e8e8' : '#9a8f7a';
-      if ((u.atk ?? 0) > 0) {
-        ctx.fillRect(px + 2 * f, hY - 3, 1, 2);
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(px + 3 * f, hY - 2, 1, 1);
+      const art = ITEM_DEFS[u.wep]?.art;
+      if (art === 'bow') {
+        paintBow(ctx, px, hY, f, (u.atk ?? 0) > 0);
+      } else if (art === 'staff') {
+        paintStaff(ctx, u, px, hY, f, t);
+      } else if (art === 'axe') {
+        paintAxe(ctx, px, hY, f, (u.atk ?? 0) > 0);
       } else {
-        ctx.fillRect(px + 2 * f, hY - 2, 1, 2);
+        // 刃械：体侧佩械（攻击时前挥 + 白刃光）
+        ctx.fillStyle = u.wep === 'sword3' ? '#ffd93d' : u.wep === 'sword2' ? '#e8e8e8' : '#9a8f7a';
+        if ((u.atk ?? 0) > 0) {
+          ctx.fillRect(px + 2 * f, hY - 3, 1, 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(px + 3 * f, hY - 2, 1, 1);
+        } else {
+          ctx.fillRect(px + 2 * f, hY - 2, 1, 2);
+        }
       }
     }
   }
-  // 职业徽标（头顶信物）：一眼可辨的分工
+  // 职业徽标（头顶信物）：一眼可辨的分工（高帽顶起徽标——法师尖帽/王冠不被压住）
   const job = u.job ?? 0;
   if (u.trait !== 'giant') {
     const jY = goblin ? y + 1 : y;
+    const lift = hatBadgeLift(u);
     if (job === 1) {
       ctx.fillStyle = '#ffd93d';
-      ctx.fillRect(px - 1, jY - 4, 2, 1);
+      ctx.fillRect(px - 1, jY - 4 - lift, 2, 1);
     } else if (job === 2) {
       ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#c0c6cc';
-      ctx.fillRect(px - 1, jY - 4, 2, 1);
+      ctx.fillRect(px - 1, jY - 4 - lift, 2, 1);
       ctx.fillStyle = '#cf3f2e';
-      ctx.fillRect(px - 1, jY - 5, 1, 1);
+      ctx.fillRect(px - 1, jY - 5 - lift, 1, 1);
     } else if (job === 3) {
       ctx.fillStyle = '#8a5a2c';
       ctx.fillRect(px + (u.flip ? -3 : 2), jY - 2, 1, 1);
       ctx.fillRect(px + (u.flip ? -3 : 2), jY, 1, 1);
     } else if (job === 4) {
       ctx.fillStyle = '#ff9b2d';
-      ctx.fillRect(px - 1, jY - 4, 2, 1);
+      ctx.fillRect(px - 1, jY - 4 - lift, 2, 1);
     } else if (job === 5) {
       ctx.fillStyle = '#ffd93d';
       ctx.fillRect(px + (u.flip ? -2 : 1), jY - 1, 1, 1);
@@ -2467,6 +2736,20 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
   ctx.fillRect(fx - 3, fy + 1, 1, 1);
   ctx.fillRect(fx + 3, fy + 1, 1, 1);
 
+  // —— 0.5 披风背饰层（暗影斗篷/帝王华服：身后先画，下摆随步频摆动） ——
+  if (u.arm === 'shadow_cloak' || u.arm === 'emperor_robe') {
+    const royal = u.arm === 'emperor_robe';
+    const flutter = isMoving && ((t >> 3) & 1) === 1 ? 1 : 0;
+    const capeX = fx - 4 * f;
+    ctx.fillStyle = royal ? '#5a1f8a' : '#241f30';
+    ctx.fillRect(capeX, dy - 9, 2, 8 - flutter); // 披风身（背侧 2 宽垂坠）
+    ctx.fillRect(capeX - f, dy - 8 + flutter, 1, 6 - flutter); // 下摆外扩摆动
+    if (royal) {
+      ctx.fillStyle = '#f5c842';
+      ctx.fillRect(capeX - f, dy - 2 - flutter, 1, 1); // 金线 hem
+    }
+  }
+
   // —— 1. 双腿（四相步态：前后腿交替伸缩 + 前后错位） ——
   const legTop = dy - 3;
   ctx.fillStyle = rgb(pants);
@@ -2495,15 +2778,24 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
   ctx.fillStyle = hurt ? '#ff6b5e' : rgb(mix(cloth, [235, 230, 220], 0.18));
   ctx.fillRect(f > 0 ? tx + torsoW - 1 : tx, dy - 7, 1, 2); // 受光缘
 
-  // —— 4. 护甲（胸甲板 + 双肩垫） ——
+  // —— 4. 护甲（17 形制分层：形制表底色甲板 + 高光 + 细节点/流光；金属甲配钢色肩垫） ——
   if (u.arm) {
-    const steel = u.arm === 'armor2' || u.arm === 'armor3';
-    ctx.fillStyle = steel ? '#cfd4da' : '#b58a5a';
+    const look = ARMOR_LOOK[u.arm];
+    const metal = look ? /plate|mail|shell|scale|armor/.test(u.arm) : false;
+    ctx.fillStyle = look ? look.base : '#b58a5a';
     ctx.fillRect(tx + 1, dy - 7, torsoW - 2, 2);
-    ctx.fillStyle = steel ? '#eef2f6' : '#d8b078';
+    ctx.fillStyle = look?.det ?? (metal ? '#eef2f6' : '#d8b078');
     ctx.fillRect(tx + 1, dy - 7, 1, 1); // 甲面高光
-    ctx.fillStyle = steel ? '#9aa2ac' : '#8a6238';
-    ctx.fillRect(tx - 1, dy - 7, 1, 2); // 肩垫 ×2
+    if (look?.det && !look.glow) {
+      ctx.fillStyle = look.det;
+      ctx.fillRect(tx + torsoW - 2, dy - 6, 1, 1); // 铆钉/鳞点/滚边（前缘）
+    }
+    if (look?.glow && ((t >> 3) & 1) === 1) {
+      ctx.fillStyle = look.det ?? '#ffffff';
+      ctx.fillRect(tx + torsoW - 2, dy - 6, 1, 1); // 流光呼吸交替
+    }
+    ctx.fillStyle = metal ? '#9aa2ac' : '#8a6238';
+    ctx.fillRect(tx - 1, dy - 7, 1, 2); // 肩垫 ×2（随甲色系）
     ctx.fillRect(tx + torsoW, dy - 7, 1, 2);
   }
 
@@ -2520,6 +2812,43 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
     const swing = ph === 1 || ph === 2 ? 1 : 0;
     ctx.fillRect(fx - 3, dy - 7 + (isMoving && swing ? 0 : 1), 1, 2);
     ctx.fillRect(fx + 2 + (isMoving && swing ? 1 : 0), dy - 7 + (isMoving && swing ? 1 : 0), 1, 2);
+  }
+
+  // —— 5.5 盾牌副手层（平时挂面朝反侧；接敌举盾前护 —— 盾墙朝向敌阵） ——
+  if (u.shd) {
+    const sx0 = atk ? fx + 2 * f : fx - 5 * f;
+    const stop = dy - 9;
+    switch (u.shd) {
+      case 'round_shield': // 圆木盾：木底 2 宽 + 铁钉心
+        ctx.fillStyle = '#8a5a34'; ctx.fillRect(sx0, stop, 2, 5);
+        ctx.fillStyle = '#c0c6cc'; ctx.fillRect(sx0, stop + 2, 2, 1);
+        ctx.fillStyle = '#6e4a2b'; ctx.fillRect(sx0, stop, 2, 1);
+        break;
+      case 'wood_shield': // 木盾：深木 2x6 + 板缝
+        ctx.fillStyle = '#6e4a2b'; ctx.fillRect(sx0, stop, 2, 6);
+        ctx.fillStyle = '#4a3420'; ctx.fillRect(sx0, stop + 2, 2, 1); ctx.fillRect(sx0, stop + 4, 2, 1);
+        break;
+      case 'kite_shield': // 鸢形盾：蓝钢 2x4 收底 + 金脊
+        ctx.fillStyle = '#5a78a0'; ctx.fillRect(sx0, stop, 2, 4);
+        ctx.fillRect(sx0 + (f > 0 ? 0 : 1), stop + 4, 1, 2);
+        ctx.fillStyle = '#f5c842'; ctx.fillRect(sx0, stop, 2, 1);
+        break;
+      case 'spiked_shield': // 刺击盾：木底 + 外向双棘（举盾时刺向敌向）
+        ctx.fillStyle = '#6e4a2b'; ctx.fillRect(sx0, stop, 2, 5);
+        ctx.fillStyle = '#e8e8e8';
+        ctx.fillRect(atk ? sx0 + 2 * f : sx0 + (f > 0 ? 1 : 0), stop - 1, 1, 2);
+        break;
+      case 'iron_shield': // 铁盾：灰钢 2x5 + 双铆钉行
+        ctx.fillStyle = '#b7bec6'; ctx.fillRect(sx0, stop, 2, 5);
+        ctx.fillStyle = '#6e7884'; ctx.fillRect(sx0, stop + 1, 2, 1); ctx.fillRect(sx0, stop + 3, 2, 1);
+        break;
+      case 'tower_shield': // 塔盾：半身高木墙 2x8 + 双铁箍
+        ctx.fillStyle = '#8a5a34'; ctx.fillRect(sx0, stop - 1, 2, 8);
+        ctx.fillStyle = '#6e7884'; ctx.fillRect(sx0, stop + 1, 2, 1); ctx.fillRect(sx0, stop + 4, 2, 1);
+        break;
+      default: // 未知盾：木底兜底
+        ctx.fillStyle = '#8a5a34'; ctx.fillRect(sx0, stop, 2, 5);
+    }
   }
 
   // —— 6. 颈 ——
@@ -2587,8 +2916,8 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
     }
   }
 
-  // —— 9. 涌现标记（视觉基因组：头角/头冠/荧光瞳已在眼色处理） ——
-  if (vis) {
+  // —— 9. 涌现标记（视觉基因组：头角/头冠/荧光瞳已在眼色处理；戴盔时头角/头冠被罩住） ——
+  if (vis && !u.hlm) {
     if (vis.horns >= 1) {
       ctx.fillStyle = '#e8dcc0';
       ctx.fillRect(fx - 2, hy - 3, 1, 1);
@@ -2609,17 +2938,81 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
     }
   }
 
-  // —— 10. 头盔（罩发 + 鼻梁护条） ——
+  // —— 10. 头盔（12 形制分层：罩发压绘；全覆式接管眼位，开放盔保留五官） ——
   if (u.hlm) {
-    const steel = u.hlm === 'hlm2' || u.hlm === 'hlm3';
-    ctx.fillStyle = steel ? '#cfd4da' : '#b58a5a';
-    ctx.fillRect(fx - 2, hy - 2, 4, 2);
-    ctx.fillRect(fx - 2, hy, 1, 1);
-    ctx.fillRect(fx + 1, hy, 1, 1);
-    ctx.fillStyle = steel ? '#eef2f6' : '#d8b078';
-    ctx.fillRect(fx - 1, hy - 2, 2, 1);
-    ctx.fillStyle = steel ? '#9aa2ac' : '#8a6238';
-    ctx.fillRect(fx + (f > 0 ? 1 : -2), hy, 1, 2); // 鼻梁护条朝前
+    const steel = '#b7bec6', steelL = '#cfd4da', steelD = '#9aa2ac';
+    switch (u.hlm) {
+      case 'leather_cap': // 皮帽：皮革顶 + 前伸帽檐
+        ctx.fillStyle = '#8a5a34'; ctx.fillRect(fx - 2, hy - 2, 4, 2);
+        ctx.fillStyle = '#6e4a2b'; ctx.fillRect(fx + (f > 0 ? 2 : -3), hy - 1, 1, 1);
+        break;
+      case 'archer_cap': // 猎手帽：绿帽 + 后飘红翎
+        ctx.fillStyle = '#4a7a34'; ctx.fillRect(fx - 2, hy - 2, 4, 2);
+        ctx.fillStyle = '#cf3f2e'; ctx.fillRect(fx + (f > 0 ? -3 : 2), hy - 3, 1, 1);
+        break;
+      case 'iron_helm': // 铁盔：钢顶 + 高光 + 鼻梁护条
+        ctx.fillStyle = steel; ctx.fillRect(fx - 2, hy - 2, 4, 2);
+        ctx.fillStyle = steelL; ctx.fillRect(fx - 1, hy - 2, 2, 1);
+        ctx.fillStyle = steelD; ctx.fillRect(fx + (f > 0 ? 1 : -2), hy, 1, 2);
+        break;
+      case 'horned_helm': // 兽角盔：钢顶 + 双骨角外张
+        ctx.fillStyle = steel; ctx.fillRect(fx - 2, hy - 2, 4, 2);
+        ctx.fillStyle = '#e8dcc8';
+        ctx.fillRect(fx - 3, hy - 4, 1, 2); ctx.fillRect(fx + 2, hy - 4, 1, 2);
+        break;
+      case 'wizard_hat': { // 法师尖帽：5 宽帽檐 + 前倾锥顶 + 星尖闪烁
+        ctx.fillStyle = '#6a3cb0'; ctx.fillRect(fx - 3, hy - 1, 5, 1);
+        ctx.fillStyle = '#7d4bc4'; ctx.fillRect(fx + (f > 0 ? 0 : -1), hy - 3, 1, 2);
+        if (((t >> 3) & 1) === 1) { ctx.fillStyle = '#7df9ff'; ctx.fillRect(fx + (f > 0 ? 0 : -1), hy - 4, 1, 1); }
+        break;
+      }
+      case 'knight_helm': // 骑士全盔：钢面覆脸 + 目缝 + 后飘盔缨
+        ctx.fillStyle = steelL;
+        ctx.fillRect(fx - 2, hy - 2, 4, 2);
+        ctx.fillRect(fx - 2, hy, 4, 2);
+        ctx.fillStyle = '#14100c'; ctx.fillRect(fx - 1, hy + 1, 3, 1);
+        ctx.fillStyle = '#cf3f2e'; ctx.fillRect(fx + (f > 0 ? -3 : 2), hy - 3, 1, 2);
+        break;
+      case 'warlock_hood': // 术士兜帽：罩顶 + 双侧帽沿 + 紫瞳幽光
+        ctx.fillStyle = '#2a2433';
+        ctx.fillRect(fx - 2, hy - 2, 4, 2);
+        ctx.fillRect(fx - 3, hy - 1, 1, 3); ctx.fillRect(fx + 2, hy - 1, 1, 3);
+        ctx.fillStyle = ((t >> 2) & 1) === 1 ? '#b56cf0' : '#8a3fd0';
+        ctx.fillRect(fx - 1, hy + 1, 3, 1);
+        break;
+      case 'viking_helm': // 维京战盔：钢顶 + 双侧白翼
+        ctx.fillStyle = steel; ctx.fillRect(fx - 2, hy - 2, 4, 2);
+        ctx.fillStyle = '#e8e8e8';
+        ctx.fillRect(fx - 3, hy - 4, 1, 2); ctx.fillRect(fx + 2, hy - 4, 1, 2);
+        break;
+      case 'skull_mask': // 骷髅面甲：骨面接管 + 双眼窝 + 齿线
+        ctx.fillStyle = '#e8e0d0'; ctx.fillRect(fx - 2, hy, 4, 3);
+        ctx.fillStyle = '#14100c'; ctx.fillRect(fx - 1, hy + 1, 1, 1); ctx.fillRect(fx + 1, hy + 1, 1, 1);
+        ctx.fillStyle = '#8a8274'; ctx.fillRect(fx - 1, hy + 2, 3, 1);
+        break;
+      case 'gold_crown': // 黄金王冠：金冠带 + 双齿 + 前齿红宝石
+        ctx.fillStyle = '#f5c842';
+        ctx.fillRect(fx - 2, hy - 2, 4, 1);
+        ctx.fillRect(fx - 2, hy - 3, 1, 1); ctx.fillRect(fx + 1, hy - 3, 1, 1);
+        ctx.fillStyle = '#cf3f2e'; ctx.fillRect(fx + (f > 0 ? 1 : -2), hy - 3, 1, 1);
+        break;
+      case 'dragon_skull': // 龙骨冠：骨顶 + 后掠双角
+        ctx.fillStyle = '#e8dcc8';
+        ctx.fillRect(fx - 2, hy - 2, 4, 2);
+        ctx.fillRect(fx + (f > 0 ? -4 : 3), hy - 3, 1, 1);
+        ctx.fillRect(fx + (f > 0 ? -3 : 2), hy - 4, 1, 1);
+        break;
+      case 'crown_kings': // 王者之冠：金冠双层 + 中尖圣辉闪烁
+        ctx.fillStyle = '#ffd93d';
+        ctx.fillRect(fx - 2, hy - 2, 4, 1);
+        ctx.fillRect(fx - 2, hy - 3, 4, 1);
+        ctx.fillRect(fx, hy - 4, 1, 1);
+        if (((t >> 3) & 1) === 1) { ctx.fillStyle = '#7df9ff'; ctx.fillRect(fx, hy - 4, 1, 1); }
+        break;
+      default: // 未知盔：钢盔兜底
+        ctx.fillStyle = steel; ctx.fillRect(fx - 2, hy - 2, 4, 2);
+        ctx.fillStyle = steelL; ctx.fillRect(fx - 1, hy - 2, 2, 1);
+    }
   }
 
   // —— 11. 持械（攻击姿势：举过肩） ——
@@ -2651,8 +3044,23 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
     } else if (fam === 'spear') {
       ctx.fillStyle = '#6e4a2b';
       ctx.fillRect(wx, wy - 2, 1, 8); // 长杆
-      ctx.fillStyle = '#d8d8d8';
-      ctx.fillRect(wx, wy - 4, 1, 2); // 枪尖
+      if (u.wep?.includes('staff')) {
+        // 法杖：杖顶宝珠（学徒/法师/风暴/大魔导师各色；高阶呼吸闪烁）+ 施法闪光
+        const orbs: Record<string, [string, boolean]> = {
+          wood_staff: ['#c9873a', false], mage_staff: ['#5ba8e0', false],
+          storm_staff: ['#7df9ff', true], archmage_staff: ['#b56cf0', true],
+        };
+        const orb = orbs[u.wep] ?? ['#c9873a', false];
+        ctx.fillStyle = orb[1] && ((t >> 2) & 1) === 1 ? '#ffffff' : orb[0];
+        ctx.fillRect(wx, wy - 3, 1, 1);
+        if (atk) {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(wx, wy - 4, 1, 1);
+        }
+      } else {
+        ctx.fillStyle = '#d8d8d8';
+        ctx.fillRect(wx, wy - 4, 1, 2); // 枪尖
+      }
     } else if (fam === 'bow') {
       ctx.strokeStyle = '#6e4a2b';
       ctx.lineWidth = 1;
