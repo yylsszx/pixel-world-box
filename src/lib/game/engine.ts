@@ -8481,6 +8481,10 @@ export class GameEngine {
     if (this.civSiege.has(civ.id)) s -= 10;
     // —— 城防已破：本方城内存有鲜破口（#27 breaches 名册）——「墙上开了口子」是全城皆知的绝望 ——
     if (this.breachPressureOf(civ.id)) s -= 4;
+    // —— 民心互连（#33）：stability 是战争承受力的民意根基——破口民怨（#30 巷战深账）/饥荒/重税压垮的民心同样拖垮战争意志；
+    //    城下之盟的历史语义：城破民怨沸腾之国撑不到厌战爆表，先在谈判桌上屈膝（stab≥60 常态国零影响，旧档兼容）
+    const stab = civ.stability ?? 70;
+    if (stab < 60) s -= (60 - stab) * 0.5;
     s -= ex * 0.5;
     s -= (isA ? (wd.wearA ?? 0) : (wd.wearB ?? 0)) * 0.24; // 厌战度侵蚀承受力
     s -= razedAgainst * 1.2;
