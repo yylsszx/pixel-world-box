@@ -538,6 +538,14 @@ export class GameEngine {
   /** 各文明建筑分类计数（civsTick 每 5 tick 重建：civId → [kind 计数]） */
   civBuildCounts = new Map<number, number[]>();
 
+  // ---------------- 守土体系（个体守军层：驻墙列阵 × 巷战堵截） ----------------
+  /** 兵临登记（defenseTick 每 10 tick 重建：civId → 威胁焦点军团旗坐标；判据与解围驰援同源——交战敌军团旗距王都 14 格内）。瞬态不入档 */
+  civSiege = new Map<number, { x: number; y: number; tick: number }>();
+  /** 破口名册：交战中被敌军破开的城墙（onBuildingDestroyed 登记，150 tick 鲜度——巷战堵截的集结坐标）。瞬态不入档 */
+  breaches: { i: number; x: number; y: number; civ: number; tick: number }[] = [];
+  /** 驻墙战位（unitId → 墙 tile 序号：战位失效前不重扫——守军不换岗不叠位）。瞬态不入档 */
+  garrisonOf = new Map<number, number>();
+
   // ---------------- 军团方阵体系 ----------------
   /** 现役军团列表 */
   armies: Army[] = [];
@@ -1910,6 +1918,36 @@ export class GameEngine {
     return 1;
   }
 
+  // ---------------- 守土体系（个体守军层：驻墙列阵 × 巷战堵截） ----------------
+  /** 最近的新鲜破口（r 内、150 tick 鲜度——超过视为战况已变不再驰援）。返回集结点坐标（无 null） */
+  freshBreachNear(u: Unit, r: number): { x: number; y: number } | null {
+    let best: { x: number; y: number } | null = null;
+    let bestD = r * r;
+    const tk = this.tickCount;
+    for (const br of this.breaches) {
+      if (br.civ !== u.civ || tk - br.tick >= 150) continue;
+      const dx = br.x - u.x;
+      const dy = br.y - u.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD) { bestD = d2; best = { x: br.x, y: br.y }; }
+    }
+    return best;
+  }
+
+  /** 驻墙战位拣选：受威胁面（威胁焦点 12 格）内的己方墙段按近度排序，守军按 id 错位分摊至
+   *  最近的至多 4 段（列阵成线不叠罗汉——同段守军自然错格站位）。返回 tile 序号（无墙 -1） */
+  private garrisonSpot(u: Unit, tx: number, ty: number): number {
+    const cand: { i: number; d: number }[] = [];
+    for (const b of this.buildings) {
+      if (b.civ !== u.civ || b.kind !== BUILD_KINDS.WALL) continue;
+      const dw = Math.hypot(b.x + 0.5 - tx, b.y + 0.5 - ty);
+      if (dw < 12) cand.push({ i: b.i, d: dw });
+    }
+    if (cand.length === 0) return -1;
+    cand.sort((p, q) => p.d - q.d);
+    return cand[u.id % Math.min(4, cand.length)].i;
+  }
+
   // ---------------- 道路网络（深度打磨：村庄脉络） ----------------
   /** A* 寻路（8 向；避水/山/岩浆；曼哈顿启发 + 二叉小顶堆；节点预算上限）。
    *  返回含起终点的 tile 路径，不可达/超预算返回 null */
@@ -2646,6 +2684,7 @@ export class GameEngine {
     if (this.tickCount % 30 === 0) this.worldWarTick();
     // —— 军团方阵体系：状态机每 5 tick 推进（集结/行军/会战/围城/溃退）——
     if (this.tickCount % 5 === 0) this.armyTick();
+    if (this.tickCount % 5 === 3) this.garrisonTick(); // 守土钉扎（与军团调度错峰）
     // —— 地形工程体系：文明改造自然（凿山/运河/填海；错峰扫描）——
     if (this.tickCount % 60 === 12) this.terraformTick();
     // —— 战争体系升级：战争分数结算/割地/亡乏（每 100 tick）——
@@ -4443,6 +4482,9 @@ export class GameEngine {
             // 跨海远征：隔海目标周期性尝试登船（沿岸滑行的单位不会触发 moveUnit 阻断分支，
             // 必须主动检查 — maybeBoardForWar 内部有距离/跨水率/锚地完整校验）
             if (this.rng() < 0.05 && this.maybeBoardForWar(u)) return;
+            // 守土两态（驻墙列阵 × 巷战堵截）由引擎级 garrisonTick 统一钉扎 tx/ty ——
+            // 内核主路径只在抵达/漫游时才覆写目标（行进中尊重既有 tx），JS 回退路径同理；
+            // 引擎级钉扎双路径通吃（#20 nightDang 同型的引擎层通道），不在此处分叉两套实现
             // 推进至最近的敌建筑（抵达或偶发重定目标；1.2² 平方距离判定）
             {
               const tdx = u.tx - u.x;
@@ -4857,6 +4899,12 @@ export class GameEngine {
     const b = this.buildings[bi];
     const kind = b.kind;
     const victimCiv = b.civ;
+    // —— 巷战咽喉：交战破开的城墙登记为破口（守军驰援堵口的集结坐标；瞬态不入档）——
+    //    敌性野怪（僵尸尸潮）破墙同录——byCiv<0；文明攻城须宣战在案
+    if (kind === BUILD_KINDS.WALL && byCiv != null && (byCiv < 0 || this.atWar(byCiv, victimCiv))) {
+      this.breaches.push({ i, x: b.x + 0.5, y: b.y + 0.5, civ: victimCiv, tick: this.tickCount });
+      if (this.breaches.length > 24) this.breaches.shift();
+    }
     const def = BUILDING_DEFS[kind];
     this.destroyBuilding(i);
     if (byCiv == null || byCiv < 0 || byCiv === victimCiv) return; // 天灾/己方摧毁：无战争结算
@@ -5033,6 +5081,28 @@ export class GameEngine {
   // ---------------- 建筑运转：防御/经济/神殿/兵营 ----------------
   /** 箭塔/城堡：每 10 tick 自动射击射程内敌人（守城力量，让攻城付出代价） */
   defenseTick() {
+    // —— 守土簿维护：兵临登记重建 + 破口名册过期清理 + 战位校验（每 10 tick；全瞬态不入档）——
+    //    兵临判据与解围驰援同源：交战敌军团旗距王都 14 格内（团结御侮的同一份军情快报）
+    this.civSiege.clear();
+    for (const c of this.civs) {
+      if (!c?.alive || c.capital < 0 || !this.civAtWar(c.id)) continue;
+      const capX = (c.capital % W) + 0.5;
+      const capY = ((c.capital / W) | 0) + 0.5;
+      for (const o of this.armies) {
+        if (o.civ === c.id || o.state === 'retreat' || o.members.length === 0 || !this.atWar(o.civ, c.id)) continue;
+        if (Math.hypot(o.x - capX, o.y - capY) < 14) { this.civSiege.set(c.id, { x: o.x, y: o.y, tick: this.tickCount }); break; }
+      }
+    }
+    if (this.breaches.length > 0) {
+      const tk = this.tickCount;
+      this.breaches = this.breaches.filter(br => tk - br.tick < 150);
+    }
+    if (this.garrisonOf.size > 0) {
+      for (const [uid, ti] of this.garrisonOf) {
+        const gu = this.unitById.get(uid);
+        if (!gu || gu.dead || this.building[ti] !== BUILD_KINDS.WALL) this.garrisonOf.delete(uid);
+      }
+    }
     for (const b of this.buildings) {
       if (b.kind !== BUILD_KINDS.TOWER && b.kind !== BUILD_KINDS.CASTLE) continue;
       if (!this.civs[b.civ]?.alive) continue;
@@ -5065,6 +5135,55 @@ export class GameEngine {
       }
       if (target && this.rng() < 0.6) {
         this.castArrow({ x: b.x + 0.5, y: b.y + 0.5, civ: b.civ } as Unit, target.x, target.y, dmg);
+      }
+    }
+  }
+
+  /** 守土钉扎（每 5 tick，与 armyTick 错峰）：驻墙列阵 × 巷战堵截的引擎级通道。
+   *  内核主路径的单位 AI 只在「抵达战位/3% 漫游」时才覆写 tx/ty（行进中尊重既有目标，
+   *  经 pack2 热列同步进镜像）——引擎周期性钉扎即可双路径通用地牵引守军（#20 nightDang
+   *  同型的引擎层通道；rust 镜像零改动）。钉扎不越权：敌入视野接战、恐慌溃逃、军团军令
+   *  均由单位 AI / 战斗分支自然优先（钉扎目标仅在无更高优先级行为时被遵照执行）。
+   *  两态：破口优先（150 tick 鲜度内 18 格驰援堵口——破口即绞肉机咽喉）；
+   *  其次兵临驻墙（近畿 40 格战士登上受威胁面墙段战位，站墙格借 wallDefenseOf 28% 减伤）。 */
+  garrisonTick() {
+    if (this.breaches.length === 0 && this.civSiege.size === 0) {
+      if (this.garrisonOf.size > 0) this.garrisonOf.clear(); // 全境无围城：战位名册整体失效（下轮围城按现状重拣）
+      return;
+    }
+    const tk = this.tickCount;
+    for (const u of this.units) {
+      if (u.dead || u.boat || u.army != null) continue;
+      const job = u.job ?? 0;
+      if (job !== 2 && job !== 3) continue;
+      const sg = this.civSiege.get(u.civ);
+      if (!sg || tk - sg.tick >= 60) {
+        if (this.garrisonOf.has(u.id)) this.garrisonOf.delete(u.id); // 围解复岗（战位名册随手清）
+        continue;
+      }
+      const civ = this.civs[u.civ];
+      if (!civ || civ.capital < 0) continue;
+      // 破口优先：新鲜的己方墙破口在驰援圈内 → 弃战位赴咽喉（巷战堵截）
+      const br = this.freshBreachNear(u, 18);
+      if (br) {
+        this.garrisonOf.delete(u.id);
+        u.tx = br.x;
+        u.ty = br.y;
+        continue;
+      }
+      // 兵临驻墙：近畿（40 格）战士钉上受威胁面墙段战位
+      const capX = (civ.capital % W) + 0.5;
+      const capY = ((civ.capital / W) | 0) + 0.5;
+      if (Math.hypot(u.x - capX, u.y - capY) >= 40) continue;
+      let post = this.garrisonOf.get(u.id) ?? -1;
+      if (post < 0 || this.building[post] !== BUILD_KINDS.WALL) {
+        post = this.garrisonSpot(u, sg.x, sg.y); // 战位失效才重扫（墙毁/无墙低频路径）
+        if (post >= 0) this.garrisonOf.set(u.id, post);
+        else this.garrisonOf.delete(u.id);
+      }
+      if (post >= 0) {
+        u.tx = (post % W) + 0.5;
+        u.ty = ((post / W) | 0) + 0.5;
       }
     }
   }
