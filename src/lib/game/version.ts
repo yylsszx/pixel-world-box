@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.60-preview';
+export const GAME_VERSION = 'v0.61-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.61-preview',
+    date: '2026-11-09',
+    items: [
+      '围城之困：被围的城不再死撑到底——王都被围时民意煎熬（厌战加速六成）、承受力动摇；城墙上每破一个口子更是全城皆知的绝望；守不住了会主动签下城下之盟割地求和——「围而不攻」从此是真正的终局选项',
+      '守土两态：兵临城下时近畿战士自动登上受威胁面墙段列阵借墙而战，城墙被破即驰援堵口——破口不再是通道，而是绞肉机咽喉',
+    ],
+  },
   {
     ver: 'v0.60-preview',
     date: '2026-11-09',

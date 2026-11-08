@@ -8396,6 +8396,15 @@ export class GameEngine {
     return { reason: 'border', aggressor: agg, victim: vic };
   }
 
+  /** 本方城内是否存有鲜破口（150 tick 鲜度内）——围城之困感知账（sustain/wear）共用判据 */
+  private breachPressureOf(civId: number): boolean {
+    const tk = this.tickCount;
+    for (const br of this.breaches) {
+      if (br.civ === civId && tk - br.tick < 150) return true;
+    }
+    return false;
+  }
+
   /** 战争承受力（0-100）：军心/财富/政体支撑 − 伤亡/家园烽火/战局不利/人口凋敝。跌破 25 = 无力支撑 */
   sustainOf(civ: Civ, wd: WarInfo, isA: boolean): number {
     const ex = isA ? wd.exA : wd.exB;
@@ -8420,6 +8429,10 @@ export class GameEngine {
     if (this.nature.season === 3) s -= 6;
     // —— 生态互连：饥荒年月，军队与百姓争食 ——
     if (this.ecoState === 'collapse') s -= 8;
+    // —— 围城互连（#28 围城之困感知账）：王都被敌军团围困——补给断绝、士民惶惶、守志动摇 ——
+    if (this.civSiege.has(civ.id)) s -= 10;
+    // —— 城防已破：本方城内存有鲜破口（#27 breaches 名册）——「墙上开了口子」是全城皆知的绝望 ——
+    if (this.breachPressureOf(civ.id)) s -= 4;
     s -= ex * 0.5;
     s -= (isA ? (wd.wearA ?? 0) : (wd.wearB ?? 0)) * 0.24; // 厌战度侵蚀承受力
     s -= razedAgainst * 1.2;
@@ -8815,8 +8828,14 @@ export class GameEngine {
       const imB = this.ideaModsOf(wd.b);
       const popRatioA = Math.max(0, ca.pop) / Math.max(1, wd.popA0);
       const popRatioB = Math.max(0, cb.pop) / Math.max(1, wd.popB0);
-      wd.wearA = Math.min(100, (wd.wearA ?? 0) + (wearBase + (popRatioA < 0.75 ? 2.2 : 0) + (wd.razedA > 0 ? 0 : 0.4)) * (1 + imA.wear) * allyA);
-      wd.wearB = Math.min(100, (wd.wearB ?? 0) + (wearBase + (popRatioB < 0.75 ? 2.2 : 0) + (wd.razedB > 0 ? 0 : 0.4)) * (1 + imB.wear) * allyB);
+      // —— 围城之困（#28 感知账）：王都被围 ×1.6（城内断粮、市民惶惶——「围而不攻」的民意代价）；
+      // 城防破口 +1.2/轮（墙破人慌，围城终局压力——破口即城下之盟的前奏）——
+      const siegeA = this.civSiege.has(wd.a);
+      const siegeB = this.civSiege.has(wd.b);
+      const brA = this.breachPressureOf(wd.a) ? 1.2 : 0;
+      const brB = this.breachPressureOf(wd.b) ? 1.2 : 0;
+      wd.wearA = Math.min(100, (wd.wearA ?? 0) + (wearBase + (popRatioA < 0.75 ? 2.2 : 0) + (wd.razedA > 0 ? 0 : 0.4) + brA) * (1 + imA.wear) * allyA * (siegeA ? 1.6 : 1));
+      wd.wearB = Math.min(100, (wd.wearB ?? 0) + (wearBase + (popRatioB < 0.75 ? 2.2 : 0) + (wd.razedB > 0 ? 0 : 0.4) + brB) * (1 + imB.wear) * allyB * (siegeB ? 1.6 : 1));
       // —— 单边厌战崩溃（Task 35）：落后方厌战爆表 → 被迫屈膝求和（不看战线活跃度——民变逼迫政府）——
       if (!wd.total && ((wd.wearA ?? 0) > 82 || (wd.wearB ?? 0) > 82)) {
         const weary = (wd.wearA ?? 0) > 82 ? ca : cb;
@@ -8824,7 +8843,9 @@ export class GameEngine {
         const winner = diff >= 0 ? ca : cb;
         const loser = diff >= 0 ? cb : ca;
         if (weary === loser) {
-          this.addEvent('collapse', `「${weary.name}」厌战怒火沸腾，政局摇摇欲坠——被迫屈膝求和`, { colorHex: weary.colorHex });
+          this.addEvent('collapse', this.civSiege.has(weary.id)
+            ? `「${weary.name}」城被围、粮道绝，市井惶惶不可终日——被迫签下城下之盟`
+            : `「${weary.name}」厌战怒火沸腾，政局摇摇欲坠——被迫屈膝求和`, { colorHex: weary.colorHex });
           const cap = wd.reason === 'border' ? Math.max(6, wd.goal) : wd.reason === 'plunder' || wd.reason === 'revenge' ? 10 : 40;
           this.concludeByScore(winner, loser, cap);
         } else {
@@ -8899,7 +8920,9 @@ export class GameEngine {
         const brokenIsLoser = diff >= 0 ? bBroken : aBroken;
         if (brokenIsLoser && this.rng() < 0.5) {
           // 弱势方崩溃 → 屈膝割地求和（割让量与战争目的相称）
-          this.addEvent('collapse', `「${loser.name}」民穷财尽、无力支撑战事，被迫屈膝求和`, { colorHex: loser.colorHex });
+          this.addEvent('collapse', this.civSiege.has(loser.id)
+            ? `「${loser.name}」城被围、补给断绝，军民疲敝难继——被迫签下城下之盟`
+            : `「${loser.name}」民穷财尽、无力支撑战事，被迫屈膝求和`, { colorHex: loser.colorHex });
           const cap = wd.reason === 'border' ? Math.max(6, wd.goal) : wd.reason === 'plunder' || wd.reason === 'revenge' ? 10 : 40;
           this.concludeByScore(winner, loser, cap);
         } else if (this.rng() < 0.4) {
