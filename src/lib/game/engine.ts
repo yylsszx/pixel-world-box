@@ -7678,6 +7678,24 @@ export class GameEngine {
       if (d < preyD) { preyD = d; prey = u; }
     }
     if (prey) {
+      // —— 护航检查：猎物 7 格内有其本国军舰 → 私掠舰被迫转攻护航舰（商船趁隙突围）——
+      let esc: Army | null = null;
+      let escD = 7;
+      for (const o of this.armies) {
+        if (o === a || !o.naval || o.civ !== prey.civ || o.state === 'retreat') continue;
+        const d = Math.hypot(o.x - prey.x, o.y - prey.y);
+        if (d < escD) { escD = d; esc = o; }
+      }
+      if (esc) {
+        const escCiv = this.civs[prey.civ];
+        a.tx = esc.x; a.ty = esc.y; // 私掠舰转攻护航舰
+        esc.tx = a.x; esc.ty = a.y; // 护航舰迎击私掠舰
+        const note = (prey.caravan ?? 0) > 0
+          ? `「${escCiv?.name ?? ''}」的护航舰队拦截了「${civ.name}」的私掠舰——炮火相向，商船趁隙突围`
+          : `「${escCiv?.name ?? ''}」的护航舰队迎击「${civ.name}」的拦截舰队——殖民船趁隙突围`;
+        this.navalDuel(a, civ, esc, note);
+        return; // 本 tick 火力全被护航舰吸引——商船继续沿航点突围航行
+      }
       a.tx = prey.x; a.ty = prey.y; // 军旗直指猎物（追猎航向）
       if (preyD < 3.2) {
         const tm = this.techModsOf(a.civ);
@@ -7713,40 +7731,10 @@ export class GameEngine {
       if (d < foeD) { foeD = d; foe = o; }
     }
     if (foe) {
-      const tmA = this.techModsOf(a.civ);
-      const tmB = this.techModsOf(foe.civ);
       // 对进接战：军旗互指（两支舰队逼近炮战距离）
       a.tx = foe.x; a.ty = foe.y;
       foe.tx = a.x; foe.ty = a.y;
-      const killsA = this.navalVolley(a.x, a.y, foe.x, foe.y, a.civ, tmA, foe); // 我方齐射
-      const killsB = this.navalVolley(foe.x, foe.y, a.x, a.y, foe.civ, tmB, a); // 敌方还击
-      this.statNavalKills += killsA;
-      // 战损入账（战争档案）
-      const wd = this.warData.get(pairKey(a.civ, foe.civ));
-      if (wd) {
-        if (a.civ === wd.a) { wd.casB += killsA; wd.casA += killsB; wd.scoreA += killsA * 0.8; wd.scoreB += killsB * 0.8; }
-        else { wd.casA += killsA; wd.casB += killsB; wd.scoreB += killsA * 0.8; wd.scoreA += killsB * 0.8; }
-      }
-      a.morale = Math.min(100, a.morale + killsA * 1.5 - killsB * 1.2);
-      foe.morale = Math.min(100, foe.morale + killsB * 1.5 - killsA * 1.2);
-      if (this.rng() < 0.3) {
-        this.addEvent('naval', `海上遭遇战——「${civ.name}」与「${this.civs[foe.civ]?.name ?? ''}」的舰队炮火互轰（${killsA}:${killsB}）`, { colorHex: civ.colorHex, x: (a.x + foe.x) / 2, y: (a.y + foe.y) / 2 });
-      }
-      this.onSound?.('boom');
-      // 溃败判定：弱势方舰队脱离（海军溃退 = 弃船上岸撤退）
-      const aStr = a.members.length * tmA.dmg * (a.morale / 60);
-      const bStr = foe.members.length * tmB.dmg * (foe.morale / 60);
-      if (a.morale < 36 || a.members.length < 4 || aStr < bStr * 0.35) {
-        this.addEvent('naval', `${a.name} 舰队不支，弃船登岸撤退`, { colorHex: civ.colorHex, x: a.x, y: a.y });
-        this.armyDisembark(a);
-        this.routArmy(a);
-      } else if (foe.morale < 36 || foe.members.length < 4 || bStr < aStr * 0.35) {
-        this.addEvent('naval', `${foe.name} 舰队不支，弃船登岸撤退`, { colorHex: this.civs[foe.civ]?.colorHex, x: foe.x, y: foe.y });
-        this.armyDisembark(foe);
-        this.routArmy(foe);
-      }
-      a.navalCd = this.tickCount + 20;
-      foe.navalCd = this.tickCount + 20;
+      this.navalDuel(a, civ, foe);
       return;
     }
     // —— 三、岸防交火：驶入敌国海岸工事射程 → 吃岸炮（舰队可被岸防拦截）——
@@ -7787,6 +7775,41 @@ export class GameEngine {
       }
       a.navalCd = this.tickCount + 25;
     }
+  }
+
+  /** 海上炮战（遭遇战与护航拦截共用）：对进齐射 + 战损入账 + 士气与溃败判定（note = 护航版播报正文，传色随护航国） */
+  private navalDuel(a: Army, civ: Civ, foe: Army, note?: string) {
+    const tmA = this.techModsOf(a.civ);
+    const tmB = this.techModsOf(foe.civ);
+    const killsA = this.navalVolley(a.x, a.y, foe.x, foe.y, a.civ, tmA, foe); // 我方齐射
+    const killsB = this.navalVolley(foe.x, foe.y, a.x, a.y, foe.civ, tmB, a); // 敌方还击
+    this.statNavalKills += killsA;
+    // 战损入账（战争档案）
+    const wd = this.warData.get(pairKey(a.civ, foe.civ));
+    if (wd) {
+      if (a.civ === wd.a) { wd.casB += killsA; wd.casA += killsB; wd.scoreA += killsA * 0.8; wd.scoreB += killsB * 0.8; }
+      else { wd.casA += killsA; wd.casB += killsB; wd.scoreB += killsA * 0.8; wd.scoreA += killsB * 0.8; }
+    }
+    a.morale = Math.min(100, a.morale + killsA * 1.5 - killsB * 1.2);
+    foe.morale = Math.min(100, foe.morale + killsB * 1.5 - killsA * 1.2);
+    if (this.rng() < (note ? 0.65 : 0.3)) {
+      this.addEvent('naval', note ?? `海上遭遇战——「${civ.name}」与「${this.civs[foe.civ]?.name ?? ''}」的舰队炮火互轰（${killsA}:${killsB}）`, { colorHex: (note ? this.civs[foe.civ] : civ)?.colorHex, x: (a.x + foe.x) / 2, y: (a.y + foe.y) / 2 });
+    }
+    this.onSound?.('boom');
+    // 溃败判定：弱势方舰队脱离（海军溃退 = 弃船上岸撤退）
+    const aStr = a.members.length * tmA.dmg * (a.morale / 60);
+    const bStr = foe.members.length * tmB.dmg * (foe.morale / 60);
+    if (a.morale < 36 || a.members.length < 4 || aStr < bStr * 0.35) {
+      this.addEvent('naval', `${a.name} 舰队不支，弃船登岸撤退`, { colorHex: civ.colorHex, x: a.x, y: a.y });
+      this.armyDisembark(a);
+      this.routArmy(a);
+    } else if (foe.morale < 36 || foe.members.length < 4 || bStr < aStr * 0.35) {
+      this.addEvent('naval', `${foe.name} 舰队不支，弃船登岸撤退`, { colorHex: this.civs[foe.civ]?.colorHex, x: foe.x, y: foe.y });
+      this.armyDisembark(foe);
+      this.routArmy(foe);
+    }
+    a.navalCd = this.tickCount + 20;
+    foe.navalCd = this.tickCount + 20;
   }
 
   /** 溃退（triumph = 凯旋归国；重复调用去重——同一军团不重复播报） */
