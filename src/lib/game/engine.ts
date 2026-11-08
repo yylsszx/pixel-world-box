@@ -5384,6 +5384,16 @@ export class GameEngine {
 
   /** 粮食账本：产出（在岗农民×农田 + 出海渔民×渔场）- 消耗（人口），见底则饥荒连锁 */
   foodTick(c: Civ, counts: number[]) {
+    // —— 围城断粮（粮道机制）：与本国交战的敌军团（陆围海封）压境之处，农人不敢出郭、渔船不敢离港 ——
+    //    军团旗 9 格内的田/渔场绝收：围而不攻也能饿垮一座城；溃退之师无心袭扰不算威胁。
+    //    纯瞬态扫描（不入档零兼容风险），现有饥荒链（stability/饿殍/军团士气）自动接管后续
+    const threatX: number[] = [];
+    const threatY: number[] = [];
+    for (const a of this.armies) {
+      if (a.state === 'retreat' || a.members.length === 0) continue;
+      if (!this.atWar(a.civ, c.id)) continue;
+      threatX.push(a.x); threatY.push(a.y);
+    }
     const farms = counts[BUILD_KINDS.FARM] ?? 0;
     const fisheries = counts[BUILD_KINDS.FISHERY] ?? 0;
     // 旧档引导：首次结算时按存量建筑补一笔开仓粮（不追溯惩罚旧王国）
@@ -5405,6 +5415,12 @@ export class GameEngine {
         for (const f of farmers) {
           if (f.sleep) continue; // 昼夜节律：熟睡的农民不在岗 —— 夜晚粮产自然停摆（经济随昼夜呼吸）
           if (Math.abs(f.x - b.x) <= 6 && Math.abs(f.y - b.y) <= 6) { staffed = true; break; }
+        }
+        // 兵临城下：敌军团 9 格内的田港绝收（围城粮道——军团压到哪片田，哪片田就荒）
+        if (staffed && threatX.length > 0) {
+          for (let k = 0; k < threatX.length; k++) {
+            if (Math.abs(threatX[k] - b.x) <= 9 && Math.abs(threatY[k] - b.y) <= 9) { staffed = false; break; }
+          }
         }
         if (staffed) { if (b.kind === BUILD_KINDS.FARM) workedFarms++; else workedFisheries++; }
       }
@@ -6680,6 +6696,32 @@ export class GameEngine {
     return RACES[u.race].hostile; // 无国籍野怪：天生敌意者被拦（狼/僵尸等），走兽野兽通行
   }
 
+  /** 破墙纪律：被敌墙拦停的围攻者就地攻墙（不再随机弹开游荡——围城部队对墙保持持续压力）。
+   *  资格：交战文明单位（攻城战）或敌性非捕食野怪（僵尸尸潮啃墙；狼熊等捕食者绕墙觅径不砸墙）。
+   *  返回 true 表示单位留在墙前贴墙待命/破墙（cd 共享节流——与攻城拆毁通道天然互斥，
+   *  墙 hp 200：单兵 dmg×1.6 每 14 tick 一振，多兵齐砸提速——破墙需要时间，这正是围城战术的张力）。 */
+  private wallBreach(u: Unit, nx: number, ny: number): boolean {
+    const cx = Math.floor(u.x), cy = Math.floor(u.y);
+    let wall = -1;
+    const fx = Math.floor(nx);
+    if (fx !== cx) { const i = idx(fx, cy); if (this.building[i] === BUILD_KINDS.WALL) wall = i; }
+    if (wall < 0) {
+      const fy = Math.floor(ny);
+      if (fy !== cy) { const i = idx(cx, fy); if (this.building[i] === BUILD_KINDS.WALL) wall = i; }
+    }
+    if (wall < 0) return false; // 非墙拦截（地形）→ 走原绕行逻辑
+    const b = this.buildings[this.bIdx.get(wall) ?? -1];
+    if (!b) return false;
+    const foe = u.civ >= 0 ? this.atWar(b.civ, u.civ) : (RACES[u.race].hostile && !RACES[u.race].predator);
+    if (!foe) return false;
+    if (u.cd <= 0) {
+      u.cd = 14;
+      u.atk = 12; // 拆城挥击动画（与攻城 AI 同款）
+      this.attackBuilding(wall, u.dmg * 1.6, u.civ);
+    }
+    return true; // 留在墙前：cd 期间贴墙待命，破口出现即自然涌入
+  }
+
   moveUnit(u: Unit, mul: number) {
     const def = RACES[u.race];
     const dx = u.tx - u.x;
@@ -6751,6 +6793,8 @@ export class GameEngine {
     else if (passX) u.x = nx;
     else if (passY) u.y = ny;
     else {
+      // 城墙纪律：被敌墙拦停的围攻者就地破墙（贴墙待命不游荡——破口出现即涌入）
+      if (this.wallBreach(u, nx, ny)) return;
       // 阻断：战时可能是隔海 → 登船跨海远征（WorldBox 战争船）；否则随机改向绕行
       if (this.maybeBoardForWar(u)) return;
       u.tx = Math.max(1, Math.min(W - 2, u.x + (this.rng() * 2 - 1) * 6));
@@ -7195,6 +7239,20 @@ export class GameEngine {
       }
       // —— 海战体系：行军中的舰队评估遭遇战/拦截/岸防（远洋不再是法外之地）——
       if (a.naval && a.state === 'march') this.navalWarfare(a, civ);
+      // —— 解围驰援：首都被围（交战敌军团旗距王都 14 格内）→ 近畿非接战军团转向迎击 ——
+      //    本土告急优先于远征（距都 ≤60 格才驰援——远征军鞭长莫及）；目标直指敌旗：
+      //    march 评估在 <8 格自动 declareClash（援军迎击）；battle/siege/retreat 不打断（接战不折腾）
+      if ((a.state === 'march' || a.state === 'rally') && !a.naval && civ.capital >= 0) {
+        const capX = (civ.capital % W) + 0.5, capY = ((civ.capital / W) | 0) + 0.5;
+        if (Math.hypot(a.x - capX, a.y - capY) < 60) {
+          for (const o of this.armies) {
+            if (o.civ === a.civ || o.state === 'retreat' || o.members.length === 0 || !this.atWar(o.civ, a.civ)) continue;
+            if (Math.hypot(o.x - capX, o.y - capY) >= 14) continue;
+            a.tx = o.x; a.ty = o.y; a.state = 'march';
+            break;
+          }
+        }
+      }
       switch (a.state) {
         case 'rally': this.armyRally(a, civ); break;
         case 'march': this.armyMarch(a, civ); break;
@@ -7617,6 +7675,14 @@ export class GameEngine {
       const nx = a.x + ((tgt.x - a.x) / dd) * step;
       const ny = a.y + ((tgt.y - a.y) / dd) * step;
       if (walkable(this.terrain[idx(Math.floor(nx), Math.floor(ny))]) || a.naval) { a.x = nx; a.y = ny; }
+      // 兵临城下：围城纪事（与 sack/摧毁播报共用节流——降噪纪律）
+      if (this.tickCount - this.lastSiegeEventTick > 150) {
+        const victim = this.civs[tgt.civ];
+        if (victim?.alive) {
+          this.lastSiegeEventTick = this.tickCount;
+          this.addEvent('siege', `「${civ.name}」的大军围困了「${victim.name}」，粮道断绝`, { colorHex: civ.colorHex, x: tgt.x, y: tgt.y });
+        }
+      }
       // 围城本身也在蚕食周边敌土（战线语义：压境即渗透）
       this.frontPush(a, 2, 4);
       return;
