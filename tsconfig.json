@@ -43,6 +43,7 @@
     "examples",
     "third_party",
     "skills",
-    "oracle-server/dsh-runtime"
+    "oracle-server/dsh-runtime",
+    "out"
   ]
 }
