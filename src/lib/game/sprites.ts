@@ -250,6 +250,133 @@ function paintAxe(ctx: CanvasRenderingContext2D, px: number, hY: number, f: numb
   }
 }
 
+// ============================================================
+// 装备三小件（B 重点收尾）：靴 bts / 戒 rng / 护符 amu —— 属性生效的
+// 三件套从此肉眼可见。此前渲染层只画了 wep/arm/hlm/shd（+披风），
+// 靴子（speedMul/armor 生效）、戒指（dmg/hp/regen 生效）、护符（crit/
+// lifesteal/regen 生效）在画面上完全隐形——属性与视觉脱节。
+// 三件均为 1-2px 点睛件：靴覆盖脚位随步态，戒指持械手宝石点，
+// 护符胸前挂坠+挂绳。双档（中距/精绘）各自接线。
+// ============================================================
+
+/** 戒指宝石/金属色：金属戒按材质，宝石戒按晶石 */
+const RING_GEM: Record<string, string> = {
+  copper_ring: '#c87a3a', silver_ring: '#d8d8d8', ring: '#5ec46a', gold_ring: '#ffd93d',
+  ruby_ring: '#ff4a5e', sapphire_ring: '#5ba8e0', ring_power: '#ff8c42', ring_fire: '#ff6a2a',
+  ring_ice: '#7df9ff', ring_sage: '#d4e07a', ring_void: '#7a5cb0', ring_immortal: '#f2ead8',
+};
+
+/** 护符形色：坠点主色（+ 可选闪烁标记） */
+const AMU_LOOK: Record<string, { base: string; blink?: boolean }> = {
+  lucky_charm: { base: '#5ec46a' }, wolf_fang: { base: '#f2ead8' }, bear_claw: { base: '#b58a5a' },
+  totem_stone: { base: '#cf7a3a' }, eagle_eye: { base: '#e0a83a' }, vampire_fang: { base: '#c9463d' },
+  holy_symbol: { base: '#ffe9a8', blink: true }, moon_pendant: { base: '#b8d0e8', blink: true },
+  demon_heart: { base: '#8a2a3a' }, phoenix_feather: { base: '#ff8c42', blink: true },
+  doom_amulet: { base: '#6a4a8a' }, god_shard: { base: '#f8f4e8', blink: true },
+};
+
+/** 靴形制色（中距档 1px/脚；精绘档 2x2/脚形制分层） */
+const BOOTS_LOOK: Record<string, string> = {
+  worn_sandal: '#c9a06a', leather_boots: '#8a5a34', boots: '#3a3440', mountain_boots: '#a07848',
+  war_greaves: '#b7bec6', iron_boots: '#8a929c', swift_greaves: '#5ba8e0', lava_boots: '#3a2a20',
+  winged_sandals: '#e8e0d0', phantom_boots: '#4a3a5a',
+};
+
+/**
+ * 戒指：持械手 1px 宝石点（金属圈手绘由手臂肤色自然围合）。
+ * 双档共用——手位由调用方按各自坐标体系算好传入。
+ */
+function paintRing(ctx: CanvasRenderingContext2D, u: Unit, hx: number, hy: number, t: number) {
+  if (!u.rng) return;
+  const col = RING_GEM[u.rng] ?? '#c87a3a';
+  const blink = u.rng === 'ring_immortal' || u.rng === 'ring_void';
+  ctx.fillStyle = blink && ((t >> 3) & 1) === 1 ? '#ffffff' : col;
+  ctx.fillRect(hx, hy, 1, 1);
+}
+
+/**
+ * 护符：胸前挂坠 1px + 挂绳链点（精绘档）；中距档仅坠点。
+ * 挂在衣/甲之外——垂坠在胸甲前符合佩戴逻辑。
+ */
+function paintAmulet(ctx: CanvasRenderingContext2D, u: Unit, x: number, y: number, t: number, ropeX?: number, ropeY?: number) {
+  if (!u.amu) return;
+  const look = AMU_LOOK[u.amu] ?? { base: '#c0c6cc' };
+  if (ropeX !== undefined && ropeY !== undefined) {
+    ctx.fillStyle = look.blink ? '#c0c6cc' : '#9a8f7a'; // 链色
+    ctx.fillRect(ropeX, ropeY, 1, 1); // 左肩链点
+    ctx.fillRect(ropeX + 4, ropeY, 1, 1); // 右肩链点（V 形收点由肤色/衣色自然围合）
+  }
+  const blink = look.blink && ((t >> 3) & 1) === 1;
+  ctx.fillStyle = blink ? '#ffffff' : look.base;
+  ctx.fillRect(x, y, 1, 1);
+}
+
+/**
+ * 靴子（精绘档）：替换默认棕靴——形制分层（凉鞋/皮靴/胫甲/带翼/熔岩/幻影…）。
+ * 脚位随四相步态：左腿 l1 右腿 l2（与双腿绘制同逻辑）。
+ */
+function paintBootsFine(ctx: CanvasRenderingContext2D, u: Unit, fx: number, dy: number, ph: number, t: number) {
+  const kind = u.bts;
+  if (!kind) {
+    // 无靴默认：棕革裸靴（保持原观感）
+    ctx.fillStyle = '#3a2c1c';
+    ctx.fillRect(fx - 2, dy, 2, 1);
+    ctx.fillRect(fx + 1 + (ph === 1 ? 1 : 0), dy, 2, 1);
+    return;
+  }
+  const lx1 = fx - 2, lx2 = fx + 1 + (ph === 1 ? 1 : 0);
+  const base = BOOTS_LOOK[kind] ?? '#3a2c1c';
+  const isGreave = kind === 'war_greaves' || kind === 'iron_boots' || kind === 'swift_greaves';
+  // 主靴体：2 宽（胫甲类 2 高延伸到小腿）
+  ctx.fillStyle = base;
+  ctx.fillRect(lx1, dy - (isGreave ? 1 : 0), 2, isGreave ? 2 : 1);
+  ctx.fillRect(lx2, dy - (isGreave ? 1 : 0), 2, isGreave ? 2 : 1);
+  switch (kind) {
+    case 'worn_sandal': // 凉鞋：革带压点（裸足感由浅色底给足）
+      ctx.fillStyle = '#8a6a42';
+      ctx.fillRect(lx1, dy, 2, 1); ctx.fillRect(lx2, dy, 2, 1);
+      break;
+    case 'boots': // 迅捷之靴：鞋尖速度亮缘
+      ctx.fillStyle = '#5ba8e0';
+      ctx.fillRect(lx1 + (ph === 3 ? -1 : 1), dy, 1, 1);
+      ctx.fillRect(lx2 + 1, dy, 1, 1);
+      break;
+    case 'mountain_boots': // 登山靴：防滑纹（鞋底暗齿）
+      ctx.fillStyle = '#5a4028';
+      ctx.fillRect(lx1, dy + 1, 2, 1); ctx.fillRect(lx2, dy + 1, 2, 1);
+      break;
+    case 'war_greaves': // 战争胫甲：钢面高光 + 上缘铆钉
+      ctx.fillStyle = '#eef2f6';
+      ctx.fillRect(lx1, dy - 1, 1, 1); ctx.fillRect(lx2 + 1, dy - 1, 1, 1);
+      break;
+    case 'iron_boots': // 铁靴：铆钉行
+      ctx.fillStyle = '#6e7884';
+      ctx.fillRect(lx1, dy, 1, 1); ctx.fillRect(lx2 + 1, dy, 1, 1);
+      break;
+    case 'swift_greaves': // 疾风胫甲：风纹闪点
+      if (((t >> 2) & 1) === 1) {
+        ctx.fillStyle = '#a5f3fc';
+        ctx.fillRect(lx1 - 1, dy, 1, 1); ctx.fillRect(lx2 + 2, dy, 1, 1);
+      }
+      break;
+    case 'lava_boots': // 熔岩之靴：靴面熔纹火星（呼吸闪烁）
+      ctx.fillStyle = ((t >> 2) & 1) === 1 ? '#ff6a2a' : '#c9463d';
+      ctx.fillRect(lx1, dy, 1, 1); ctx.fillRect(lx2 + 1, dy, 1, 1);
+      break;
+    case 'winged_sandals': // 神行凉鞋：脚踝白翼（随步相开合）
+      ctx.fillStyle = '#f8f4e8';
+      if (ph === 1 || ph === 2) { ctx.fillRect(lx1 - 1, dy - 1, 1, 1); ctx.fillRect(lx2 - 1, dy - 1, 1, 1); }
+      else { ctx.fillRect(lx1 + 2, dy - 1, 1, 1); ctx.fillRect(lx2 + 2, dy - 1, 1, 1); }
+      break;
+    case 'phantom_boots': // 幻影之靴：靴后残影（半透明影迹）
+      ctx.fillStyle = 'rgba(122,92,176,0.45)';
+      ctx.fillRect(lx1 - (ph === 3 ? 1 : 0), dy, 2, 1);
+      ctx.fillRect(lx2 + (ph === 1 ? 1 : 0), dy, 2, 1);
+      break;
+  }
+}
+
+
 
 /**
  * 精细动态人形（恶魔级身形标准）：多部件身体 —— 地面阴影 / 交替跨步的双腿 /
@@ -321,6 +448,17 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
       ctx.fillRect(px - 1, gy + 1, 1, 1);
       ctx.fillRect(px + 1, gy + 1, 1, 2);
     }
+    // 装备靴（巨躯）：覆盖脚位随步态
+    if (u.bts) {
+      ctx.fillStyle = BOOTS_LOOK[u.bts] ?? '#3a2c1c';
+      if (step === 1) {
+        ctx.fillRect(px - 1, gy + 2, 1, 1);
+        ctx.fillRect(px + 1, gy + 1, 1, 1);
+      } else {
+        ctx.fillRect(px - 1, gy + 1, 1, 1);
+        ctx.fillRect(px + 1, gy + 2, 1, 1);
+      }
+    }
     // 武器：3px 长剑（攻击时举过头顶）/ 火枪（水平枪身 + 射击时枪口爆闪）/ 相位光束枪（能量槽发光）
     if (u.wep === 'musket' || u.wep === 'rifle' || u.wep === 'laser_rifle') {
       const fut = u.wep === 'laser_rifle';
@@ -357,6 +495,8 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
         else ctx.fillRect(px + 2 * f, gy - 2, 1, 3);
       }
     }
+    // 巨躯戒指：持械侧臂末端宝石点
+    paintRing(ctx, u, px + 2 * f, gy, t);
   } else {
     // ---- 常规身形（总高 6px：头2 躯干2 腿2；哥布林矮一号） ----
     const hY = goblin ? y + 1 : y; // 哥布林整体压低 1px
@@ -379,6 +519,22 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
       ctx.fillRect(px - 1, y + 1 + (goblin ? 1 : 0), 1, legH);
       ctx.fillRect(px, y + 1 + (goblin ? 1 : 0), 1, legH);
     }
+    // 装备靴：覆盖脚位（步态随腿——长腿脚/短腿脚）
+    if (u.bts) {
+      ctx.fillStyle = BOOTS_LOOK[u.bts] ?? '#3a2c1c';
+      if (isMoving) {
+        if (step === 1) {
+          ctx.fillRect(px - 1, y + legH + (goblin ? 1 : 0), 1, 1);
+          ctx.fillRect(px, y + 2 + (goblin ? 1 : 0), 1, 1);
+        } else {
+          ctx.fillRect(px - 1, y + 2 + (goblin ? 1 : 0), 1, 1);
+          ctx.fillRect(px, y + legH + (goblin ? 1 : 0), 1, 1);
+        }
+      } else {
+        ctx.fillRect(px - 1, y + legH + (goblin ? 1 : 0), 1, 1);
+        ctx.fillRect(px, y + legH + (goblin ? 1 : 0), 1, 1);
+      }
+    }
     // 躯干（2x2；矮人/壮硕亚种加宽 3）
     const torsoW = race === R.DWARF || (vis?.bulk ?? 0) >= 0.62 ? 3 : 2;
     const tx = race === R.DWARF ? px - 1 : px - 1;
@@ -386,6 +542,8 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
     ctx.fillRect(tx, hY - 1, torsoW, 2);
     // 护甲：胸前甲片（17 种甲形制分层：底色 + 前缘细节点 + 流光呼吸）
     paintArmorPlate(ctx, u, px, hY, f, t, torsoW);
+    // 护符：胸前坠点（挂衣/甲外）
+    paintAmulet(ctx, u, px, hY, t);
     // 双臂：反相摆动（僵尸双臂前伸平举）
     ctx.fillStyle = rgb(skin);
     if (zombie) {
@@ -545,6 +703,19 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
         } else {
           ctx.fillRect(px + 2 * f, hY - 2, 1, 2);
         }
+      }
+    }
+    // 装备戒指：持械手宝石点（攻击时画高举手底；垂持时画握柄位；空手时画前臂手端）
+    if (u.rng) {
+      if ((u.atk ?? 0) > 0) {
+        paintRing(ctx, u, px + 2 * f, hY - 2, t);
+      } else if (u.wep) {
+        paintRing(ctx, u, px + 2 * f, hY - 1, t);
+      } else if (zombie) {
+        paintRing(ctx, u, px + (f > 0 ? 2 : -2), hY - 2, t);
+      } else {
+        const hy = isMoving ? (step === 1 ? hY + 1 : hY - 1) : hY;
+        paintRing(ctx, u, px + 1, hy, t);
       }
     }
   }
@@ -2757,10 +2928,8 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
   const l2 = ph === 3 || ph === 0 ? 3 : 2; // 右腿
   ctx.fillRect(fx - 2, dy + 1 - l1, 2, l1);
   ctx.fillRect(fx + 1 + (ph === 1 ? 1 : 0), dy + 1 - l2, 2, l2);
-  // 靴
-  ctx.fillStyle = '#3a2c1c';
-  ctx.fillRect(fx - 2, dy, 2, 1);
-  ctx.fillRect(fx + 1 + (ph === 1 ? 1 : 0), dy, 2, 1);
+  // —— 1.5 靴（形制分层：凉鞋/皮靴/胫甲/带翼/熔岩/幻影…；无靴默认棕革裸靴） ——
+  paintBootsFine(ctx, u, fx, dy, ph, t);
 
   // —— 2. 腰带（暗革 + 金扣朝前） ——
   ctx.fillStyle = '#4a3421';
@@ -2798,6 +2967,9 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
     ctx.fillRect(tx - 1, dy - 7, 1, 2); // 肩垫 ×2（随甲色系）
     ctx.fillRect(tx + torsoW, dy - 7, 1, 2);
   }
+
+  // —— 4.5 护符：胸前挂坠 + 挂绳肩链点（挂衣/甲外） ——
+  paintAmulet(ctx, u, fx, dy - 6, t, fx - 2, dy - 7);
 
   // —— 5. 双臂（反相摆动；僵尸双臂前伸平举两行） ——
   ctx.fillStyle = hurt ? '#ff6b5e' : rgb(skin);
@@ -3091,6 +3263,18 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
           ctx.fillRect(wx + (f > 0 ? 6 : -7), wy, 1, 1);
         }
       }
+    }
+  }
+
+  // —— 11.5 戒指：持械手宝石点（举臂手底 / 握柄位 / 空手前臂手端） ——
+  if (u.rng) {
+    if (atk) {
+      paintRing(ctx, u, fx + 2 * f, dy - 7, t);
+    } else if (fam !== 'none') {
+      paintRing(ctx, u, fx + 2 * f, dy - 3, t);
+    } else {
+      const swing = ph === 1 || ph === 2 ? 1 : 0;
+      paintRing(ctx, u, fx + 2 + (isMoving && swing ? 1 : 0), dy - 6 + (isMoving && swing ? 1 : 0), t);
     }
   }
 
