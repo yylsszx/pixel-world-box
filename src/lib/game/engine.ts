@@ -3109,10 +3109,11 @@ export class GameEngine {
     }
   }
 
-  /** 昼夜节律睡眠通道（每 4 tick）：入夜入眠/受扰唤醒 —— 引擎级直写通道。
+  /** 昼夜节律睡眠通道（每 4 tick）：入夜入眠/受扰唤醒/夜患惊醒 —— 引擎级直写通道。
    *  必要性：Rust 批内核接管时 JS updateUnit 不跑（bails=0 常态），updateUnit 内的睡眠 gate
    *  只覆盖 bail 接力单位；本通道让内核路径同样入睡。瞬态不入档，读档白天自愈唤醒。
-   *  开销：night=false 时仅扫 sleep 单位（绝大多数 undefined 零写回）；night=true 分桶入眠。 */
+   *  开销：night=false 时仅扫 sleep 单位（绝大多数 undefined 零写回）；night=true 分桶入眠；
+   *  夜患名册常态个位数（交战文明预检——和平期敌国大军不入册），零危险零惊醒开销。 */
   sleepTick() {
     const dp = this.dayPhase();
     const night = dp > 0.545 && dp < 0.865;
@@ -3125,11 +3126,44 @@ export class GameEngine {
       }
       return;
     }
+    // —— 夜患清点（第一相）——「因睡觉而亡」的解药：敌临门外，睡民不再引颈就戮。
+    // 三类危险源：wild 敌性种族（强盗/僵尸/骷髅/巨龙…对一切文明敌对，判据与箭塔守军同源）；
+    // 交战国单位（围城之夜的敌兵——只惊醒交战对方睡民）；绝望捕食者（狼/熊 food<45 饥不择食档——
+    // rust 生态里捕食者常态饥饿（<70 即猎食），以 70 为阈会让饿狼地毯铺满世界、荒野永无睡眠；
+    // <45 才是真会闹到人家门口的绝望猎手，实测常态全图个位数）。交战文明预检：和平期空集。
+    const warring = new Set<number>();
+    for (const c of this.civs) {
+      if (!c?.alive) continue;
+      for (const o of this.civs) {
+        if (!o?.alive || o.id <= c.id || !this.atWar(c.id, o.id)) continue;
+        warring.add(c.id); warring.add(o.id);
+      }
+    }
+    const dang = this.nightDang; dang.length = 0;
+    const dangCiv = this.nightDangCiv; dangCiv.length = 0;
+    const dangPred = this.nightDangPred; dangPred.length = 0;
+    for (const u of this.units) {
+      if (u.dead) continue;
+      const rc = RACES[u.race];
+      if (!rc) continue;
+      if (u.civ >= 0 && rc.isCiv) {
+        if (warring.has(u.civ)) { dang.push(u); dangCiv.push(u.civ); dangPred.push(false); }
+      } else if (rc.hostile || u.race === R.ZOMBIE || u.race === R.SKELETON) {
+        dang.push(u); dangCiv.push(-2); dangPred.push(false);
+      } else if (rc.predator && (u.food ?? 999) < 45) {
+        dang.push(u); dangCiv.push(-2); dangPred.push(true);
+      }
+    }
+    const nd = dang.length;
     const bucket = (this.tickCount >> 2) & 3;
     this.bedCnt.clear(); // 熟睡住户按户清点（顺主循环一趟，零额外遍历）
     for (const u of this.units) {
       if (u.dead || u.civ < 0 || !RACES[u.race]?.isCiv) continue; // 野生动物不眠（生态永续活跃）
       if (u.sleep) {
+        // —— 夜患惊醒（第二相）：惊醒半径内有敌 → 满户惊起（先于床位清点——惊起者不卧床）。
+        //    敌性/交战 6 格、绝望捕食者 3 格（门前一跃）；唤醒即交还内核 AI 应战避祸——不注 panic（rust 侧
+        //    panic 不随内核衰减，注入恐致彻夜失眠；惊醒窗口由危险源在场与否自限，敌走自可再睡）。
+        if (nd > 0 && this.dangerNear(u)) { u.sleep = undefined; continue; }
         const h = this.homeOf.get(u.id);
         if (h != null) this.bedCnt.set(h, (this.bedCnt.get(h) ?? 0) + 1);
       }
@@ -3139,8 +3173,8 @@ export class GameEngine {
         continue;
       }
       if (u.goHome != null) {
-        // 归途通道（内核路径）：纠偏航向 + 到家入睡 + 超时半路倒下
-        if (u.hurt > 0 || (u.panic ?? 0) > 0.2) { u.goHome = undefined; u.goHomeAt = undefined; continue; }
+        // 归途通道（内核路径）：纠偏航向 + 到家入睡 + 超时半路倒下；夜患贴身（半半径）弃归途避祸
+        if (u.hurt > 0 || (u.panic ?? 0) > 0.2 || (nd > 0 && this.dangerNear(u, 0.5))) { u.goHome = undefined; u.goHomeAt = undefined; continue; }
         const hx = (u.goHome % W) + 0.5, hy = ((u.goHome / W) | 0) + 0.5;
         const dd = (u.x - hx) * (u.x - hx) + (u.y - hy) * (u.y - hy);
         if (dd < 3.2) { u.sleep = 1; u.goHome = undefined; u.goHomeAt = undefined; continue; } // 到家门口躺下
@@ -3152,7 +3186,7 @@ export class GameEngine {
       if (u.boat || u.army != null || u.king) continue; // 航海者/军团在编/国王不眠
       const jobN = u.job ?? 0;
       if (jobN === 2 || jobN === 3) continue; // 战士/弓手：夜巡与守土
-      if (u.hurt > 0 || (u.panic ?? 0) > 0 || u.hp <= u.maxHp * 0.5 || u.cd > 0) continue;
+      if (u.hurt > 0 || (u.panic ?? 0) > 0 || u.hp <= u.maxHp * 0.5 || u.cd > 0 || (nd > 0 && this.dangerNear(u))) continue; // 伤/恐/弱/战火不入睡；敌在院中不熄灯
       if (this.rng() < 0.02) {
         // 归家机制：有自家住宅且不在家门口 → 动身回家（户籍派房）；家门口/无家可归 → 原地入眠（流浪者野外躺平）
         const home = this.homeFor(u);
@@ -3170,6 +3204,26 @@ export class GameEngine {
         u.sleep = 1; // 已在家门口 / 无房文明：就地倒下
       }
     }
+  }
+
+  /** 夜患名册（瞬态不入档，sleepTick 每夜每跑重建）：危险源本体（读 x/y）。 */
+  private nightDang: Unit[] = [];
+  /** 危险源归属（-2 = wild 敌性/绝望捕食者，对一切文明敌对；>=0 = 所属文明，仅对交战对象危险）。 */
+  private nightDangCiv: number[] = [];
+  /** 危险源是否绝望捕食者（惊醒半径 3 门前一跃，敌性种族/交战敌军 6）。 */
+  private nightDangPred: boolean[] = [];
+  /** 惊醒半径内是否有夜患：scale 缩放半径（睡民惊醒 1 / 归途贴身 0.5）。
+   *  交战国兵锋只对交战对象生效（atWar 逐对判——敌国之师不入他国梦乡）；和平期名册空，零开销直返。 */
+  private dangerNear(u: Unit, scale = 1): boolean {
+    const nd = this.nightDang.length;
+    for (let k = 0; k < nd; k++) {
+      const dc = this.nightDangCiv[k];
+      if (dc >= 0 && !this.atWar(dc, u.civ)) continue;
+      const rr = (this.nightDangPred[k] ? 3 : 6) * scale;
+      const dx = this.nightDang[k].x - u.x, dy = this.nightDang[k].y - u.y;
+      if (dx * dx + dy * dy < rr * rr) return true;
+    }
+    return false;
   }
 
   /** 自家最近住宅 tile 缓存查询（-1 无）：civ → 住宅 tile 列表，300 tick 惰性重建
@@ -3844,12 +3898,12 @@ export class GameEngine {
       const dp = this.dayPhase();
       const night = dp > 0.545 && dp < 0.865;
       if (u.sleep) {
-        if (!night || u.hurt > 0 || (u.panic ?? 0) > 0.2) { u.sleep = undefined; u.goHome = undefined; u.goHomeAt = undefined; }
-        else return; // 熟睡：本 tick 不索敌不工作不移动
+        if (!night || u.hurt > 0 || (u.panic ?? 0) > 0.2 || this.dangerNear(u)) { u.sleep = undefined; u.goHome = undefined; u.goHomeAt = undefined; }
+        else return; // 熟睡：本 tick 不索敌不工作不移动（夜患惊醒主通道在 sleepTick——此处 bail 单位逐帧兜底）
       } else if (u.goHome != null && !u.army && !u.king) {
         // 归途通道：夜晚朝自家住宅赶路，到家门口倒头睡；天亮/受扰半途而废；超时疲惫半路入眠
-        if (!night || u.hurt > 0 || (u.panic ?? 0) > 0.2) {
-          u.goHome = undefined; u.goHomeAt = undefined; // 半途而废（天亮该干活了/夜袭逃命要紧——本 tick 继续常规逻辑）
+        if (!night || u.hurt > 0 || (u.panic ?? 0) > 0.2 || this.dangerNear(u, 0.5)) {
+          u.goHome = undefined; u.goHomeAt = undefined; // 半途而废（天亮该干活了/夜袭逃命/夜患贴身弃归途——本 tick 继续常规逻辑）
         } else {
           const hx = (u.goHome % W) + 0.5, hy = ((u.goHome / W) | 0) + 0.5;
           const dd = (u.x - hx) * (u.x - hx) + (u.y - hy) * (u.y - hy);
@@ -3862,7 +3916,7 @@ export class GameEngine {
       } else if (night && !u.army && !u.king) {
         const jobN = u.job ?? 0;
         const guard = jobN === 2 || jobN === 3; // 战士/弓手：夜巡与守土
-        if (!guard && u.hurt <= 0 && (u.panic ?? 0) <= 0 && u.hp > u.maxHp * 0.5 && u.cd <= 0 && this.rng() < 0.02) {
+        if (!guard && u.hurt <= 0 && (u.panic ?? 0) <= 0 && u.hp > u.maxHp * 0.5 && u.cd <= 0 && !this.dangerNear(u) && this.rng() < 0.02) {
           const home = this.homeFor(u);
           if (home >= 0) {
             const hx = (home % W) + 0.5, hy = ((home / W) | 0) + 0.5;
