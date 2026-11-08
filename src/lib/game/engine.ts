@@ -541,8 +541,10 @@ export class GameEngine {
   // ---------------- 守土体系（个体守军层：驻墙列阵 × 巷战堵截） ----------------
   /** 兵临登记（defenseTick 每 10 tick 重建：civId → 威胁焦点军团旗坐标；判据与解围驰援同源——交战敌军团旗距王都 14 格内）。瞬态不入档 */
   civSiege = new Map<number, { x: number; y: number; tick: number }>();
-  /** 破口名册：交战中被敌军破开的城墙（onBuildingDestroyed 登记，150 tick 鲜度——巷战堵截的集结坐标）。瞬态不入档 */
-  breaches: { i: number; x: number; y: number; civ: number; tick: number }[] = [];
+  /** 破口名册：交战中被敌军破开的城墙（onBuildingDestroyed 登记，150 tick 鲜度——巷战堵截的集结坐标）。cas=该破口巷战守军阵亡数（#30 民怨账，瞬态不入档） */
+  breaches: { i: number; x: number; y: number; civ: number; tick: number; cas?: number }[] = [];
+  /** 破城记忆（civId → 末次被破墙 tick：一朝被蛇咬——守军建造倾向与赶工补砌的战后人性反馈）。瞬态不入档 */
+  breachMem = new Map<number, number>();
   /** 驻墙战位（unitId → 墙 tile 序号：战位失效前不重扫——守军不换岗不叠位）。瞬态不入档 */
   garrisonOf = new Map<number, number>();
 
@@ -1886,8 +1888,10 @@ export class GameEngine {
       // 圈完整（缺口 ≤3：海岸与山体豁口留作城门）则不再砌
       if (gaps.length === 0 || gaps.length <= 3) continue;
       let built = 0;
+      // 一朝被蛇咬（#30）：破城记忆 600 tick 内加紧赶工——每轮补砌 3→6 段
+      const bittenWall = this.tickCount - (this.breachMem.get(civ.id) ?? -1e9) < 600;
       for (const i of gaps) {
-        if (built >= 3) break;
+        if (built >= (bittenWall ? 6 : 3)) break;
         if ((civ.gold ?? 0) < cost) break;
         this.buildBuilding(i, BUILD_KINDS.WALL, civ.id);
         civ.gold = (civ.gold ?? 0) - cost;
@@ -4904,6 +4908,7 @@ export class GameEngine {
     if (kind === BUILD_KINDS.WALL && byCiv != null && (byCiv < 0 || this.atWar(byCiv, victimCiv))) {
       this.breaches.push({ i, x: b.x + 0.5, y: b.y + 0.5, civ: victimCiv, tick: this.tickCount });
       if (this.breaches.length > 24) this.breaches.shift();
+      this.breachMem.set(victimCiv, this.tickCount); // #30 一朝被蛇咬：战后人性反馈的计时起点
     }
     const def = BUILDING_DEFS[kind];
     this.destroyBuilding(i);
@@ -5100,7 +5105,17 @@ export class GameEngine {
     if (this.garrisonOf.size > 0) {
       for (const [uid, ti] of this.garrisonOf) {
         const gu = this.unitById.get(uid);
-        if (!gu || gu.dead || this.building[ti] !== BUILD_KINDS.WALL) this.garrisonOf.delete(uid);
+        if (!gu || gu.dead || this.building[ti] !== BUILD_KINDS.WALL) {
+          // —— 巷战深账（#30）：驻墙守军阵亡（含赴堵口途中，战位墙或已毁）→ 死亡位置邻近鲜破口即伤亡账 +1（市民恐慌的实证，双路径汇聚于引擎级名册） ——
+          if (gu && gu.dead && gu.civ >= 0) {
+            for (const br of this.breaches) {
+              if (br.civ !== gu.civ) continue;
+              const bdx = br.x - gu.x, bdy = br.y - gu.y;
+              if (bdx * bdx + bdy * bdy < 36) { br.cas = (br.cas ?? 0) + 1; break; }
+            }
+          }
+          this.garrisonOf.delete(uid);
+        }
       }
     }
     for (const b of this.buildings) {
@@ -5944,6 +5959,15 @@ export class GameEngine {
       // —— 种族互连：多族王国的种族张力（包容种族多元化更稳 / 排外种族动荡）——
       const homo = this.civHomogeneity.get(c.id) ?? 1;
       if (homo < 0.9) stab += ((rp?.harmony ?? 0.5) - 0.45) * 20 * (0.9 - homo);
+      // —— 巷战深账（#30）：城防破口的民怨——口子久开 + 守军阵亡是全城皆知的流血（城墙是心理安全线） ——
+      if (this.breaches.length > 0) {
+        for (const br of this.breaches) {
+          if (br.civ !== c.id) continue;
+          stab -= (this.tickCount - br.tick) >= 50 ? 6 : 3;
+          stab -= Math.min(3, br.cas ?? 0);
+          break;
+        }
+      }
       // —— 联盟互连：盟约的安全感（凝聚力高的联盟成员更安定）——
       const alS = this.allianceOfCiv(c.id);
       if (alS && !atWar) stab += Math.min(1.2, alS.cohesion * 0.012);
@@ -7062,13 +7086,18 @@ export class GameEngine {
           }
         }
       }
-      // war towers（保留旧时代行为：战争期间补建箭塔）
-      if (this.tickCount % 300 === 0 && civ.houses > 8 && this.rng() < 0.5) {
+      // war towers（战争期间补建箭塔；一朝被蛇咬：破城记忆 600 tick 内加紧备战——战后也补、门槛放宽，#30 守军建造倾向）
+      {
+        const bitten = this.tickCount - (this.breachMem.get(civ.id) ?? -1e9) < 600;
         let atWar = false;
         for (const other of this.civs) {
           if (other.alive && other.id !== civ.id && this.atWar(civ.id, other.id)) { atWar = true; break; }
         }
-        if (atWar) this.tryBuildBuilding(civ, BUILD_KINDS.TOWER);
+        if (atWar && this.tickCount % 300 === 0 && civ.houses > 8 && this.rng() < (bitten ? 0.9 : 0.5)) {
+          this.tryBuildBuilding(civ, BUILD_KINDS.TOWER);
+        } else if (bitten && !atWar && this.tickCount % 300 === 60 && civ.houses > 5 && this.rng() < 0.35) {
+          this.tryBuildBuilding(civ, BUILD_KINDS.TOWER); // 战后重建防御：破过城的国家知道箭塔不是奢侈品
+        }
       }
       // colony ships — 繁荣文明周期性跨海殖民
       if (civ.pop >= 10 && civ.houses >= 2 && this.tickCount >= (civ.colonizeCd ?? 0) && this.rng() < 0.06) {
