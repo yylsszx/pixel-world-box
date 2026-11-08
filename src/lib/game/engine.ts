@@ -1128,6 +1128,16 @@ export class GameEngine {
     return n;
   }
 
+  /** 当前在世陆生野生动物总数（wildAlive 分账——水生独立配额后，陆生门不应被鱼群鲸落挤占：
+   *  鱾+鲨+鲸常驻数百只，全局口径下陆生实际容量被腰斩，猎手迁徙回归被永久锁死） */
+  wildAliveLand(): number {
+    let n = 0;
+    for (const [race, v] of this.wildCount) {
+      if (!RACES[race]?.aquatic) n += v;
+    }
+    return n;
+  }
+
   // ---------------- 涌现社会内核（Task 39）：家族谱系 / 血仇网络 / 恐慌传染场 ----------------
 
   /** 家族姓氏词库：前缀 × 后缀词法组合（16×12=192 —— 重姓本就自然，不查重） */
@@ -1321,7 +1331,7 @@ export class GameEngine {
     // 水生独立配额后海洋可繁衍至自身承载（此前全球预算被羊群饱和占用，鱼被封顶 ~40、鲨鱼复兴无门）
     if (!def.isCiv) {
       if (def.aquatic) { if (this.wildAliveAquatic() >= MAX_WILDLIFE_AQUATIC) return null; }
-      else if (this.wildAlive() >= MAX_WILDLIFE) return null; // 含僵尸（防刷屏无上限）
+      else if (this.wildAliveLand() >= MAX_WILDLIFE) return null; // 陆生分账（水生独立配额，鱼群不再挤占陆地预算）；含僵尸（防刷屏无上限）
     }
     if (race === R2 && (this.wildCount.get(race) ?? 0) >= MAX_DRAGONS) return null;
     if (race === RD && (this.wildCount.get(race) ?? 0) >= MAX_DEMONS) return null;
@@ -14275,8 +14285,10 @@ export class GameEngine {
       { race: R.TURTLE, n: [2, 3], habitat: isW },
       { race: R.SHARK, n: [1, 2], habitat: isW },
     ];
-    // 灭绝名单：wildCount 为 0 的候选（O(1) 分种族计数）
-    const extinct = SEED.filter((s) => (this.wildCount.get(s.race) ?? 0) === 0);
+    // 灭绝名单：wildCount ≤ 2 的候选（O(1) 分种族计数）—— 残喘 limbo 与真灭绝同列：
+    // 1-2 只苟延个体无法自持（繁衍门榳 + 找偶无望），狼群卡两只两百年不生不灭就是生态摆设；
+    // 远方族群迁入合流即基因救援，种群过阈自离名单（双向自限）
+    const extinct = SEED.filter((s) => (this.wildCount.get(s.race) ?? 0) <= 2);
     if (extinct.length === 0) return;
     if (this.rng() > 0.6) return; // 掷签门：并非每轮都迁来 —— 平均 ~5.5 年一支兽群抵达
     // 加权掷签（Task 97）：灭绝越久的种族权重越高（1 → 最高 5，2400 tick ≈ 13 年封顶）——
@@ -14297,7 +14309,7 @@ export class GameEngine {
     const def = RACES[seed.race];
     const aquatic = !!def.aquatic;
     // 预算按轨检（水生掷签看海洋配额，陆生看全球预算）—— 羊群饱和不再挡住鲨鱼的迁徙回归
-    if (aquatic ? this.wildAliveAquatic() >= MAX_WILDLIFE_AQUATIC - 8 : this.wildAlive() >= MAX_WILDLIFE - 8) return;
+    if (aquatic ? this.wildAliveAquatic() >= MAX_WILDLIFE_AQUATIC - 8 : this.wildAliveLand() >= MAX_WILDLIFE - 8) return;
     // 栖息地采样：随机掷点找落位（蟹需 r=2 内有水 —— 沿 worldgen 口径）
     // 鲨鱼特例：锚定一条活鱼落位（猎手跟着鱼群走 —— 随机深水的鲨鱼追不上远处的鱼群，Task 96 实测）
     if (seed.race === R.SHARK) {
@@ -14363,6 +14375,39 @@ export class GameEngine {
         this.addEvent('eco', `洋流送来了远方的族群——${def.name}重新出现在这片水域`, { x: s0.x + 0.5, y: s0.y + 0.5 });
       }
       return;
+    }
+    // 陆生猎手锚定猎物落位（Task 96 鲨鱼锚鱼的土地版）：随机森林=食物沙漠——本轮实测 5 只迁入狼
+    // 两代内饿毙（陆地猎物密度 1/74 格且聚居绿洲，随机林地与猎场南辕北辙）。猎手的宜居带不是
+    // 植被而是猎物：锚定陆生猎物 5-12 格外落位，一程续航之内有猎场才算立足；无猎可锚（世界
+    // 真空）退回通用随机采样（放到哪都一样）。
+    if (!aquatic && RACES[seed.race]?.predator) {
+      const prey = this.units.filter((q) => !q.dead && q.civ < 0 && !RACES[q.race]?.predator && !RACES[q.race]?.aquatic && !RACES[q.race]?.hostile);
+      if (prey.length > 0) {
+        let placed = 0;
+        const n = seed.n[0] + Math.floor(this.rng() * (seed.n[1] - seed.n[0] + 1));
+        let p0: Unit | null = null;
+        for (let k = 0; k < n; k++) {
+          const p = prey[Math.floor(this.rng() * prey.length)];
+          if (!p0) p0 = p;
+          for (let t2 = 0; t2 < 10; t2++) {
+            const ang = this.rng() * Math.PI * 2;
+            const dist = 5 + this.rng() * 7;
+            const jx = Math.max(0.5, Math.min(W - 0.5, p.x + Math.cos(ang) * dist));
+            const jy = Math.max(0.5, Math.min(H - 0.5, p.y + Math.sin(ang) * dist));
+            const t = this.terrain[Math.floor(jy) * W + Math.floor(jx)];
+            if (t === T.DEEP || t === T.WATER) continue; // 猎手不落水
+            if (this.spawnUnit(seed.race, jx, jy, { silent: true })) placed++;
+            break;
+          }
+        }
+        if (placed > 0 && p0) {
+          this.reboundLast.set(seed.race, this.tickCount);
+          this.fx('spawn', p0.x, p0.y, 46);
+          this.addEvent('eco', `远方的兽群循着猎群的踪迹跋涉而来——${def.name}重新踏上了这片大地`, { x: p0.x, y: p0.y });
+        }
+        return;
+      }
+      // 无猎可锚 → 落回通用随机采样
     }
     for (let tries = 0; tries < 140; tries++) {
       const x = 2 + Math.floor(this.rng() * (W - 4));
