@@ -545,6 +545,8 @@ export class GameEngine {
   breaches: { i: number; x: number; y: number; civ: number; tick: number; cas?: number }[] = [];
   /** 破城记忆（civId → 末次被破墙 tick：一朝被蛇咬——守军建造倾向与赶工补砌的战后人性反馈）。瞬态不入档 */
   breachMem = new Map<number, number>();
+  /** 兽患记忆（civId → 末次被野生捕食者进犯 tick：被狼咬过的村子也知道塔的用处——猎获经济账的支出面接入守军建造倾向）。瞬态不入档 */
+  predMem = new Map<number, number>();
   /** 驻墙战位（unitId → 墙 tile 序号：战位失效前不重扫——守军不换岗不叠位）。瞬态不入档 */
   garrisonOf = new Map<number, number>();
 
@@ -7086,9 +7088,10 @@ export class GameEngine {
           }
         }
       }
-      // war towers（战争期间补建箭塔；一朝被蛇咬：破城记忆 600 tick 内加紧备战——战后也补、门槛放宽，#30 守军建造倾向）
+      // war towers（战争期间补建箭塔；一朝被蛇咬：破城/兽患记忆 600 tick 内加紧备战——战后也补、门槛放宽，#30/#31 守军建造倾向）
       {
-        const bitten = this.tickCount - (this.breachMem.get(civ.id) ?? -1e9) < 600;
+        const lastBad = Math.max(this.breachMem.get(civ.id) ?? -1e9, this.predMem.get(civ.id) ?? -1e9);
+        const bitten = this.tickCount - lastBad < 600;
         let atWar = false;
         for (const other of this.civs) {
           if (other.alive && other.id !== civ.id && this.atWar(civ.id, other.id)) { atWar = true; break; }
@@ -14507,6 +14510,7 @@ export class GameEngine {
         }
         if (prey) {
           killsCiv++;
+          this.predMem.set(prey.civ, this.tickCount); // #31 兽患记忆：这个村子该加塔了（与破城记忆同型，接入守军建造倾向）
           this.addEvent('eco', `「${this.civs[prey.civ]?.name ?? '?'}」遭遇兽患——饥饿的${pd.name}闯入人烟，叼走了牲口与村民`, { colorHex: '#f59e0b', x: prey.x, y: prey.y });
         }
       }
