@@ -969,7 +969,7 @@ export function drawDragon(ctx: CanvasRenderingContext2D, u: Unit, frame: number
 }
 
 // ---------- buildings (houses 6x6 px, capital 8x8, tower 2x4, farm 6x4, castle 10x8 …) ----------
-export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: [number, number, number], tier = 0, hpRatio = 1, fc = 0) {
+export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: [number, number, number], tier = 0, hpRatio = 1, fc = 0, night = false, bedN = 0) {
   // —— 超细粒度建筑（4px/格基准）：所有结构细节翻倍；fc = 全局帧计数（旗帜飘动/麦浪风摆等微动画驱动）——
   const flap = (fc >> 3) & 1; // 8 帧一摆的旗帜相位
   const sway = ((fc >> 4) & 1) === 0 ? 0 : 1; // 16 帧一换的麦浪相位
@@ -1343,6 +1343,30 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
   ctx.fillStyle = tier >= 3 ? '#ffd93d' : '#ffdba0';
   ctx.fillRect(ox + 2, py + 4, 2, 2);
   ctx.fillRect(ox + w - 4, py + 4, 2, 2);
+  // 住宅床铺（归家叙事的建筑侧表达）：两侧壁各一张枕毯小床；夜里户籍住户卧床——毯面隆起 + 枕头收暗 + 窗火更亮（有人家的灯）
+  if (!big) {
+    const blanket = rgb(mix(color, [255, 255, 255], 0.35));
+    const lump = rgb(mix(color, [0, 0, 0], 0.25));
+    const bed = (bx: number, pillowRight: boolean, occupied: boolean) => {
+      ctx.fillStyle = '#6e4a2b';
+      ctx.fillRect(bx, py + 7, 3, 1); // 床架
+      ctx.fillStyle = blanket;
+      ctx.fillRect(bx, py + 6, 3, 1); // 毯
+      ctx.fillStyle = occupied ? '#d8d0c0' : '#f2ead8';
+      ctx.fillRect(bx + (pillowRight ? 2 : 0), py + 6, 1, 1); // 枕
+      if (occupied) {
+        ctx.fillStyle = lump;
+        ctx.fillRect(bx + (pillowRight ? 0 : 1), py + 6, 2, 1); // 卧者隆起
+      }
+    };
+    bed(ox, false, night && bedN > 0); // 左床（首户）
+    bed(ox + w - 3, true, night && bedN > 1); // 右床（共居第二户）
+    if (night && bedN > 0) {
+      ctx.fillStyle = '#ffe28a'; // 归家灯火：有人卧床的窗火更亮（灯火可亲）
+      ctx.fillRect(ox + 2, py + 4, 2, 2);
+      ctx.fillRect(ox + w - 4, py + 4, 2, 2);
+    }
+  }
   // base shadow
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
   ctx.fillRect(ox, py + 8, w, 2);

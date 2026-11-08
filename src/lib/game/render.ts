@@ -3,7 +3,7 @@ import type { Army, Effect, Unit } from './types';
 import { T, R, RACES } from './types';
 import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawHydra, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster, drawPersonFine, drawQuadFine, drawChicken, drawPig, drawRabbit, drawFox, drawFish, drawCrab, drawTurtle, drawShark } from './sprites';
 import { visCacheFor } from './emergence';
-import { BUILDING_DEFS } from './types';
+import { BUILDING_DEFS, BUILD_KINDS } from './types';
 import { GameEngine } from './engine';
 import { AW, AH, CELL } from './nature';
 
@@ -1341,6 +1341,7 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
   }
 
   // buildings（超细粒度：4px/格 ×4 坐标）
+  const nightNow = engine.dayPhase() > 0.545 && engine.dayPhase() < 0.865; // 与睡眠系统同一夜窗（归家灯火/卧床联动）
   for (const b of engine.buildings) {
     if (b.x < x0 - 2 || b.x > x1 + 2 || b.y < y0 - 3 || b.y > y1 + 3) continue;
     const civ = engine.civs[b.civ];
@@ -1356,7 +1357,7 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
     const bhp = engine.bHp.get(b.i);
     const bMax = BUILDING_DEFS[b.kind]?.hp ?? 70;
     const bRatio = bhp != null ? bhp / bMax : 1;
-    drawBuilding(wc, b, civ.color, engine.houseTierOf(civ), bRatio, frameCount);
+    drawBuilding(wc, b, civ.color, engine.houseTierOf(civ), bRatio, frameCount, nightNow, b.kind === BUILD_KINDS.HOUSE ? engine.bedCountAt(b.i) : 0);
     // —— 原子级：受损建筑冒烟（耐久 <60% 轻烟，<30% 浓烟 + 火点）——
     if (bhp != null) {
       const ratio = bRatio;

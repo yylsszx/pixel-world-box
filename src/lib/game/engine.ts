@@ -3092,6 +3092,7 @@ export class GameEngine {
     const night = dp > 0.545 && dp < 0.865;
     if (!night) {
       // 白昼/黄昏/破晓：全员唤醒（只碰带 sleep/goHome 标记的少数单位——归途也作废，天亮回家睡觉没意义）
+      this.bedCnt.clear(); // 白天无人卧床（渲染层据此熄灭床铺夜态）
       for (const u of this.units) {
         if (u.sleep) u.sleep = undefined;
         if (u.goHome != null) { u.goHome = undefined; u.goHomeAt = undefined; }
@@ -3099,8 +3100,13 @@ export class GameEngine {
       return;
     }
     const bucket = (this.tickCount >> 2) & 3;
+    this.bedCnt.clear(); // 熟睡住户按户清点（顺主循环一趟，零额外遍历）
     for (const u of this.units) {
       if (u.dead || u.civ < 0 || !RACES[u.race]?.isCiv) continue; // 野生动物不眠（生态永续活跃）
+      if (u.sleep) {
+        const h = this.homeOf.get(u.id);
+        if (h != null) this.bedCnt.set(h, (this.bedCnt.get(h) ?? 0) + 1);
+      }
       if (((u.id + bucket) & 3) !== 0) continue; // 1/4 分桶：错落扫描摊平开销
       if (u.sleep) {
         if (u.hurt > 0 || (u.panic ?? 0) > 0.2) u.sleep = undefined; // 受扰即醒（夜袭/惊吓）
@@ -3122,8 +3128,8 @@ export class GameEngine {
       if (jobN === 2 || jobN === 3) continue; // 战士/弓手：夜巡与守土
       if (u.hurt > 0 || (u.panic ?? 0) > 0 || u.hp <= u.maxHp * 0.5 || u.cd > 0) continue;
       if (this.rng() < 0.02) {
-        // 归家机制：有自家住宅且不在家门口 → 动身回家；家门口/无家可归 → 原地入眠（流浪者野外躺平）
-        const home = this.nearestHomeTile(u.civ, u.x, u.y);
+        // 归家机制：有自家住宅且不在家门口 → 动身回家（户籍派房）；家门口/无家可归 → 原地入眠（流浪者野外躺平）
+        const home = this.homeFor(u);
         if (home >= 0) {
           const hx = (home % W) + 0.5, hy = ((home / W) | 0) + 0.5;
           const dd = (u.x - hx) * (u.x - hx) + (u.y - hy) * (u.y - hy);
@@ -3144,24 +3150,83 @@ export class GameEngine {
    *  （建筑稀疏变更；destroyBuilding 打失效戳即时纠偏，迁都等旁路 12.5 秒自愈）。 */
   private homeCache: Map<number, number[]> | null = null;
   private homeCacheAt = -99999;
-  private nearestHomeTile(civ: number, x: number, y: number): number {
-    if (!this.homeCache || this.tickCount - this.homeCacheAt >= 300) {
-      const m = new Map<number, number[]>();
-      for (const b of this.buildings) {
-        if (b.kind !== BUILD_KINDS.HOUSE || b.civ < 0) continue;
-        const a = m.get(b.civ);
-        if (a) a.push(b.i); else m.set(b.civ, [b.i]);
-      }
-      this.homeCache = m;
-      this.homeCacheAt = this.tickCount;
+  /** 户籍簿（瞬态不入档）：unitId → 自家住宅 tile —— 归家不再「就近随便睡」，每户有了常住的家。
+   *  年检（随缓存重建）：亡者腾退、拆房/易主改派；纯引擎侧 Map 零存档字段，旧档零兼容风险。 */
+  private homeOf = new Map<number, number>();
+  /** 每户在册人数（随重建重算 + 派房时累加）——新户优先住人少的屋（独户优先、满员共居）。 */
+  private homeOcc = new Map<number, number>();
+  /** 熟睡住户按户清点（瞬态，sleepTick 每跑重建；白天清空）——渲染层读它点亮卧床。 */
+  private bedCnt = new Map<number, number>();
+  /** 住宅床位占用数（渲染用）：某住宅内正在熟睡的户籍人数。 */
+  bedCountAt(i: number): number { return this.bedCnt.get(i) ?? 0; }
+  private rebuildHomeCache() {
+    const m = new Map<number, number[]>();
+    const sets = new Map<number, Set<number>>();
+    for (const b of this.buildings) {
+      if (b.kind !== BUILD_KINDS.HOUSE || b.civ < 0) continue;
+      let a = m.get(b.civ);
+      if (!a) { a = []; m.set(b.civ, a); sets.set(b.civ, new Set<number>()); }
+      a.push(b.i);
+      sets.get(b.civ)?.add(b.i);
     }
-    const list = this.homeCache.get(civ);
+    this.homeCache = m;
+    this.homeCacheAt = this.tickCount;
+    // 户籍年检：亡者腾退 / 拆房·易主改派 + 每户在册人数重算（派房摊派的依据）
+    this.homeOcc.clear();
+    const seen = new Set<number>();
+    for (const u of this.units) {
+      seen.add(u.id);
+      const h = this.homeOf.get(u.id);
+      if (h != null) {
+        const hs = sets.get(u.civ);
+        if (hs && hs.has(h)) this.homeOcc.set(h, (this.homeOcc.get(h) ?? 0) + 1);
+        else this.homeOf.delete(u.id); // 房没了/文明易主：户籍作废，下个夜晚重新派房
+      }
+    }
+    for (const uid of this.homeOf.keys()) {
+      if (!seen.has(uid)) this.homeOf.delete(uid); // 亡者腾退（id 不在册即已亡故）
+    }
+  }
+  private nearestHomeTile(civ: number, x: number, y: number): number {
+    if (!this.homeCache || this.tickCount - this.homeCacheAt >= 300) this.rebuildHomeCache();
+    const cache = this.homeCache;
+    if (!cache) return -1;
+    const list = cache.get(civ);
     if (!list || list.length === 0) return -1;
     let best = -1, bd = Infinity;
     for (const i of list) {
       const hx = (i % W) + 0.5, hy = ((i / W) | 0) + 0.5;
       const d = (x - hx) * (x - hx) + (y - hy) * (y - hy);
       if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  /** 户籍派房：自家有效优先；无/失效 → 派给在册人最少的本文明住宅（并列取最近）。
+   *  满员（≥4）仍可超编共居兜底——摊派是倾向而非硬限，真无房才露宿（走不到家的超时半路入眠）。 */
+  private homeFor(u: Unit): number {
+    if (!this.homeCache || this.tickCount - this.homeCacheAt >= 300) this.rebuildHomeCache();
+    const cur = this.homeOf.get(u.id);
+    if (cur != null) {
+      const mine = this.homeCache;
+      const ownList = mine ? mine.get(u.civ) : undefined;
+      if (ownList && ownList.includes(cur)) return cur; // 自家仍在：户籍有效，今夜还回这家
+      this.homeOf.delete(u.id); // 拆了/易主了：户籍作废，重新派房
+    }
+    const cache = this.homeCache;
+    if (!cache) return -1;
+    const list = cache.get(u.civ);
+    if (!list || list.length === 0) return -1;
+    let best = -1, bOcc = Infinity, bd = Infinity;
+    for (const i of list) {
+      const occ = this.homeOcc.get(i) ?? 0;
+      const hx = (i % W) + 0.5, hy = ((i / W) | 0) + 0.5;
+      const d = (u.x - hx) * (u.x - hx) + (u.y - hy) * (u.y - hy);
+      if (occ < bOcc || (occ === bOcc && d < bd)) { bOcc = occ; bd = d; best = i; }
+    }
+    if (best >= 0) {
+      this.homeOf.set(u.id, best);
+      this.homeOcc.set(best, (this.homeOcc.get(best) ?? 0) + 1);
     }
     return best;
   }
@@ -3754,7 +3819,7 @@ export class GameEngine {
         const jobN = u.job ?? 0;
         const guard = jobN === 2 || jobN === 3; // 战士/弓手：夜巡与守土
         if (!guard && u.hurt <= 0 && (u.panic ?? 0) <= 0 && u.hp > u.maxHp * 0.5 && u.cd <= 0 && this.rng() < 0.02) {
-          const home = this.nearestHomeTile(u.civ, u.x, u.y);
+          const home = this.homeFor(u);
           if (home >= 0) {
             const hx = (home % W) + 0.5, hy = ((home / W) | 0) + 0.5;
             const dd = (u.x - hx) * (u.x - hx) + (u.y - hy) * (u.y - hy);
