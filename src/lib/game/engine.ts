@@ -3607,6 +3607,24 @@ export class GameEngine {
           const key = pairKey(home.id, partner.id);
           this.rel.set(key, Math.max(-100, (this.rel.get(key) ?? 0) - 6));
           this.addEvent('trade', `「${home.name}」的商队在途中遇袭，贸易中断`, { colorHex: home.colorHex, x: u.x, y: u.y });
+          // —— 战争劫掠：兵锋所指货袋散落——尸身旁交战国单位所属文明顺手劫走散碎货财 ——
+          //    陆上劫掠动机链补全（海上私掠满船入账的陆上对称）：近战/会战 AoE/野兽围杀统一收敛于死亡结算
+          //    （单位近战主路径在 WASM 内核——JS 命中点只覆盖 bail 单位，死亡点劫掠才是唯一公共汇聚处）
+          let robber: Unit | null = null;
+          let robD = 2.5;
+          for (const w of this.units) {
+            if (w.dead || w.civ < 0 || w.civ === u.civ || !this.atWar(w.civ, u.civ)) continue;
+            const d = Math.hypot(w.x - u.x, w.y - u.y);
+            if (d < robD) { robD = d; robber = w; }
+          }
+          if (robber) {
+            const robCiv = this.civs[robber.civ];
+            if (robCiv && robCiv.alive) {
+              robCiv.gold = (robCiv.gold ?? 0) + 2 + Math.floor(this.rng() * 4);
+              this.fx('coin', u.x, u.y - 0.8, 22);
+              this.addEvent('war', `「${robCiv.name}」劫掠了「${home.name}」的商队——散碎货财尽入囊中`, { colorHex: robCiv.colorHex, x: u.x, y: u.y });
+            }
+          }
         }
       }
       // 尸骸残留 + 死亡血泊（原子级死亡反馈；亡者化为骨尘、无血可流）
@@ -3902,11 +3920,20 @@ export class GameEngine {
     } // —— WASM/JS 扫描环分流结束 ——
 
     if (enemy && (u.caravan ?? 0) > 0) {
-      // 深度打磨：商队不攻击 — 满载行商遇敌只会夺路而逃（可被劫杀，贸易中断）
-      const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);
-      u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 4));
-      u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 4));
-      this.moveUnit(u, 1.15); // 逃命加成
+      // 深度打磨：商队不攻击 — 满载行商遇敌夺路而逃（可被劫杀，贸易中断）
+      // 陆路随护的对偶：本国军团在侧（7 格内，陆路随护已重瞄赶来）时行商信任刀剑——
+      // 停队观望不弃货奔逃，把危险交给护卫（军团缠住敌人，商队原地待援）
+      let guarded = false;
+      for (const o of this.armies) {
+        if (o.naval || o.civ !== u.civ || o.state === 'retreat') continue;
+        if (Math.hypot(o.x - u.x, o.y - u.y) < 7) { guarded = true; break; }
+      }
+      if (!guarded) {
+        const ang = Math.atan2(u.y - enemy.y, u.x - enemy.x);
+        u.tx = Math.max(1, Math.min(W - 2, u.x + Math.cos(ang) * 4));
+        u.ty = Math.max(1, Math.min(H - 2, u.y + Math.sin(ang) * 4));
+        this.moveUnit(u, 1.15); // 逃命加成
+      }
       return;
     }
 
@@ -4981,6 +5008,20 @@ export class GameEngine {
       let bd = 14;
       for (const o of this.armies) {
         if (!o.naval || o.civ !== u.civ || o.state === 'retreat' || o.clashWith != null) continue;
+        const dc = Math.hypot(o.x - u.x, o.y - u.y);
+        if (dc < bd) { bd = dc; best = o; }
+      }
+      if (best) { best.tx = u.x; best.ty = u.y; }
+    }
+    // —— 陆路随护：己方军团在陆上商队 12 格内则周期重瞄随行（陆军护商队——商路的刀剑护卫）——
+    //    与海上商船随护对称成陆海双线；闲时军团有了新差事，商路在兵荒马乱的年代有了走完的可能
+    //    纯瞬态重瞄（tx/ty 不入档零兼容风险）；接战/溃退军团不打断——护航不误征战
+    for (const u of this.units) {
+      if (u.dead || u.boat || (u.caravan ?? 0) <= 0) continue;
+      let best: Army | null = null;
+      let bd = 12;
+      for (const o of this.armies) {
+        if (o.naval || o.civ !== u.civ || o.state === 'retreat' || o.clashWith != null) continue;
         const dc = Math.hypot(o.x - u.x, o.y - u.y);
         if (dc < bd) { bd = dc; best = o; }
       }

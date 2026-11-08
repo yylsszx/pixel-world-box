@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.56-preview';
+export const GAME_VERSION = 'v0.57-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.57-preview',
+    date: '2026-11-08',
+    items: [
+      '海上贸易与私掠：商船自港口扬帆跨洋沿航点通商、满载货值归来；战时敌国舰队海上私掠商船——满船货物尽入囊中，远洋不再是法外之地',
+      '商船护航：军舰闻商而动——随护重瞄跟队，私掠舰近身即被护航舰队拦截转攻（炮火相向，商船趁隙突围）；殖民船同受保护',
+      '陆路商队护航：本国军团对陆上商队随护跟队（商路的刀剑护卫）；护卫在侧行商不再弃货奔逃，把危险交给刀剑；劫杀商队可缴获散碎货财——兵荒马乱的年代商路有了活着走完的可能',
+    ],
+  },
   {
     ver: 'v0.56-preview',
     date: '2026-11-08',
