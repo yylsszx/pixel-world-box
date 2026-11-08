@@ -561,6 +561,8 @@ export class GameEngine {
   warData = new Map<string, WarInfo>();
   /** 战败耻辱记忆（pairKey → 上次战争败方 id；复仇宣战依据） */
   warShame = new Map<string, number>();
+  /** 战争创伤记忆（civId → {tick, amount}：停战不是遗忘——阵亡者的哀悼按开战人口折算，一代人渐平。瞬态不入档，与 breachMem/predMem 同型） */
+  griefMem = new Map<number, { tick: number; amount: number }>();
   /** 文明旨意（文明级开发者功能：目标由文明自行达成，可能失败） */
   directives: Directive[] = [];
   /** 旨意序号 */
@@ -2329,12 +2331,19 @@ export class GameEngine {
     }
     // —— 军团随之覆灭（静默解散）——
     for (const a of [...this.armies]) if (a.civ === civ.id) this.disbandArmy(a, true);
-    // —— 战争档案清理 ——
+    // —— 战争档案清理（胜方虽胜犹痛：灭国战的死难也记入哀悼，凯旋减半 #36）——
     for (const key of [...this.warData.keys()]) {
       const dash = key.indexOf('-');
       const x = +key.slice(0, dash);
       const y = +key.slice(dash + 1);
-      if (x === civ.id || y === civ.id) this.warData.delete(key);
+      if (x === civ.id || y === civ.id) {
+        const wdl = this.warData.get(key);
+        if (wdl) {
+          const other = wdl.a === civ.id ? wdl.b : wdl.a;
+          this.bookGrief(other, wdl.a === other ? wdl.casA : wdl.casB, wdl.a === other ? wdl.popA0 : wdl.popB0, 0.5);
+        }
+        this.warData.delete(key);
+      }
     }
     // —— 旨意结算：以该国为目标的灭国/攻城令 → 颁布方成功；该国的旨意 → 失败 ——
     for (const d of this.directives) {
@@ -5999,6 +6008,13 @@ export class GameEngine {
       // —— 联盟互连：盟约的安全感（凝聚力高的联盟成员更安定）——
       const alS = this.allianceOfCiv(c.id);
       if (alS && !atWar) stab += Math.min(1.2, alS.cohesion * 0.012);
+      // —— 哀悼缓释（#36）：战争创伤随岁月平复（每轮 ×0.85，两代人渐平）——停战不是遗忘，重建红利先要填平哀悼
+      const gr = this.griefMem.get(c.id);
+      if (gr) {
+        stab -= gr.amount;
+        gr.amount *= 0.85;
+        if (gr.amount < 0.05) this.griefMem.delete(c.id);
+      }
       c.stability = Math.max(0, Math.min(100, stab));
       // —— 文化积累：神殿 + 节日 + 科技乘数 + 种族虔诚（精灵的仪式与信仰）——
       const cultGain = (temples * 0.8 + 0.4 + libraries * 0.3) * (0.7 + (rp?.piety ?? 0.5) * 0.6) * tm2.cult * (gov === 2 ? 1.4 : 1);
@@ -8958,6 +8974,9 @@ export class GameEngine {
         const aAhead = wd.scoreA >= wd.scoreB;
         const winner = aAhead ? ca : cb;
         const quitter = aAhead ? cb : ca;
+        // —— 战争创伤（#36）：无果而终也有死难——弃战方创痛加倍，守住的一方凯旋减半 ——
+        this.bookGrief(quitter.id, wd.a === quitter.id ? wd.casA : wd.casB, wd.a === quitter.id ? wd.popA0 : wd.popB0, 1.25);
+        this.bookGrief(winner.id, wd.a === winner.id ? wd.casA : wd.casB, wd.a === winner.id ? wd.popA0 : wd.popB0, 0.5);
         this.totalWars.delete(key);
         this.warData.delete(key);
         this.rel.set(key, -5); // 怀恨在心（> -20 即停战，宿怨为复仇战争留种）
@@ -9018,7 +9037,19 @@ export class GameEngine {
     }
   }
 
-  /** 停战（统一入口：纪事 + 战败耻辱记忆 + 未竟战争旨意提前结算）。
+  /** 战争创伤记账（#36）：阵亡数/开战人口 折算成停战初期的每轮民心压制（死一成人口 ≈ −1.4/轮起步，封顶 2.5），
+   *  胜方凯旋减半（wonMul=0.5）、败方创痛加倍（1.25）、白和全额（1）；旧痛未平新伤又至取较重者；重伤之国举哀纪事 */
+  bookGrief(id: number, cas: number, pop0: number, wonMul: number) {
+    const cv = this.civs[id];
+    if (!cv?.alive) return;
+    const amt = Math.min(2.5, (cas / Math.max(30, pop0)) * 14) * wonMul;
+    if (amt < 0.05) return;
+    const prev = this.griefMem.get(id);
+    this.griefMem.set(id, { tick: this.tickCount, amount: Math.max(prev?.amount ?? 0, amt) });
+    if (amt > 1.0) this.addEvent('peace', `「${cv.name}」为阵亡将士举哀——山河犹在，故人已矣`, { colorHex: cv.colorHex });
+  }
+
+  /** 停战（统一入口：纪事 + 战败耻辱记忆 + 战争创伤残留 + 未竟战争旨意提前结算）。
    *  postRel：战后关系（25=常态；10=冷和平；5=心怀怨咀；40=神谕和解） */
   makePeace(a: number, b: number, text: string, postRel = 25) {
     const key = pairKey(a, b);
@@ -9040,6 +9071,10 @@ export class GameEngine {
       // 战败耻辱记忆（复仇战争的种子）
       const loser = wd.scoreA === wd.scoreB ? null : wd.scoreA > wd.scoreB ? this.civs[wd.b] : this.civs[wd.a];
       if (loser?.alive) this.warShame.set(key, loser.id);
+      // —— 战争创伤残留（#36）：停战不是遗忘——凯旋减半、败痛加倍，哀悼随岁月缓释（societyTick）——
+      const wonOf = (id: number) => (wd.scoreA === wd.scoreB ? 1 : (wd.scoreA > wd.scoreB) === (wd.a === id) ? 0.5 : 1.25);
+      this.bookGrief(a, wd.a === a ? wd.casA : wd.casB, wd.a === a ? wd.popA0 : wd.popB0, wonOf(a));
+      this.bookGrief(b, wd.b === b ? wd.casB : wd.casA, wd.b === b ? wd.popB0 : wd.popA0, wonOf(b));
       // 未竟的战争旨意随停战提前失败（灭国/攻城令半途而废——目标未成则失败）
       for (const d of this.directives) {
         if (d.status !== 'active') continue;
