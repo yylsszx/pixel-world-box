@@ -385,6 +385,8 @@ export interface Unit {
   boatTTL?: number;
   /** 贸易商队：目标文明 id（>0 = 满载商队正奔赴伙伴市场；0/undefined = 普通） */
   caravan?: number;
+  /** 商船航路点（tile index 队列，spawn 时 BFS 水路生成——绕开半岛岛链防贴岸提前登陆；瞬态不入档，旧档/中途读档退化为直航，零兼容风险） */
+  wps?: number[];
   /** 职业索引（JOBS 下标；undefined = 0 平民；仅文明生物） */
   job?: number;
   /** 装备：武器（剑/斧/弓/杖） */

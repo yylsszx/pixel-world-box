@@ -5018,8 +5018,11 @@ export class GameEngine {
       for (let pj = 0; pj < partners.length; pj++) { rollP -= pws[pj]; if (rollP <= 0) { pickIdx = pj; break; } }
       const partner = partners[pickIdx];
       const pi = this.marketIdx.get(partner.id)!;
-      // 可达性校验（同大陆且路径预算内；商队不航海）
-      if (this.findPath(mi, pi, 5000) == null) continue;
+      // 可达性校验：陆路不通则尝试海路（商船自港口扬帆跨洋——运河连通的水系同样通航）
+      if (this.findPath(mi, pi, 5000) == null) {
+        this.trySpawnTradeShip(civ, partner);
+        continue;
+      }
       const cu = this.spawnUnit(civ.race, (mi % W) + 0.5, ((mi / W) | 0) + 0.5, { civ: civ.id, silent: true, job: 5 });
       if (!cu) continue;
       cu.caravan = partner.id;
@@ -5032,15 +5035,16 @@ export class GameEngine {
     }
   }
 
-  /** 商队抵达伙伴市场：双方入账 + 偶发知识流通 + 外交升温 + 种族亲善；行商转为客居商人 */
-  caravanArrive(u: Unit) {
+  /** 商队/商船抵达伙伴市场：双方入账 + 偶发知识流通 + 外交升温 + 种族亲善；行商转为客居商人
+   *  sea=true 商船抵港（海上货值更厚——远洋贸易的风险溢价） */
+  caravanArrive(u: Unit, sea = false) {
     WBB.touchMeta(); // Stage 3：caravan/job 列 JS 写点收口
     const home = u.civ >= 0 ? this.civs[u.civ] : null;
     const partner = this.civs[u.caravan!];
     // —— 联盟互连：盟内商路免税互市，收益 ×1.25 ——
     const alC = home && partner ? this.allianceOfCiv(home.id) : null;
     const allyBonus = alC && partner && alC.members.includes(partner.id) ? (alC.bonded ? 1.38 : 1.25) : 1;
-    const val = Math.round((6 + Math.floor(this.rng() * 9)) * allyBonus);
+    const val = Math.round((sea ? 10 + Math.floor(this.rng() * 12) : 6 + Math.floor(this.rng() * 9)) * allyBonus);
     if (home && home.alive) {
       home.gold = (home.gold ?? 0) + val;
       if (this.rng() < 0.35) home.knowledge = (home.knowledge ?? 0) + 1;
@@ -5057,10 +5061,100 @@ export class GameEngine {
     }
     this.fx('coin', u.x, u.y - 1, 30);
     if (this.rng() < 0.3 && home && partner) {
-      this.addEvent('trade', `「${home.name}」商队抵达「${partner.name}」，两市共获 ${val} 金`, { colorHex: partner.colorHex, x: u.x, y: u.y });
+      this.addEvent('trade', sea
+        ? `「${home.name}」的商船抵靠「${partner.name}」的港口，两市共获 ${val} 金`
+        : `「${home.name}」商队抵达「${partner.name}」，两市共获 ${val} 金`, { colorHex: partner.colorHex, x: u.x, y: u.y });
     }
     u.caravan = 0;
     u.job = 5;
+  }
+
+  /** 该国首座港口的 tile（无港口返回 null——海上贸易的门槛：建港才有跨洋商路） */
+  portTileOf(civId: number): number | null {
+    for (const b of this.buildings) {
+      if (b.civ === civId && b.kind === BUILD_KINDS.PORT) return b.i;
+    }
+    return null;
+  }
+
+  /** 海上贸易（海战体系的商贸侧翼）：陆路不通时，两国港口若共享同一片水域 → 商船扬帆跨洋
+   *  运河连通的内海同样通航（地形工程 × 海上贸易交汇）；失败静默返回 false（本轮无商队） */
+  trySpawnTradeShip(civ: Civ, partner: Civ): boolean {
+    const srcPort = this.portTileOf(civ.id);
+    const dstPort = this.portTileOf(partner.id);
+    if (srcPort == null || dstPort == null) return false;
+    const srcWater = this.findWaterNear((srcPort % W) + 0.5, ((srcPort / W) | 0) + 0.5, 3);
+    const dstWater = this.findWaterNear((dstPort % W) + 0.5, ((dstPort / W) | 0) + 0.5, 3);
+    if (!srcWater || !dstWater) return false;
+    const route = this.waterPath(srcWater.x, srcWater.y, dstWater.x, dstWater.y);
+    if (!route || route.length < 2) return false;
+    if (this.units.length >= MAX_UNITS) return false;
+    const u = this.spawnUnit(civ.race, (srcPort % W) + 0.5, ((srcPort / W) | 0) + 0.5, { civ: civ.id, silent: true, job: 5 });
+    if (!u) return false;
+    WBB.touchMeta(); // Stage 3：新船入 boat/caravan 列收口
+    u.boat = 1;
+    u.boatTTL = 1000 + Math.floor(this.rng() * 400) + Math.floor(route.length * 0.9); // 航海寿命：基数 + 按航程余量；超时寻岸/海难兜底
+    u.caravan = partner.id;
+    u.x = srcWater.x;
+    u.y = srcWater.y;
+    u.lx = u.x;
+    u.ly = u.y; // 插值起点重置（避免一帧长距离滑行——殖民船登船同款）
+    u.tx = dstWater.x;
+    u.ty = dstWater.y;
+    // 航路点导航（每 2 格取样防拐角切滩；终点即目的锚地）——绕开半岛岛链，杜绝贴岸提前登陆
+    const wps: number[] = [];
+    for (let k = 2; k < route.length - 1; k += 2) wps.push(route[k]);
+    wps.push(route[route.length - 1]);
+    u.wps = wps;
+    u.maxAge = Math.max(u.maxAge, u.age + 110); // 保证走完长途（约 27 年余量）
+    this.fx('spawn', u.x, u.y, 24);
+    if (this.rng() < 0.3) {
+      this.addEvent('trade', `「${civ.name}」的商船自港口扬帆，满载货物跨洋奔赴「${partner.name}」`, { colorHex: civ.colorHex, x: u.x, y: u.y });
+    }
+    return true;
+  }
+
+  /** 水路连通校验：两片锚地是否共享同一水域（4 向 BFS，预算内）——商船航线/运河通航的依据 */
+  waterReachable(ax: number, ay: number, bx: number, by: number, budget = 20000): boolean {
+    return this.waterPath(ax, ay, bx, by, budget) != null;
+  }
+
+  /** 水路寻径（4 向 BFS 带回溯）：返回起点→目的锚地的 tile index 序列（不通返回 null）——商船航路点导航的底图 */
+  waterPath(ax: number, ay: number, bx: number, by: number, budget = 20000): number[] | null {
+    const sx = Math.floor(ax);
+    const sy = Math.floor(ay);
+    const tx = Math.floor(bx);
+    const ty = Math.floor(by);
+    if (sx === tx && sy === ty) return [idx(sx, sy)];
+    const prev = new Int32Array(W * H).fill(-1);
+    const q = [idx(sx, sy)];
+    prev[q[0]] = q[0];
+    let head = 0;
+    let n = 0;
+    let meet = -1;
+    while (head < q.length && n < budget) {
+      const cur = q[head++];
+      n++;
+      const cx = cur % W;
+      const cy = (cur / W) | 0;
+      if (Math.abs(cx - tx) <= 1 && Math.abs(cy - ty) <= 1) { meet = cur; break; }
+      for (let k = 0; k < 4; k++) {
+        const nx = cx + (k === 0 ? 1 : k === 1 ? -1 : 0);
+        const ny = cy + (k === 2 ? 1 : k === 3 ? -1 : 0);
+        if (nx < 1 || ny < 1 || nx >= W - 1 || ny >= H - 1) continue;
+        const ni = idx(nx, ny);
+        if (prev[ni] !== -1 || !isWater(this.terrain[ni])) continue;
+        prev[ni] = cur;
+        q.push(ni);
+      }
+    }
+    if (meet < 0) return null;
+    const path: number[] = [];
+    let cur = meet;
+    while (cur !== q[0]) { path.push(cur); cur = prev[cur]; }
+    path.push(q[0]);
+    path.reverse();
+    return path;
   }
 
   economyTick() {
@@ -6123,6 +6217,8 @@ export class GameEngine {
 
   /** 殖民船每 tick 航行：贪心绕障（仅水面上移动），抵近目标/超时后尝试靠岸 */
   updateBoat(u: Unit) {
+    // —— 商船（海上贸易）：独立航海——直奔目的港卸货，不圈地不建定居点 ——
+    if ((u.caravan ?? 0) > 0) { this.updateTradeShip(u); return; }
     u.age += 2 / YEAR_TICKS;
     if (u.age > u.maxAge) { u.dead = true; return; } // 年迈的殖民者可能死在航程中
     u.boatTTL = (u.boatTTL ?? 0) - 1;
@@ -6165,6 +6261,12 @@ export class GameEngine {
     }
 
     // 航行：直航角 ± 绕障偏角依次尝试（只在水面推进；baseAng 已在靠岸判定中求出）
+    this.sailToward(u, baseAng);
+    // 完全被围（罕见）：原地等待下一 tick
+  }
+
+  /** 船舶航行步进（殖民船/商船共用）：直航角 ± 绕障偏角依次尝试，只在水面推进；被围原地等待 */
+  private sailToward(u: Unit, baseAng: number) {
     const step = 0.26; // 船速（约为行军 1.4 倍 — WorldBox 中乘船快于步行）
     for (const off of [0, 0.7, -0.7, 1.4, -1.4, 2.6, -2.6, Math.PI]) {
       const ang = baseAng + off;
@@ -6177,7 +6279,90 @@ export class GameEngine {
       if (Math.cos(ang) !== 0) u.flip = Math.cos(ang) < 0;
       return;
     }
-    // 完全被围（罕见）：原地等待下一 tick
+  }
+
+  /** 商船每 tick 航行（海上贸易）：直奔目的港锚地，抵岸卸货入账；伙伴亡国就近靠岸改行；超时寻岸/海难 */
+  updateTradeShip(u: Unit) {
+    u.age += 2 / YEAR_TICKS;
+    if (u.age > u.maxAge) { u.dead = true; return; }
+    u.boatTTL = (u.boatTTL ?? 0) - 1;
+
+    // 超时后改向最近陆地；宽限期内仍找不到岸则海难（满舱货物沉入海底）
+    if ((u.boatTTL ?? 0) <= 0) {
+      if ((u.boatTTL ?? 0) <= -600) {
+        u.dead = true;
+        this.fx('skull', u.x, u.y, 46);
+        this.fx('wreck', u.x, u.y, 420, { src: u.civ });
+        this.addEvent('shipwreck', '一艘商船连同满舱货物葬身了大海', { x: u.x, y: u.y });
+        return;
+      }
+      const land = this.findLandNear(u.x, u.y, 14);
+      if (land) { u.tx = land.x; u.ty = land.y; }
+    }
+
+    // 伙伴亡国/市场尽毁 → 弃货靠岸（船长改行行商——与陆路商队同款处置）
+    const pc = this.civs[u.caravan!];
+    const mi = pc && pc.alive ? this.marketIdx.get(u.caravan!) : undefined;
+    const docking = mi == null;
+    if (docking) {
+      const land = this.findLandNear(u.x, u.y, 14);
+      if (land) { u.tx = land.x; u.ty = land.y; }
+    }
+    // —— 航路点导航（spawn 时 BFS 水路）：逐段驶向下一航点，航点耗尽后由锚地校准收尾 ——
+    //    直航被陆地阻断不再贴岸提前登陆（那是殖民船的行为——商船的目的地是目的港）
+    let wps = u.wps;
+    if (!docking && wps && wps.length > 0) {
+      const hx = (wps[0] % W) + 0.5;
+      const hy = ((wps[0] / W) | 0) + 0.5;
+      if (Math.hypot(u.x - hx, u.y - hy) < 1.6) u.wps = wps = wps.slice(1);
+    }
+    const onLeg = !docking && !!wps && wps.length > 0;
+    if (onLeg) {
+      const h = u.wps![0];
+      u.tx = (h % W) + 0.5;
+      u.ty = ((h / W) | 0) + 0.5;
+    } else if (!docking && (u.boatTTL ?? 0) > 0 && this.tickCount % 20 === 0) {
+      // 航路走完（或旧档无航路退化直航）：目的锚地校准——目的港邻水（港口毁 → 退化为伙伴市场邻水）
+      const dp = this.portTileOf(u.caravan!);
+      const dw = dp != null
+        ? this.findWaterNear((dp % W) + 0.5, ((dp / W) | 0) + 0.5, 3)
+        : this.findWaterNear((mi % W) + 0.5, ((mi / W) | 0) + 0.5, 3);
+      if (dw) { u.tx = dw.x; u.ty = dw.y; }
+    }
+
+    // 靠岸判定：仅弃货态（伙伴亡国/超时）或已抵达目的锚地邻域（航点耗尽）才允许登陆——途中的海岸只是风景
+    const baseAng = Math.atan2(u.ty - u.y, u.tx - u.x);
+    const aheadX = Math.floor(u.x + Math.cos(baseAng) * 0.4);
+    const aheadY = Math.floor(u.y + Math.sin(baseAng) * 0.4);
+    const aheadBlocked = aheadX < 0 || aheadY < 0 || aheadX >= W || aheadY >= H || !isWater(this.terrain[idx(aheadX, aheadY)]);
+    if (docking && aheadBlocked) {
+      const coast = this.findLandNear(u.x, u.y, 2);
+      if (coast) { u.tx = coast.x; u.ty = coast.y; }
+    }
+    if (Math.hypot(u.tx - u.x, u.ty - u.y) < 2.5 && (!onLeg || docking)) {
+      const dock = this.findLandNear(u.x, u.y, 2);
+      if (dock) {
+        WBB.touchMeta(); // Stage 3：下船 boat 列收口
+        u.boat = 0;
+        u.boatTTL = 0;
+        u.wps = undefined;
+        u.x = dock.x;
+        u.y = dock.y;
+        u.lx = u.x;
+        u.ly = u.y;
+        u.tx = u.x;
+        u.ty = u.y;
+        if (docking) {
+          u.caravan = 0;
+          u.job = 5;
+          this.fx('spawn', u.x, u.y, 20);
+        } else {
+          this.caravanArrive(u, true); // 抵港卸货：入账+外交升温+行商转客居（海上货值更厚）
+        }
+        return;
+      }
+    }
+    this.sailToward(u, baseAng);
   }
 
   /** 靠岸登陆：优先无主沃土（建定居点）> 本国领土 > 拒绝敌国海岸。成功返回 true */
@@ -7505,7 +7690,14 @@ export class GameEngine {
           this.fx('wreck', prey.x, prey.y, 400, { src: prey.civ }); // 沉船残骸（海面留下的战争证据）
           this.statNavalKills++;
           const preyCiv = this.civs[prey.civ];
-          this.addEvent('naval', `「${civ.name}」的舰队在海上拦截并击沉了「${preyCiv?.name ?? '未知'}」的殖民船——制海权从不免费`, { colorHex: civ.colorHex, x: prey.x, y: prey.y });
+          if ((prey.caravan ?? 0) > 0) {
+            // —— 私掠商船（海上贸易的天敌）：满船货物易主——战争财入账 ——
+            civ.gold = (civ.gold ?? 0) + 6 + Math.floor(this.rng() * 9);
+            this.fx('coin', prey.x, prey.y, 26);
+            this.addEvent('naval', `「${civ.name}」的舰队在海上私掠了「${preyCiv?.name ?? '未知'}」的商船——满船货物尽入囊中`, { colorHex: civ.colorHex, x: prey.x, y: prey.y });
+          } else {
+            this.addEvent('naval', `「${civ.name}」的舰队在海上拦截并击沉了「${preyCiv?.name ?? '未知'}」的殖民船——制海权从不免费`, { colorHex: civ.colorHex, x: prey.x, y: prey.y });
+          }
           this.onSound?.('boom');
         }
         a.navalCd = this.tickCount + 15;

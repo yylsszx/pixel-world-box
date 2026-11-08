@@ -1552,6 +1552,17 @@ export function drawBoat(ctx: CanvasRenderingContext2D, u: Unit, civColor: [numb
   ctx.fillRect(px - 2 * f, oy - 1 - bob, 1, 1); // 头
   ctx.fillStyle = civColor ? rgb(civColor) : '#f2ead8';
   ctx.fillRect(px - 2 * f, oy - bob, 1, 1); // 斗篷躯干（一抹王国色）
+  // —— 商船（海上贸易）：甲板满载——艏部货箱 + 艉部麻袋堆（一眼可辨：这是商船不是殖民船）——
+  if ((u.caravan ?? 0) > 0) {
+    ctx.fillStyle = '#a8763e';
+    ctx.fillRect(px + 1 * f, oy - 1, 1, 1); // 货箱（艏部甲板）
+    ctx.fillStyle = '#8a5a2e';
+    ctx.fillRect(px + 2 * f, oy - 1, 1, 1); // 货箱第二只
+    ctx.fillStyle = '#e8dcc0';
+    ctx.fillRect(px - 1 * f, oy - 1, 1, 1); // 麻袋（艉部甲板）
+    ctx.fillStyle = '#d8c9a5';
+    ctx.fillRect(px - 1 * f, oy - 2, 1, 1); // 麻袋堆叠
+  }
   // 低血量警示（与人员一致的红色血条）
   if (u.hp < u.maxHp * 0.4) {
     ctx.fillStyle = '#cf3f2e';
