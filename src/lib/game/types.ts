@@ -405,6 +405,8 @@ export interface Unit {
   trk?: _ItemKind | null;
   /** 攻击动画计时（tick；>0 时摆出挥击姿势 — 瞬态不入档） */
   atk?: number;
+  /** 昼夜节律：夜晚入眠标记（瞬态不入档——读档自带 sleep 由 updateUnit 每帧自愈校验：非夜即醒，旧档零兼容风险） */
+  sleep?: number;
   /** 凤凰已用重生次数（0-3；第 4 次死亡魂飞魄散走常规收尸 — 不入档，读档后从 0 重计） */
   rebirths?: number;
   /** 九头蛇世代（0 初代 3 头 / 1 幼蛇 2 头 / 2 幼蛇 1 头；第 3 世代死亡即真终焉 — 不入档，与 rebirths 同策略） */

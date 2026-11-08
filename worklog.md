@@ -5252,6 +5252,6 @@ Stage Summary:
 
 **验证（实机检阅方阵+裁剪放大）**: lint 零告警；tsc 零错误。本地实机——放置人类文明（applyTool 六连）→ 40 只人类检阅方阵（10 靴+12 戒+12 护符+3 全套）排布空地 → speed=0 冻结 → zoom 40 精绘档：**金戒黄点/再生绿戒/蓝宝石点/四叶绿挂坠/狼牙白坠/脚部靴色分层肉眼清晰**（PIL 裁剪 NEAREST 放大逐点目验）；zoom 7 中距档方阵完整渲染。console 全程零 error。标题屏徽章 **v0.55**。
 **方法论**: race 是数字枚举（R.HUMAN=0）——字符串过滤 ['human'] 全空导致的「放置失败」假象；四足兽走 drawQuadFine 不渲染人形装备（刷装备要选人形 race）。引擎放置用 __wbEngine.applyTool('human', x, y, params) 直达（UI 画布 pointer 合成事件不触发 brush 落地）；暂停用 engine.speed=0（paused 字段不存在）。
-**推送**: push-web.sh GitHub TLS 三连败（GnuTLS -110 ×2 + 连接超时 ×1，三连重试全灭）→ **SYNC_FAIL——本地提交 5f3f36e 在库，下轮自愈续推**。
+**推送**: push-web.sh GitHub TLS 三连败（GnuTLS -110 ×2 + 连接超时 ×1，三连重试全灭）→ SYNC_FAIL → **本轮内自愈续推成功**（教训：单跑自愈要用 `scripts/sync-github.sh`，.zscripts/ 版本白名单仍硬编码旧根路径会 cp 报错）→ **SYNC_OK cdc23c4 → CI success → Pages 线上 v0.55 实机验证**。
 **版本节奏**: **v0.55 正式升位**（#7 建筑微动画/沉船/脚手架 + #8 装备分层 + #9 首载体验 + #10 三小件 四笔合并），标题屏/关于页徽章同步 v0.55。
 **遗留（下轮优先池）**: **首要——SYNC_FAIL 自愈续推 5f3f36e**（push-web.sh 或单跑 sync-github.sh）；盔形制与种族特征互动（维京翼+兽人角同戴取舍）；海战残骸自然触发实拍（等战争爆发）；装备检阅方阵 VLM 交叉验证（本轮 PIL 裁剪已实证，可再上 VLM 复核）。

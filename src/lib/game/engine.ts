@@ -2600,6 +2600,8 @@ export class GameEngine {
     if (this.tickCount % 40 === 0) this.iceTick();
     // 冬季雪人（Task 104）：村民雪地堆雪人 / 出冬渐融（每 80 tick，与 iceTick 错峰）
     if (this.tickCount % 80 === 16) this.snowmanTick();
+    // —— 昼夜节律：夜晚入眠/破晓唤醒（每 4 tick；引擎级通道让批内核路径同样入睡）——
+    if (this.tickCount % 4 === 2) this.sleepTick();
     if (this.tickCount % 200 === 0) this.historyTick();
     if (this.tickCount % 150 === 0) this.victoryTick();
     if (this.tickCount % 200 === 0) this.warTick();
@@ -3077,6 +3079,36 @@ export class GameEngine {
       for (const [i, at] of [...this.wet]) {
         if (this.tickCount >= at) this.wet.delete(i);
       }
+    }
+  }
+
+  /** 昼夜节律睡眠通道（每 4 tick）：入夜入眠/受扰唤醒 —— 引擎级直写通道。
+   *  必要性：Rust 批内核接管时 JS updateUnit 不跑（bails=0 常态），updateUnit 内的睡眠 gate
+   *  只覆盖 bail 接力单位；本通道让内核路径同样入睡。瞬态不入档，读档白天自愈唤醒。
+   *  开销：night=false 时仅扫 sleep 单位（绝大多数 undefined 零写回）；night=true 分桶入眠。 */
+  sleepTick() {
+    const dp = this.dayPhase();
+    const night = dp > 0.545 && dp < 0.865;
+    if (!night) {
+      // 白昼/黄昏/破晓：全员唤醒（只碰带 sleep 标记的少数单位）
+      for (const u of this.units) {
+        if (u.sleep) u.sleep = undefined;
+      }
+      return;
+    }
+    const bucket = (this.tickCount >> 2) & 3;
+    for (const u of this.units) {
+      if (u.dead || u.civ < 0 || !RACES[u.race]?.isCiv) continue; // 野生动物不眠（生态永续活跃）
+      if (((u.id + bucket) & 3) !== 0) continue; // 1/4 分桶：错落扫描摊平开销
+      if (u.sleep) {
+        if (u.hurt > 0 || (u.panic ?? 0) > 0.2) u.sleep = undefined; // 受扰即醒（夜袭/惊吓）
+        continue;
+      }
+      if (u.boat || u.army != null || u.king) continue; // 航海者/军团在编/国王不眠
+      const jobN = u.job ?? 0;
+      if (jobN === 2 || jobN === 3) continue; // 战士/弓手：夜巡与守土
+      if (u.hurt > 0 || (u.panic ?? 0) > 0 || u.hp <= u.maxHp * 0.5 || u.cd > 0) continue;
+      if (this.rng() < 0.02) u.sleep = 1; // 概率入眠 —— 夜幕落下后自然错落躺下（约数秒内全村归寂）
     }
   }
 
@@ -3640,6 +3672,26 @@ export class GameEngine {
       if (isWater(this.terrain[ti]) && this.rng() < 0.6) this.setTerrain(ti, T.ICE);
     }
     if (u.hp <= 0) { u.dead = true; return; }
+
+    // —— 昼夜节律：夜晚民用单位就地入眠（村庄灯火阑珊人影归寂 —— 世界睡了） ——
+    //    睡眠者跳过索敌/AI/移动（环境伤害/饥饿账本仍照常结算 —— 火灾不放过熟睡者）；
+    //    守卫职业（战士/弓手）与国王夜巡不眠；受击/恐慌/白天自愈唤醒 —— 每帧校验保证旧档零兼容风险；
+    //    野生动物不眠（生态永续活跃），海船渔民在 updateUnit 早段的 boat 分支不受此 gate 影响（夜渔连轴转）。
+    if (def.isCiv && u.civ >= 0) {
+      const dp = this.dayPhase();
+      const night = dp > 0.545 && dp < 0.865;
+      if (u.sleep) {
+        if (!night || u.hurt > 0 || (u.panic ?? 0) > 0.2) { u.sleep = undefined; }
+        else return; // 熟睡：本 tick 不索敌不工作不移动
+      } else if (night && !u.army && !u.king) {
+        const jobN = u.job ?? 0;
+        const guard = jobN === 2 || jobN === 3; // 战士/弓手：夜巡与守土
+        if (!guard && u.hurt <= 0 && (u.panic ?? 0) <= 0 && u.hp > u.maxHp * 0.5 && u.cd <= 0 && this.rng() < 0.02) {
+          u.sleep = 1;
+          return; // 倒头就睡：本 tick 起进入睡眠
+        }
+      }
+    }
 
     // find enemy（同步清点邻近友军/敌群 —— 神经决策特征，零额外 isEnemy 调用）
     let enemy: Unit | null = null;
@@ -4946,6 +4998,7 @@ export class GameEngine {
         if (b.kind !== BUILD_KINDS.FARM && b.kind !== BUILD_KINDS.FISHERY) continue;
         let staffed = false;
         for (const f of farmers) {
+          if (f.sleep) continue; // 昼夜节律：熟睡的农民不在岗 —— 夜晚粮产自然停摆（经济随昼夜呼吸）
           if (Math.abs(f.x - b.x) <= 6 && Math.abs(f.y - b.y) <= 6) { staffed = true; break; }
         }
         if (staffed) { if (b.kind === BUILD_KINDS.FARM) workedFarms++; else workedFisheries++; }

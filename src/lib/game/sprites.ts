@@ -412,6 +412,35 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
   // Task 48-B3 长者灰发：年逾 78% 寿限头发染霜（岁月可见；僵尸保持腐色）
   const hairCol = race !== R.ZOMBIE && u.age > u.maxAge * 0.78 ? (vis ? shiftColor('#c9c5bd', vis) : '#c9c5bd') : vis ? shiftColor(hairBase, vis) : hairBase;
 
+  // —— 昼夜节律：睡姿（横躺 + 闭眼 + zZ 气泡）—— 独立绘制分支，装备层不参与（躺下卸甲）；巨躯同适用 ——
+  if (u.sleep) {
+    const hd = f > 0 ? 1 : -1; // 头端方向
+    const breath = ((t >> 5) & 1) === 1 ? 1 : 0; // 慢呼吸（躯干起伏）
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.fillRect(px - 3, y + 3, 6, 1); // 横躺长影
+    // 腿蜷曲（裤色）
+    ctx.fillStyle = rgb(pants);
+    ctx.fillRect(px - 2 * hd - (hd > 0 ? 1 : 0), y + 2, 2, 1);
+    // 躯干横置（衣色；呼吸时 2 高微微隆起）
+    ctx.fillStyle = u.hurt > 0 ? '#ff3b30' : rgb(cloth);
+    ctx.fillRect(px - 1, y + 2 - breath, 3, 1 + breath);
+    // 头 2x2 侧枕（肤色）+ 发 + 闭眼线（无瞳孔 —— 眼帘合拢）
+    const hxm = px + 2 * hd - (hd > 0 ? 1 : 0);
+    ctx.fillStyle = hairCol;
+    ctx.fillRect(hxm, y + 1, 2, 1);
+    ctx.fillStyle = rgb(skin);
+    ctx.fillRect(hxm, y + 2, 2, 1);
+    ctx.fillStyle = '#2a2118';
+    ctx.fillRect(hxm + (hd > 0 ? 0 : 1), y + 2, 1, 1); // 闭眼线
+    // zZ 气泡：Z 形三点随相位上浮（睡得越香飘越高）
+    const zp = (t >> 3) & 3;
+    ctx.fillStyle = 'rgba(232,238,255,0.85)';
+    ctx.fillRect(hxm + 1, y - 1 - zp, 1, 1);
+    ctx.fillRect(hxm + 2, y - zp, 1, 1);
+    ctx.fillRect(hxm + 3, y - 1 - zp, 1, 1);
+    return;
+  }
+
   // ---- 巨型特质：整身放大一号（头 3 宽/躯干 3 宽/加高一格） ----
   if (u.trait === 'giant') {
     const gy = py - bob;
@@ -2901,6 +2930,43 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
   const hairCol = race !== R.ZOMBIE && u.age > u.maxAge * 0.78 ? (vis ? shiftColor('#c9c5bd', vis) : '#c9c5bd') : vis ? shiftColor(hairBase, vis) : hairBase;
   const hurt = u.hurt > 0;
 
+  // —— 昼夜节律：精绘睡姿（侧枕横躺 + 闭眼 + 枕臂 + zZ 气泡）—— 躺下卸甲，只著家衣 ——
+  if (u.sleep) {
+    const hd = f > 0 ? 1 : -1;
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(fx - 4, fy, 8, 1); // 横躺长影
+    // 腿蜷曲（裤色 2 宽）
+    ctx.fillStyle = rgb(pants);
+    ctx.fillRect(fx - 3 * hd - (hd > 0 ? 1 : 0), fy - 1, 3, 1);
+    // 躯干横置（衣色 4x2：呼吸体现于 zZ 相位与光影，躯干本体恒定不与头重叠）
+    ctx.fillStyle = hurt ? '#ff3b30' : rgb(cloth);
+    ctx.fillRect(fx - 2 * hd - (hd > 0 ? 1 : 0), fy - 2, 4, 2);
+    ctx.fillStyle = rgb(clothDark);
+    ctx.fillRect(hd > 0 ? fx - 3 : fx + 2, fy - 2, 1, 2); // 背阴端列
+    // 枕臂（肤色 1px 从头下垫出）
+    ctx.fillStyle = rgb(skinDark);
+    ctx.fillRect(fx + 2 * hd - (hd > 0 ? 0 : 1), fy - 1, 1, 1);
+    // 头 3x2 侧枕（肤色）+ 发 + 闭眼横线
+    const hxm = fx + 2 * hd - (hd > 0 ? 1 : 0);
+    ctx.fillStyle = hairCol;
+    ctx.fillRect(hxm - (hd > 0 ? 1 : 0), fy - 3, 3, 1);
+    ctx.fillStyle = rgb(skin);
+    ctx.fillRect(hxm, fy - 2, 2, 2);
+    ctx.fillStyle = '#2a2118';
+    ctx.fillRect(hxm + (hd > 0 ? 0 : 1), fy - 1, 1, 1); // 闭眼
+    // zZ 气泡：Z 形三点 + 顶点闪烁，随相位上浮
+    const zp = (t >> 3) & 3;
+    ctx.fillStyle = 'rgba(232,238,255,0.85)';
+    ctx.fillRect(hxm + 1, fy - 4 - zp, 1, 1);
+    ctx.fillRect(hxm + 2, fy - 3 - zp, 1, 1);
+    ctx.fillRect(hxm + 3, fy - 4 - zp, 1, 1);
+    if ((t >> 2) & 1) {
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fillRect(hxm + 2, fy - 5 - zp, 1, 1);
+    }
+    return;
+  }
+
   // —— 0. 地面阴影（椭圆感：中段全宽两端收窄） ——
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
   ctx.fillRect(fx - 2, fy + 1, 5, 1);
@@ -3048,14 +3114,14 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
     ctx.fillRect(fx - 1, hy + 2, 1, 1); // 獠牙 ×2
     ctx.fillRect(fx + 1, hy + 2, 1, 1);
   }
-  if (race === R.ELF) {
+  if (race === R.ELF && !(u.hlm === 'knight_helm' || u.hlm === 'warlock_hood' || u.hlm === 'skull_mask')) {
     ctx.fillStyle = rgb(skin);
-    ctx.fillRect(fx - 3, hy + 1, 1, 1); // 尖耳外伸
+    ctx.fillRect(fx - 3, hy + 1, 1, 1); // 尖耳外伸（全覆盔让位 —— 耳被盔壳罩住）
     ctx.fillRect(fx + 2, hy + 1, 1, 1);
   }
-  if (goblin) {
+  if (goblin && !(u.hlm === 'knight_helm' || u.hlm === 'warlock_hood' || u.hlm === 'skull_mask')) {
     ctx.fillStyle = rgb(skinDark);
-    ctx.fillRect(fx - 3, hy + 1, 1, 1); // 大耳 ×2（更外扩）
+    ctx.fillRect(fx - 3, hy + 1, 1, 1); // 大耳 ×2（更外扩；全覆盔让位）
     ctx.fillRect(fx + 2, hy + 1, 1, 1);
   }
   // 矮人胡须（垂至胸口）
