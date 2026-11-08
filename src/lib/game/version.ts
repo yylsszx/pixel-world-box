@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.58-preview';
+export const GAME_VERSION = 'v0.59-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.59-preview',
+    date: '2026-11-09',
+    items: [
+      '生态自持：野兽不再无声灭绝——水陆预算分账、残喘种群迎来远方族群合流、猎手循着猎群的踪迹迁入；狼尽羊繁、羊尽狼饥，捕食者与猎物进入相位错开的真实振荡',
+      '狼袭羊圈：猎物绝迹时饥饿的狼群会闯入村庄叼走牲口与村民，箭塔守卫对入院之敌张弓还击——射杀的猛兽尸体落肉，同伴食腐、村民拾取入国库，荒野与文明从此血脉相连',
+      '猎手生态位保留：食草种群繁衍为捕食者让出配额，猎物乐园不再是死锁的稳态—— boom 与 bust 之间，世界有了呼吸感',
+    ],
+  },
   {
     ver: 'v0.58-preview',
     date: '2026-11-08',

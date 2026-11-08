@@ -5045,7 +5045,12 @@ export class GameEngine {
             if (o.dead) continue;
             const d = Math.hypot(o.x - b.x, o.y - b.y);
             if (d < bestD) {
-              const hostile = this.civs[b.civ] && (o.civ !== b.civ) && (o.civ < 0 ? RACES[o.race].hostile || o.race === R.ZOMBIE || o.race === R.SKELETON : this.atWar(b.civ, o.civ));
+              const rc = RACES[o.race];
+              // 绝望捕食者近圈驱离（狼袭羊圈防卫对，判据与扑杀通道同频 food≤25）：深渊档猎手
+              // 闯入 3 格内圈才招箭雨 —— 守军不猎远狼，只驱入村之敌；射杀的猛兽尸体落肉，
+              // 同伴食腐、村民拾取入国库 —— 战利品闭环（生态×文明联系的文明侧回应）
+              const desperateBeast = o.civ < 0 && rc.predator && !rc.undead && (o.food ?? 999) <= 25 && d < 3;
+              const hostile = desperateBeast || !!(this.civs[b.civ] && (o.civ !== b.civ) && (o.civ < 0 ? rc.hostile || o.race === R.ZOMBIE || o.race === R.SKELETON : this.atWar(b.civ, o.civ)));
               if (hostile) { bestD = d; target = o; }
             }
           }
@@ -14219,6 +14224,7 @@ export class GameEngine {
     capAqua = Math.min(capAqua, Math.max(1, Math.round(fishAlive / 28)));
     let killsLand = 0;
     let killsAqua = 0;
+    let killsCiv = 0; // 进犯文明的独立账本（狼袭羊圈）—— 与野物扑杀预算分开记账
     for (const p of this.units) {
       if (p.dead) continue;
       const pd = RACES[p.race];
@@ -14229,6 +14235,7 @@ export class GameEngine {
       // （狼-羊平衡是 Task 95/97 调好的，勿动）。水生鲨群在猎场吃饱到 ~300，才有通勤/繁衍的盈余。
       if ((p.food ?? 70) > (pd.aquatic ? 300 : 45)) continue; // 只有饥饿者出手（饱食者不滥杀）
       let prey: Unit | null = null;
+      // 常规猎场扫描（食草野物）—— 优先安全的野味：绝望不等于疯狂，身边有羊先吃羊
       let bd = pd.aquatic ? 196 : 2.56; // 扑杀窗口：陆捕 r=1.6 / 水捕 r=14（深海突袭抽象 —— 内核猎物惊逃感知半径
       // 大于追击可闭合距离，插桩实测 3 鲨 750 tick 零扑杀的死亡螺旋；r=14 让导向鲨在惊逃启动前
       // 稳定落爪，防过杀由弹性预算 + 猎物存量平滑耦合把守）
@@ -14239,6 +14246,26 @@ export class GameEngine {
         const d2 = dx * dx + dy * dy;
         if (d2 < bd) { bd = d2; prey = q; }
       }
+      // —— 绝望猎手进犯文明（狼袭羊圈 —— 生态×文明联系第一笔）：rust 敌意矩阵只给熊写了袭人
+      // 条目（is_enemy_full），狼/狐/雪狼贴村游荡永不咬人，箭塔守军对它们也视而不见 ——
+      // 「无用摆设」感的机制根源。引擎级扑杀通道补上缺失半环：猎场扑空（贴身无野味）且深渊档
+      // （food≤25，比 45 惊醒档更深一层 —— 濒死才铤而走险）的陆生猎手把村庄视为最后的猎场。
+      // 猎尽期叙事就此耦合：LV 猎物崩溃（野味绝迹）自动转化为对文明的压力，守卫的箭雨与
+      // 肉块战利品又成为文明的回应。健康狼群（food>45）与野味丰盛区（常态）永不扰民。
+      // 双重限流：每轮 2 杀硬顶 + 出手掷签对半 —— 年化顶格 ≈2，常态 ≈0（濒死狼本就罕见）。
+      if (!prey && !pd.aquatic && (p.food ?? 70) <= 25 && killsCiv < 2 && this.rng() < 0.5) {
+        let rd = 2.56; // 近身窗口与陆捕同款（r=1.6）—— 真闯进人烟才下口
+        for (const q of this.units) {
+          if (q.dead || (q.grab ?? 0) > 0 || q.civ < 0) continue; // 神明手中之物与荒野游魂不入册
+          const dx = q.x - p.x, dy = q.y - p.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < rd) { rd = d2; prey = q; }
+        }
+        if (prey) {
+          killsCiv++;
+          this.addEvent('eco', `「${this.civs[prey.civ]?.name ?? '?'}」遭遇兽患——饥饿的${pd.name}闯入人烟，叼走了牲口与村民`, { colorHex: '#f59e0b', x: prey.x, y: prey.y });
+        }
+      }
       if (!prey) continue;
       prey.dead = true;
       WB.syncDead(prey); // WASM 镜像：后续扫描即刻跳过亡者
@@ -14248,8 +14275,8 @@ export class GameEngine {
         // 深海突袭水花（Task 98 遗留④）：r=14 的引擎级扑杀本是"隔空"抽象 —— 水花 + 血渍
         // 双特效把 hit 翻译成可读的突袭视觉（水花蓝色四溅 + 中心水柱闪光，与灭火同款语言）
         this.fx('water', prey.x, prey.y, 16);
-      } else {
-        killsLand++;
+      } else if (prey.civ < 0) {
+        killsLand++; // 进犯击杀（civ 单位）不入野物账 —— 两本账分开（进犯账已在目标选择时记）
       }
       p.food = Math.min(400, (p.food ?? 0) + 25); // 扑杀即刻进食（腐食回充再补一口）
       if ((p.food ?? 0) >= 380) break; // 吃饱了就收手 —— 满仓过杀只会浪费猎物（能量随尸体蒸发）
