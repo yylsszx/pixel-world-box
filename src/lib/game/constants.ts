@@ -10,6 +10,10 @@ export const YEAR_TICKS = 40; // 1 game year per 40 ticks (~2.7s at 1x)
 export const MAX_UNITS = 2400;
 /** 野生动物独立生态预算：文明人口不抢占（与 MAX_UNITS 分轨，防长时程生态灭绝） */
 export const MAX_WILDLIFE = 900;
+/** 陆生猎手保留配额：食草系繁衍在 MAX_WILDLIFE-本值 处止步，给捕食者留出生态位——
+ *  猎物 plateau 稳态（不崩盘不解锁）曾把猎手迁入永久锁死（yr2669 实测 land 896+猎手 2），
+ *  LV 循环需要硬性捕食者生态位；猎手/敌性种族自身直面硬帽不受此保留限制 */
+export const PREDATOR_RESERVE = 60;
 /** 纯水生物种独立海洋配额（鱼/龟/鲨/蟹及演化后裔）：与陆地预算分轨 ——
  *  全球预算曾被速繁陆生物种（羊 cap 240 等）饱和占用，鱼繁衍被封顶、远洋鲨鱼寻不到猎物（Task 95 长时程实测）。
  *  取值 = 各水生物种 cap 之和（鱼 280 + 龟 90 + 蟹 90 + 鲨 40 = 500）+ 20 余量：

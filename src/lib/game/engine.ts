@@ -4,7 +4,7 @@ import { T, R, RACES, TRAITS, CIV_RACES, DEFAULT_LAWS, ITEM_DEFS, describeCond, 
 import { EVO_KIND_META, applyEmTechMods, describeVis, inventIdea, inventTech, inventTrait, invalidateVisCache, mutateVis, tupleToVis, visFromGene, visToTuple } from './emergence';
 import type { EmModKey, EmTech, EvoKind, EvoNode, IdeaDef, VisGenome } from './emergence';
 import {
-  W, H, TICK_MS, YEAR_TICKS, MAX_UNITS, MAX_DRAGONS, MAX_DEMONS, MAX_ITEMS, HOUSE_CAP, MAX_WILDLIFE, MAX_WILDLIFE_AQUATIC, MAX_TROLLS, MAX_OGRES, MAX_WHITEWALKERS, MAX_VAMPIRES, MAX_KRAKENS, MAX_SANDWORMS, MAX_BASILISKS, MAX_HYDRAS,
+  W, H, TICK_MS, YEAR_TICKS, MAX_UNITS, MAX_DRAGONS, MAX_DEMONS, MAX_ITEMS, HOUSE_CAP, MAX_WILDLIFE, PREDATOR_RESERVE, MAX_WILDLIFE_AQUATIC, MAX_TROLLS, MAX_OGRES, MAX_WHITEWALKERS, MAX_VAMPIRES, MAX_KRAKENS, MAX_SANDWORMS, MAX_BASILISKS, MAX_HYDRAS,
   CIV_COLORS, FLAMMABLE, isWater, isLand, walkable, buildable,
   TERRAIN_RGB, TOOL_BY_ID, RACE_TOOL, ITEM_TOOL, CHEST_TIERS, rollChestItem,
   WATER_TIER_RGB, DEEP_TIER_RGB, SOFT_TERRAIN,
@@ -1331,7 +1331,7 @@ export class GameEngine {
     // 水生独立配额后海洋可繁衍至自身承载（此前全球预算被羊群饱和占用，鱼被封顶 ~40、鲨鱼复兴无门）
     if (!def.isCiv) {
       if (def.aquatic) { if (this.wildAliveAquatic() >= MAX_WILDLIFE_AQUATIC) return null; }
-      else if (this.wildAliveLand() >= MAX_WILDLIFE) return null; // 陆生分账（水生独立配额，鱼群不再挤占陆地预算）；含僵尸（防刷屏无上限）
+      else if (this.wildAliveLand() + (def.predator || def.hostile ? 0 : PREDATOR_RESERVE) >= MAX_WILDLIFE) return null; // 陆生分账+猎手保留配额：食草系在 840 止步给猎手留生态位，猎手/敌性直面硬帽（猎物 plateau 锁死猎手的死结）；含僵尸（防刷屏无上限）
     }
     if (race === R2 && (this.wildCount.get(race) ?? 0) >= MAX_DRAGONS) return null;
     if (race === RD && (this.wildCount.get(race) ?? 0) >= MAX_DEMONS) return null;
@@ -14308,8 +14308,11 @@ export class GameEngine {
     const seed = extinct[idx];
     const def = RACES[seed.race];
     const aquatic = !!def.aquatic;
-    // 预算按轨检（水生掷签看海洋配额，陆生看全球预算）—— 羊群饱和不再挡住鲨鱼的迁徙回归
-    if (aquatic ? this.wildAliveAquatic() >= MAX_WILDLIFE_AQUATIC - 8 : this.wildAliveLand() >= MAX_WILDLIFE - 8) return;
+    // 预算按轨检（水生掷签看海洋配额；陆生食草系让位猎手保留配额，猎手/敌性直面硬帽——
+    // 保留配额是它们的生态位：yr2669 实测猎物 plateau 896 稳态不崩盘不解锁，LV 循环需要硬性地板）
+    if (aquatic) { if (this.wildAliveAquatic() >= MAX_WILDLIFE_AQUATIC - 8) return; }
+    else if (def.predator || def.hostile) { if (this.wildAliveLand() >= MAX_WILDLIFE) return; }
+    else if (this.wildAliveLand() + PREDATOR_RESERVE >= MAX_WILDLIFE - 8) return;
     // 栖息地采样：随机掷点找落位（蟹需 r=2 内有水 —— 沿 worldgen 口径）
     // 鲨鱼特例：锚定一条活鱼落位（猎手跟着鱼群走 —— 随机深水的鲨鱼追不上远处的鱼群，Task 96 实测）
     if (seed.race === R.SHARK) {
