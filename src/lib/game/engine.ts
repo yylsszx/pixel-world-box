@@ -447,8 +447,8 @@ export class GameEngine {
     }
     if (fpDirty) this.footprints = this.footprints.filter((f) => f.age < GameEngine.FP_TTL);
 
-    // —— 闪电：活跃强风暴（非冰暴）上空随机落下 ——
-    if (this.fxPrefs.ambience && this.speed > 0) {
+    // —— 闪电：活跃强风暴（非冰暴）上空随机落下（【性能 v75】≥8× 停生 —— 高速下闪电内眼不可追）——
+    if (this.fxPrefs.ambience && this.speed > 0 && this.speed < 8) {
       for (const st of this.nature.storms) {
         if (st.kind === 'blizzard' || st.strength < 0.45) continue;
         // 期望频率 ~ 每 2.2s 一道（强度加权），帧率无关
@@ -458,8 +458,8 @@ export class GameEngine {
     for (const b of this.bolts) b.age += dtMs;
     if (this.bolts.length > 0) this.bolts = this.bolts.filter((b) => b.age < b.ttl);
 
-    // —— 鸟群：定时生成（候鸟季节节律：春秋迁徙频密/冬稀少） + 匀速巡航 + 出界回收 ——
-    if (this.fxPrefs.ambience && this.speed > 0) {
+    // —— 鸟群：定时生成（候鸟季节节律：春秋迁徙频密/冬稀少） + 匀速巡航 + 出界回收（≥8× 停生）——
+    if (this.fxPrefs.ambience && this.speed > 0 && this.speed < 8) {
       this.flockTimer -= dtMs / 1000;
       if (this.flockTimer <= 0) {
         this.spawnFlock();
@@ -2863,16 +2863,20 @@ export class GameEngine {
   frame(dtMs: number) {
     this.frameCount++;
     this.updateZoomAnim(dtMs);
+    // 【性能 v75】≥12× 隔帧渲染：奇数帧不绘制 —— 模拟独占帧（budget 内嵌感知），渲染半频 ≈30fps
+    // 在高速档内眼足够；速度回落自动恢复逐帧渲染。GameCanvas 每帧读取本标记。
+    this.renderSkip = this.speed >= 12 && (this.frameCount & 1) === 1;
     if (this.speed > 0) {
       this.acc += dtMs * this.speed;
-      // —— 帧预算式步进调度【性能修复 v74】——
-      // 旧版固定步数上限（simMs EMA 分档 4/8/12）的问题：①偶发重 tick（战争结算/地质演化/
-      // 繁衍潮）时仍会连跑 4-12 个重 tick，单帧 50ms+ 停顿 —— 可感知卡顿的主源；②小世界
-      // （sim 便宜）时步数上限 12 又封死了极速上限（12 步/帧 = 720tps 封顶）。
-      // 现改为逐 tick 实测耗时：超过帧预算即让出本帧（积压截断到 ≤2 tick，避免追赶风暴；
-      // 速度盘的「引擎保护中·实际 X.X×」如实反映有效速率），步数硬上限提到 30 ——
-      // 小世界 50x 极速也能真实跑满，重世界永不爆发式连 tick。
-      const budget = this.speed >= 3 ? 11 : 9; // ms：高倍速给模拟更多帧内份额（渲染层另有 ~5-8ms）
+      // —— 帧预算式步进调度【性能修复 v74 → v75 吞吐优先自适应】——
+      // v74 遗留：固定 11ms 预算在渲染便宜/慢的设备上都错位 —— 快设备浪费帧内时间（20× 需 5 tick/帧
+      // ≈ 12.5ms+，11ms 直接掐死），慢设备与渲染无谓抢帧。v75：预算 = min(24, 30 − 渲染 EMA)，下限 8ms
+      // —— 帧时长目标 ≤30ms（≥33fps 平移下限），渲染越便宜模拟吃越多；隔帧渲染帧无渲染开销吃满 24ms。
+      // 注：预算不可依赖实测 fps（自反馈收缩：帧变慢→周期变大→预算变大→帧更慢的发散成收缩部）。
+      // 旧 acc 截断（≤2 tick）与 30 步硬顶语义不变。
+      const budget = this.speed >= 3
+        ? Math.max(8, Math.min(24, 30 - (this.renderSkip ? 0 : this.perf.drawMs)))
+        : 9;
       const tStart = performance.now();
       let steps = 0;
       while (this.acc >= TICK_MS) {
@@ -3483,6 +3487,8 @@ export class GameEngine {
 
   /** unitsTick 内层剖析（EMA ms）：pack2=JS→WASM 镜像打包 batch=Rust 批处理 replay=动作回放 wb=写回+收尸+bail接力 js=JS 路径（fallback） */
   uprof = { pack2: 0, batch: 0, replay: 0, wb: 0, js: 0 };
+  /** 【性能 v75】≥12× 隔帧渲染标记：本帧建议跳过渲染（模拟独占帧）—— frame() 每 rAF 置位，GameCanvas 读取 */
+  renderSkip = false;
   /** TEMP-48: bail 类型诊断直方图（1=船 2=涌现 3=建筑摧毁 4=商队 5=殖民建城） */
   bailKinds: Record<number, number> = {};
   /** 本 tick 单位是否由 wasm 批内核接管（effectsTick 时域补偿的门控：内核接管时 JS 主循环不跑，
@@ -3503,6 +3509,7 @@ export class GameEngine {
         this._wbBatch = true;
         let from = 0;
         let guard = 0;
+        let stormFrom = -1; // 【性能 v75】bail 风暴软降级：本 tick 剩余槽位改走 JS 接力的起点（-1 = 无风暴）
         let batchAcc = 0; let replayAcc = 0; let wbAcc = 0;
         for (;;) {
           const tB0 = performance.now();
@@ -3551,9 +3558,13 @@ export class GameEngine {
             }
             batchAcc += performance.now() - tP0; // bail 重打包计入 batch 段
             from = r.slot + 1;
-            if (++guard > 400) { // 防御：极端退化（如全船队）本 tick 放弃批处理 —— 冷却后自动重试
-              WBB.failed = true;
-              WBB.scheduleRetry(this.tickCount);
+            if (++guard > 24) {
+              // 【性能 v75】bail 风暴软降级：繁衍潮（kind 2 连环 spawn）一 tick 内连环 bail ——
+              // 剩余槽位本 tick 改走 JS 接力，内核不熔断。旧版 guard>400 直接 failed=true +
+              // 指数退避：20× 快进下繁衍潮反复触发，冷却期 JS 全量路径 tick 成本翻倍，且重试
+              // 再遇风暴再熔断 —— 永久半速的根源（实测 245 年快进即触发）。软降级代价：风暴 tick
+              // 尾部几十单位走一次 JS 路径（有限且自愈），下 tick 恢复满批。
+              stormFrom = from;
               break;
             }
             this._wbBatch = true;
@@ -3568,9 +3579,20 @@ export class GameEngine {
         WBB.writeback(this);
         this.rngA = WBB.getRng();
         this._wbBatch = false;
+        if (stormFrom >= 0) {
+          // 风暴软降级尾部：剩余槽位 JS 接力（parity 心跳/时之奔流双跳/镜像同步与纯 JS 路径同口径）
+          for (let k = stormFrom; k < this.units.length; k++) {
+            const u2 = this.units[k];
+            if (u2.parity === parity && !u2.dead) {
+              this.updateUnit(u2);
+              if ((u2.haste ?? 0) > 0 && !u2.dead) this.updateUnit(u2);
+              if (wbOn) WB.syncAfterUpdate(u2);
+            }
+          }
+        }
         this.unitsReap();
         wbAcc += performance.now() - tW1;
-        WBB.noteGood(); // 【v74】本轮无 guard 触发 → 退避计数衰减
+        if (stormFrom < 0) WBB.noteGood(); // 【v74】本轮无 guard 触发 → 退避计数衰减（风暴轮不计）
         const UP = this.uprof;
         UP.pack2 = UP.pack2 * 0.9 + (uT1 - uT0) * 0.1;
         UP.batch = UP.batch * 0.9 + batchAcc * 0.1;
@@ -14433,7 +14455,9 @@ export class GameEngine {
             let tgt: Unit | null = null;
             const tid = (u.beachTargetId ?? -1);
             if (tid >= 0) {
-              const cand = this.units.find((q) => q.id === tid && !q.dead);
+              // 【性能 v75】unitById O(1) 查表替代全表 find（旧版 O(单位数)——鲨群粘性目标主成本）
+              const cd = this.unitById.get(tid);
+              const cand = cd && !cd.dead ? cd : undefined;
               if (cand && !RACES[cand.race].isCiv) {
                 const cj = Math.floor(cand.y) * W + Math.floor(cand.x);
                 const dx = cand.x - u.x, dy = cand.y - u.y;
@@ -14472,7 +14496,9 @@ export class GameEngine {
             else { u.beachTx = undefined; u.beachTy = undefined; }
           } else if (u.beachTargetId != null) {
             // 粘性目标的逐 tick 坐标刷新：目标鱼在游，断言坐标必须跟随（否则追着旧坐标扑空）
-            const tgt = this.units.find((q) => q.id === u.beachTargetId && !q.dead);
+            // 【性能 v75】unitById O(1) 查表（旧版全表 find —— O(鲨数×单位数) 每 tick 的隐性二次方）
+            const tg = this.unitById.get(u.beachTargetId);
+            const tgt = tg && !tg.dead ? tg : undefined;
             if (tgt) { u.beachTx = tgt.x; u.beachTy = tgt.y; }
           }
           if (u.beachTx != null && u.beachTy != null) { u.tx = u.beachTx; u.ty = u.beachTy; }
@@ -16093,7 +16119,26 @@ export class GameEngine {
   }
 
   // ---------------- layer flush ----------------
+  /** 【性能 v75】高速档换季分帧行扫游标：≥0 = 待扫起始格（flushDirty 每帧消化 2048 格后推进；
+   *  -1 = 无待扫）。瞬态不入档 —— 读档后无游标，下次换季自然重生。 */
+  seasonBakeCursor = -1;
+  /** 【性能 v75】上次换季行扫启动墙钟（ms）—— ≥4s 节流：高速下换季快于全图扫描，不节流则扫描永不完结 */
+  seasonSweepLast = 0;
+
   flushDirty() {
+    // 【性能 v75】换季分帧行扫：高速档季节变更不再瞬时全图重烘（~100ms 栅格化风暴），
+    // 改每帧消化 2048 格（~5ms）—— 20× 下换季每 ~1.8s 一次，扫描 0.7s 内完成，不堆叠
+    // （新换季重置游标重扫，tint 读当前季节 —— 旧扫描残留格子自然被下一次扫到）。
+    // 门控 dirty<512：扫描带与散点脏格分离，避免二者联合拉出全图 putImageData 大盒
+    // （常态 p50 脏格为 0，扫描不会饿死；散点密集帧让位，下帧再扫）。
+    if (this.seasonBakeCursor >= 0 && this.dirty.size < 512) {
+      const end = Math.min(W * H, this.seasonBakeCursor + 2048);
+      for (let i = this.seasonBakeCursor; i < end; i++) {
+        this.dirty.add(i);
+        if (this.terrain[i] === T.FOREST) this.propsDirty.add(i);
+      }
+      this.seasonBakeCursor = end >= W * H ? -1 : end;
+    }
     if (this.dirty.size === 0) return;
     const data = this.terrainImg.data;
     const nat = this.nature;

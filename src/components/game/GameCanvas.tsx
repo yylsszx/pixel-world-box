@@ -1025,13 +1025,17 @@ export function GameCanvas() {
         const { w, h } = sizeRef.current;
         // 性能仪表（Task 42-a）：渲染路径耗时与帧率 EMA —— 只写引擎实例字段，
         // 不走 zustand（避免高频更新引发重渲染风暴），后续性能 HUD 自行低频轮询
-        const r0 = performance.now();
-        render(engine, ctx, w, h);
-        const dms = performance.now() - r0;
-        const p = engine.perf;
-        p.drawMs = p.drawMs > 0 ? p.drawMs * 0.9 + dms * 0.1 : dms;
+        // 【性能 v75】≥12× 隔帧渲染：模拟独占帧不绘制（drawMs 只在真渲染帧计 —— 预算公式依赖真渲染成本）
+        if (!engine.renderSkip) {
+          const r0 = performance.now();
+          render(engine, ctx, w, h);
+          const dms = performance.now() - r0;
+          const p = engine.perf;
+          p.drawMs = p.drawMs > 0 ? p.drawMs * 0.9 + dms * 0.1 : dms;
+        }
         const instFps = 1000 / Math.max(1, dt);
-        p.fps = p.fps > 0 ? p.fps * 0.9 + instFps * 0.1 : instFps;
+        const p2 = engine.perf;
+        p2.fps = p2.fps > 0 ? p2.fps * 0.9 + instFps * 0.1 : instFps;
       } catch (err) {
         // keep the loop alive and surface the error once
         console.error('[WB-RENDER]', err);

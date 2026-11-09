@@ -218,9 +218,22 @@ export class NatureSystem {
       if (s !== 3) this.iceChronDone = false; // 离冬复位：下个冬季重新择机播报封冻
       if (s !== 3) this.snowmanChronDone = false; // 离冬复位：下个冬季重新播报堆雪人
       if (s !== 0) this.thawChronDone = false; // 离春复位：下个春季重新播报落冰湖
-      for (let i = 0; i < W * H; i++) {
-        this.eng.dirty.add(i);
-        if (this.eng.terrain[i] === T.FOREST) this.eng.propsDirty.add(i);
+      // 【性能 v75】高速档换季改分帧行扫：20× 下换季每 ~1.8s 一次，旧版全图 40960 格瞬时重烘
+      // （flushDirty ~100ms/次）—— drawMs 被季节风暴支配。≥8× 改由 flushDirty 每帧消化 2048 格。
+      // 节流（≥4s 才启新扫）+ 不重置在飞扫描：扫描读当前季节色，滞后几秒在高速下不可感知 ——
+      // 否则换季快于扫描（实测 121tps 下扫描 1.6s vs 换季 1.78s）导致扫描永不完结，
+      // 每帧都在烘 2048 格反而更贵（实测 flushDirty 11.5ms/帧连续占用）。
+      if (this.eng.speed >= 8) {
+        const now = performance.now();
+        if (this.eng.seasonBakeCursor < 0 && now - this.eng.seasonSweepLast >= 4000) {
+          this.eng.seasonSweepLast = now;
+          this.eng.seasonBakeCursor = 0;
+        }
+      } else {
+        for (let i = 0; i < W * H; i++) {
+          this.eng.dirty.add(i);
+          if (this.eng.terrain[i] === T.FOREST) this.eng.propsDirty.add(i);
+        }
       }
       if (first) return; // 开局/读档基线：不宣告（HUD 已示当前季节）
       if (s === 0) {

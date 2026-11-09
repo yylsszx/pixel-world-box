@@ -3909,6 +3909,12 @@ export function drawEmergentMonster(ctx: CanvasRenderingContext2D, u: Unit, vc: 
       ctx.fillStyle = dark;
       ctx.fillRect(px - 1, py - 6, 1, 1);
     }
+    // 鬃毛（基因组）：穹顶两侧竖丛——狮鬃式环颈（水生巨怪无发色，用受光亮色）
+    if (vc.mane) {
+      ctx.fillStyle = light;
+      ctx.fillRect(px - 3, py - 4, 1, 2);
+      ctx.fillRect(px + 3, py - 4, 1, 2);
+    }
     // 眼（荧光/暗瞳）
     ctx.fillStyle = vc.glow ? '#7df9ff' : dark;
     ctx.fillRect(px - 1, py - 3, 1, 1);
@@ -3931,6 +3937,13 @@ export function drawEmergentMonster(ctx: CanvasRenderingContext2D, u: Unit, vc: 
       const bx = px + side * (2 + (k >> 1));
       ctx.fillRect(bx, py - 2, 1, 2 + (k & 1));
       if (curl) ctx.fillRect(bx + side, py + (k & 1), 1, 1);
+    }
+    // 尾（基因组）：触手群后方拖出的鞭尾（梢随相位起伏）
+    if (vc.tail >= 1) {
+      ctx.fillStyle = body;
+      const wag = ((t >> 3) & 1) === 1 ? -1 : 0;
+      ctx.fillRect(px - 4, py + 1, 1, 1);
+      if (vc.tail >= 2) ctx.fillRect(px - 5, py + 1 + wag, 1, 1);
     }
   } else if (shape === 'worm') {
     // —— 沙虫形：分段蠕体（头节大 + 3-4 体节渐小 + 环纹）+ 张合巨口 ——
@@ -3970,6 +3983,22 @@ export function drawEmergentMonster(ctx: CanvasRenderingContext2D, u: Unit, vc: 
       ctx.fillStyle = accent;
       ctx.fillRect(px, py - 4, 2, 1);
     }
+    // 鬃毛（基因组）：颈节背脊亮丛——蠕颈蓬起（头节之后的体节顶，朝向感知）
+    if (vc.mane) {
+      ctx.fillStyle = light;
+      ctx.fillRect(f > 0 ? px - 2 : px, py - 2, 2, 1);
+    }
+    // 尾（基因组）：末节背缘后曳须尾（梢随相位起伏）
+    if (vc.tail >= 1) {
+      const li = segs - 1;
+      const lw = li === 0 ? 4 : 3 - Math.min(1, li >> 1);
+      const lsx = f > 0 ? px - li * 2 : px - lw + 2 + li * 2 - 2;
+      const lsy = py - 2 - (li === 0 ? 1 : 0) + (li % 2 === 1 ? 1 : 0);
+      const wag = ((t >> 3) & 1) === 1 ? -1 : 0;
+      ctx.fillStyle = body;
+      ctx.fillRect(f > 0 ? lsx - 1 : lsx + lw, lsy, 1, 1);
+      if (vc.tail >= 2) ctx.fillRect(f > 0 ? lsx - 2 : lsx + lw + 1, lsy + wag, 1, 1);
+    }
   } else {
     // —— 蛇形（蛇怪/巨龙种化）：S 蜿蜒躯体 + �颈部立起 + 兜帽/翅 ——
     ctx.fillStyle = 'rgba(0,0,0,0.22)';
@@ -3989,6 +4018,11 @@ export function drawEmergentMonster(ctx: CanvasRenderingContext2D, u: Unit, vc: 
     if (vc.crest || vc.horns >= 1) {
       ctx.fillStyle = mix3(body, dark, 0.35);
       ctx.fillRect(px - 1, py - 4, 2, 2);
+    }
+    // 鬃毛（基因组）：兜帽/立颈后蓬起（受光亮色，与颈同高）
+    if (vc.mane) {
+      ctx.fillStyle = light;
+      ctx.fillRect(px - 2, py - 3, 1, 2);
     }
     // 头：眼 + 吐信
     ctx.fillStyle = vc.glow ? '#7df9ff' : '#ffd93d';
@@ -4018,6 +4052,16 @@ export function drawEmergentMonster(ctx: CanvasRenderingContext2D, u: Unit, vc: 
     // 尾尖
     ctx.fillStyle = mix3(body, dark, 0.2);
     ctx.fillRect(px - 5, py + 1, 1, 1);
+    // 尾（基因组）：长尾沿地后曳——固定尾尖之外再展两节，梢随相位起伏
+    if (vc.tail >= 1) {
+      ctx.fillStyle = mix3(body, dark, 0.25);
+      ctx.fillRect(px - 6, py + 2, 1, 1);
+      if (vc.tail >= 2) {
+        ctx.fillStyle = mix3(body, dark, 0.35);
+        const wag = ((t >> 3) & 1) === 1 ? -1 : 0;
+        ctx.fillRect(px - 7, py + 2 + wag, 1, 1);
+      }
+    }
   }
   if (scaled) ctx.restore();
 }

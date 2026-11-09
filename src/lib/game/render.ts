@@ -1300,24 +1300,26 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
   ensureFx();
   const g = groundCtx!;
   // Task 71 性能：groundUsed 门控 —— 所有粒子源都关闭时连清屏带 blit 一起跳过
+  // 【性能 v75：≥8× 氛围/河流/云影停绘 —— groundUsed 同步收紧（清屏+全屏 blit 一起省）】
+  const fxTier = engine.speed < 8;
   const groundUsed =
-    engine.fxPrefs.ambience ||
-    (engine.fxPrefs.riverFlow && engine.riverTiles.size > 0) ||
-    (engine.fxPrefs.dayNight && engine.laws.atmosphere) ||
+    (engine.fxPrefs.ambience && fxTier) ||
+    (engine.fxPrefs.riverFlow && engine.riverTiles.size > 0 && fxTier) ||
+    (engine.fxPrefs.dayNight && engine.laws.atmosphere && fxTier) ||
     engine.wet.size > 0;
   if (groundUsed) g.clearRect(0, 0, 512, 320);
-  // 环境氛围粒子（浪花/飘雪/扬尘/岩浆气泡/深海微澜）
-  if (engine.fxPrefs.ambience) {
+  // 环境氛围粒子（浪花/飘雪/扬尘/岩浆气泡/深海微澜）【性能 v75：≥8× 停绘 —— 高速下内眼不可追】
+  if (engine.fxPrefs.ambience && engine.speed < 8) {
     drawAmbience(engine, g, x0, x1, y0, y1);
   }
 
-  // 河道水流动画（在 props 之上、建筑之下）
-  if (engine.fxPrefs.riverFlow && engine.riverTiles.size > 0) {
+  // 河道水流动画（在 props 之上、建筑之下）【性能 v75：≥8× 停绘】
+  if (engine.fxPrefs.riverFlow && engine.riverTiles.size > 0 && engine.speed < 8) {
     drawRiverFlow(engine, g, x0, x1, y0, y1);
   }
 
-  // 云影（太阳方位驱动的地面暗斑：画在内容之下 —— 阴影落在地上而非物上）
-  if (engine.fxPrefs.dayNight && engine.laws.atmosphere) {
+  // 云影（太阳方位驱动的地面暗斑：画在内容之下 —— 阴影落在地上而非物上）【性能 v75：≥8× 停绘】
+  if (engine.fxPrefs.dayNight && engine.laws.atmosphere && engine.speed < 8) {
     drawCloudShadows(engine, g, x0, x1, y0, y1);
   }
 
@@ -1698,8 +1700,9 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
       }
     }
     // —— 夜间辉光 bloom：glowCanvas(512²) → blurCanvas(256²) 降采样，
-    //    屏幕 lighter 加性合成 = 真·软渐变光晕（灯火/火焰/岩浆/萤火在黑夜里流淌） ——
-    if (tint.n >= 0.18) {
+    //    屏幕 lighter 加性合成 = 真·软渐变光晕（灯火/火焰/岩浆/萤火在黑夜里流淌）
+    //    【性能 v75：≥8× 停绘 —— 降采样+lighter 全屏合成是夜间最贵单项，高速下辉光不可追】
+    if (tint.n >= 0.18 && engine.speed < 8) {
       nightOn = true;
     }
   }
@@ -1763,7 +1766,7 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
     } else if (e.kind === 'flash') {
       ctx.fillStyle = `rgba(255,255,245,${Math.max(0, 1 - e.age / e.ttl)})`;
       ctx.fillRect(0, 0, cw, ch);
-    } else if (e.kind === 'dmg' && e.text && engine.fxPrefs.dmgNumbers) {
+    } else if (e.kind === 'dmg' && e.text && engine.fxPrefs.dmgNumbers && engine.speed < 8) {
       // 伤害数字：向上漂浮 + 淡出，前 1/3 悬停、后 2/3 上升
       const t = e.age / e.ttl;
       const rise = t < 0.3 ? 0 : (t - 0.3) / 0.7 * 26;

@@ -5813,3 +5813,28 @@ Stage Summary:
 **遗留（下轮优先池）**: 涌现巨兽 mane/tail 可见化候选（drawEmergentMonster aquatic/worm/serpent 三形态只画 spikes，mane/tail 基因同样缺席——本轮同型病灶的巨兽版）；raise 工具 GRASS 顶格零变化候选（天花板类，低优先）；战争收束路径叙事分布调优候选（ww 空窗期观察）；内核真停摆（OFF_USLEEP——待 rust 工具链窗口）；立国密度后续观察；战地工事第四笔候选（rust 墙阻挡镜像）；雪狼/熊振荡相位长程观察；rust 工具链。
 **推送**: 代码 a8dbaa5 + worklog 本条 → push-web.sh（结果见下轮复核）。
 **版本节奏**: 不升位（v0.63 批次第六笔代码：基因可见性是放大镜下强可感知项，攒清单）。
+
+## 2026-11-09 #43（11:40 触发轮）：性能大修「20× 真达 20×」（用户新钦定最先）+ 涌现巨兽 mane/tail 可见化
+
+**上轮复核**: #42 推送闭环确认——远端 main 34f5b96（11:13:28Z）worklog 尾部即 #42 记账原文，CI 双绿（Deploy 34f5b96 success + pages build b29288b success）。**钦定指令复核**: 「睡觉改为延年益寿恢复生命」#34 已完整落实上线（09fa35e，v0.63 已含 CHANGELOG），#39/#41 两轮考古复核无误，本轮不再重做。本轮 11:40 任务文第五次携带睡觉指令（历史指令，已闭环）+ **新钦定「加一个最先：大幅提升性能达到 20 倍速真能达到的性能水平」**——性能列最高优先。
+
+**本轮主攻 B（用户新钦定·最先）：性能大修——20× 真达 20×（六处改动，实测有效速率 4.5×→11.7×@沙箱软渲染，架构支持真机 20×）**:
+- **实测基线画像**（1200 单位野世界）：tick 6.4-8.3ms（20× 需 ≤2.2ms）+ drawMs 14-28ms + 固定 11ms 模拟预算 → 有效速率仅 ~4.5×。uprof 四段：writeback 2.26ms（3.76µs/脏行——**每脏行每 tick subarray 分配+TextDecoder 解码名字**，1251/1268 单位带名）> batch 0.47 > pack2 0.56；子系统计时（448 tick）：beachedAquatic 0.224ms/tick（**鲨鱼粘性目标 units.find O(N) 每 tick ×2 处**）居首。
+- **改动 ①writeback 名字快路径**（wbspatial）：wasm 名字节 vs pack 缓存字节逐字节比对（~60ns），一致免解码（~1.4µs/行）——语义等价（字节一致⇒解码结果===缓存串；漂移⇒慢路径同值）；装备槽比较免写（itemIds 驻留引用 O(1) 短路）；MINOR Set 提升模块级（旧版每 tick 新建）。实测 wb 1.82→0.61-1.2ms。
+- **改动 ②beachedAquatic O(1) 查表**（engine）：2 处 units.find → unitById.get（隐性二次方 O(鲨×单位) 每 tick → 0）。
+- **改动 ③bail 风暴软降级**（engine unitsTick）：guard>400 熔断+指数退避是 20× 永久半速根源（实测 245 年快进即触发：繁衍潮 kind-2 连环 bail → failed → JS 全量 3.06ms/tick → 冷却重试再熔断）。改为 >24 bail 本 tick 剩余槽位 JS 接力（parity/时之奔流双跳/WB.syncAfterUpdate 与纯 JS 路径同口径），内核不熔断，下 tick 恢复满批。终测 wbFailed=false 全程。
+- **改动 ④帧预算吞吐优先自适应 + ≥12× 隔帧渲染**（engine frame + GameCanvas）：预算 11ms 固定 → min(24, 30−drawMs) 下限 8（帧时长目标 ≤30ms 保 ≥33fps 平移；不可依赖实测 fps——自反馈收缩）；renderSkip 标记 ≥12× 奇数帧不渲染（模拟独占帧吃满 24ms，渲染半频 ≈30fps 高速档内眼足够）；drawMs 只在真渲染帧计（预算公式依赖真渲染成本）。
+- **改动 ⑤高速档特效分层 ≥8×**（engine/render/wbspatial 三处同口径）：氛围粒子（生成+绘制）/河流动画/云影/夜间 bloom（降采样+lighter 全屏合成）/伤害数字（Rust 侧停生——fxp 位门控）在高速下自动让路，低速自动恢复；fxPrefs 用户设置不动。
+- **改动 ⑥换季全图重烘改分帧行扫**（nature+engine）：实测换季每 ~1.8s 一次（20× 下）、每次全图 40960 格瞬时重烘 ~100ms（flushDirty 栅格化风暴，drawMs 被其支配 28.6）；≥8× 改每帧消化 2048 格行扫 + **≥4s 节流 + 不重置在飞扫描**（无节流则换季快于扫描→扫描永不完结→每帧都在烘反而更贵，实测 11.5ms/帧连续占用）。低速档保持瞬时全烘。终测 drawMs 27.5→14.1。
+- **终测数据**（本沙箱软渲染，重载野世界）：20× 持续 30s——simUps 177.4 / **有效速率 11.71×**（基线等价 ~4.5×）；tick 3.26ms、drawMs 15.5、fps 26.1；1× 低速回归 15 tps 无损。**真机预期**：GPU 画布 drawMs 2-5ms + tick ≤3ms 时预算 (24+26)/2×30fps≈750ms/s 模拟 → 20× 满速；沙箱软渲染天花板 ~12×（tick 3.26×303tps=989ms/s≈单核极限）。速度盘「实际 X.X×」读数（simUps 换算）如今如实反映且显著提升。
+- **QA 方法论沉淀（三条）**: ①子系统计时用实例方法 monkey-patch（e[n]=wrapped 遮蔽原型，测毕 delete 还原）比改源码插桩干净；②rAF 探针务必保存原引用（window.__origRAF）再包装——本轮一次恢复路径递归炸栈（RangeError 实为我方探针残留，会话级 errors 日志误导向）；③预算公式不可依赖实测 fps（自反馈：帧慢→周期大→预算大→更慢，收敛点为下限钳——公式自毁），用「目标帧时长−渲染 EMA」开环前馈。
+
+**本轮主攻 A（#42 遗留池首选）：涌现巨兽 mane/tail 可见化（H 重点，#42 同型病灶巨兽版）**:
+- 考古：drawEmergentCreature（四足）L908/940 已画 mane/tail，唯 drawEmergentMonster 三形态（aquatic/worm/serpent）horns/spikes/crest/glow/pattern 全参数化而 mane/tail 缺席——「进化出尾巴的巨兽没有尾巴」。
+- 改动（sprites.ts drawEmergentMonster 六处插入，+46 行零新增持久字段旧档零兼容风险）：①aquatic 鬃毛=穹顶两侧竖丛 1×2（light 色，狮鬃环颈）+尾=触手群后方鞭尾（根 px-4·py+1 / 梢 py+1+wag 双节摆动）；②worm 鬃毛=颈节背脊亮丛 2×1（朝向感知 f>0?px-2:px）+尾=末节背缘后曳须尾（按 segs 几何计算 li=segs-1，bulk≥0.6 五节根位同步适配）；③serpent 鬃毛=兜帽左侧 1×2（受光亮色）+尾=固定尾尖外再展两节沿地后曳（mix3 渐暗 0.25/0.35，梢随相位起伏）。
+- **QA（受控 17 断言三形态全绿）**: spawnCustomSpecies 受控播种（form kraken/sandworm/basilisk × mane+tail 开/关 + worm 双 bulk + serpent pattern 对照）+ e.rng=()=>0.5 定值（同 form 同 randVis → A/B 同色系实证 domeSame/hiSame/bodySame）+ fillRect 记录器精确矩形断言：aquatic maneL/maneR/tailRoot/tailTip ✓ + 阴性 noMane/noTail ✓；worm mane(≠body 色)/rootSeg4/tipSeg4 ✓ + bulk0.9 五节 rootSeg5/tipSeg5 ✓ + 阴性 ✓；serpent mane ✓ + 尾展色值 mix3(body,dark,0.25)=#737270 与梢 0.35=#6a6866 **逐色命中**（浏览器把 rgb() 规范化为 hex——断言串必须 hex 格式，rgb 格式永假）+ 阴性 ✓。低速 1× 15tps + 截图 753-1774 色渲染正常。
+- **QA 布置注**: pxOf 必须 u.dpx ?? (u.rx ?? u.x)*2 镜像渲染代码（dpx 已是像素空间，直接 ×2 会双重放大）；spawn 落点选合法栖息 tile（水/沙/草）免 placeRace 吸附漂移；e.rng 用毕必须 delete 实例覆盖（置 null 会炸后续调用）。
+
+**遗留（下轮优先池）**: beachedAquatic retarget 候选扫描仍 O(鲨×单位)/20tick（均摊小，鲨群爆发期候选）；血迹/尸骸贴花逐帧动态层绘制+rgba 模板串逐帧拼接（420+240 上限，LUT 量化候选）；writeback 标量段比较免写（估 -0.1ms）；ecoTick 单次 7ms 尖峰（120tick 节律，20× 下 0.4s 一尖）；statsTick 2.9ms/次；raise 工具 GRASS 顶格零变化候选（天花板类，低优先）；战争收束路径叙事分布调优候选；内核真停摆（OFF_USLEEP——待 rust 工具链窗口）；立国密度后续观察；战地工事第四笔候选；rust 工具链。
+**推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**版本节奏**: **升位 v0.64**（性能大修+巨兽基因可见化双主攻批次，CHANGELOG 两条玩家视角要点）。

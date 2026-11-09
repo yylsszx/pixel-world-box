@@ -537,6 +537,9 @@ export interface BatchResult {
   data: Float64Array; // BAILP 8×f64
 }
 
+/** 【性能 v75】fx 虚拟队列的轻量特效种类集（模块级驻留 —— 免每 tick 新建 Set） */
+const FX_MINOR_KINDS = new Set(['dmg', 'hit', 'smoke', 'spawn', 'heart', 'skull', 'arrow', 'coin', 'blood', 'dust', 'bullet']);
+
 /** Stage 2 批处理桥接（独立实例/独立内存；Stage 1 WB 保留为 JS 回退扫描） */
 class WbBatch {
   ready = false;
@@ -1036,8 +1039,11 @@ class WbBatch {
     if (L.reproduction) laws |= 1; if (L.zombieInfect) laws |= 2; if (L.undeadRise) laws |= 4;
     new Uint8Array(m, A(OFF_LAWS), 1)[0] = laws;
     const F = engine.fxPrefs;
+    // 【性能 v75】高速档特效分层（≥8×）：伤害数字/氛围粒子在高速下内眼不可追，Rust 侧停生
+    // ——效果数组收缩，fx 队列打包与 replay 同步减压；低速档自动恢复（fxPrefs 用户设置不动）
+    const fxTier = engine.speed >= 8 ? 0 : 1;
     let fxp = 0;
-    if (F.dmgNumbers) fxp |= 1; if (F.ambience) fxp |= 2; if (F.blood) fxp |= 4; if (F.corpses) fxp |= 8;
+    if (F.dmgNumbers && fxTier) fxp |= 1; if (F.ambience && fxTier) fxp |= 2; if (F.blood) fxp |= 4; if (F.corpses) fxp |= 8;
     fxp |= (F.fxDensity ?? 1) << 4;
     new Uint8Array(m, A(OFF_FXP), 1)[0] = fxp;
     // fx 虚拟队列
@@ -1045,9 +1051,9 @@ class WbBatch {
     {
       const fmin = new Int32Array(m, A(OFF_FXMIN), 1600);
       let k = 0;
-      const MINOR = new Set(['dmg', 'hit', 'smoke', 'spawn', 'heart', 'skull', 'arrow', 'coin', 'blood', 'dust', 'bullet']);
+      // 【性能 v75】MINOR 集提升至模块级（旧版每 tick 新建 Set —— 纯分配浪费）
       for (let i = 0; i < engine.effects.length && k < 1600; i++) {
-        if (MINOR.has(engine.effects[i].kind)) fmin[k++] = i;
+        if (FX_MINOR_KINDS.has(engine.effects[i].kind)) fmin[k++] = i;
       }
       i32v(OFF_FXMINN, 1)[0] = k;
     }
@@ -1255,9 +1261,9 @@ class WbBatch {
     {
       const fmin = new Int32Array(m, A(OFF_FXMIN), 1600);
       let k = 0;
-      const MINOR = new Set(['dmg', 'hit', 'smoke', 'spawn', 'heart', 'skull', 'arrow', 'coin', 'blood', 'dust', 'bullet']);
+      // 【性能 v75】MINOR 集提升至模块级（旧版每 tick 新建 Set —— 纯分配浪费）
       for (let i = 0; i < engine.effects.length && k < 1600; i++) {
-        if (MINOR.has(engine.effects[i].kind)) fmin[k++] = i;
+        if (FX_MINOR_KINDS.has(engine.effects[i].kind)) fmin[k++] = i;
       }
       i32v(OFF_FXMINN, 1)[0] = k;
     }
@@ -1724,16 +1730,33 @@ class WbBatch {
       // u.caravan 不再从 wasm 回写（cvn 列因步长错位已休眠 —— JS 为唯一权威）
       u.boat = (R.boat[i] && !this.virtBoat[i]) ? 1 : undefined; u.boatTTL = R.btl[i] || undefined;
       const army = R.army[i]; u.army = army >= 0 ? army : undefined;
+      // 【性能 v75】装备槽比较免写：itemIds 返回驻留字符串引用，未变时引用相等 O(1) 短路 ——
+      // 旧版逐槽无条件写（Record 键控 store 慢于命名 store），脏行全量×7 槽纯浪费
+      const ur = u as unknown as Record<string, unknown>;
       for (let g = 0; g < 7; g++) {
         const gi = R.gear[i * 7 + g];
-        (u as unknown as Record<string, unknown>)[GEAR_KEYS[g] as string] = gi >= 0 ? this.itemIds[gi] : null;
+        const s = gi >= 0 ? this.itemIds[gi] : null;
+        if (ur[GEAR_KEYS[g] as string] !== s) ur[GEAR_KEYS[g] as string] = s;
       }
       const gs = R.gene[i * 4];
       if (!Number.isNaN(gs)) u.gene = { s: gs, d: R.gene[i * 4 + 1], h: R.gene[i * 4 + 2], r: R.gene[i * 4 + 3] };
       const fam = R.fam[i]; u.fam = fam >= 0 ? fam : undefined;
       const fgn = R.fgn[i]; u.fgn = fgn >= 0 ? fgn : undefined;
       const nl = R.name[i * 32 + 31];
-      if (nl > 0) u.name = this.dec.decode(R.name.subarray(i * 32, i * 32 + nl));
+      if (nl > 0) {
+        // 【性能 v75】名字快路径：wasm 字节 vs pack 缓存字节逐字节比对（~60ns），一致则免
+        // subarray 分配 + TextDecoder 解码（~1.4µs/行——旧版脏行每 tick 全量解码，writeback 最大单项）。
+        // 语义等价：字节一致 ⇒ 解码结果 === nameCacheStr[i]（同一字符串）；字节漂移（Rust 改名/spawn）
+        // ⇒ 慢路径解码，与旧版完全同值。缓存失配（undefined）⇒ 慢路径，永不误判。
+        const base = i * 32;
+        const nb = this.nameCache[i];
+        let hit = false;
+        if (nb !== undefined && nb.length === nl && this.nameCacheStr[i] !== undefined) {
+          hit = true;
+          for (let b = 0; b < nl; b++) if (R.name[base + b] !== nb[b]) { hit = false; break; }
+        }
+        u.name = hit ? (this.nameCacheStr[i] as string) : this.dec.decode(R.name.subarray(base, base + nl));
+      }
       const gl = R.gln[i];
       if (gl >= 0) {
         const ids: number[] = []; const vals: number[] = [];
@@ -1767,7 +1790,6 @@ function sykk(v: number): number { return v; }
 function nz(v: number): number | undefined { return Number.isNaN(v) ? undefined : v; }
 
 export const WBB = new WbBatch();
-
 // bun 基准直灌支持（与 Stage 1 相同协议）
 if (typeof window === 'undefined' && typeof globalThis !== 'undefined') {
   (globalThis as unknown as Record<string, unknown>).__wbbatchBootBytes = (bytes: Uint8Array) => WBB.boot(bytes);
