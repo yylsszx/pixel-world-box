@@ -516,6 +516,10 @@ export class GameEngine {
 
   /** 世界法则（WorldBox 的 World Laws）：玩家可实时切换，随存档保存 */
   laws: WorldLaws = { ...DEFAULT_LAWS };
+  /** 【用户钦定修复】野生生物繁殖倍率（0-1，默认 1）：非文明种族的有效基础繁衍 =
+   *  min(自身 repro, 倍率 × 繁殖基准数 civSlowestRepro()) —— 倍率 1 时野生生物至多以
+   *  最慢文明生物的速度繁殖，0 = 野生生物不繁殖；文明种族不受影响。随存档保存。 */
+  wildReproScale = 1;
   /** 地面物品（待拾取的宝物） */
   items: GroundItem[] = [];
   /** 物品序号（序列化用） */
@@ -2295,6 +2299,17 @@ export class GameEngine {
     if (d.eco === 'pred') return 60;
     if (d.eco === 'neutral') return 80;
     return this.wildCapOf(d.parent);
+  }
+
+  /** 繁殖基准数（用户钦定）：繁殖速度最低的文明生物的 repro —— 野生繁殖倍率的锚点。
+   *  CIV_RACES 含动态文明亚种（种化时推入），基线为精灵/矮人的 0.005；无文明种族时兑底同值。 */
+  civSlowestRepro(): number {
+    let min = Infinity;
+    for (const r of CIV_RACES) {
+      const rp = RACES[r]?.repro ?? 0;
+      if (rp > 0 && rp < min) min = rp;
+    }
+    return Number.isFinite(min) ? min : 0.005;
   }
 
   /** 捕食物种判定（含动态演化后裔：狼/熊/蛇/蝎/雪狼的种化后继仍参与捕食压力；全新造物用 eco 锚） */
@@ -4766,7 +4781,11 @@ export class GameEngine {
     // reproduce — 与战斗状态无关（否则被猎物包围的捕食者永不绝育 → 种群灭绝）
     // 繁衍：两段式 —— 先掷基础骰（绝大多数单位此 tick 直接跳过），过门再算增益（懒计算省 CPU）
     // 搁浅的水生个体失去繁衍能力（离水濒死不产卵 —— 否则陆生鱼群自续成退化生态；beachT 由 beachedAquaticTick 维护）
-    if (this.laws.reproduction && def.repro > 0 && !(def.aquatic && !def.beach && (u.beachT ?? 0) > 0) && this.rng() < def.repro) {
+    // 【用户钦定修复】野生生物繁殖倍率：非文明种族的基础骰读封顶值 min(自身 repro, 倍率×繁殖基准) ——
+    // 两段式骰子的第一段在此锚定基准；增益链（食物/季节/基因/科技）仍在第二段原样生效。
+    // 文明种族不受影响（倍率只管野生动物）。
+    const baseRepro = def.isCiv ? def.repro : Math.min(def.repro, this.wildReproScale * this.civSlowestRepro());
+    if (this.laws.reproduction && baseRepro > 0 && !(def.aquatic && !def.beach && (u.beachT ?? 0) > 0) && this.rng() < baseRepro) {
       // 增益链：人口令 ×1.8 / 科技繁衍 / 爱之甘霖 ×2.5 / 基因繁衍 / 自然季节
       // 战乱年代生育率 ×0.55（兵荒马乱）；食草动物随植被丰度 ×0.75..1.5（草肥羊壮）
       const boost = (def.isCiv && u.civ >= 0 && this.activeDirective(u.civ, 'populate') ? 1.8 : 1)
@@ -15019,6 +15038,9 @@ export class GameEngine {
     if (sharks.length === 0 || sharks.length >= 8) return;
     const mother = sharks.find((s) => (s.food ?? 0) > 220);
     if (!mother) return;
+    // 【用户钦定修复】野生繁殖倍率同口径 gate：地板机制也是繁衍通道（倍率 0 = 鲨群也不诞崽）；
+    // 鲨鱼 repro 低于基准时倍率 1 不影响其地板（与主路径 min(R_i, m×B) 同语义）
+    if (this.rng() >= Math.min(1, (this.wildReproScale * this.civSlowestRepro()) / (RACES[R.SHARK].repro || 1e-9))) return;
     for (let t = 0; t < 8; t++) {
       const jx = Math.max(0.5, Math.min(W - 0.5, mother.x + (this.rng() * 3 - 1.5)));
       const jy = Math.max(0.5, Math.min(H - 0.5, mother.y + (this.rng() * 3 - 1.5)));
@@ -17370,6 +17392,7 @@ export class GameEngine {
       river: rleEncode(this.riverDir),
       road: rleEncode(this.road),
       laws: { ...this.laws },
+      wildReproScale: this.wildReproScale,
       items: this.items.map((it) => [it.id, it.kind, it.x, it.y] as [number, string, number, number]),
       itemSeq: this.itemSeq,
       triggers: this.triggers.map(triggerToRow),
@@ -17635,6 +17658,7 @@ export class GameEngine {
 
     // 恢复世界法则与地面物品（可选字段：旧存档回退默认法则/空物品）
     this.laws = { ...DEFAULT_LAWS, ...(data.laws ?? {}) };
+    this.wildReproScale = Math.max(0, Math.min(1, data.wildReproScale ?? 1)); // 旧档缺省 1（钳到 0-1）
     this.items = (data.items ?? []).map((row) => ({ id: row[0], kind: row[1] as ItemKind, x: row[2], y: row[3] }));
     this.itemSeq = data.itemSeq ?? (this.items.reduce((m, it) => Math.max(m, it.id), 0) + 1);
     // 恢复事件触发器（可选字段：旧存档无触发器 → 空列表；损坏行抛错拒绝整档）

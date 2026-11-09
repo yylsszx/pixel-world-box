@@ -190,6 +190,8 @@ export function GameCanvas() {
     engine.fxPrefs = { ...store.fxPrefs };
     // 世界法则：从持久化的玩家偏好恢复到引擎
     engine.laws = { ...store.laws };
+    // 野生繁殖倍率（用户钦定修复）：同法则语义 —— 新世界用玩家偏好，读档由 applySave 覆盖
+    engine.wildReproScale = store.wildReproScale;
     // 地图覆盖模式（政治版图/温度/湿度）：从持久化偏好恢复，regenerate 后由 render 按需重绘
     engine.overlayMode = store.overlayMode;
     engine.overlayDirty = true;

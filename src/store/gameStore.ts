@@ -99,6 +99,7 @@ const FX_PREFS_KEY = 'wb_fx_prefs';
 const OVERLAY_KEY = 'wb_overlay';
 /** 世界法则持久化（玩家偏好；读档时若存档携带法则则以存档为准并同步 store） */
 const LAWS_KEY = 'wb_laws';
+const WILD_REPRO_KEY = 'wb_wildrepro';
 /** 音效开关的持久化键 */
 const SOUND_KEY = 'wb_sound';
 /** 工具放置参数持久化（每工具 count/radius/power/duration） */
@@ -415,9 +416,12 @@ interface GameStore {
   setFxPrefs: (prefs: FxPrefs) => void;
   /** 世界法则（WorldBox World Laws） */
   laws: WorldLaws;
+  /** 野生生物繁殖倍率（0-1，基准 = 最慢文明生物 repro；用户钦定修复） */
+  wildReproScale: number;
   setLaw: (key: keyof WorldLaws, value: boolean) => void;
   /** 读档后把存档中的法则同步到 store（内部使用） */
   syncLaws: (laws: WorldLaws) => void;
+  setWildReproScale: (v: number) => void;
   /** 地图覆盖模式（无/政治版图/温度/湿度） */
   overlayMode: OverlayMode;
   setOverlayMode: (mode: OverlayMode) => void;
@@ -596,6 +600,20 @@ const initialLaws: WorldLaws = (() => {
   return { ...DEFAULT_LAWS };
 })();
 
+// 野生繁殖倍率初始值（用户钦定修复）：从 localStorage 恢复（读档时若存档带值则同步覆盖）
+const initialWildRepro: number = (() => {
+  if (typeof window === 'undefined') return 1;
+  try {
+    const raw = localStorage.getItem(WILD_REPRO_KEY);
+    const v = raw == null ? 1 : Number(raw);
+    return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
+  } catch {
+    return 1;
+  }
+})();
+
+
+
 // 工具放置参数初始值：每工具取参数定义默认值 → 再用持久化偏好覆盖（仅限已知工具与合法值）
 const initialToolParams: Record<string, Record<string, number>> = (() => {
   const out: Record<string, Record<string, number>> = {};
@@ -727,6 +745,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   eventFilter: 'all',
   fxPrefs: initialFxPrefs,
   laws: initialLaws,
+  wildReproScale: initialWildRepro,
   overlayMode: initialOverlay,
   saveDialog: 'none',
   // —— 神谕圣装（Task 70）初始值 ——
@@ -1226,6 +1245,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ laws: { ...laws } });
   },
 
+  // ---------------- 野生生物繁殖倍率（用户钦定修复） ----------------
+  setWildReproScale: (v) => {
+    const clamped = Math.max(0, Math.min(1, Number.isFinite(v) ? v : 1));
+    const eng = _engine;
+    if (eng) eng.wildReproScale = clamped; // 引擎热生效（JS 骰子 + 内核种族表下 tick 刷新）
+    try {
+      localStorage.setItem(WILD_REPRO_KEY, String(clamped));
+    } catch {
+      /* 隐私模式忽略 */
+    }
+    set({ wildReproScale: clamped });
+  },
+
   // ---------------- 地图覆盖模式（无/政治/温度/湿度） ----------------
   setOverlayMode: (mode) => {
     const eng = _engine;
@@ -1291,6 +1323,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       getCouncil().reset();
       set({ selUnit: null, selCiv: null, follow: false, events: eng.worldEvents, saveDialog: 'none', councilFeed: [], councilPending: [] });
       get().syncLaws({ ...eng.laws });
+      set({ wildReproScale: eng.wildReproScale }); // 读档/导入带入优先，不写 localStorage（同 syncLaws 语义）
       if (r.recovered) quickToast(`已从备份恢复 ${key === 'auto' ? '自动存档' : key === 'legacy' ? '旧版存档' : `槽位 ${parseInt(key.slice(4), 10) + 1}`}（主档损坏，上一份完好存档已救回，${Math.floor(eng.yearF)} 年）`, 'good');
       else quickToast(`已读取 ${key === 'auto' ? '自动存档' : key === 'legacy' ? '旧版存档' : `槽位 ${parseInt(key.slice(4), 10) + 1}`}（${Math.floor(eng.yearF)} 年的世界）`, 'good');
       return true;
@@ -1359,6 +1392,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       getCouncil().reset();
       set({ selUnit: null, selCiv: null, follow: false, events: eng.worldEvents, saveDialog: 'none', councilFeed: [], councilPending: [] });
       get().syncLaws({ ...eng.laws });
+      set({ wildReproScale: eng.wildReproScale }); // 读档/导入带入优先，不写 localStorage（同 syncLaws 语义）
       quickToast(`已导入存档（${Math.floor(eng.yearF)} 年的世界），记得保存到槽位`, 'good');
       return true;
     } catch (err) {

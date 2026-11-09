@@ -1808,6 +1808,8 @@ export interface SaveDataV1 {
   river?: string;
   /** 世界法则（可选：旧存档回退默认值） */
   laws?: WorldLaws;
+  /** 野生生物繁殖倍率（0-1；基准 = 最慢文明生物的 repro；旧档缺省 = 1） */
+  wildReproScale?: number;
   /** 地面物品（可选：[id, kind, x, y] 行式紧凑数组；旧存档无物品） */
   items?: [number, string, number, number][];
   /** 物品序号（可选：兼容旧存档） */
@@ -1851,6 +1853,8 @@ export interface SaveDataV2 {
   road?: string;
   /** 世界法则（可选：旧存档回退默认值） */
   laws?: WorldLaws;
+  /** 野生生物繁殖倍率（0-1；基准 = 最慢文明生物的 repro；旧档缺省 = 1） */
+  wildReproScale?: number;
   /** 地面物品（[id, kind, x, y] 行式紧凑数组） */
   items?: [number, string, number, number][];
   /** 物品序号 */

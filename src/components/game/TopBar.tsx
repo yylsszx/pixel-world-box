@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
-import { Pause, Play, FastForward, ChevronsRight, Check, Undo2, Redo, Biohazard, Gauge, RefreshCw, CircleHelp, Map as MapIcon, Clock, Users, Swords, Flame, Save, FolderOpen, Volume2, VolumeX, Crown, ScrollText, Sailboat, SlidersHorizontal, Hash, Zap, Waves, Sparkles, Layers, Snowflake, Thermometer, Droplets, Flag, TreePine, Scale, Baby, TrendingUp, Ghost, Swords as SwordsIcon, Skull as SkullIcon, Rocket, Terminal, Bone, Heart, Leaf, Camera, Trophy, MountainSnow, CloudRain, Sun, CloudSnow, Flower2, Tornado, GitBranch, Handshake, UsersRound, BrainCircuit, Network, Activity, ImageDown, Music, Gamepad2, History, ChevronDown, House, BookOpen, Orbit, Search, LayoutGrid, Gavel } from 'lucide-react';
+import { Pause, Play, FastForward, ChevronsRight, Check, Undo2, Redo, Biohazard, Gauge, RefreshCw, CircleHelp, Map as MapIcon, Clock, Users, Swords, Flame, Save, FolderOpen, Volume2, VolumeX, Crown, ScrollText, Sailboat, SlidersHorizontal, Hash, Zap, Waves, Sparkles, Layers, Snowflake, Thermometer, Droplets, Flag, TreePine, Scale, Baby, Rabbit, TrendingUp, Ghost, Swords as SwordsIcon, Skull as SkullIcon, Rocket, Terminal, Bone, Heart, Leaf, Camera, Trophy, MountainSnow, CloudRain, Sun, CloudSnow, Flower2, Tornado, GitBranch, Handshake, UsersRound, BrainCircuit, Network, Activity, ImageDown, Music, Gamepad2, History, ChevronDown, House, BookOpen, Orbit, Search, LayoutGrid, Gavel } from 'lucide-react';
 import type { OverlayMode, WorldLaws } from '@/lib/game/types';
 import { RACES } from '@/lib/game/types';
 import { ICONS, RACE_DOT } from '@/lib/game/constants';
@@ -414,7 +414,7 @@ export function TopBar() {
   const {
     speed, setSpeed, newWorld, toggleHelp, toggleMinimap, openSaveDialog,
     soundOn, toggleSound, openMobilePanel, overlayMode, setOverlayMode,
-    laws, setLaw, devMode, toggleDevMode, toggleDevPanel, showDev,
+    laws, setLaw, wildReproScale, setWildReproScale, devMode, toggleDevMode, toggleDevPanel, showDev,
     toggleCinema, perfHud, togglePerfHud, showTitle, showSettings, toggleSettings,
     toggleCodex, showCodex, setPaletteOpen,
   } = useGameStore();
@@ -709,6 +709,26 @@ export function TopBar() {
                     onToggle={(v) => setLaw(law.key as keyof WorldLaws, v)}
                   />
                 ))}
+              </div>
+              {/* 野生繁殖倍率（用户钦定修复）：繁衍法则的连续档位 —— 基准锚定最慢文明生物的繁殖速度 */}
+              <div className="flex items-center gap-2.5 rounded-sm border-2 border-zinc-700/80 bg-zinc-800/60 px-2.5 py-2">
+                <Rabbit className="h-4 w-4 shrink-0 text-amber-300" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="text-[11px] font-bold text-zinc-200">野生繁殖倍率</p>
+                    <p className="font-mono text-[10px] font-bold text-amber-300" data-testid="wild-repro-val">{wildReproScale.toFixed(2)}×</p>
+                  </div>
+                  <p className="text-[9px] leading-tight text-zinc-500">基准 = 最慢文明生物繁殖速度；1 = 野生至多与其同速，0 = 不再繁殖</p>
+                  <Slider
+                    value={[wildReproScale]}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    onValueChange={([v]) => setWildReproScale(v)}
+                    aria-label="野生繁殖倍率"
+                    className="mt-1.5"
+                  />
+                </div>
               </div>
               <p className="mt-1.5 px-1 text-[9px] text-[#75694f]">法则随存档保存；开关立即生效</p>
             </PopoverContent>

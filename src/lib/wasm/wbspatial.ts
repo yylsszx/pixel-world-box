@@ -843,6 +843,19 @@ class WbBatch {
       misc[0] = 2400; misc[1] = 900 + 520;
       this.tablesVersion = 1;
     }
+    // 【用户钦定修复】野生生物繁殖倍率：种族表 repro 列每 tick 刷新（滑杆热生效）——
+    // 非文明种族封顶 min(自身 repro, 倍率 × 繁殖基准数 civSlowestRepro())，文明种族原值直装。
+    // 内核第一段繁衍骰（rng < repro）读 TBR[id*12+4]，在此封顶即免改 rust（约 45 写/ tick，可忽略）。
+    if (!this.failed) {
+      const tbr2 = new Float64Array(m, A(OFF_TBR), 512 * 12);
+      const cap = engine.wildReproScale * engine.civSlowestRepro();
+      for (const k of Object.keys(RACES)) {
+        const id = Number(k);
+        if (id < 0 || id >= 512) continue;
+        const d = RACES[id];
+        tbr2[id * 12 + 4] = d.isCiv ? d.repro : Math.min(d.repro, cap);
+      }
+    }
     void ex;
   }
 
