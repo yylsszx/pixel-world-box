@@ -13409,6 +13409,7 @@ export class GameEngine {
       WBB.touchMeta(); // 新种族首代收口
       this.toast(`图鉴造物「${entry.name}」降临 ×${spawned}`, 'good');
     }
+    // H 巡检注记：spawned=0 时无需兜底 toast——循环 k=0 恒以 quiet=false 调 placeRace，首只失败必已弹出具体原因（落点类或预算帽类），此处再弹即双重提示
     return spawned;
   }
 
@@ -15211,7 +15212,30 @@ export class GameEngine {
       }
     }
     const u = this.spawnUnit(race, px, py);
+    if (!u && !quiet) this.spawnBlockedToast(race); // H 巡检：预算帽静默拒绝的玩家反馈——「点了没反应」病灶收口（#32 吸收提示同型反馈补全）
     return !!u;
+  }
+
+  /** 放置被预算帽拒绝时的玩家反馈（仅 placeRace 玩家路径调用；引擎内部繁衍/迁徙的高频拒绝走 quiet 绝不弹——防刷屏）。
+   *  文案顺序按「实际最可能的挡板」排：克拉肯/龙/魔的专属帽远小于生态总闸，先查专属再查总闸。 */
+  spawnBlockedToast(race: number) {
+    const def = RACES[race];
+    if (!def) return;
+    const cnt = this.wildCount.get(race) ?? 0;
+    if (race === R.KRAKEN) { this.toast(`克拉肯至多 ${MAX_KRAKENS} 只同世（现存 ${cnt}）——深海霸主不可滥放`, 'danger', true); return; }
+    if (race === R2) { this.toast(`世间已有 ${cnt}/${MAX_DRAGONS} 条龙——神兽不可滥放`, 'danger', true); return; }
+    if (race === RD) { this.toast(`世间已有 ${cnt}/${MAX_DEMONS} 只魔物——魔气冲天不可再增`, 'danger', true); return; }
+    if (def.isCiv) { this.toast(`凡尘已满——世间已有 ${this.units.length} 个生灵（上限 ${MAX_UNITS}），战争与天灾会腾出空位`, 'danger', true); return; }
+    if (def.aquatic) { this.toast(`深海承载已满（${this.wildAliveAquatic()}/${MAX_WILDLIFE_AQUATIC} 水族）——等待海洋腾出空位`, 'danger', true); return; }
+    const caps: Array<[number, number, string]> = [
+      [R.TROLL, MAX_TROLLS, '巨魔'], [R.OGRE, MAX_OGRES, '食人魔'], [R.WHITEWALKER, MAX_WHITEWALKERS, '异鬼'],
+      [R.VAMPIRE, MAX_VAMPIRES, '吸血鬼'], [R.SANDWORM, MAX_SANDWORMS, '沙虫'],
+      [R.BASILISK, MAX_BASILISKS, '蛇怪'], [R.HYDRA, MAX_HYDRAS, '九头蛇'],
+    ];
+    for (const [rid, cap, name] of caps) {
+      if (race === rid) { this.toast(`${name}至多 ${cap} 只同世——稀缺之物不可滥放`, 'danger', true); return; }
+    }
+    this.toast(`荒野承载已满（${this.wildAliveLand()}/${MAX_WILDLIFE} 陆生野生生灵）——猎捕与天灾会腾出空位`, 'danger', true);
   }
 
   applyTool(toolId: string, wx: number, wy: number, params?: Record<string, number>) {
