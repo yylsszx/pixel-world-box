@@ -5838,3 +5838,18 @@ Stage Summary:
 **遗留（下轮优先池）**: beachedAquatic retarget 候选扫描仍 O(鲨×单位)/20tick（均摊小，鲨群爆发期候选）；血迹/尸骸贴花逐帧动态层绘制+rgba 模板串逐帧拼接（420+240 上限，LUT 量化候选）；writeback 标量段比较免写（估 -0.1ms）；ecoTick 单次 7ms 尖峰（120tick 节律，20× 下 0.4s 一尖）；statsTick 2.9ms/次；raise 工具 GRASS 顶格零变化候选（天花板类，低优先）；战争收束路径叙事分布调优候选；内核真停摆（OFF_USLEEP——待 rust 工具链窗口）；立国密度后续观察；战地工事第四笔候选；rust 工具链。
 **推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
 **版本节奏**: **升位 v0.64**（性能大修+巨兽基因可见化双主攻批次，CHANGELOG 两条玩家视角要点）。
+
+## 2026-11-09 #44（18:00 触发轮）：批内核特质表溢出死锁根治——「20× 真达标」首战：长跑世界静默半速的根因修复（用户新钦定最先·性能线）
+
+**上轮复核**: #43 推送闭环确认——远端 main 6df9583（05:47Z）+ pages build 9414a13 双绿，v0.64 已上线（性能大修+巨兽 mane/tail 双主攻均在）。**沙箱再次被回收**：项目目录全失，凭证自愈+重克隆（TLS 瞬断两次后成功）；本轮实际为恢复后首推。
+
+**本轮主攻（用户钦定最先：20× 真达 20×）**: 上轮遗留池首选「ecoTick 7ms 尖峰」实测**证伪**——十周期子系统全家桶 monkey-patch 60s 画像：ecoTick 平均仅 0.33ms（7ms 是 58 次里 2 次的尾部尖峰）、statsTick 平均 1.09ms，摊销合计 <25µs/tick（占 simMs 0.7%，纯噪音）。真瓶颈在 uprof：**js 段 6.16ms 独大**——rust 批内核三段合计才 ~1.4ms，单位模拟几乎全在 JS 回退路径跑！
+- **根因链（三层考古定罪）**: ①`__wbBatchCore.failed=true` 且 `failStreak=0/retryAtTick=-1` 死锁态（批内核历史跑过 11411 次批处理后暴毙）→ ②失败点 = wbspatial packTables L986 特质表溢出：**TRAITS 运行时被涌现特质注册膨胀（12 基础 + 24 动态 = 36 > wasm MAX_TRAITS2=32）**——engine L10338 上限 24 是拍脑袋值（12+24 必炸），且 L3711 Rust 回放路径 `inventEmergentTrait` 完全无上限；③炸后无自愈：`scheduleRetry` 全库零调用者（v74 半接线死代码）——`retryDue` 因 retryAtTick<0 永不触发，**一次溢出 = 永久回退 JS 慢路径**。#43 实测 11.7× 是新reload世界（内核活着）；长跑世界（涌现特质攒满后）静默跌回 ~6.6×——「20× 真达标」路上最大的暗礁。
+- **改动四处（+46 行零新增持久字段，旧档零兼容风险）**: ①wbspatial 导出 `WB_MAX_DYN_TRAITS = MAX_TRAITS2 - 12`（=20，四处置共用，types.ts 增基础键须同步扣减的契约写在注释）；②两处发明门同口径收口：L10338 上限 24→WB_MAX_DYN_TRAITS，L3711 Rust 回放路径补门（返回 null=门后未发明，孩子正常出生，与掷骰未中同语义）；③scheduleRetry 接线：pack2 L858（单位瞬时峰）与 packTables L986（表溢出）结构性失败登记冷却重试——瞬时峰自愈、持续溢出每次重试代价 ≈0.1ms/4800tick 可忽略；④applySave 老档调和：dynTraits>20 时保最新 20（Map 插入序=发明序）、携带被裁特质单位退化无特质 + console.warn（涌现特质是锦上添花，换回批内核吞吐）。
+- **QA（合成注入法 A/B 全绿 + 自捕一测试泄漏）**: ①净世界注入 24 特质+3 携带者存档 → loadFromSlot 载入：恰裁 dt100-103 四个最旧、3 携带者清 null、tick 2518 精确恢复、**内核复活**；②20× 吞吐 A/B：修前（内核死）simUps 84-105/simMs 5.03/js 段 6.16ms/有效 6.6× → 修后（等量人口段）simUps 143.5/simMs 2.75/**js 段 0**/有效 9.57×——单位段开销 4.4× 改善，等量人口 simMs -45%；③35s 持续 20× 穿越人口暴涨 1198→1373：内核全程存活、23 次繁衍 bail 软降级无熔断、零控制台错误；④上限门验证：size=20 时 tryEmergentTrait 返回 null、19 时正常发明 dt124（序号延续无冲突）；⑤低速 1× 回归 simUps 14.5≈15 正常。
+- **QA 方法论沉淀**: ①「进入世界」= 新世界/续会话，**「继续旅程」才是读档**且本会话两次 reload 均未显示（latestSave 未含自动档？——遗留候选：自动档不 surfaced 进继续旅程按钮，疑似 UX bug 待查）；读档 QA 直调 `store.getState().loadFromSlot('auto')` 即可触发 applySave 全链；②console 注入 dynTraits 只能改 Map 够不着模块 TRAITS 表——删 Map 键会泄漏 TRAITS 键（本轮自捕：测试泄漏 dt104 致 TRAITS=33 再触发熔断，恰好实证 scheduleRetry 接线在真实条件工作：retryAtTick 登记+指数退避；真实游玩无此路径，两发明门均 set+TRAITS 同步写）；③沙箱 rAF 天花板实证 30Hz（空载 speed=0 fps=30）——沙箱内一切「有效速率」被 30fps+软渲染 drawMs 15-17 双重压制，真机 60Hz+GPU（drawMs 3-5）下 24ms 预算×~37fps≈900ms/s ÷ 修后 simMs 2.75 ≈ 327tps ≥ 300tps，**20× 在架构上成立**；④人口暴涨期与定居期的 simUps 不可直接对比（boom 期 1373 单位 simMs 4.44 vs 定居 924 单位 2.75——每单位·tick 成本稳定 ~3.2µs），跨次测量须等量人口归一。
+- **改动文件**: src/lib/wasm/wbspatial.ts（+常量导出+两处 scheduleRetry 接线）、src/lib/game/engine.ts（import+两发明门+applySave 调和块）。
+
+**遗留（下轮优先池）**: 标题屏「继续旅程」不显示自动档候选（疑似 latestSave 只认手动槽？UX bug 待查证）；帧循环 43ms/23fps 与预算公式 27ms 预期的 ~16ms 缺口（内核修后仍存在，drawMs EMA 滞后/GC/帧循环外开销待画像——真机影响待估）；ecoTick/statsTick 尖峰尾部（摊销噪音，纯低优先）；血迹/尸骸贴花 rgba LUT 量化候选；writeback 标量段比较免写（估 -0.1ms）；beachedAquatic retarget O(鲨×单位)/20tick；raise 工具 GRASS 顶格零变化候选（天花板类）；战争收束路径叙事分布调优候选；内核真停摆（OFF_USLEEP——待 rust 工具链窗口）；立国密度后续观察；战地工事第四笔候选；rust 工具链。
+**推送**: 代码 91c12b9 + worklog 本条 → push-web.sh（TLS 瞬断一次）→ sync-github.sh 自愈续推 **SYNC_OK b6f0c73 → origin/main**。
+**版本节奏**: 不升位（v0.64 性能批次第二笔：特质表死锁是 20× 真达标的前置暗礁，攒清单）。
