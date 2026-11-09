@@ -759,9 +759,6 @@ export class GameEngine {
   readonly bw = Math.ceil(W / 4);
   readonly bh = Math.ceil(H / 4);
   buckets: Unit[][] = [];
-  /** 懒清空世代戳（Stage 3）：bucketStampArr[ci] === bucketStamp ⇒ buckets[ci] 为本世代有效数据 */
-  bucketStampArr!: Int32Array;
-  bucketStamp = 0;
 
   /** mulberry32 状态（Stage 2：批内核镜像同步点；rng 闭包读它） */
   rngA = 0;
@@ -801,9 +798,6 @@ export class GameEngine {
     this.overlayCanvas.height = H * 4;
     this.overlayCtx = this.overlayCanvas.getContext('2d')!;
     for (let i = 0; i < this.bw * this.bh; i++) this.buckets.push([]);
-    // 懒清空世代戳（Rust 重构 Stage 3：rebuildBuckets 只清本 tick 有单位的桶，4096 全清 → 按需 ~N 清）
-    this.bucketStampArr = new Int32Array(this.bw * this.bh);
-    this.bucketStamp = 0;
     this.generate(seed ?? Math.floor(Math.random() * 1e9));
     // Task 38：恢复在线训练权重（localStorage；离线权重指纹不匹配时自动作废 —— Q6 共存）
     onlineRestore();
@@ -3519,10 +3513,12 @@ export class GameEngine {
   // ---------------- units sim ----------------
   rebuildBuckets() {
     const buckets = this.buckets;
-    // Rust 重构 Stage 3（懒清空）：世代戳递增 → 仅本 tick 实际有单位落入的桶才清空。
-    // 4096 桶全清 → 按需 ~N 清（N=存活单位数）；桶内容仍严格是本世代数据，消费者零改动。
-    const cur = (this.bucketStamp = (this.bucketStamp + 1) | 0);
-    const st = this.bucketStampArr;
+    // 【稳定性 #55】全量清空取代懒清空世代戳：懒清空下未触桶保留跨世代单位引用（旧位置残影），
+    // 而全部桶消费者（meatSweepTick 吃肉判定 / 建筑目标搜索 / 炮击瞄准等 10 处）均未查
+    // bucketStampArr —— 距离过滤被旧位置命中 → 「隔空吃肉」，且残留内容随会话历史（真玩时长）
+    // 变化 → 同档读档位等分叉（QA 首分歧 tick19：meatSweep rng 消费 48 vs 76 实锤）。
+    // 全量 length=0 每 tick ~万次整型写（µs 级），换消费者零协议依赖的语义确定性。
+    for (let i = 0; i < buckets.length; i++) buckets[i].length = 0;
     // 索引循环 + 局部量（bw/bh/buckets 提出循环，避免逐单位属性链访问；热路径每 tick 全量重排）
     const units = this.units;
     const bw = this.bw;
@@ -3535,9 +3531,7 @@ export class GameEngine {
       let cy = (u.y / 4) | 0;
       if (cx > maxX) cx = maxX; else if (cx < 0) cx = 0;
       if (cy > maxY) cy = maxY; else if (cy < 0) cy = 0;
-      const ci = cy * bw + cx;
-      if (st[ci] !== cur) { buckets[ci].length = 0; st[ci] = cur; }
-      buckets[ci].push(u);
+      buckets[cy * bw + cx].push(u);
     }
     // WASM 空间内核镜像打包（Task 45-a：SoA 镜像 + counting-sort 网格；扫描环位精确替代）
     if (WB.active() && !WBB.batchReady) WB.pack(this); // 批内核就绪后由 pack2 全量接管（Stage 1 扫描镜像停更）
