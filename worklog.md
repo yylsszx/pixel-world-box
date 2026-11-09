@@ -5853,3 +5853,24 @@ Stage Summary:
 **遗留（下轮优先池）**: 标题屏「继续旅程」不显示自动档候选（疑似 latestSave 只认手动槽？UX bug 待查证）；帧循环 43ms/23fps 与预算公式 27ms 预期的 ~16ms 缺口（内核修后仍存在，drawMs EMA 滞后/GC/帧循环外开销待画像——真机影响待估）；ecoTick/statsTick 尖峰尾部（摊销噪音，纯低优先）；血迹/尸骸贴花 rgba LUT 量化候选；writeback 标量段比较免写（估 -0.1ms）；beachedAquatic retarget O(鲨×单位)/20tick；raise 工具 GRASS 顶格零变化候选（天花板类）；战争收束路径叙事分布调优候选；内核真停摆（OFF_USLEEP——待 rust 工具链窗口）；立国密度后续观察；战地工事第四笔候选；rust 工具链。
 **推送**: 代码 91c12b9 + worklog 本条 → push-web.sh（TLS 瞬断一次）→ sync-github.sh 自愈续推 **SYNC_OK b6f0c73 → origin/main**。
 **版本节奏**: 不升位（v0.64 性能批次第二笔：特质表死锁是 20× 真达标的前置暗礁，攒清单）。
+
+## 2026-11-09 #45（19:15 触发轮·用户插入指令）：野生生物繁殖倍率手动调节（0-1）——用户钦定「超级大bug」修复（与性能并行的最先重点①）
+
+**用户指令（本轮最高优先）**: 「在定时任务提示词加上这个超级大bug的修复（与性能提升并行为重点任务，先完成），可手动调节野生生物繁殖倍率0到1，以繁殖速度最低的文明生物的繁殖速度为基准数」——①定时任务文已更新（Job 2934389 → 新 Job 2936347，同频同名，新增【最先重点】段：①本修复 ②性能线含 #43/#44 已完成状态注记；睡觉指令标注已闭环勿重做）；②本轮直接实现修复。#44 复核：远端 7e31b2c + pages build 8151949 双绿，#44 推送闭环。
+
+**考古定锚**: 文明种族 repro——人类 0.006/精灵 0.005/矮人 0.005/兽人 0.006/蜥蜴 0.0058/哥布林 0.0092 → **基准数 B = 0.005（繁殖速度最低的文明生物）**；野生侧兔 0.014/鱼 0.016/鸡 0.011（基准 2-3 倍，爆炸源头）、羊狼狐 0.004（本就低于基准）。繁衍双通道：JS updateUnitPostJS 两段式骰子（第一段 `rng()<def.repro`）+ rust 批内核第一段骰读 packTables 种族表 TBR[id*12+4]（L775）——**内核侧在打包时封顶即免改 rust**。
+
+**改动（六文件，公式：非文明种族有效基础繁衍 = min(自身 repro, 倍率 m × B)）**:
+- **engine.ts**: ①`wildReproScale` 字段（0-1 默认 1，随存档）；②`civSlowestRepro()`（CIV_RACES 含动态文明亚种取最低 repro，无文明兜底 0.005）；③JS 基础骰改读封顶值（文明原值，增益链第二段原样）；④sharkBreedTick 地板机制同口径概率 gate（倍率 0 = 鲨群也不诞崽）；⑤serialize/applySave 往返（旧档缺省 1 钳 0-1）。
+- **wbspatial.ts**: packTables 尾部种族表 repro 列**每 tick 刷新**（滑杆热生效；~45 写/tick 可忽略；文明原值直装）。
+- **types.ts**: SaveData/SaveDataV2 增可选 `wildReproScale`。
+- **gameStore.ts**: `wildReproScale` 状态 + `setWildReproScale`（engine 热生效+localStorage wb_wildrepro+store）+ loadFromSlot/importSave 两处读档同步（同 syncLaws 语义：带入优先不写偏好）。
+- **TopBar.tsx**: 世界法则面板尾部滑杆行（Rabbit 图标 + 数值 1.00× + 0-1 步 0.05 Slider；13 条法则本就超一屏滚动，行在滚动区底部）。
+- **GameCanvas.tsx**: 新世界从 localStorage 偏好引导（同法则语义，读档由 applySave 覆盖）。
+
+**QA（三点倍率验证 + 确定性表值证明 + 全链往返，全绿）**: tsc 零错误 + 六文件 eslint 零告警 + console 零 error。①基准与封顶：civSlowestRepro()=0.005；m=1 内核表兔/鱼 0.014/0.016→0.005（封顶）、羊 0.004（低于基准不扰）、人类 0.006/哥布林 0.0092（文明不解锁）；②m=1 活体对照：~4700 tick 野生繁衍 57 起；③**m=0 活体：野生繁衍精确 0**（spawnUnit 计数器按「携带 gene 参数」签名区分繁衍/迁徙——首轮未区分时 45 起全是 ecoTick 回种+wildlifeRebound 迁徙：人口崩溃期 638→485 生态保底活跃，设计保留非繁衍通道）；文明繁衍全程正常（37+9+3 起，gate 不伤文明）；④m=0.5 确定性表值：兔/羊 = 0.0025 精确（min(R, 0.5×0.005)，线性缩放免统计噪声——崩溃期恐慌 0.3×+饥荒使活体出生率极低属世界状态非 gate 问题）；⑤setWildReproScale 全链（engine+store+localStorage 同步）；⑥存档往返：set 0.5→saveGame→存档含 0.5→loadFromSlot→引擎+store 双 0.5；⑦滑杆 UI 渲染 + scrollIntoView 后行可见（188×52 弹层内）；⑧内核全程 active（parity 无损）。
+- **QA 方法论沉淀**: ①繁衍/迁徙区分签名：繁衍通道 spawnUnit 必带 opts.gene（子代基因）、迁徙回种只带 silent——counting 野生出生必须按此分流，否则生态保底机制污染计数；②zustand state 是不可变快照——`const st = getState(); st.setAction(); st.field` 读到旧快照，动作后须重新 getState()；③radix Slider 滑杆行在滚动容器内时 getBoundingClientRect 报内容坐标（视口外 y=854）——可见性断言须先 scrollIntoView；④内核种族表可从 console 直读定位 bug：`new Float64Array(c.mem, c.at(130), 512*12)`（OFF_TBR=130，repro 在 id*12+4 槽）——滑杆/平衡类改动的确定性免统计验证通道。
+
+**遗留（下轮优先池）**: 性能线续推（用户钦定②）：帧循环 43ms/23fps 与预算 27ms 预期 ~16ms 缺口画像（真机影响待估）、贴花 rgba LUT、writeback 标量段免写、beachedAquatic retarget；「继续旅程」不显示自动档候选（UX bug 待查）；滑杆行在法则面板滚动区底部（可见性候选：置顶或紧随繁衍开关）；ecoTick/statsTick 尖峰尾部（噪音级）；raise 工具 GRASS 顶格候选；战争收束叙事调优；内核真停摆（待 rust 工具链）；rust 工具链。
+**推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**版本节奏**: 不升位（v0.64 批次第三笔：用户钦定平衡修复，攒清单）。
