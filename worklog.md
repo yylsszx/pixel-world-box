@@ -5692,3 +5692,33 @@ Stage Summary:
 **推送**: 代码+worklog 同程快照 → push-web.sh 超时 → 本地 98cded7 已落库 → sync-github.sh 自愈续推 **SYNC_OK 0223d27**（TLS 瞬断一次重试成功）。
 **版本节奏**: 不升位（v0.63 批次第一笔；战争创伤是玩家强可感知项——哀悼纪事+停战初期民心承压，攒清单）。
 **遗留（下轮优先池）**: 破口民怨与城下之盟联动涌现观察（#33 管道已通，长程看「城下之盟」事件频率）；内核真停摆（OFF_USLEEP 贯通——待 rust 工具链窗口）；H 重点巡检候选（spawnUnit/createCiv 静默路径玩家反馈缺失扫描）；立国密度后续观察；战地工事第四笔候选（rust 墙阻挡镜像——待工具链窗口）；雪狼/熊振荡相位长程观察；盔形制与种族特征互动（B 重点，沿用二十轮）；rust 工具链。
+
+## 2026-11-09 #37（07:40 触发轮）：破口民怨×城下之盟联动涌现观察——管道全绿，稀有是结构性的
+
+**本轮主攻（#36 遗留首选）**: #33 把 stab 接入 sustainOf 后「城下之盟」事件频率的长程观察——纯观察轮（零代码改动），验证「破口民怨→民心崩溃→城下之盟」因果链在世界演化中的自然表现。
+
+**自然世界统计（yearF 422 真实年，10 国世界，播种 8 国自然裂变/消化）**:
+- 战争收束路径分布：两败俱伤罢兵 / 劳师糜饷（「久战虚耗」collapse）/ 灭国征服（3 次 fall：Wolfsburg、Stormhold、Sungard）/ 世界大战乞和休战——唯独「城下之盟」0 次
+- 围城自然发生 2 次（Sungard 被围至 pop=0 直接灭国吞并，未踩中崩溃求和窗口；末段又现 1 个活体围城）；破口 0 次——136 帧-年无一破墙
+- #33 民意管道活跃实证：大战期 stab 全线低迷（0/1/5/11 常态）复现 #33 观察；#36 哀悼账 6-10 国自然入账（0.10-0.60）、×0.85 缓释曲线自然运转；#35 重建红利与战时损耗拉锯真实（Oakgard 战时 stab 卡 1——战损+哀悼压过恢复，和平即回弹）
+
+**结构性发现（城下之盟稀有的三重原因，非 bug）**:
+1. 大战期战争几乎全是 total（灭国战争守方战至亡国不停战）——绕过城下之盟路径
+2. 世界大战期崩溃走专属「乞求临时停战喘息」路径（warInfoTick L8857 分支）——ww 框架下城下之盟文案永不出现
+3. 常规战争的城下之盟要求「崩溃判定触发时恰被围城」——围城本身稀有（军队推到王都 14 格内），二次方稀有事件。历史语义自洽：城下之盟本就是城破时刻的罕见产物
+
+**受控实证（端到端一击全通）**: phase=idle + declareWar(border,force) + rel=-60 + total=false + goal=999 + scoreB=50（败方）+ exA=200（sustain 0）+ civSiege.set(loser) → 直调 warInfoTick() —— **「城被围、补给断绝，军民疲敝难继——被迫签下城下之盟」精确触发**，concludeByScore 战败割地（cession 事件）+ makePeace(postRel=10) + 签约宽慰 +2 + 哀悼记账 0.523 全链路工作正常。#33 民意因子在 sustain 0 中贡献到位（stab 12 → -24 民意项）。
+
+**QA 方法论沉淀（本轮七条，观察轮最大收获）**:
+1. **worldEvents 是 80 条环形缓冲**——`n0=length(80); for(j=n0; j<length)` 抓取窗口恒空（环满时 push+shift 长度不变）；必须用 slice(-N) 尾部快照或 monkey-patch addEvent
+2. **civSiege 是每帧全量重建的实时态**（siegeTick 先 clear 再扫描 set）——手工 set 的假围城在 rAF 下一帧即被清；受控围城必须与判定调用同 eval 零间隙
+3. **三个时钟**：tickCount（模拟 tick 总数）/ yearF（真实模拟年，tick() 内推进 1/40）/ frameCount（渲染帧数，rAF 驱动）——yr 换算必须用 yearF，frameCount/40 是假年（真实年约为其 2.9 倍）
+4. **rAF 在 eval 间隙持续推演世界**（agent-browser 挂机即真实 tick）——受控实验的所有状态构造与断言必须单 eval 一气呵成，间隙即污染（ declareWar 的战争会在间隙被目的达成/ww 休战等自然机制处理）
+5. **warInfoTick 每 100 tick 一跑**；崩溃判定每轮独立 rng<0.5——受控直调需循环覆盖 rng（8 次全不中 0.4%）
+6. **ensureWarData 的 wd.a/b 按 Math.min/Math.max 数值序**（非宣战方序）——scoreA/exA/wearA 的归属须按数值序对号
+7. **monkey-patch 白盒法**：eval 里包装 e.warData.delete / e.addEvent 记录调用栈与全量事件——比抓窗口快照强一个数量级，一击定位「makePeace ← warInfoTick」删除链
+8. （附）declareWar 后 9 tick 内战争静默消失 = 目的达成路径（Embergard 已占领 ≥goal 格→宣战即 concludeGoalWar→makePeace postRel=10）；受控宣战须 goal=999 阻断
+
+**遗留（下轮优先池）**: H 重点巡检候选（spawnUnit/createCiv 静默路径玩家反馈缺失扫描）；战争收束路径的叙事分布调优候选（total 战争主导大战期——常规战争/城下之盟在 ww 空窗期才可见，观察ww 空窗期长度）；内核真停摆（OFF_USLEEP 贯通——待 rust 工具链窗口）；立国密度后续观察；战地工事第四笔候选（rust 墙阻挡镜像——待工具链窗口）；雪狼/熊振荡相位长程观察；盔形制与种族特征互动（B 重点，沿用二十一轮）；rust 工具链。
+**推送**: worklog 记账同程快照 → push-web.sh（零代码轮不升位不推码）。
+**版本节奏**: 不升位（v0.63 批次第二笔为记账；零代码观察轮）。
