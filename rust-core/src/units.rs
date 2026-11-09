@@ -204,10 +204,22 @@ fn tile_y(i: usize) -> i32 {
 
 #[inline(always)]
 fn rng_next() -> f64 {
-    let mut a = u32_at(OFF_RNGS, 0);
-    let v = mulberry32_next(&mut a);
-    set_u32_at(OFF_RNGS, 0, a);
-    v
+    // 【稳定性 #52】全局自续流（速度无关）：不再逐调读 arena L95——真玩 rAF 路径
+    // pack 期写入 L95 的时机与内核消费耦合会导致 20×/1×/手动三角 units 生死分叉。
+    // 流的连续性由批出口写回 L95 + JS getRng() 读回维持；读档确定性由批入口播种保证。
+    unsafe {
+        let p = &raw mut RNG_STATE;
+        mulberry32_next(&mut *p)
+    }
+}
+
+#[inline(always)]
+fn rng_writeback() {
+    // 【稳定性 #52】批出口写回：全局 → L95，供 JS getRng()（bail 接力/批结束）读回续流
+    unsafe {
+        let v = RNG_STATE;
+        set_u32_at(OFF_RNGS, 0, v);
+    }
 }
 
 #[inline(always)]
@@ -3547,6 +3559,17 @@ fn try_pickup(ctx: &mut Ctx, s: usize) {
 #[no_mangle]
 pub extern "C" fn wb_units_batch(from: u32, limit: u32) -> u32 {
     let st = state();
+    // 【稳定性 #52】批入口播种：load/generate 后（wb_reset/wb_init 置 pending）首批
+    // 从 L95 取 JS pack 写入的新档 rngA —— 读档确定性 + 同页双载位等
+    unsafe {
+        if RNG_SEED_PENDING {
+            let seed = u32_at(OFF_RNGS, 0);
+            let p = &raw mut RNG_STATE;
+            *p = seed;
+            let q = &raw mut RNG_SEED_PENDING;
+            *q = false;
+        }
+    }
     let parity = u8_at(OFF_PAR, 0);
     let mut ctx = Ctx {
         act_cur: 0,
@@ -3566,6 +3589,7 @@ pub extern "C" fn wb_units_batch(from: u32, limit: u32) -> u32 {
             set_f64_at(OFF_BAILP, 0, st.live_len as f64);
             set_f64_at(OFF_BAILP, 1, i as f64);
             set_u32_at(OFF_BATCHR, 0, 5);
+            rng_writeback();
             return 5;
         }
         let live = st.live_len as usize;
@@ -3584,6 +3608,7 @@ pub extern "C" fn wb_units_batch(from: u32, limit: u32) -> u32 {
                     // 动作游标写回
                     set_i32_at(OFF_ACTN, 0, ctx.act_cur as i32);
                     set_u32_at(OFF_BATCHR, 0, 2);
+                    rng_writeback();
                     return 2;
                 }
             }
@@ -3593,9 +3618,11 @@ pub extern "C" fn wb_units_batch(from: u32, limit: u32) -> u32 {
     set_i32_at(OFF_ACTN, 0, ctx.act_cur as i32);
     if ctx.overflow {
         set_u32_at(OFF_BATCHR, 0, 3);
+        rng_writeback();
         return 3;
     }
     set_u32_at(OFF_BATCHR, 0, 1);
+    rng_writeback();
     1
 }
 
