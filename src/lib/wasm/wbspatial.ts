@@ -483,6 +483,11 @@ const OFF_WILDCAP = 146, OFF_MONCAP = 147, OFF_MISC = 148, OFF_TBHP = 149, OFF_G
 
 const TILES = 40960;
 const MAX_FAM = 256, MAX_BLD = 1024, MAX_ITEMS2 = 256, MAX_TRAITS2 = 32, MAX_ITEMDEFS = 128;
+/** 涌现特质注册预算：wasm 特质镜像表 MAX_TRAITS2(32) 槽 − 基础特质(types.ts 12 键)。
+ *  历史上限 24 会让 TRAITS 总键数达 36 > 32 → packTables 溢出 → 批内核永久回退 JS 路径
+ *  （实测 units 段 1.4ms → 6.2ms，吞吐 ×0.23 —— 长跑世界静默半速的根因）。
+ *  引擎两处发明门 + applySave 老档调共用此常量；若 types.ts 增基础特质键须同步扣减。 */
+export const WB_MAX_DYN_TRAITS = MAX_TRAITS2 - 12;
 
 // —— Task 50：pack2 分段截面位（bail 分级重打包）——
 // GRIDS=6 网格 bulk 拷贝 / WAR=战争位图+dynRaces / CIV=文明表 / FAM=家族表 / BLD=建筑表+damagedSet
@@ -855,7 +860,10 @@ class WbBatch {
 
     const units = engine.units;
     const n = units.length;
-    if (n > this.nu) { this.failed = true; return; }
+    // 【性能修复 v76】结构性失败须登记冷却重试（scheduleRetry 此前零调用者 —— failed=true 且
+    // retryAtTick=-1 的死锁态：retryDue 永不触发，批内核一次溢出即永久回退 JS 慢路径）。
+    // 瞬时单位峰（>4096）冷却后自愈；持续性溢出每次重试代价 ≈ 一次 packTables（~0.1ms/4800tick，可忽略）。
+    if (n > this.nu) { this.failed = true; this.scheduleRetry(engine.tickCount); return; }
 
     // —— 网格（bulk copy）——
     const g0 = performance.now();
@@ -975,7 +983,7 @@ class WbBatch {
     const tk = Object.keys(TRAITS);
     const tkSig = tk.join('|');
     if (tkSig !== this.traitsKeyCache) {
-      if (tk.length > MAX_TRAITS2) { this.failed = true; return; }
+      if (tk.length > MAX_TRAITS2) { this.failed = true; this.scheduleRetry(engine.tickCount); return; } // 表溢出：登记冷却重试（新世界上限门拦截；旧档由 applySave 调和化解 —— 不再永久死锁）
       this.traitKeys = tk;
       this.traitIdMap.clear();
       tk.forEach((k, i) => this.traitIdMap.set(k, i));

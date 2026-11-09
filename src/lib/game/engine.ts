@@ -23,7 +23,7 @@ import { neuroAcc, neuroStance, neuroFlight, F_ACC, F_STANCE, F_FLIGHT, setNeuro
 import {
   collectDecision, collectKill, collectUnitDead, collectFleeEnd, collectEnemyGone,
 } from './online/collector';
-import { WB, WBB, WP_WAR, WP_CIV, WP_FAM, WP_ITEM, WP_SCAL, WP_HOT, WP_META } from '../wasm/wbspatial';
+import { WB, WBB, WP_WAR, WP_CIV, WP_FAM, WP_ITEM, WP_SCAL, WP_HOT, WP_META, WB_MAX_DYN_TRAITS } from '../wasm/wbspatial';
 import { getCreation, parseCreationTool, addCreation, patchCreation, type SpeciesCreation } from './creations';
 import {
   onlineSnapshot, setOnline, setIntensity, setFrozen, rollback as onlineRollback, resetToOffline,
@@ -3709,6 +3709,11 @@ export class GameEngine {
 
   /** 涌现特质发明（tryEmergentTrait 的门后段 —— 门与掷骰已在 Rust 侧消耗） */
   private inventEmergentTrait(parent: Unit, childGene: Gene): string | null {
+    // 【性能修复 v76】上限收口：Rust 侧门控不知道 JS 特质表规模 —— 此处必须再挡一道（与
+    // tryEmergentTrait 同口径 WB_MAX_DYN_TRAITS=20），否则表可无限膨胀越过 wasm 32 槽 →
+    // packTables 溢出 → 批内核永久回退 JS 慢路径（长跑世界静默半速的根因）。返回 null =
+    // 门后未发明（孩子正常出生不带特质），与掷骰未中同语义。
+    if (this.dynTraits.size >= WB_MAX_DYN_TRAITS) return null;
     const t = inventTrait(this.rng, childGene, this.traitSeq);
     t.key = `dt${this.traitSeq++}`;
     this.dynTraits.set(t.key, t);
@@ -10335,7 +10340,7 @@ export class GameEngine {
   /** 涌现特质诞生（新生儿极端基因分化）：登记 TRAITS + 图谱 + 播报，返回 key（null = 未分化） */
   tryEmergentTrait(parent: Unit, childGene: Gene): string | null {
     const extreme = childGene.d >= 1.5 || childGene.h >= 1.5 || childGene.s >= 1.5;
-    if (!extreme || this.dynTraits.size >= 24 || this.rng() > 0.06) return null;
+    if (!extreme || this.dynTraits.size >= WB_MAX_DYN_TRAITS || this.rng() > 0.06) return null;
     const t = inventTrait(this.rng, childGene, this.traitSeq);
     t.key = `dt${this.traitSeq++}`;
     this.dynTraits.set(t.key, t);
@@ -17739,6 +17744,17 @@ export class GameEngine {
         TRAITS[t.key] = t;
       }
       this.traitSeq = Math.max(1, dynSave.traitSeq ?? 1, ...[...this.dynTraits.keys()].map((k) => parseInt(k.slice(2), 10) + 1 || 1));
+    }
+    // 【性能修复 v76】批内核特质表调和（旧档兼容）：历史上限 24 会让 TRAITS 总键数 36 > wasm
+    // 32 槽 → 批内核永久回退 JS 慢路径（units 段 ×4.4 耗时）。保留最新 WB_MAX_DYN_TRAITS 个
+    //（Map 插入序 = 发明序），携带被裁特质的单位退化为无特质（涌现特质是锦上添花，换回批内核吞吐）。
+    if (this.dynTraits.size > WB_MAX_DYN_TRAITS) {
+      const allKeys = [...this.dynTraits.keys()];
+      const dropped = new Set(allKeys.slice(0, allKeys.length - WB_MAX_DYN_TRAITS));
+      for (const k of dropped) { delete TRAITS[k]; this.dynTraits.delete(k); }
+      let trimmed = 0;
+      for (const u of this.units) if (u.trait != null && dropped.has(u.trait)) { u.trait = null; trimmed++; }
+      console.warn(`[applySave] 涌现特质表超容：裁剪最旧 ${dropped.size} 个（${[...dropped].join(',')}），${trimmed} 个携带单位退化为无特质（批内核 32 槽上限）`);
     }
     // v3：进化图谱恢复（节点 + 索引重建；旧档缺省 → 根源懒补）
     const EVO_KINDS: EvoKind[] = ['species', 'weapon', 'tech', 'trait', 'society'];
