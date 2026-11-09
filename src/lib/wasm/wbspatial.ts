@@ -603,6 +603,10 @@ class WbBatch {
    *  wb_reset 只清世界结构态，批运行态（bail 概率表/动作缓冲/内核内部静态/更大人口行尾巴）
    *  跨读档存活 → 内核首 tick 以旧世界状态决策（deepdiff4/5/6 分块实锤）→ 位等分叉。 */
   private arenaBaseline: Uint8Array | null = null;
+  /** 【稳定性 #54】新页 boot 竞态标志：WBB 未 ready（wasm 异步加载中）时 onWorldReset 被跳过
+   *  → 基线回写/wb_reset 全部丢失 → 新页前几载内核生命周期状态不一致 → 位等分叉。
+   *  置 pending，ensureWorld 冷启成功后补跑完整 reset（arenaBaseline 已建=boot 态，补跑即冷启等价）。 */
+  private pendingWorldReset = false;
   private tablesVersion = -1;
   private weightsVersion = -1;
   private traitsKeyCache = '';
@@ -674,7 +678,14 @@ class WbBatch {
   }
 
   onWorldReset(engine: GameEngine): void {
-    if (!this.active() || !this.ensureWorld(engine)) return;
+    if (!this.active() || !this.ensureWorld(engine)) {
+      // 【稳定性 #54】boot 竞态窗口：WBB 未 ready（wasm 异步加载中）时基线回写/wb_reset 全部
+      // 被跳过 → 新页前几载内核生命周期状态不一致 → 位等分叉（#53 误判「未闭合」根因）。
+      // 置 pending，ensureWorld 冷启成功后补跑完整 reset（arenaBaseline 已建=boot 态，等价冷启）。
+      this.pendingWorldReset = true;
+      return;
+    }
+    this.pendingWorldReset = false; // 正常路径清残留标志
     // 【稳定性 v80】boot 基线回写：wb_reset 只清世界结构态，批运行态（vBailP——wbResume 决策
     // 输入、vAct 动作缓冲、vDlist 脏行表、内核内部静态、更大人口的行尾巴 [n,NU)）跨读档存活
     // → 内核首 tick 以旧世界状态决策 → 位等分叉（deepdiff4/5/6 分块实锤）。
@@ -757,6 +768,21 @@ class WbBatch {
     // 【稳定性 v80】boot 基线快照：wb_init 后即刻镜像整块线性内存（~4MB，一次性）——
     // 之后每次读档/generate 恢复此基线 = 内核零态，pack2 重灌 [0,n) 即完整重建。
     this.arenaBaseline = new Uint8Array(ex.memory.buffer).slice();
+    // 【稳定性 #54】boot 竞态补偿：冷启前曾有 onWorldReset 被跳过 → 此处补跑完整 reset
+    // （wb_reset 清结构态 + 基线回写 = 内核字节级回 boot 态，与未跳过场景完全等价）
+    if (this.pendingWorldReset) {
+      this.pendingWorldReset = false;
+      ex.wb_reset();
+      const memR = ex.memory.buffer;
+      if (this.arenaBaseline.length === memR.byteLength) {
+        new Uint8Array(memR).set(this.arenaBaseline);
+      }
+      this.tablesVersion = -1; this.weightsVersion = -1; this.traitsKeyCache = '';
+      this.batchReady = false; this.metaDirty = true; this.rowDirtyN = 0;
+      if (this.virtBoat.length) this.virtBoat.fill(0);
+      if (this.nameCacheStr.length) this.nameCacheStr.fill(undefined);
+      if (this.rowDirty) this.rowDirty.fill(0);
+    }
     this.bw = engine.bw; this.bh = engine.bh;
     return true;
   }

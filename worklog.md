@@ -6064,3 +6064,22 @@ Stage Summary:
 **推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
 **版本节奏**: 不升位（v0.65 批次第二笔：视图缓存性能 + wasm 部署纠错回 #52 应有状态，无玩家可见新语义）。
 **评估**: D3 性能——pack 热路径视图缓存 -14%（3.997 vs 4.661 ms/tick 同协议 A/B），pack2 画像入账（每调用 72 视图分配清零）；D6 稳定健壮——**wbcore 修复版部署纠错**（#52 误提交 arena 版含速度相关分叉缺陷，本轮回归仓库正确二进制）+ 载入序位等在新世界未闭合诚实入账（下轮头部专攻）；下一最大差距：载入序位等通道 + 真机 vsync。
+
+## 2026-11-10 #54（06:33 触发轮）：载入序位等专攻——热页三方全等证明主机制健康 + 新页 boot 竞态补跑修复 + 「eval 首载特异」模式精确定位（D6 深挖轮）
+
+**上轮复核**: #53 推送闭环——Deploy 1e6febf success（22:33:13Z）+ pages 86b6b6d 双绿；dev server/agent-browser 遗留复用，无撞车。
+
+**本轮主攻（遗留池首选：载入序位等未闭合专攻）**:
+- **方法升级**: 受控世界（newWorld 777001, 150 tick）存**合法键 slot2**（上轮非法键陷阱规避）+ **内核线性内存全字节 FNV 哈希逐 tick 采样**（WBB.ex.memory.buffer 4MB，每 tick ~3ms）+ boot 载入边界快照（mem/simHash/pending/ready 四元组）。
+- **热页三方全等（主机制健康证明）**: 同页连续三次载入各 180 tick、60 采样点（mem+rngA+units）**全等**（diffs AB=-1/AC=-1/BC=-1）——#52 的播种+基线机制在热页协议下位等成立；#53 轮末「未闭合」结论系**新页 boot 竞态窗口 + 非法键存档混淆**双重误判。
+- **新页 boot 竞态修复（防御性补丁）**: onWorldReset 在 WBB 未 ready（wasm 异步加载中）时原直接 return——基线回写/wb_reset 全部跳过（#51 已知竞态窗口）。新增 pendingWorldReset 标志：跳过时置 pending，ensureWorld 冷启成功（wb_init+arenaBaseline 建立后）**补跑完整 reset**（wb_reset+基线回写+全部标志清零=与未跳过场景字节级等价）。本地 dev wasm 加载快窗口难复现（navigate→eval 间隔 >1s 时已 ready），生产慢网络场景由补跑兜底。
+- **rng 调用日志法排除 JS 侧**: 包装 e.rng 记录 tick159-172 段调用序列——A/B 两轮 7646 个调用值全同——JS 侧 rng 消费路径确定性无恙。
+- **「eval 首载特异」模式精确定位（本轮最大发现）**: 多 eval 会话中稳定复现——**每个 eval 的第一次载入 tick30 mem=81b2a9eb、后续载入全等 bd781602**（D/E/F 与 G/H 两组三连载均同模式；rngA 载入边界与 tick30 **全等**、units 全等 631、simHash 分叉）——**内核非 rng 态残留**：载入重置映射 R(上轮终态)→本轮态不收敛（R(C终态)=81b2≠R(D终态)=bd78），残留源在「eval 边界」而非载入序奇偶；分叉通道=内核线性内存中基线回写未覆盖或跨 eval 新增的区域。**下轮专攻方向**：D/E 轮载入边界后逐 tick mem 全字节 diff 找首分叉字节区段（对照 arena 布局表定位 region）→ 盘查非导出全局（RNG_STATE/RNG_SEED_PENDING/LUT_OFF/STATE 帧外静态）与 vAct 尾巴/actBase。
+
+**QA**: tsc 零错误 + eslint 零告警；CI 预验证 export-static 绿；竞态路径冒烟（loadFromSlot→post.pending=false→50 tick 正常）；受控世界全程 speed=0 冻结协议。
+
+**遗留（下轮优先池）**: **「eval 首载特异」内核非 rng 态残留专攻**（逐 tick mem diff 找首分叉字节→region 定位；候选：vAct 尾巴/actBase、STATE 帧外静态、vBailP 自适应表、写回段比较免写逻辑——#49 GC 第三刀的「写回段比较」若以非基线参照做免写判断，可能把残留误判为「未变」而跳过写回！）；「继续旅程」不显示自动档+标题屏元数据人口 0（再次复现）；beachedAquatic retarget O(鲨×单位)/20tick；真机 vsync 实测；战争收束叙事调优；滑杆行可见性；raise 工具 GRASS 顶格。
+
+**推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**版本节奏**: 不升位（v0.65 批次第三笔：位等深挖+竞态补跑，无玩家可见语义变更）。
+**评估**: D6 稳定健壮——热页三方全等闭合「同页双载位等」主通道（#52 机制健康获证），新页 boot 竞态补跑机制补上「WBB 未 ready 跳过 reset」窗口（生产慢网络兜底）；「eval 首载特异」残留通道精确定位并给出下轮专攻路径（写回段免写误判假说入账）；下一最大差距：残留通道根治 + 真机 vsync。
