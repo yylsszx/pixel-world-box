@@ -5754,3 +5754,18 @@ Stage Summary:
 **遗留（下轮优先池）**: raise 工具 GRASS 顶格零变化候选（天花板类，玩家想造山会用 mountain，低优先）；战争收束路径叙事分布调优候选（ww 空窗期观察）；内核真停摆（OFF_USLEEP——待 rust 工具链窗口）；立国密度后续观察；战地工事第四笔候选（rust 墙阻挡镜像）；雪狼/熊振荡相位长程观察；盔形制与种族特征互动（B 重点，沿用二十三轮）；rust 工具链。
 **推送**: 代码+worklog 同程快照 → push-web.sh（结果见下轮复核）。
 **版本节奏**: 不升位（v0.63 批次第三笔代码：森林笔刷反馈是玩家强可感知项，攒清单）。
+
+## 2026-11-09 #40（08:50 触发轮）：精绘档盔形制×种族特征一致性收口——drawPersonFine 四点对齐 drawPerson（B 重点）
+
+**本轮主攻（遗留池「盔形制与种族特征互动（B 重点，沿用二十三轮）」落地）**: 考古发现「盔×种族互动」在常绘小人路径（drawPerson，zoom<8）已相当完整（#21-25 时期沉淀：全覆盔 fullCover=骑士/术士/骷髅让位精灵尖耳/哥布林大耳、头角头冠被装备盔遮、矮人无盔自绘钢盔、强盗无盔兜帽、蜥蜴头冠被遮），但 **zoom≥8 精绘档 drawPersonFine 是独立实现，四处滞后**——「放得越大越看不清特征」的缩放悖论：①强盗兜帽无 `!u.hlm` 条件——戴装备盔仍画兜帽黑影叠脸（常绘是「盔代帽」）②发型块 `!bandit` 恒排强盗——戴盔强盗光头（常绘戴盔露发、盔压发而绘）③蜥蜴脊冠无 `!u.hlm`——戴盔蜥蜴脊冠从盔顶穿出（常绘冠被盔遮）④涌现尖耳 vis.ears 整段缺失——种化亚种（ears 分布：竖耳 45%/长耳 27%）在精绘档无耳。
+
+**改动（sprites.ts drawPersonFine 单函数，+22 行零新增持久字段旧档零兼容风险）**:
+- 强盗兜帽 `bandit` → `bandit && !u.hlm`（盔代帽）；发型块 `!bandit` → `!bandit || u.hlm`（戴盔强盗露发，与常绘同款「盔压发而绘」）
+- 蜥蜴脊冠加 `&& !u.hlm`（冠被装备盔遮）
+- 补涌现尖耳分支：`vis && race !== R.ELF && !goblin` 门控（精灵/哥布林已有专属耳，排除防双绘——常绘 else-if 链语义在平行 if 下的等价改写）+ fullCover 让位（竖耳 2 高/单耳 1 像素，耳位与 ELF 同列 fx±3 外扩）；fullCover 从两处内联三元组提取为局部 const 复用（与 drawPerson L607 同口径）
+
+**QA（受控 fillRect 精确矩形嗅探七断言全绿 + tsc/lint/console 全清）**: monkey-patch CanvasRenderingContext2D.fillRect 只录 worldCtx 记录（世界 tile 坐标系，与镜头无关）——①BANDIT半盔 hood('#2a2620')=false + 裸强盗=true（盔代帽）②LIZARD半盔 crestRect('#2c5e24' w2h1@hy-3)=false + 裸蜥蜴=true（冠被盔遮；首版按色断言被蜥蜴尾同色污染，改精确矩形后通过）③ELF全盔 earL(fx-3)=false + ELF半盔=true（fullCover 让位双向）④HUMAN+editRaceDef(rerollVis) 固定 ears2+horns1：竖耳 (fx-3,hy,1,2) 精确命中 + 头角 '#e8dcc0' 共存正常⑤阴性：HUMANvis crest/hood=false 无关分支零扰动。tsc 零错误 + lint 零告警 + console 零 error + speed=3 恢复 300tick 推演正常（1180 单位世界运转）。
+**QA 方法论沉淀（四条，本轮最大收获——dev server QA 环境三重陷阱）**: ①**dev 长驻 server 的模块图会损坏**（HMR 拉取 404：`GET /sprites.ts?t=... 404`）——「改动在盘+tsc 过+编译日志有」三证齐全仍可跑旧代码，重启 server 是唯一解；②**chrome 全家桶 ~3GB + turbopack 编译 1.2GB 会顶穿 4GB 沙箱**——OOM killer 反复杀 next-server（log 无痕），对策：agent-browser close 释放 → build 独占内存期编译 → **静态导出+python http.server（15MB）承载 QA**，顺带完成 CI 预验证；③**多渲染循环交替覆盖画布**（Fast Refresh 泄漏旧 rAF）——「eval 读引擎状态正常+截图画面冻结/偶发生效」即此症，reload 页面保单实例；④嗅探断言先查**同色/同矩形噪声源**（蜥蜴尾=脊冠同色、额前鬓角=耳同位 1x2、iron_helm 盔顶=发型顶同矩形），几何隔离（单位间距 6 tile）+ 精确矩形（w/h/坐标全配）才够判别力。
+**推送**: 代码 05f79db + worklog 本条 → push-web.sh 超时自愈 sync-github.sh 续推（结果见下轮复核）。
+**版本节奏**: 不升位（v0.63 批次第四笔代码：精绘档特征一致性是放大镜下强可感知项，攒清单）。
+**遗留（下轮优先池）**: buildBuilding 静默失败已澄清（#39 误判——玩家无直接入口）；raise 工具 GRASS 顶格零变化候选（天花板类，低优先）；战争收束路径叙事分布调优候选（ww 空窗期观察）；内核真停摆（OFF_USLEEP——待 rust 工具链窗口）；立国密度后续观察；战地工事第四笔候选（rust 墙阻挡镜像）；雪狼/熊振荡相位长程观察；盔形制第二笔候选（巨怪 giant 盔 3 宽形制与 vis.horns 的互动——drawPerson L460 giant 分支与涌现亚种盔的组合渲染）；rust 工具链。

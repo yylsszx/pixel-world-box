@@ -3149,12 +3149,14 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
     ctx.fillRect(fx - 1, hy + 2, 1, 1); // 獠牙 ×2
     ctx.fillRect(fx + 1, hy + 2, 1, 1);
   }
-  if (race === R.ELF && !(u.hlm === 'knight_helm' || u.hlm === 'warlock_hood' || u.hlm === 'skull_mask')) {
+  // 全覆式盔（骑士/术士/骷髅）接管脸与耳位 —— 与 drawPerson 的 fullCover 同口径（精华注释见彼处）
+  const fullCover = u.hlm === 'knight_helm' || u.hlm === 'warlock_hood' || u.hlm === 'skull_mask';
+  if (race === R.ELF && !fullCover) {
     ctx.fillStyle = rgb(skin);
     ctx.fillRect(fx - 3, hy + 1, 1, 1); // 尖耳外伸（全覆盔让位 —— 耳被盔壳罩住）
     ctx.fillRect(fx + 2, hy + 1, 1, 1);
   }
-  if (goblin && !(u.hlm === 'knight_helm' || u.hlm === 'warlock_hood' || u.hlm === 'skull_mask')) {
+  if (goblin && !fullCover) {
     ctx.fillStyle = rgb(skinDark);
     ctx.fillRect(fx - 3, hy + 1, 1, 1); // 大耳 ×2（更外扩；全覆盔让位）
     ctx.fillRect(fx + 2, hy + 1, 1, 1);
@@ -3165,8 +3167,8 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
     ctx.fillRect(fx - 2, hy + 3, 4, 2);
     ctx.fillRect(fx - 1, hy + 5, 2, 1);
   }
-  // 强盗兜帽（罩发 + 面部阴影只露双眼）
-  if (bandit) {
+  // 强盗兜帽（罩发 + 面部阴影只露双眼；戴了装备盔则盔代帽 —— drawPerson 同款口径）
+  if (bandit && !u.hlm) {
     ctx.fillStyle = '#2a2620';
     ctx.fillRect(fx - 2, hy - 1, 4, 3);
     ctx.fillRect(fx - 2, hy + 2, 4, 1);
@@ -3174,8 +3176,8 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
     ctx.fillRect(fx - 1, hy + 1, 3, 1);
   }
 
-  // —— 8. 发型（顶部两行 + 面缘刘海 + 背侧垂发；精灵长发及肩） ——
-  if (!bandit) {
+  // —— 8. 发型（顶部两行 + 面缘刘海 + 背侧垂发；精灵长发及肩；强盗戴装备盔时露发，盔压发而绘） ——
+  if (!bandit || u.hlm) {
     ctx.fillStyle = hairCol;
     ctx.fillRect(fx - 2, hy - 2, 4, 2);
     ctx.fillRect(fx + (f > 0 ? -3 : 2), hy - 1, 1, 2); // 额前鬓角
@@ -3183,12 +3185,25 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
     ctx.fillRect(backX, hy - 1, 1, race === R.ELF ? 5 : 3); // 背侧垂发
     ctx.fillStyle = 'rgba(255,255,240,0.25)';
     ctx.fillRect(fx - 1, hy - 2, 2, 1); // 发丝高光
-    if (race === R.LIZARD) {
+    if (race === R.LIZARD && !u.hlm) {
       ctx.fillStyle = '#2c5e24';
-      ctx.fillRect(fx - 1, hy - 3, 2, 1); // 蜥蜴脊冠
+      ctx.fillRect(fx - 1, hy - 3, 2, 1); // 蜥蜴脊冠（头冠被装备盔遮 —— drawPerson 同款口径）
     }
   }
 
+  // 涌现尖耳（视觉基因组 ears）：半开盔下露出、全覆盔让位 —— 与 ELF/哥布林耳位同列；
+  // 精灵/哥布林已有专属耳分支，排除防双绘（drawPerson 的 else-if 链语义在平行 if 下的等价改写）
+  if (vis && race !== R.ELF && !goblin) {
+    if (vis.ears === 2 && !fullCover) {
+      ctx.fillStyle = rgb(skin);
+      ctx.fillRect(fx - 3, hy, 1, 2); // 竖耳 ×2（两像素高）
+      ctx.fillRect(fx + 2, hy, 1, 2);
+    } else if (vis.ears === 1 && !fullCover) {
+      ctx.fillStyle = rgb(skin);
+      ctx.fillRect(fx - 3, hy + 1, 1, 1); // 单像素耳
+      ctx.fillRect(fx + 2, hy + 1, 1, 1);
+    }
+  }
   // —— 9. 涌现标记（视觉基因组：头角/头冠/荧光瞳已在眼色处理；戴盔时头角/头冠被罩住） ——
   if (vis && !u.hlm) {
     if (vis.horns >= 1) {
