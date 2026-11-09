@@ -380,6 +380,26 @@ function drawAmbience(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numb
 /** 滚动波带亮度查表（6 档加性淡白 —— 热路径零字符串拼接；上限压低避免「棋盘感」） */
 const DEEP_WAVE_ALPHA = Array.from({ length: 6 }, (_, k) => `rgba(224,244,255,${(0.03 + k * 0.018).toFixed(3)})`);
 
+// —— 【GC 治理 v77】热路径 fillStyle 量化缓存（#47 画像：唯一 rgba 串 1339/s 全部进 GC 堆，
+//    天气云层占 81%、贴花血/骸 ~2%）—— 连续浮点 alpha（及火山灰连续调色）每帧拼新串；
+//    量化 alpha 至 1/16 档（半透明叠加层 0.03 级差低于可感知阈值，贴花淡出周期数游戏年更不可辨），
+//    同 key 命中返回同一字符串实例 → 稳态零分配，且 Chromium 对同实例串的样式解析走内部缓存。
+//    缓存上限 4096 防御病态组合（实际组合 ~数百）。这是 worklog 遗留池「贴花 rgba LUT 量化」处方的通用化实现。
+const _fsCache = new Map<number, string>();
+function qStyle(r: number, g: number, b: number, a: number): string {
+  const rq = r < 0 ? 0 : r > 255 ? 255 : Math.round(r);
+  const gq = g < 0 ? 0 : g > 255 ? 255 : Math.round(g);
+  const bq = b < 0 ? 0 : b > 255 ? 255 : Math.round(b);
+  const aq = a <= 0 ? 0 : a >= 1 ? 15 : Math.round(a * 15);
+  const key = (rq << 20) | (gq << 12) | (bq << 4) | aq;
+  let s = _fsCache.get(key);
+  if (s === undefined) {
+    s = `rgba(${rq},${gq},${bq},${(aq / 15).toFixed(3)})`;
+    if (_fsCache.size < 4096) _fsCache.set(key, s);
+  }
+  return s;
+}
+
 /** P1 深海滚动波带：沿风向移动的斜向微光（周期 ~6s；stride 7 步进采样；只画深海格）
  *  实现：每带一条固定斜率的斜线（错开基线），只画行进波波峰尖（sin>0.8）——稀疏点缀而非连续亮带 */
 function drawDeepWaves(engine: GameEngine, wc: CanvasRenderingContext2D, tx0: number, tx1: number, ty0: number, ty1: number) {
@@ -436,7 +456,7 @@ function drawWeather(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numbe
         if (winter) { cr = 224; cg = 228; cb = 234; }
         if (ash > 0.1) { cr = Math.round(cr - 40 * ash); cg = Math.round(cg - 30 * ash); cb = Math.round(cb - 10 * ash); }
         if (stormy) { cr = Math.round(cr * 0.72); cg = Math.round(cg * 0.74); cb = Math.round(cb * 0.8); ca = Math.min(0.62, a + 0.12); }
-        wc.fillStyle = `rgba(${cr},${cg},${cb},${ca})`;
+        wc.fillStyle = qStyle(cr, cg, cb, ca); // 【GC v77】云层连续 alpha/灰调 → 量化缓存（画像 81% 唯一串源头）
         wc.fillRect(px, py, 9, 5);
         wc.fillRect(px + 3, py - 3, 6, 3);
         wc.fillRect(px + 6, py + 4, 7, 3);
@@ -449,7 +469,7 @@ function drawWeather(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numbe
         const px = cx * CELL * 2 + 1 + offX;
         const py = cy * CELL * 2 + 1 + Math.cos(fc * 0.004 + cy * 0.5) * 1.5 + v2 * 2;
         const alpha = Math.min(0.5, ashC * 0.72);
-        wc.fillStyle = `rgba(${Math.round(84 + 34 * ashC)},${Math.round(76 + 28 * ashC)},${Math.round(70 + 22 * ashC)},${alpha.toFixed(3)})`;
+        wc.fillStyle = qStyle(84 + 34 * ashC, 76 + 28 * ashC, 70 + 22 * ashC, alpha); // 【GC v77】
         wc.fillRect(px, py, 10, 6);
         wc.fillRect(px + 4, py - 2, 7, 4);
       }
@@ -467,7 +487,7 @@ function drawWeather(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numbe
           if (onWater) {
             const ph = ((hsh >> 3) + fc * 0.8) % 18;
             const ra = ph < 6 ? 0.5 : ph < 12 ? 0.32 : 0.16; // 三段扩散渐隐
-            wc.fillStyle = `rgba(196,222,244,${ra})`;
+            wc.fillStyle = qStyle(196, 222, 244, ra); // 【GC v77】三档离散 → 缓存仅 3 串
             if (ph < 6) {
               wc.fillRect(rx, ry, 1, 1); // 落点
             } else if (ph < 12) {
@@ -575,8 +595,8 @@ function drawWeather(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numbe
         const w = 5 - t * 2;
         const alpha = (st.strength * 0.5) * (1 - t * 0.45);
         wc.fillStyle = ice
-          ? `rgba(214,232,246,${alpha})`
-          : `rgba(${Math.round(232 - t * 40)},${Math.round(236 - t * 30)},${Math.round(242 - t * 10)},${alpha})`;
+          ? qStyle(214, 232, 246, alpha)
+          : qStyle(232 - t * 40, 236 - t * 30, 242 - t * 10, alpha); // 【GC v77】
         wc.fillRect(Math.round(ax - w / 2), Math.round(ay - w / 2), Math.max(2, w), Math.max(2, w));
       }
     }
@@ -1423,7 +1443,7 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
       // 种子哈希：每处血迹形状固定（3~5 滴，飞溅方向随机）；颜色仅随 decal 变化 → 提出滴循环免重复拼接
       const s = bd.seed;
       const n = bd.big ? 5 : 3;
-      wc.fillStyle = bd.big ? `rgba(122,16,16,${0.55 * fade})` : `rgba(158,28,22,${0.5 * fade})`;
+      wc.fillStyle = bd.big ? qStyle(122, 16, 16, 0.55 * fade) : qStyle(158, 28, 22, 0.5 * fade); // 【GC v77】贴花 LUT 量化（钦定项）
       for (let k = 0; k < n; k++) {
         const ox = (((s >> (k * 3)) & 7) - 3) * (bd.big ? 1 : 1);
         const oy = (((s >> (k * 3 + 2)) & 3) - 1);
@@ -1472,18 +1492,18 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
       const fade = Math.max(0.2, 1 - c.age / (GameEngine.CORPSE_TTL * (c.stone ? 2.2 : 1)));
       if (c.stone) {
         // 蛇怪的石像：灰白人形剪影（头+身+双腿）+ 底座
-        wc.fillStyle = `rgba(150,150,150,${0.85 * fade})`;
+        wc.fillStyle = qStyle(150, 150, 150, 0.85 * fade); // 【GC v77】
         wc.fillRect(bx - 1, by - 5, 2, 2); // 头
         wc.fillRect(bx - 1, by - 3, 2, 3); // 身
-        wc.fillStyle = `rgba(110,110,110,${0.9 * fade})`;
+        wc.fillStyle = qStyle(110, 110, 110, 0.9 * fade); // 【GC v77】
         wc.fillRect(bx - 2, by, 4, 1); // 底座
         // 石化高光
-        wc.fillStyle = `rgba(200,205,210,${0.7 * fade})`;
+        wc.fillStyle = qStyle(200, 205, 210, 0.7 * fade); // 【GC v77】
         wc.fillRect(bx - 1, by - 5, 1, 1);
         if (frameCount % 90 < 45) { wc.fillRect(bx, by - 2, 1, 1); }
       } else {
         // 骸骨堆：白色/暗色骨点组合（头骨+散乱骨片）；亡者为暗色骨尘
-        const bone = c.undead ? `rgba(70,64,58,${0.7 * fade})` : `rgba(226,222,212,${0.85 * fade})`;
+        const bone = c.undead ? qStyle(70, 64, 58, 0.7 * fade) : qStyle(226, 222, 212, 0.85 * fade); // 【GC v77】
         wc.fillStyle = bone;
         wc.fillRect(bx - 1, by, 2, 2); // 主骨堆
         wc.fillRect(bx, by - 1, 1, 1); // 头骨点
