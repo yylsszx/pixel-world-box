@@ -456,7 +456,34 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
     ctx.fillRect(px - 1, gy - 3, 3, 2);
     ctx.fillStyle = '#14100c';
     ctx.fillRect(px + (u.flip ? -2 : 1), gy - 3, 1, 1);
-    // 头盔装备层（巨盔：压发而绘）
+    // —— 涌现亚种特征（vis）：巨躯同适用 —— 与精绘档同口径（ears 排除 ELF/哥布林专属耳防双绘；
+    // horns/crest 遇装备盔让位——盔外悬装饰同占头顶外圈行）：巨躯不是特征黑洞，血统标记远观同样可见
+    const fullCover = u.hlm === 'knight_helm' || u.hlm === 'warlock_hood' || u.hlm === 'skull_mask';
+    if (vis) {
+      if (vis.ears === 2 && !fullCover && race !== R.ELF && !goblin) {
+        ctx.fillStyle = rgb(skin);
+        ctx.fillRect(px - 2, gy - 4, 1, 2); // 竖耳贴头侧（发行+脸上行；巨头 3 宽耳外扩一位）
+        ctx.fillRect(px + 2, gy - 4, 1, 2);
+      } else if (vis.ears === 1 && !fullCover && race !== R.ELF && !goblin) {
+        ctx.fillStyle = rgb(skin);
+        ctx.fillRect(px - 2, gy - 3, 1, 1); // 短耳（脸行）
+        ctx.fillRect(px + 2, gy - 3, 1, 1);
+      }
+      if (vis.horns >= 1 && !u.hlm) {
+        ctx.fillStyle = shiftColor('#e8dcc8', vis, -0.08);
+        ctx.fillRect(px - 1, gy - 5, 1, 1); // 头角：发上一行（单角左列；装备盔外悬同圈行，戴盔让位）
+        if (vis.horns >= 2) ctx.fillRect(px + 1, gy - 5, 1, 1);
+      }
+      if (vis.crest && !u.hlm) {
+        ctx.fillStyle = shiftColor('#cf3f2e', vis, 0.1);
+        ctx.fillRect(px - 1, gy - 5, 3, 1); // 巨冠：3 宽配巨头形制
+      }
+      if (vis.glow) {
+        ctx.fillStyle = '#7df9ff';
+        ctx.fillRect(px + (u.flip ? -2 : 1), gy - 3, 1, 1); // 荧光瞳（全覆盔罩脸时被面甲覆盖）
+      }
+    }
+    // 头盔装备层（巨盔：压发而绘——帽檐压耳如压发，半开盔下竖耳下半仍自盔缘露出）
     paintHelmet(ctx, u, px, gy - 4, gy - 3, f, t, true);
     // 躯干 3x2 + 巨臂
     ctx.fillStyle = u.hurt > 0 ? '#ff3b30' : rgb(cloth);
@@ -466,6 +493,14 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
     ctx.fillRect(px + 2, gy - 1, 1, 2);
     // 胸甲片（宽甲 3 版：形制分层）
     paintArmorPlate(ctx, u, px, gy, f, t, 3);
+    // 涌现条纹（vis.pattern）：躯干竖纹/红斑——甲后绘制与标准身形同层序
+    if (vis?.pattern === 1) {
+      ctx.fillStyle = shiftColor('#3a342c', vis, 0.02);
+      ctx.fillRect(px, gy - 1, 1, 2);
+    } else if (vis?.pattern === 2) {
+      ctx.fillStyle = shiftColor('#cf3f2e', vis, 0.05);
+      ctx.fillRect(px, gy, 1, 1);
+    }
     // 盾牌副手层（巨盾）
     paintShield(ctx, u, px, gy, f, t, true);
     // 双腿跨步
