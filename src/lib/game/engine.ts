@@ -535,6 +535,8 @@ export class GameEngine {
   totalWars = new Set<string>();
   /** 攻城事件节流（上次 siege/sack 事件的 tick，防刷屏） */
   lastSiegeEventTick = 0;
+  /** 森林笔刷「全落空」点拨节流（frameCount 哨兵——拖过海面每帧都触发 applyTool，不节流则每帧弹一条。瞬态不入档） */
+  forestDenyAt = -1e9;
   /** 各文明建筑分类计数（civsTick 每 5 tick 重建：civId → [kind 计数]） */
   civBuildCounts = new Map<number, number[]>();
 
@@ -15319,13 +15321,34 @@ export class GameEngine {
           mountain: T.MOUNTAIN, snow: T.SNOW, lava: T.LAVA, ice: T.ICE, swamp: T.SWAMP,
         };
         const target = map[toolId];
+        if (toolId === 'forest') {
+          // —— 林木硬约束（#39 H 巡检收尾）：水面/山岩不可生林（植被语义）——笔刷拖过海面原本逐格静默 skip =
+          //    「点了没反应」病灶。全落空时给一句点拨（为什么不行 + 怎样才行）；部分成功不弹——海岸线种树
+          //    边缘 skip 是常态，弹则打扰正常操作。拖动每帧都触发（brush 类 continuous），1.2s（72 帧）同源节流。
+          let planted = 0;
+          let tried = 0;
+          for (let yy = Math.floor(wy - r); yy <= wy + r; yy++) {
+            for (let xx = Math.floor(wx - r); xx <= wx + r; xx++) {
+              if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+              if (Math.hypot(xx - wx, yy - wy) > r) continue;
+              tried++;
+              const i = idx(xx, yy);
+              if (isWater(this.terrain[i]) || this.terrain[i] === T.MOUNTAIN) continue;
+              this.setTerrain(i, target);
+              planted++;
+            }
+          }
+          if (tried > 0 && planted === 0 && this.frameCount - this.forestDenyAt > 72) {
+            this.forestDenyAt = this.frameCount;
+            this.toast('林木难生于水域与山岩——请在陆地上播撒', 'danger', true);
+          }
+          break;
+        }
         for (let yy = Math.floor(wy - r); yy <= wy + r; yy++) {
           for (let xx = Math.floor(wx - r); xx <= wx + r; xx++) {
             if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
             if (Math.hypot(xx - wx, yy - wy) > r) continue;
             const i = idx(xx, yy);
-            if (toolId === 'forest' && isWater(this.terrain[i])) continue;
-            if (toolId === 'forest' && this.terrain[i] === T.MOUNTAIN) continue;
             this.setTerrain(i, target);
           }
         }
