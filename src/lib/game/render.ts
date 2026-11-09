@@ -938,7 +938,8 @@ function applyLighting(engine: GameEngine, wc: CanvasRenderingContext2D, x0: num
     const bhp = engine.bHp.get(b.i);
     const lit = bhp == null || bhp > (BUILDING_DEFS[b.kind]?.hp ?? 70) * 0.35;
     if (lit) {
-      wc.fillStyle = `rgba(255,224,150,${(0.75 + 0.2 * Math.sin((fc + b.i * 7) * 0.05)) * glow})`;
+      // v78 GC 第二刀：连续 alpha 量化缓存（qStyle）—— 稳态零分配 + 串实例复用
+      wc.fillStyle = qStyle(255, 224, 150, (0.75 + 0.2 * Math.sin((fc + b.i * 7) * 0.05)) * glow);
       wc.fillRect(px + 1, py - 3, 1, 1);
       if ((b.i & 1) === 0) wc.fillRect(px, py - 2, 1, 1);
     }
@@ -953,11 +954,12 @@ function applyLighting(engine: GameEngine, wc: CanvasRenderingContext2D, x0: num
     const px = x * 2;
     const py = y * 2;
     const flick = 0.75 + 0.25 * Math.sin((fc + i * 13) * 0.09);
-    g.fillStyle = `rgba(255,130,40,${(0.22 * glow * flick).toFixed(3)})`;
+    // v78 GC 第二刀：火焰三层连续 alpha → qStyle 量化缓存
+    g.fillStyle = qStyle(255, 130, 40, 0.22 * glow * flick);
     g.fillRect(px - 3, py - 3, 8, 8);
-    g.fillStyle = `rgba(255,170,70,${(0.26 * glow * flick).toFixed(3)})`;
+    g.fillStyle = qStyle(255, 170, 70, 0.26 * glow * flick);
     g.fillRect(px - 2, py - 2, 6, 6);
-    g.fillStyle = `rgba(255,200,90,${(0.22 * glow * flick).toFixed(3)})`;
+    g.fillStyle = qStyle(255, 200, 90, 0.22 * glow * flick);
     g.fillRect(px - 1, py - 1, 4, 4);
     budget--;
   }
@@ -977,9 +979,10 @@ function applyLighting(engine: GameEngine, wc: CanvasRenderingContext2D, x0: num
       const breathe = 0.7 + 0.3 * Math.sin((fc + h % 100) * 0.02);
       const px = x * 2;
       const py = y * 2;
-      g.fillStyle = `rgba(255,110,30,${(0.15 * glow * breathe).toFixed(3)})`;
+      // v78 GC 第二刀：岩浆两层连续 alpha → qStyle 量化缓存
+      g.fillStyle = qStyle(255, 110, 30, 0.15 * glow * breathe);
       g.fillRect(px - 3, py - 3, 8, 8);
-      g.fillStyle = `rgba(255,160,60,${(0.18 * glow * breathe).toFixed(3)})`;
+      g.fillStyle = qStyle(255, 160, 60, 0.18 * glow * breathe);
       g.fillRect(px - 1, py - 1, 4, 4);
       budget--;
     }
@@ -1006,11 +1009,10 @@ function applyLighting(engine: GameEngine, wc: CanvasRenderingContext2D, x0: num
         if (b2 < 0.12) continue;
         const px = wx * 2;
         const py = wy * 2;
-        const a = (0.55 * b2 * fg).toFixed(3);
-        // 微光晕 + 亮芯（暖绿；bloom 后呈真实萤光）
-        g.fillStyle = `rgba(150,220,90,${(0.16 * b2 * fg).toFixed(3)})`;
+        // 微光晕 + 亮芯（暖绿；bloom 后呈真实萤光）—— v78 GC 第二刀：qStyle 量化缓存
+        g.fillStyle = qStyle(150, 220, 90, 0.16 * b2 * fg);
         g.fillRect(px - 1.5, py - 1.5, 3, 3);
-        g.fillStyle = `rgba(210,255,140,${a})`;
+        g.fillStyle = qStyle(210, 255, 140, 0.55 * b2 * fg);
         g.fillRect(px - 0.5, py - 0.5, 1, 1);
       }
     }
@@ -1156,6 +1158,9 @@ const FP_SNOW_EDGE = Array.from({ length: 8 }, (_, k) => `rgba(235,242,250,${(0.
 
 function drawFootprints(engine: GameEngine, wc: CanvasRenderingContext2D, x0: number, x1: number, y0: number, y1: number) {
   const fps = engine.footprints;
+  // v78 GC 第二刀：脚印按时间序排列且同档聚簇——局部 last 去重免重复 setter 解析（赋值计数热点 Top4）
+  let lf = '';
+  let lf2 = '';
   for (let k = 0; k < fps.length; k++) {
     const fp = fps[k];
     if (fp.x < x0 - 2 || fp.x > x1 + 2 || fp.y < y0 - 2 || fp.y > y1 + 2) continue;
@@ -1169,19 +1174,25 @@ function drawFootprints(engine: GameEngine, wc: CanvasRenderingContext2D, x0: nu
     // 颜色查表（寿命 8 档量化）
     const li = Math.min(7, ((1 - life) * 8) | 0);
     const ci = fp.t === T.SNOW ? 0 : fp.t === T.SAND ? 1 : fp.t === T.ICE ? 3 : 2;
-    wc.fillStyle = FP_COLORS[ci][li];
+    const cs = FP_COLORS[ci][li];
+    if (cs !== lf) { wc.fillStyle = cs; lf = cs; }
     wc.fillRect(bx + side, by, 1, 1);
     if (fp.t === T.SNOW && life > 0.55) {
       // 新鲜雪印：边缘挤起的雪痕
-      wc.fillStyle = FP_SNOW_EDGE[li];
+      const es = FP_SNOW_EDGE[li];
+      if (es !== lf2) { wc.fillStyle = es; lf2 = es; }
       wc.fillRect(bx + side - 1, by - 0.75, 1, 0.75);
     }
   }
 }
 
 /** —— Task 48-B2：鸟群（迁徙鸟斜掠天空：V 字队形 + 双帧扇翅 + 前后错位扑翼相位） —— */
+const BIRD_BODY_STYLE = 'rgba(44,44,52,0.88)';
+const BIRD_WING_STYLE = 'rgba(58,58,68,0.8)';
 function drawBirds(engine: GameEngine, wc: CanvasRenderingContext2D, x0: number, x1: number, y0: number, y1: number) {
   const fc = engine.frameCount;
+  // v78 GC 第二刀：连续同串赋值去重（鸟群常量串逐鸟重复赋）
+  let lf = '';
   for (const f of engine.flocks) {
     if (f.x < x0 - 14 || f.x > x1 + 14 || f.y < y0 - 14 || f.y > y1 + 14) continue;
     const mag = Math.hypot(f.vx, f.vy) || 1;
@@ -1196,11 +1207,11 @@ function drawBirds(engine: GameEngine, wc: CanvasRenderingContext2D, x0: number,
       const py = Math.round((f.y - dirY * back + dirX * spread) * 8) / 4;
       // 扑翼：每只鸟相位错开（i*3），两帧一扇
       const flap = ((fc >> 2) + i * 3) & 1;
-      wc.fillStyle = 'rgba(44,44,52,0.88)';
+      if (BIRD_BODY_STYLE !== lf) { wc.fillStyle = BIRD_BODY_STYLE; lf = BIRD_BODY_STYLE; }
       wc.fillRect(px, py - flap * 0.5, 1, 1); // 身体（扇翅时略升）
       // 翅膀：扇起时左右张开两点，收拢时贴身一点
       if (flap) {
-        wc.fillStyle = 'rgba(58,58,68,0.8)';
+        if (BIRD_WING_STYLE !== lf) { wc.fillStyle = BIRD_WING_STYLE; lf = BIRD_WING_STYLE; }
         wc.fillRect(px - 1, py - 0.5, 1, 0.5);
         wc.fillRect(px + 1, py - 0.5, 1, 0.5);
       }
@@ -3831,13 +3842,14 @@ export function renderMinimap(engine: GameEngine, ctx: CanvasRenderingContext2D,
     ctx.drawImage(engine.overlayCanvas, 0, 0, mw, mh);
     ctx.globalAlpha = 1;
   }
-  // units as dots
+  // units as dots —— v78 GC 第二刀：局部 last 去重（单位序按文明聚簇，同色连续段命中率高；赋值计数热点 Top1）
+  let lastCol = '';
   for (const u of engine.units) {
     const c = RACES[u.race];
     let col: string;
     if (c.isCiv && u.civ >= 0 && engine.civs[u.civ]?.alive) col = engine.civs[u.civ].colorHex;
     else col = u.race === R.ZOMBIE ? '#64c95d' : u.race === R.DRAGON ? '#cf3f2e' : '#f2ead8';
-    ctx.fillStyle = col;
+    if (col !== lastCol) { ctx.fillStyle = col; lastCol = col; }
     // 殖民船在小地图上画稍大的 2x2 点，更易追踪
     if (u.boat) ctx.fillRect((u.x / 256) * mw - 1, (u.y / 160) * mh - 1, 2, 2);
     else ctx.fillRect((u.x / 256) * mw, (u.y / 160) * mh, 1, 1);
