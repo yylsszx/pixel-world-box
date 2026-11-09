@@ -482,6 +482,20 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
         ctx.fillStyle = '#7df9ff';
         ctx.fillRect(px + (u.flip ? -2 : 1), gy - 3, 1, 1); // 荧光瞳（全覆盔罩脸时被面甲覆盖）
       }
+      if (vis.spikes) {
+        ctx.fillStyle = shiftColor('#3a342c', vis, 0.02);
+        ctx.fillRect(px + (u.flip ? 2 : -2), gy - 2, 1, 2); // 背棘：肩后竖棘（背侧与瞳反向：朝右背左列）
+      }
+      if (vis.mane) {
+        ctx.fillStyle = hairCol;
+        ctx.fillRect(px + (u.flip ? 1 : -1), gy - 4, 1, 2); // 鬃毛：颈后蓬起（巨头背半列）
+      }
+      if (vis.tail >= 1) {
+        ctx.fillStyle = rgb(skin);
+        const wag = ((t >> 3) & 1) === 1 ? -1 : 0;
+        ctx.fillRect(px + (u.flip ? 2 : -2), gy + 1, 1, 1); // 尾根（巨腿外侧背列）
+        if (vis.tail >= 2) ctx.fillRect(px + (u.flip ? 3 : -3), gy + 1 + wag, 1, 1); // 尾梢摆动
+      }
     }
     // 头盔装备层（巨盔：压发而绘——帽檐压耳如压发，半开盔下竖耳下半仍自盔缘露出）
     paintHelmet(ctx, u, px, gy - 4, gy - 3, f, t, true);
@@ -599,8 +613,8 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
         ctx.fillRect(px, y + legH + (goblin ? 1 : 0), 1, 1);
       }
     }
-    // 躯干（2x2；矮人/壮硕亚种加宽 3）
-    const torsoW = race === R.DWARF || (vis?.bulk ?? 0) >= 0.62 ? 3 : 2;
+    // 躯干（2x2；矮人/壮硕亚种/硕大体型加宽 3）
+    const torsoW = race === R.DWARF || (vis?.bulk ?? 0) >= 0.62 || (vis?.size ?? 0) >= 1.25 ? 3 : 2;
     const tx = race === R.DWARF ? px - 1 : px - 1;
     ctx.fillStyle = u.hurt > 0 ? '#ff3b30' : rgb(cloth);
     ctx.fillRect(tx, hY - 1, torsoW, 2);
@@ -682,6 +696,21 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
       ctx.fillRect(px + 1, hY - 2, 1, 1);
     } else if (vis) {
       // v3 涌现亚种标记：尖耳/头角/荧光瞳/头冠/条纹 —— 血统写在脸上（头角/头冠被装备盔遮住）
+      // —— 涌现附器（背棘/鬃毛/尾）：巨兽同款基因的凡人表达，肩颈臀件与盔无涉 ——
+      if (vis.spikes) {
+        ctx.fillStyle = shiftColor('#3a342c', vis, 0.02);
+        ctx.fillRect(px - 2 * f, hY - 2, 1, 2); // 背棘：肩后竖棘（竖耳共现时被耳覆盖，耳优先）
+      }
+      if (vis.mane) {
+        ctx.fillStyle = hairCol;
+        ctx.fillRect(px + (f > 0 ? -1 : 0), hY - 3, 1, 2); // 鬃毛：颈后蓬起（发色同源，自发行垂至脸侧）
+      }
+      if (vis.tail >= 1) {
+        ctx.fillStyle = rgb(skin);
+        const wag = ((t >> 3) & 1) === 1 ? -1 : 0;
+        ctx.fillRect(px - 2 * f, hY + 1, 1, 1); // 尾根（臀后，与蜥蜴尾同区但蜥蜴走专属分支不共现）
+        if (vis.tail >= 2) ctx.fillRect(px - 3 * f, hY + 1 + wag, 1, 1); // 尾梢摆动
+      }
       if (vis.ears === 2 && !fullCover) {
         ctx.fillStyle = rgb(skin);
         ctx.fillRect(px - 2, hY - 3, 1, 2);
@@ -3073,8 +3102,8 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
   ctx.fillStyle = '#d9a941';
   ctx.fillRect(fx + (f > 0 ? 1 : -2), dy - 4, 1, 1);
 
-  // —— 3. 躯干（受光面/背阴面双色 + 下摆） ——
-  const torsoW = dwarf ? 6 : 5;
+  // —— 3. 躯干（受光面/背阴面双色 + 下摆；硕大体型基因加宽） ——
+  const torsoW = dwarf ? 6 : vis && vis.size >= 1.25 ? 6 : 5;
   const tx = fx - (torsoW >> 1);
   ctx.fillStyle = hurt ? '#ff3b30' : rgb(cloth);
   ctx.fillRect(tx, dy - 7, torsoW, 3);
@@ -3258,6 +3287,24 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
       ctx.fillRect(fx - 1, dy - 7, 1, 3); // 躯干条纹
       ctx.fillRect(fx + 1, dy - 7, 1, 3);
+    }
+  }
+
+  // —— 9.5 涌现附器（背棘/鬃毛/尾）：巨兽同款基因的凡人表达，肩颈臀件与盔无涉 ——
+  if (vis) {
+    if (vis.spikes) {
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.fillRect(fx + (f > 0 ? -3 : 2), dy - 8, 1, 2); // 背棘：肩后竖棘（下缘浮臂根/肩垫之上，棘穿肩甲）
+    }
+    if (vis.mane) {
+      ctx.fillStyle = hairCol;
+      ctx.fillRect(fx + (f > 0 ? -2 : 1), dy - 9, 1, 2); // 鬃毛：颈后蓬起（背侧垂发内侧一列）
+    }
+    if (vis.tail >= 1) {
+      ctx.fillStyle = rgb(skin);
+      const wag = ((t >> 3) & 1) === 1 ? -1 : 0;
+      ctx.fillRect(fx - 3 * f, dy - 4, 1, 1); // 尾根（臀后腿外；披风穿着时尾垂披风之上）
+      if (vis.tail >= 2) ctx.fillRect(fx - 4 * f, dy - 4 + wag, 1, 1); // 尾梢摆动
     }
   }
 
