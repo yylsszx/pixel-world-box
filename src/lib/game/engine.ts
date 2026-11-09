@@ -694,8 +694,9 @@ export class GameEngine {
   private _lastTickAt = 0;
 
   // ---------------- 性能仪表（Task 42-a：纯数据采集，供后续性能 HUD 低频轮询，不走 zustand 不入档） ----------------
-  /** 引擎侧指标 EMA：simMs 单次 tick 模拟耗时 / simUps 每秒模拟 tick 数；drawMs/fps 由渲染帧循环回写 */
-  perf = { simMs: 0, simUps: 0, drawMs: 0, fps: 0 };
+  /** 引擎侧指标 EMA：simMs 单次 tick 模拟耗时 / simUps 每秒模拟 tick 数；drawMs 由渲染帧循环回写；
+   *  interpMs=帧内插值+视觉推进段耗时 EMA（v76）；fps 自 v76 改 1s 真窗口计数（dt-EMA 在长尾帧下虚高 ~2×，#46 画像实测 41.1 vs 真值 ~22） */
+  perf = { simMs: 0, simUps: 0, drawMs: 0, interpMs: 0, fps: 0 };
   /** simUps 采样窗口：窗口内 tick 计数与窗口起始时刻（每 500ms 结算一次，热路径仅一次加法与比较） */
   private _perfWinT = 0;
   private _perfWinN = 0;
@@ -2877,6 +2878,20 @@ export class GameEngine {
 
   frame(dtMs: number) {
     this.frameCount++;
+    // 【性能 v76】刷新率探针 + fps 真窗口（字段注释见 renderSkip 下方）
+    this.dtRing.push(dtMs);
+    if (this.dtRing.length > 120) this.dtRing.shift();
+    if ((this.frameCount & 63) === 0 && this.dtRing.length >= 60) {
+      const s = [...this.dtRing].sort((a, b) => a - b);
+      this.refreshMs = Math.max(8, Math.min(33.5, s[Math.floor(s.length * 0.1)]));
+    }
+    this._fpsWinN++;
+    this._fpsWinT += dtMs;
+    if (this._fpsWinT >= 1000) {
+      this.perf.fps = this._fpsWinN * 1000 / this._fpsWinT;
+      this._fpsWinN = 0;
+      this._fpsWinT = 0;
+    }
     this.updateZoomAnim(dtMs);
     // 【性能 v75】≥12× 隔帧渲染：奇数帧不绘制 —— 模拟独占帧（budget 内嵌感知），渲染半频 ≈30fps
     // 在高速档内眼足够；速度回落自动恢复逐帧渲染。GameCanvas 每帧读取本标记。
@@ -2889,8 +2904,15 @@ export class GameEngine {
       // —— 帧时长目标 ≤30ms（≥33fps 平移下限），渲染越便宜模拟吃越多；隔帧渲染帧无渲染开销吃满 24ms。
       // 注：预算不可依赖实测 fps（自反馈收缩：帧变慢→周期变大→预算变大→帧更慢的发散成收缩部）。
       // 旧 acc 截断（≤2 tick）与 30 步硬顶语义不变。
+      // 【性能 v76】vsync 感知预算：低渲染成本环境（drawMs<8ms，真机 GPU）预算目标从「帧时长 ≤30ms」
+      // 改为「单个 vsync 量子内」—— 60Hz 下 body∈(16.7,33.3] 必错一拍恒锁 30fps（#46 画像：沙箱 40% 帧
+      // 滑到 ≥50ms）；对齐量子后 60fps 稳定、模拟占空比 ~79% 反升。reserve=插值+视觉推进实测 EMA+调度余量。
+      // 沙箱软渲染 drawMs≥8 自动走 v75 旧公式（长 body 让出 vsync 换模拟吞吐，画像证实为高 drawMs 环境最优）。
+      const reserve = this.perf.interpMs + 1.2;
       const budget = this.speed >= 3
-        ? Math.max(8, Math.min(24, 30 - (this.renderSkip ? 0 : this.perf.drawMs)))
+        ? (this.refreshMs >= 12 && this.perf.drawMs >= 2 && this.perf.drawMs < 8
+          ? Math.max(6, Math.min(24, this.refreshMs - (this.renderSkip ? 0 : this.perf.drawMs) - reserve))
+          : Math.max(8, Math.min(24, 30 - (this.renderSkip ? 0 : this.perf.drawMs))))
         : 9;
       const tStart = performance.now();
       let steps = 0;
@@ -2905,6 +2927,8 @@ export class GameEngine {
         if (++steps >= 30) { this.acc = Math.min(this.acc, TICK_MS - 1); break; }
       }
     }
+    // 【性能 v76】插值+视觉推进段计时起点（该段此前不在任何仪表内，是预算公式的隐性成本）
+    const tInterp0 = performance.now();
     // —— 渲染插值：tick 内位置已定格，按 tick 进度（acc/TICK_MS）计算每单位的平滑渲染坐标 ——
     // 暂停时定格在终点（alpha=1），避免单位悬浮在半格位置
     this.tickAlpha = this.speed > 0 ? Math.min(1, this.acc / TICK_MS) : 1;
@@ -2943,6 +2967,9 @@ export class GameEngine {
       if (u) { this.cam.x = u.rx ?? u.x; this.cam.y = u.ry ?? u.y; }
       else this.followId = null;
     }
+    // 【性能 v76】插值+视觉推进段耗时 EMA（预算 reserve 用，随单位数自适应）
+    const ims = performance.now() - tInterp0;
+    this.perf.interpMs = this.perf.interpMs > 0 ? this.perf.interpMs * 0.9 + ims * 0.1 : ims;
   }
 
   // ---------------- fire ----------------
@@ -3504,6 +3531,14 @@ export class GameEngine {
   uprof = { pack2: 0, batch: 0, replay: 0, wb: 0, js: 0 };
   /** 【性能 v75】≥12× 隔帧渲染标记：本帧建议跳过渲染（模拟独占帧）—— frame() 每 rAF 置位，GameCanvas 读取 */
   renderSkip = false;
+  /** 【性能 v76】刷新率探针：dt 滚动窗（120 帧）每 64 帧取 p10 估 vsync 周期。取 p10 而非中位数：
+   *  只要 ≥10% 帧命中单个量子（body≤quantum）p10 即真周期。#46 画像证实 60Hz 下 body∈(16.7,33.3]
+   *  必错一拍恒锁 30fps——预算公式对齐量子后可 60fps 稳定。 */
+  private dtRing: number[] = [];
+  refreshMs = 16.7;
+  /** 【性能 v76】fps 1s 真窗口计数（替代 GameCanvas 的 dt-EMA） */
+  private _fpsWinN = 0;
+  private _fpsWinT = 0;
   /** TEMP-48: bail 类型诊断直方图（1=船 2=涌现 3=建筑摧毁 4=商队 5=殖民建城） */
   bailKinds: Record<number, number> = {};
   /** 本 tick 单位是否由 wasm 批内核接管（effectsTick 时域补偿的门控：内核接管时 JS 主循环不跑，

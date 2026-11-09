@@ -1035,9 +1035,7 @@ export function GameCanvas() {
           const p = engine.perf;
           p.drawMs = p.drawMs > 0 ? p.drawMs * 0.9 + dms * 0.1 : dms;
         }
-        const instFps = 1000 / Math.max(1, dt);
-        const p2 = engine.perf;
-        p2.fps = p2.fps > 0 ? p2.fps * 0.9 + instFps * 0.1 : instFps;
+        // 【性能 v76】fps 改由引擎 frame() 内 1s 真窗口计数 —— dt-EMA 在长尾帧分布下虚高 ~2×（#46 画像实测 41.1 vs 真值 ~22）
       } catch (err) {
         // keep the loop alive and surface the error once
         console.error('[WB-RENDER]', err);
