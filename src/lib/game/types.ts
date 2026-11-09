@@ -1851,6 +1851,9 @@ export interface SaveDataV2 {
   river?: string;
   /** 道路网络（RLE；旧档缺省 = 无路，新建筑将重新铺设） */
   road?: string;
+  /** 【稳定性 v79】昼夜钟（渲染帧日钟，dayPhase 基准）：旧档缺省 = 0（黎明开局）。
+   *  不入档时读档后取上个会话残留 —— 夜窗落点漂移 → 睡眠单位跳过生育/移动 → 模拟不可复现。 */
+  frameCount?: number;
   /** 世界法则（可选：旧存档回退默认值） */
   laws?: WorldLaws;
   /** 野生生物繁殖倍率（0-1；基准 = 最慢文明生物的 repro；旧档缺省 = 1） */

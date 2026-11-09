@@ -5949,3 +5949,31 @@ Stage Summary:
 **推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
 **版本节奏**: 不升位（v0.64 批次第六笔：GC 第二刀赋值计数治理，攒清单）。
 **评估**: D3 性能——GC 第二刀收口赋值计数热点（被治理串 -48%~-80%+）与剩余分配热点（量化段 -99%），fillStyle 总赋值 62.9k/s→44.6k/s（-29%，未治理段持平属预期）；下一最大差距：中档 LOD 交替串颜色桶 batching（~47k/5s 最大剩余块）。
+
+## 2026-11-10 #49（01:29 触发轮）：GC 第三刀判死→sim 写回段比较免写 v79 + 读档确定性根治（位等 QA 方法论立功，grassTiles/frameCount 双 causal 收口）
+
+**上轮复核**: #48 推送闭环确认——远端 main c684f9c → Deploy a0977c7 success（17:28Z）+ pages build 233763e success（17:29Z）双绿（开轮查 Actions API 当场确认）。dev server 本轮沿用（无撞车）。
+
+**本轮主攻（遗留池首选「GC 第三刀：LOD 交替串颜色桶 batching」→ 画像+微基准判死 → 转向 sim 写回段）**:
+- **判死证据链**: ①修前 fillStyle 画像（20×，711 单位，30s 窗）：Top16 串全部为常量字面串（零 GC 分配）——第三刀原始动机（GC 压力）已在前两刀消解，剩余仅 setter CPU 计数；②OffscreenCanvas 微基准裁决：冗余同串 setter **0.02µs/次**（Blink 内部等值短路）、交替串 0.07µs，而单次 fillRect 0.44µs——**setter 是 fillRect 的 1/22**，每帧 3.1k 次 setter ≈ 0.06-0.2ms（<drawMs 1%）→ 颜色桶 batching 是伪靶点（z 序风险不值得 <0.2ms）。画像第三次改变靶点（#44/#46/#47 同款教训：真机影响画像优先于池面窄修）。
+- **真靶点转移**: 引擎内置 prof 分段仪表读数（837 单位）：units 段 1.16ms/tick 占 80%；下钻 uprof（归零重采样）：**wb 写回段 0.701ms/tick（34%）+ pack2 0.561（27%）**——遗留池「writeback 标量段比较免写」原估 -0.1ms 严重偏保守（写回段本身就是最大单块）。
+
+**改动（v79，两文件，wbspatial.ts 写回段 + engine.ts/types.ts 读档残留收口）**:
+1. **writeback 标量段比较免写**（wbspatial.ts L1726-1802）：脏行 ~35 标量字段全部改「转换后值 !== 当前值才写」（v75 装备槽比较免写同款模式扩展到全标量段）——NaN 哨兵转换语义逐字段保持（food/lx/ly/sxk/syk/stk/panic/job/trait/boat/army 的 undefined 映射全保留）；**gene 对象分配治理**：旧版每脏行每 tick 无条件新建 {s,d,h,r}（移动单位 ≈ 数万对象/s 进 GC 堆——模拟路径此前不在渲染分配画像内），改四值比较未变复用现对象；**gIds/gVal 数组**同款（gl≥0 行逐元素比较）。
+2. **读档确定性根治**（engine.ts applySave + types.ts SaveDataV2 + wbspatial.ts WBB，位等 QA 实锤驱动）：①**grassTiles 读档重算**（O(W×H) 一次 ~1ms）——旧实现只在 ecoTick（每 120 tick）重算+初始值 1，serialize 有存但 applySave 不恢复 → 读档取标题世界残留（tick<120→1 / ≥120→全图计数），喂进生育增益（grassTiles/16000）→ 同档重载不可复现（实锤：同档双跑单位 806 vs 814、生育门 grass 输入 1 vs 5609）；②**frameCount 昼夜钟入档**（serialize 新字段 + applySave 恢复，旧档缺省回落 0 黎明开局）——dayPhase() 读 frameCount（渲染帧日钟非模拟 tick）不入档 → 夜窗（0.545-0.865）落点逐次漂移 → 睡眠文明单位跳过生育/移动 → rng 消费分叉 → 全局不可复现（第二个 causal 输入）；③**残留收口八件**：bHp/damagedSet（存档不存建筑 HP——残留把上个世界同格建筑残血/受损态带进新读档，箭塔伤害+内核 OFF_DMGL 镜像失真）/civBuildCounts/totalWars/armyNameSeq/lastGovEventTick/lastEcoPop 清空 + ecoState 重置 'balanced'（残留 'collapse' 会让健康档误吃 stability −8）——generate 有清而 applySave 漏清的跨会话污染面（comm 差集审计）；④**WBB.resetSessionState**（wbspatial.ts 新方法 + applySave 首行接线）：内核 failed/failStreak/retryAtTick/goodStreak 单例运行态跨读档清零（上个世界的 bail 风暴冷却不得让新读档走 JS 起步）。
+
+**QA（位等终审 + 九路全绿）**:
+- **位等 IDENTICAL（本轮核心新能力·新页首读定界）**: 同存档 slot1 + 300 手动 tick + 剥离 savedAt → 两次全新页面运行世界状态**字节级一致**（hashNoTs 9abf5edb）——修前同协议双跑 units 806 vs 814、rng 流 1152 vs 1132 次、哈希三连不同（956ac13f/c1157356/aed181b4）；修复逐层验证：grass 重算后 load 后 5863 双跑一致、frameCount 恢复后 0 双跑一致、终审 IDENTICAL。**写回比较免写值中性铁证**：含写回修复与不含（git stash 单变量切换）双侧 300 tick 终态哈希同为 9abf5edb——比较免写严格值语义，零行为漂移。**定界（诚实记录）**：同会话二次读档（速度 20 玩 8s 后再 load）与新页首读仍分叉（806 vs 832）——eco/hydro/beached 系统条件分支输入存在未定位的残留层（units/laws/riverTiles/内核退避态已证全同，探针包装法在 applySave 期触发崩溃中止深挖）；WBB.resetSessionState（failed/failStreak/retryAtTick/goodStreak 跨读档清零）已入册为第一层修复，余层记遗留池下轮专攻。
+- **GC 长任务对比**（30s@20×）：77 次 vs 基线 196 次（**-61%**）、总时长 4365ms vs 16179ms（**-73%**）——方向与分配消除量（gene 对象 ~5 万/s + 写回 store 减半）一致；跨会话对比，世界相位混杂因子已注记，真机/长跑复核待后续轮。
+- **wb 段/tick 时延 A/B**：同 slot1 世界 @20× 10×1s EMA 中位 **0.545ms vs 修前基线 0.626（-13%）**；3×300-tick 计时块中位 2.891 vs 3.335 ms/tick（-13%）与 wb EMA 0.551 vs 0.765（-28%）——三组协议一致指向 13-28% 区间，取保守下界 **-13%** 入账（同会话分叉使 sandbox 计时精度受限，300-tick 块协议受 dev 重编译竞态污染出现 778 异常值——方法论注记：计时 A/B 必须新页单块，本轮已入池）。
+- **20× simUps 270.5**（810 单位，沙箱历史最高——此前区间 187-211，世界相位不同不可直接归一，方向强正相关）；1× 回归 simUps 17.9 ≈ 15 ✓（历史 14-16 区间边缘，世界处于岩浆火点活跃期）。
+- tsc --noEmit 零错误 + eslint 三文件零告警；世界截图无伪影（岩浆火/雪原/森林/minimap/单位/教程浮层全正常）；存档往返 saveToSlot+loadFromSlot 双跑 ✓（位等协议即往返协议）；旧档兼容：slot1 旧格式（无 frameCount 字段）读档回落 0 正常运行 ✓，新档加可选字段旧引擎读档忽略未知字段 ✓（双向兼容，v=2 不变）；控制台零 error。
+
+**QA 方法论沉淀**:
+①**位等哈希协议**（同档+固定 tick 数+剥离 savedAt 的双页快照 diff）是模拟改动的最强对照——本轮靠它把「读档不确定性」从一个模糊 UX 观感逼到 grassTiles/frameCount 两个具体字段；②**rng 调用日志法**（包装 e.rng 记录 序列+调用点标签）：值相同而调用点分叉 ⇒ 分叉在无 rng 的门输入；调用次数不同 ⇒ 某条件分支跳过了耗 rng 段——两次定位一击命中；③**引擎指纹 diff**（读档后全字段双跑对比）一步暴露残留字段（flockTimer 红鲱鱼教训：先核消费链再定罪——它是纯视觉 vizTick 字段）；④**generate/applySave 清理差集审计**（comm -23）系统性暴露跨会话污染面，比逐案猜想要快；⑤浏览器微基准必须绕开已装探针（OffscreenCanvas 独立原型）；⑥agent-browser localStorage 配额会满（诊断键 ~400KB/个及时清理）。
+
+**遗留（下轮优先池）**: 同会话二次读档残留层专攻（新页首读已位等；玩后 load 与首读分叉的最后一层输入未定位——suspect 面：eco/beached 条件分支的生态缓存、WB Stage-1 镜像、探针包装法需绕开 applySave 期调用）；pack2 脏行重打包画像（0.56ms/tick 27%——热列/网格/文明段占比拆分，bail 分级截面是否可再省）；「继续旅程」不显示自动档候选 + 标题屏世界跑机期间 auto 档元数据显示人口0（UX bug 待查，或与标题世界 auto-save 策略相关）；beachedAquatic retarget O(鲨×单位)/20tick（rng 消费路径，本轮已证其在 tick 93609 活跃）；真机 vsync 路径实测（需真机/GPU 环境）；writeback 后余量：wildCount 重建/计数器回写微段；战争收束叙事调优；滑杆行可见性候选；raise 工具 GRASS 顶格候选；内核真停摆（待 rust 工具链）；rust 工具链；~~LOD 交替串颜色桶 batching~~（判死移出：常量串零 GC + setter 1/22 fillRect 成本）。
+
+**推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**版本节奏**: 不升位（v0.64 批次第七笔：写回段治理 + 读档确定性根治，攒清单）。
+**评估**: D3 性能——GC 长任务总时长 -73%（模拟路径分配治理收口），wb 段 -13%，20× simUps 历史新高 270.5；D6 稳定健壮——读档确定性根治（同档重载从不可复现 → 位等 IDENTICAL）+ 八项跨会话残留收口 + 昼夜钟入档（旧档双向兼容）；下一最大差距：pack2 重打包段画像与真机实测。

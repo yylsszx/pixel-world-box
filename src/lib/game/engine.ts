@@ -17407,6 +17407,7 @@ export class GameEngine {
       toastSeq: this.toastSeq,
       victoryCiv: this.victoryCiv,
       multiCivSeen: this.multiCivSeen,
+      frameCount: this.frameCount, // 【稳定性 v79】昼夜钟入档（dayPhase 基准；旧档缺省读档回落 0）
       terrain: rleEncode(this.terrain),
       variant: '', // v2 不存 variant：读档按 seed 确定性重算（worldgen hash2 纯函数）
       owner: rleEncode(ownerBytes),
@@ -17515,6 +17516,7 @@ export class GameEngine {
   /** 读档：恢复世界状态并全量重绘。数据损坏时抛错（由调用方捕获后 toast 提示）
    *  兼容 v1（base64 平铺）与 v2（RLE 压缩）两种格式 */
   applySave(data: SaveData): void {
+    WBB.resetSessionState(); // 【稳定性 v79】内核退避/失败态跨读档清零（单例运行态不入档——不清则同档二次读档走 JS 起步，与新页首读分叉）
     WBB.touchMeta(); // Stage 3：读档后全部行重建
     const version = data.v;
     if (version !== 1 && version !== 2) throw new Error(`不支持的存档版本: ${version}`);
@@ -17554,6 +17556,28 @@ export class GameEngine {
     }
     // 随机数无法序列化闭包状态，用 seed+tick 重新播种即可
     this.rngA = ((this.seed ^ 0x9e3779b9) + this.tickCount) >>> 0;
+    // 【稳定性 v79】读档恢复昼夜钟：dayPhase() 读 frameCount（渲染帧日钟，非模拟 tick）——
+    // 旧实现不入档不重置，读档后取上个会话残留（标题屏帧数时序漂移）→ 夜窗（0.545-0.865）
+    // 落点逐次不同 → 睡眠文明单位跳过生育/移动 → rng 消费分叉 → 同档重载全局不可复现
+    // （bit-equal QA 终审实锤：grassTiles 之后的第二个 causal 输入；两者同轮收口）。
+    // 旧档缺字段回落 0（黎明开局，确定性），新档无缝续日。
+    this.frameCount = Number.isFinite((data as SaveDataV2).frameCount) ? ((data as SaveDataV2).frameCount as number) : 0;
+    // 【稳定性 v79】读档重置生态态：ecoState 不入档（仅 stats UI 快照），初始值 'balanced'——
+    // 旧实现 applySave 不重置，上个会话（标题屏/上一读档）的 'collapse' 残留会让健康存档
+    // 误吃 stability −8（societyTick L8598），直到下一次 ecoTick 重算才自愈
+    this.ecoState = 'balanced';
+    // 【稳定性 v79】读档残留收口（generate 有清、applySave 漏清的跨会话污染面 —— bit-equal QA 差集）：
+    // bHp/damagedSet：存档不存建筑 HP —— 语义应为满血重建；残留会把上个世界同格建筑的残血/受损态
+    // 带进新读档（箭塔伤害、内核 OFF_DMGL 镜像随之失真）；civBuildCounts：经济计数（5 tick 重建，
+    // 窗口期失真）；totalWars：终战计数（存档不序列化，残留错乱宣战节奏）；armyNameSeq（军团命名序，
+    // 读取回落 0）；lastGovEventTick（政体播报节流）；lastEcoPop（生态趋势展示缓存，首次 ecoTick 重灌）。
+    this.bHp.clear();
+    this.damagedSet.clear();
+    this.civBuildCounts.clear();
+    this.totalWars.clear();
+    this.armyNameSeq.clear();
+    this.lastGovEventTick.clear();
+    this.lastEcoPop.clear();
 
     // —— v3 涌现层早期恢复（emTechs/emIdeas/evoNodes/dynTraits —— 必须先于文明处理：research 校验/加成缓存/理念表依赖） ——
     const v3s = data as SaveDataV2;
@@ -17601,6 +17625,13 @@ export class GameEngine {
     this.building = building;
     this.fire = fire;
     this.radiate = radiate;
+    // 【稳定性 v79】读档重算草地计数：旧实现 grassTiles 只在 ecoTick（每 120 tick）全量重算
+    // （字段初始值 1），serialize 有存 grass 但 applySave 不恢复 —— 读档后取上个会话残留
+    // （标题世界 tick<120 → 1 / ≥120 → 全图计数），生育增益（grassTiles/16000）跨会话漂移
+    // → 同存档重载模拟不可复现（bit-equal QA 实锤：同档双跑单位 806 vs 814、rng 流 1152 vs 1132 次、
+    //   生育门 grass 输入 1 vs 5609）。改为从恢复后的 terrain 单一真相重算（O(W×H) 一次 ~1ms，
+    //   读档一次性成本，顺带自愈脏档与旧档缺字段）。
+    { let g = 0; for (let gi = 0; gi < terrain.length; gi++) { const t = terrain[gi]; if (t === T.GRASS || t === T.FOREST) g++; } this.grassTiles = g; }
 
     // 从数组重建派生集合
     this.fireSet.clear();

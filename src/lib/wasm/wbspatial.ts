@@ -577,6 +577,17 @@ class WbBatch {
   noteGood(): void {
     if (this.failStreak > 0 && ++this.goodStreak >= 1800) { this.failStreak = 0; this.goodStreak = 0; }
   }
+  /** 【稳定性 v79】读档会话态重置：failed/退避四字段是单例运行态，不入存档——
+   *  旧实现 applySave 不重置：上个世界的 bail 风暴冷却若跨读档存活，新世界起步即走 JS 接力
+   *  （rng 消费序不同）→ 同档二次读档与新页首读分叉（bit-equal QA 同会话协议实锤 823 vs 806）。 */
+  resetSessionState(): void {
+    this.failed = false;
+    this.failStreak = 0;
+    this.retryAtTick = -1;
+    this.goodStreak = 0;
+    this.metaDirty = true; // 新世界全量 meta 重灌（与 touchMeta 同向，双保险）
+    this.rowDirtyN = 0;
+  }
   /** Stage 3 行级分层：meta 列（id/civ/race/装备/基因/名/血仇等稀疏变异列）脏标记 —— 变异收口方法 touchMeta() 触发，下 tick 重灌 */
   metaDirty = true;
   /** Stage 3+ 行级增量：仅重灌标记行（spawn 新行 / reap 移位行）—— 避免繁衍活跃期全表重灌 */
@@ -1727,30 +1738,57 @@ class WbBatch {
       const i = dlist[k];
       if (i >= units.length) continue;
       const u = units[i];
-      u.x = this.vUx[i]; u.y = this.vUy[i]; u.civ = this.vUciv[i]; u.race = this.vUrace[i];
-      u.dead = this.vUdead[i] !== 0;
-      u.panic = this.vUHasPanic[i] ? this.vUPanic[i] : undefined;
-      u.tx = R.tx[i]; u.ty = R.ty[i]; u.hp = R.hp[i]; u.maxHp = R.maxHp[i]; u.dmg = R.dmg[i];
-      u.speed = R.speed[i]; u.age = R.age[i]; u.maxAge = R.maxAge[i]; u.kills = R.kills[i]; u.cd = R.cd[i];
+      // 【性能 v79】标量段比较免写：转换后值 !== 当前值才写 —— 值语义严格等价（写回真相未变），
+      // 省下脏行 ~35 次无条件属性 store + 隐藏类校验；驻留/入睡/冷却中单位整行大面积命中免写。
+      // v75 装备槽比较免写同款模式扩展到全标量段（画像：wb 段 0.63ms/tick ≈ tick 的 19%）。
+      let nv: number | undefined = this.vUx[i]; if (u.x !== nv) u.x = nv;
+      nv = this.vUy[i]; if (u.y !== nv) u.y = nv;
+      nv = this.vUciv[i]; if (u.civ !== nv) u.civ = nv;
+      nv = this.vUrace[i]; if (u.race !== nv) u.race = nv;
+      const deadN = this.vUdead[i] !== 0; if (u.dead !== deadN) u.dead = deadN;
+      nv = this.vUHasPanic[i] ? this.vUPanic[i] : undefined; if (u.panic !== nv) u.panic = nv;
+      nv = R.tx[i]; if (u.tx !== nv) u.tx = nv;
+      nv = R.ty[i]; if (u.ty !== nv) u.ty = nv;
+      nv = R.hp[i]; if (u.hp !== nv) u.hp = nv;
+      nv = R.maxHp[i]; if (u.maxHp !== nv) u.maxHp = nv;
+      nv = R.dmg[i]; if (u.dmg !== nv) u.dmg = nv;
+      nv = R.speed[i]; if (u.speed !== nv) u.speed = nv;
+      nv = R.age[i]; if (u.age !== nv) u.age = nv;
+      nv = R.maxAge[i]; if (u.maxAge !== nv) u.maxAge = nv;
+      nv = R.kills[i]; if (u.kills !== nv) u.kills = nv;
+      nv = R.cd[i]; if (u.cd !== nv) u.cd = nv;
       const fd = R.fd[i];
-      u.food = Number.isNaN(fd) ? undefined : fd;
-      u.breath = R.breath[i];
-      const lx = R.lx[i]; u.lx = Number.isNaN(lx) ? undefined : lx;
-      const ly = R.ly[i]; u.ly = Number.isNaN(ly) ? undefined : ly;
-      const sxk = R.sxk[i]; u.sxk = Number.isNaN(sxk) ? undefined : sxk;
-      const syk = R.syk[i]; u.syk = Number.isNaN(sykk(syk)) ? undefined : syk;
-      u.stk = R.stk[i] === -2147483648 ? undefined : R.stk[i]; // MIN=undefined；真 0 保留
-      u.atk = nz(R.atk[i]); u.chill = nz(R.chill[i]);
-      u.fleeT = nz(R.fleet[i]); u.bless = nz(R.bless[i]);
-      u.curse = nz(R.curse[i]); u.fert = nz(R.fert[i]);
-      u.detour = nz(R.detour[i]); u.hurt = R.hurt[i] ?? 0;
-      const job = R.job[i]; u.job = job >= 0 ? job : undefined;
-      const tr = R.trait[i]; u.trait = tr >= 0 ? (this.traitKeys[tr] ?? null) : null;
-      u.infected = R.inf[i] !== 0; u.flip = R.flip[i] !== 0;
+      nv = Number.isNaN(fd) ? undefined : fd; if (u.food !== nv) u.food = nv;
+      nv = R.breath[i]; if (u.breath !== nv) u.breath = nv;
+      const lx = R.lx[i];
+      nv = Number.isNaN(lx) ? undefined : lx; if (u.lx !== nv) u.lx = nv;
+      const ly = R.ly[i];
+      nv = Number.isNaN(ly) ? undefined : ly; if (u.ly !== nv) u.ly = nv;
+      const sxk = R.sxk[i];
+      nv = Number.isNaN(sxk) ? undefined : sxk; if (u.sxk !== nv) u.sxk = nv;
+      const syk = R.syk[i];
+      nv = Number.isNaN(sykk(syk)) ? undefined : syk; if (u.syk !== nv) u.syk = nv;
+      nv = R.stk[i] === -2147483648 ? undefined : R.stk[i]; if (u.stk !== nv) u.stk = nv; // MIN=undefined；真 0 保留
+      nv = nz(R.atk[i]); if (u.atk !== nv) u.atk = nv;
+      nv = nz(R.chill[i]); if (u.chill !== nv) u.chill = nv;
+      nv = nz(R.fleet[i]); if (u.fleeT !== nv) u.fleeT = nv;
+      nv = nz(R.bless[i]); if (u.bless !== nv) u.bless = nv;
+      nv = nz(R.curse[i]); if (u.curse !== nv) u.curse = nv;
+      nv = nz(R.fert[i]); if (u.fert !== nv) u.fert = nv;
+      nv = nz(R.detour[i]); if (u.detour !== nv) u.detour = nv;
+      nv = R.hurt[i] ?? 0; if (u.hurt !== nv) u.hurt = nv;
+      const job = R.job[i];
+      nv = job >= 0 ? job : undefined; if (u.job !== nv) u.job = nv;
+      const tr = R.trait[i];
+      const tv = tr >= 0 ? (this.traitKeys[tr] ?? null) : null; if (u.trait !== tv) u.trait = tv;
+      const infN = R.inf[i] !== 0; if (u.infected !== infN) u.infected = infN;
+      const flipN = R.flip[i] !== 0; if (u.flip !== flipN) u.flip = flipN;
       // Task 50：虚拟船感知写回 —— 商队行的镜像 boat=1 不得实体化为 JS 真船（否则接力段会误入 updateBoat）；
       // u.caravan 不再从 wasm 回写（cvn 列因步长错位已休眠 —— JS 为唯一权威）
-      u.boat = (R.boat[i] && !this.virtBoat[i]) ? 1 : undefined; u.boatTTL = R.btl[i] || undefined;
-      const army = R.army[i]; u.army = army >= 0 ? army : undefined;
+      const boatN = (R.boat[i] && !this.virtBoat[i]) ? 1 : undefined; if (u.boat !== boatN) u.boat = boatN;
+      nv = R.btl[i] || undefined; if (u.boatTTL !== nv) u.boatTTL = nv;
+      const army = R.army[i];
+      nv = army >= 0 ? army : undefined; if (u.army !== nv) u.army = nv;
       // 【性能 v75】装备槽比较免写：itemIds 返回驻留字符串引用，未变时引用相等 O(1) 短路 ——
       // 旧版逐槽无条件写（Record 键控 store 慢于命名 store），脏行全量×7 槽纯浪费
       const ur = u as unknown as Record<string, unknown>;
@@ -1759,10 +1797,20 @@ class WbBatch {
         const s = gi >= 0 ? this.itemIds[gi] : null;
         if (ur[GEAR_KEYS[g] as string] !== s) ur[GEAR_KEYS[g] as string] = s;
       }
+      // 【性能 v79】gene 对象分配治理：旧版每脏行每 tick 无条件新建 {s,d,h,r}（移动单位 ≈ 数万对象/s
+      // 进 GC 堆——模拟路径此前不在渲染分配画像内）；四值逐项比较未变则复用现对象 —— 值语义等价
       const gs = R.gene[i * 4];
-      if (!Number.isNaN(gs)) u.gene = { s: gs, d: R.gene[i * 4 + 1], h: R.gene[i * 4 + 2], r: R.gene[i * 4 + 3] };
-      const fam = R.fam[i]; u.fam = fam >= 0 ? fam : undefined;
-      const fgn = R.fgn[i]; u.fgn = fgn >= 0 ? fgn : undefined;
+      if (!Number.isNaN(gs)) {
+        const gd = R.gene[i * 4 + 1], gh = R.gene[i * 4 + 2], gr = R.gene[i * 4 + 3];
+        const g = u.gene;
+        if (g === undefined || g.s !== gs || g.d !== gd || g.h !== gh || g.r !== gr) {
+          u.gene = { s: gs, d: gd, h: gh, r: gr };
+        }
+      }
+      const fam = R.fam[i];
+      nv = fam >= 0 ? fam : undefined; if (u.fam !== nv) u.fam = nv;
+      const fgn = R.fgn[i];
+      nv = fgn >= 0 ? fgn : undefined; if (u.fgn !== nv) u.fgn = nv;
       const nl = R.name[i * 32 + 31];
       if (nl > 0) {
         // 【性能 v75】名字快路径：wasm 字节 vs pack 缓存字节逐字节比对（~60ns），一致则免
@@ -1778,12 +1826,24 @@ class WbBatch {
         }
         u.name = hit ? (this.nameCacheStr[i] as string) : this.dec.decode(R.name.subarray(base, base + nl));
       }
+      // 【性能 v79】gIds/gVal 分配治理：gl≥0 行数组逐元素比较未变则复用（稀少路径，与 gene 同款）
       const gl = R.gln[i];
       if (gl >= 0) {
-        const ids: number[] = []; const vals: number[] = [];
-        for (let g = 0; g < gl && g < 8; g++) { ids.push(R.gids[i * 8 + g]); vals.push(R.gval[i * 8 + g]); }
-        u.gIds = ids; u.gVal = vals;
-      } else { u.gIds = undefined; u.gVal = undefined; }
+        const n = gl < 8 ? gl : 8;
+        const oid = u.gIds;
+        const ovl = u.gVal;
+        let same = oid !== undefined && ovl !== undefined && oid.length === n;
+        if (same) {
+          for (let g = 0; g < n; g++) {
+            if (oid![g] !== R.gids[i * 8 + g] || ovl![g] !== R.gval[i * 8 + g]) { same = false; break; }
+          }
+        }
+        if (!same) {
+          const ids: number[] = []; const vals: number[] = [];
+          for (let g = 0; g < n; g++) { ids.push(R.gids[i * 8 + g]); vals.push(R.gval[i * 8 + g]); }
+          u.gIds = ids; u.gVal = vals;
+        }
+      } else if (u.gIds !== undefined) { u.gIds = undefined; u.gVal = undefined; }
       // 名缓存随行同步（Rust spawn 写入的名与 JS 对象一致化）
       if (this.nameCacheStr[i] !== u.name) this.nameCacheStr[i] = undefined;
     }
