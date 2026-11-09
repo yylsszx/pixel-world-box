@@ -1851,9 +1851,12 @@ export interface SaveDataV2 {
   river?: string;
   /** 道路网络（RLE；旧档缺省 = 无路，新建筑将重新铺设） */
   road?: string;
-  /** 【稳定性 v79】昼夜钟（渲染帧日钟，dayPhase 基准）：旧档缺省 = 0（黎明开局）。
-   *  不入档时读档后取上个会话残留 —— 夜窗落点漂移 → 睡眠单位跳过生育/移动 → 模拟不可复现。 */
+  /** 【稳定性 v79→v81】昼夜钟（旧帧钟；v81 起 dayPhase 改 tick 钟驱动，本字段仅作旧档相位迁移源，
+   *  模拟不再消费）：旧档缺省 = 0（黎明开局）。 */
   frameCount?: number;
+  /** 【稳定性 v81】昼夜 tick 钟相位随档偏移（dayPhase = (tickCount+dayTickOff)%DAY_TICKS）：
+   *  旧档缺省按 frameCount 相位一次性折算；读档日相无缝续日。 */
+  dayTickOff?: number;
   /** 【稳定性 v80】生态再繁衍记录年（ecoTick 门控 yearNow-ecoRepopYear>25）：旧档缺省 = -999（generate 初值）。
    *  不入档时读档取上个会话残留 → 再繁衍触发时机漂移 → spawn 消费 rng 序分叉（同档重载不可复现）。 */
   ecoRepopYear?: number;

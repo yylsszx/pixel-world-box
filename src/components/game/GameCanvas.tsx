@@ -23,6 +23,7 @@ import { TOOL_BY_ID } from '@/lib/game/constants';
 import { RACES } from '@/lib/game/types';
 import type { ToastMsg, WorldEvent } from '@/lib/game/types';
 import { sfx } from '@/lib/game/sfx';
+import { WBB } from '@/lib/wasm/wbspatial';
 import { getEngine, useGameStore, SUPER_PREVIEW, superPreviewR } from '@/store/gameStore';
 import { beginStroke, endStroke, cancelStroke, strokeActive, undo, redo } from '@/lib/ui/undo';
 import { cancelFlight, tickFlight, saveBookmark, jumpBookmark } from '@/lib/ui/camera';
@@ -111,6 +112,8 @@ export function GameCanvas() {
     const engine = getEngine();
     const store = useGameStore.getState();
     (window as unknown as { __wbEngine?: unknown }).__wbEngine = engine;
+    // QA/调试句柄：批内核桥（位等 QA 内存 dump 用，与 __wbEngine 同款模式）
+    (window as unknown as { __wbWBB?: unknown }).__wbWBB = WBB;
     // QA/调试句柄：音频引擎（季节环境音确定性验证用，与 __wbEngine 同款模式）
     (window as unknown as { __wbSfx?: unknown }).__wbSfx = sfx;
 

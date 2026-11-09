@@ -6003,3 +6003,21 @@ Stage Summary:
 **推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
 **版本节奏**: 不升位（v0.64 批次第八笔：读档确定性残留层大清剿，攒清单）。
 **评估**: D6 稳定健壮——读档确定性从「新页首读位等」推进到「无玩双读位等+等速玩后读档位等」（12 项跨会话残留收口+内核字节级回 boot 态机制），跨速度 1×/20× 模拟结果一致化（fxTier 根治）；D3 性能——零回归（stash 对照同区间）+ ACT 缓冲零 GC。下一最大差距：跨速度位等最后残留通道 + pack2 脏行重打包画像。
+
+## 2026-11-10 #51（04:33 触发轮）：昼夜钟世界时化 v81——跨速度位等三角闭合（20×/1×/手动全等 9229e021）+ 内核 OFF_FRAME 虚拟帧钟 + 残留收口第四批 18 项 + 升位 v0.65
+
+**上轮复核**: #50 推送闭环确认——Deploy d709f61 success（20:31Z）+ pages 08a16bf success 双绿（开轮查 Actions API 当场确认）；上轮会话 2 分钟前刚收尾（commit 04:31+08），agent-browser 为其遗留（记台账复用），dev server 冷启。
+
+**本轮主攻（遗留池首选：跨速度位等最后残留通道专攻）**:
+- **修前定罪（相位对偶实验）**: 空降文明做实验世界（40 人口+13 建筑存 scratch 槽），同档同 300 手动 tick 仅昼夜相位不同 → 哈希 7781e6b6（夜相 3 人入睡/2 床）vs 3b623475（日相 0），同相复跑 N2/D2 位等排除残留混淆——昼夜帧钟是活的模拟输入实锤。
+- **根因链（三层）**: ①dayPhase() 读 frameCount（渲染帧钟）却在五处模拟消费（sleepTick 夜窗/updateUnit 睡眠归途/夜战减益/nature 彩虹+流星 rng 门/内核 OFF_DAYPH 镜像）——1× 4帧/tick vs 20× 0.22帧/tick → 夜窗落点 tick 漂移 → rng 序分叉 → 1×/20× 是两个世界（暂停时昼夜照流）；②内核 WP_SCAL 打包 frameCount（OFF_FRAME L1085）——调用级 rng 日志（5864 次 JS 调用值+栈全同而 rngA@tick8 分叉）实锤分叉在内核 rng 流，二进制消费 OFF_FRAME（rust 源已删读点但 wasm 未重建，工具链缺失同遗留池）；③comm 差集审计（generate-vs-applySave 全窗口重跑）余量 18 项：shellMemory（炮击「近期弹着降权」加权抽签输入）/warHistory（recentWars 门）/phoenixAshes（phoenixAshTick 复活 spawn 耗 rng）/statWars 等 13 计数器（pack2 OFF_CNT 内核叙事门同族）/lastSiegeEventTick/achProgressCache（纯展示缓存 600tick 重建）。
+- **改动（v81，四文件）**: ①昼夜钟世界时化（engine.ts：DAY_TICKS=600≈1× 15tps 下 40 秒/天与旧帧钟 1× 节奏一致，dayPhase=(tickCount+dayTickOff)%600——20× 昼夜 ×20 加速、暂停时间凝固；dayTickOff 随档序列化+旧档按 frameCount 相位一次性折算+再旧档黎明回落+generate 归零）；②OFF_FRAME 虚拟帧钟（wbspatial.ts：tickCount*4——1× 4帧/tick 节奏保真，内核 fx 节拍速度纯化）；③残留收口第四批 18 项（engine.ts applySave）；④QA 句柄 __wbWBB（GameCanvas，位等内存 dump 用）。
+- **QA（三角闭合终审+全绿）**: **跨速度位等三角闭合**——新页三侧到同一世界时 tick 2300：20× 真玩（frozenAt 2222 手动补齐）h=9229e021 == 1× 真玩（2252 补齐）9229e021 == 纯手动 480 tick 9229e021——**速度纯化+帧无关+跨会话读档确定性三项同时达成**（三侧 frameCount 轨迹完全不同而世界全同，fc 无关性以更强形式获证；每侧=新页首载=用户真实会话场景）。旧档迁移三路径实证：v81 档 dayTickOff 直读 ✓ / v79 档 fc 折算（6199→off330 相位 0.5833 无缝）✓ / pre-v79 档（slot1 tick 93608 无 fc）黎明回落（off=-8 相位 0）✓；存档往返 tick 精确保留 ✓；昼夜视觉：日/夜相截图天色正确、50tick 相位推进 0.0833=50/600 ✓；性能零回归：20× simUps 117tps@917 单位（drawMs 11.7 软渲染瓶颈，历史同档 88-98 区间相洽）；tsc/eslint 零错误；CI 预验证 export-static 绿（out/ 4.3M 49 文件）。
+- **诚实边界（遗留池新头部）**: **同页二次载档的内核二进制全局态累积**——深挖实锤：引擎全字段/桥全字段/内核线性内存全字节哈希/瞬态/子对象 sig 载入边界全等而轨迹仍按「页内载入序」分叉（载入序哈希跨页复现：load#1→d2a45ceb、#2→4347a478、#3→63781114；wb_reset 不清、boot 基线 memcpy 不覆盖、非导出不可达）——根因=二进制内核非导出全局（rng 计数器）跨读档存活（源码 rng_next 已改 OFF_RNGS 每 pack 重播种但 wasm 未重建）。用户场景不受影响（每会话首载=内核全局 wb_init 起点，三角位等即在此协议达成）；同页双载位等需 **rust 工具链重建 wbcore**（源码已就绪）或桥级 fresh-instance reboot（需接管 tick 同步门控防漂移）。另：新页首载偶发 boot 竞态（onWorldReset active() 守卫跳过基线回写窗口，dev 编译延迟放大）——QA 方法论：位等协议须热页+丢弃首载。
+- **QA 方法论沉淀**: ①相位对偶实验（单变量昼夜相位）定罪结构通道；②调用级 rng 日志（值+栈全同→分叉在内核）+逐 tick 内核内存**全字节**哈希（跨步采样会漏单字节差）；③载入序哈希跨页复现=页级累积态指纹法；④槽键名审计（store 合法键 slot0/slot1/slot2/auto/legacy——非法键 'slot_1' 等解析到 localStorage "undefined" 同一暂存键，本轮实验存取自洽结果有效；taskbook QA 段 slot 命名建议核实）。
+
+**遗留（下轮优先池）**: **内核二进制全局态重建**（同页双载位等最后一块：rust 工具链装 机→cargo build 重编 wbcore（源码已就绪：rng_next 读 OFF_RNGS/OFF_FRAME 读点已删）→或桥级 reboot 机制；装好后跑「同页双载位等」终审）；pack2 脏行重打包画像（0.56ms/tick 27% 拆分）；真机 vsync 路径实测；「继续旅程」不显示自动档候选+标题屏 auto 档元数据人口 0（本轮截图再次复现，UI bug 待查）；beachedAquatic retarget O(鲨×单位)/20tick；战争收束叙事调优；滑杆行可见性候选；raise 工具 GRASS 顶格候选；writeback 后余量微段（wildCount 重建/计数器回写）。
+
+**推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**版本节奏**: 升位 v0.65-preview（v0.64 批次第九笔——昼夜世界时化+真 20 倍速+读档无残留，玩家可见语义变更）+ CHANGELOG 头插 4 条。
+**评估**: D3 性能——20× 真实倍速语义修复落地（昼夜随世界时间 ×20 加速、速度纯化三角位等 9229e021，快进=时间加速而非平行世界）；D6 稳定健壮——读档确定性推进（18 项残留收口+旧档三路迁移+跨会话读档确定性），最后边界定位至内核二进制全局态并给出双修复路径；下一最大差距：rust 工具链/内核重建（同页双载位等）+ pack2 重打包画像。

@@ -1082,7 +1082,11 @@ class WbBatch {
     this.vRng[0] = engine.rngA >>> 0;
     const i32v = (id: number, len: number, off = 0) => new Int32Array(m, A(id), len);
     i32v(OFF_TICK, 1)[0] = engine.tickCount;
-    i32v(OFF_FRAME, 1)[0] = engine.frameCount;
+    // 【稳定性 v81】世界时虚拟帧钟：旧值 engine.frameCount（渲染墙钟）在 20× 下每 tick 仅 +0.22，
+    // 内核（现网二进制仍消费此值的 fx 节拍路径）决策随速度漂移 → 内核 rng 流分叉 → 1×/20× 两个世界
+    // （JS 侧调用级 rng 日志 5864 次全同而 rngA@tick8 分叉实锤分叉在内核；rust 源已删读点但二进制未重建）。
+    // 改写 tickCount*4：1×（15tps×60fps≈4帧/tick）节奏保真，高倍速随世界时间整体加速——速度纯化。
+    i32v(OFF_FRAME, 1)[0] = engine.tickCount * 4;
     new Uint8Array(m, A(OFF_PAR), 1)[0] = engine.tickCount % 2;
     new Uint32Array(m, A(OFF_USEQ), 1)[0] = engine.unitSeq;
     const eps = new Float64Array(m, A(OFF_EPS), 16);

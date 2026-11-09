@@ -184,6 +184,9 @@ export class GameEngine {
   speed = 1;
   shake = 0;
   frameCount = 0;
+  /** 【稳定性 v81】昼夜 tick 钟相位随档偏移（dayPhase = (tickCount+dayTickOff)%DAY_TICKS）：
+   *  新档随档序列化保读档日相无缝；旧档按 v79 帧钟相位一次性折算；generate 归零（黎明开局）。 */
+  dayTickOff = 0;
   acc = 0;
   /** 渲染插值进度 0..1（acc/TICK_MS；frame() 每帧更新，渲染层与镜头跟随使用） */
   tickAlpha = 1;
@@ -972,6 +975,7 @@ export class GameEngine {
     this.civSeq = 0;
     this.toastSeq = 1;
     this.tickCount = 0;
+    this.dayTickOff = 0; // 【稳定性 v81】新世界黎明开局（昼夜钟已改世界时）
     this.yearF = 0;
     this.victoryCiv = null;
     this.multiCivSeen = false;
@@ -2842,13 +2846,21 @@ export class GameEngine {
     }
   }
 
-  // ================== 昼夜光影（渲染层驱动：帧计数推进，视觉与模拟节奏解耦） ==================
-  /** 一天的帧数（60fps ≈ 40 秒/昼夜：足够慢以营造氛围、足够快以被观察到） */
+  // ================== 昼夜光影（世界时驱动：模拟 tick 推进，随速度真实加速） ==================
+  /** 一天的帧数（v81 前的渲染帧日钟；仅作旧档相位迁移基准，模拟不再消费） */
   static readonly DAY_FRAMES = 2400;
+  /** 一天的模拟 tick 数：600 tick ≈ 1×（15tps）下 40 秒/昼夜——与旧帧钟（2400 帧 @60fps）1× 视觉节奏一致。
+   *  【稳定性 v81】昼夜钟改世界时（tickCount）驱动：帧钟在 20× 下每 tick 仅推进 ~0.22 帧（隔帧渲染更甚），
+   *  夜窗落点随速度漂移 → 睡眠/夜战/彩虹/流星门控与内核 OFF_DAYPH 镜像的 rng 消费序列分叉 →
+   *  1× 与 20× 是两个世界（相位对偶实验实锤：同档同 300 手动 tick，仅相位不同 →
+   *  哈希 7781e6b6 vs 3b623475，同相复跑位等排除残留混淆）。tick 钟使模拟速度纯化——
+   *  20× 真实倍速 = 世界时间（含昼夜）整体 20× 加速；暂停时时间凝固（帧钟时代暂停仍流昼）。 */
+  static readonly DAY_TICKS = 600;
 
   /** 当前昼夜相位 0..1（0..0.45 白昼 · 0.45..0.5 黄昏 · 0.5..0.9 夜晚 · 0.9..1 破晓） */
   dayPhase(): number {
-    return (this.frameCount % GameEngine.DAY_FRAMES) / GameEngine.DAY_FRAMES;
+    const t = (((this.tickCount + this.dayTickOff) % GameEngine.DAY_TICKS) + GameEngine.DAY_TICKS) % GameEngine.DAY_TICKS;
+    return t / GameEngine.DAY_TICKS;
   }
 
   /** 太阳状态（渲染管线共享同一光源）：level 光照 0..1；sx/sy 阴影方向单位向量；len 阴影长度系数
@@ -17413,7 +17425,8 @@ export class GameEngine {
       toastSeq: this.toastSeq,
       victoryCiv: this.victoryCiv,
       multiCivSeen: this.multiCivSeen,
-      frameCount: this.frameCount, // 【稳定性 v79】昼夜钟入档（dayPhase 基准；旧档缺省读档回落 0）
+      frameCount: this.frameCount, // 【稳定性 v81】旧档迁移源保留（dayPhase 已改 tick 钟，本字段模拟不再消费）
+      dayTickOff: this.dayTickOff, // 【稳定性 v81】昼夜 tick 钟相位随档（读档日相无缝续日）
       ecoRepopYear: this.ecoRepopYear, // 【稳定性 v80】生态再繁衍门控记账入档（残留则再繁衍时机漂移 → rng 序分叉）
       ecoLastNoteYear: this.ecoLastNoteYear, // 【稳定性 v80】生态播报节流记账入档
       wwIgniteTick: this.wwIgniteTick, // 【稳定性 v80】大战引燃冷却钟入档（残留则引燃时机漂移 → 战局分叉）
@@ -17565,12 +17578,19 @@ export class GameEngine {
     }
     // 随机数无法序列化闭包状态，用 seed+tick 重新播种即可
     this.rngA = ((this.seed ^ 0x9e3779b9) + this.tickCount) >>> 0;
-    // 【稳定性 v79】读档恢复昼夜钟：dayPhase() 读 frameCount（渲染帧日钟，非模拟 tick）——
-    // 旧实现不入档不重置，读档后取上个会话残留（标题屏帧数时序漂移）→ 夜窗（0.545-0.865）
-    // 落点逐次不同 → 睡眠文明单位跳过生育/移动 → rng 消费分叉 → 同档重载全局不可复现
-    // （bit-equal QA 终审实锤：grassTiles 之后的第二个 causal 输入；两者同轮收口）。
-    // 旧档缺字段回落 0（黎明开局，确定性），新档无缝续日。
+    // 【稳定性 v79→v81】昼夜钟：v81 起 dayPhase() 改读 tickCount（世界时 tick 钟，速度纯化——
+    // 帧钟在 20× 下夜窗落点随速度漂移 → 睡眠/夜战/彩虹/流星/内核镜像的 rng 序分叉，
+    // 1× 与 20× 是两个世界）。frameCount 保留恢复仅为旧档迁移源；相位连续性由 dayTickOff 承载：
+    // 新档直接恢复随档 offset（读档日相无缝）；旧档（无该字段）按 v79 帧钟相位一次性折算到 tick 钟位相；
+    // 再旧档（连 frameCount 也无，v79 前）回落 0（黎明开局，确定性）。
     this.frameCount = Number.isFinite((data as SaveDataV2).frameCount) ? ((data as SaveDataV2).frameCount as number) : 0;
+    const dayOffField = (data as SaveDataV2).dayTickOff;
+    if (Number.isFinite(dayOffField)) {
+      this.dayTickOff = dayOffField as number;
+    } else {
+      const legacyDayPhase = (((this.frameCount % GameEngine.DAY_FRAMES) + GameEngine.DAY_FRAMES) % GameEngine.DAY_FRAMES) / GameEngine.DAY_FRAMES;
+      this.dayTickOff = Math.round(legacyDayPhase * GameEngine.DAY_TICKS) - (((this.tickCount % GameEngine.DAY_TICKS) + GameEngine.DAY_TICKS) % GameEngine.DAY_TICKS);
+    }
     // 【稳定性 v79】读档重置生态态：ecoState 不入档（仅 stats UI 快照），初始值 'balanced'——
     // 旧实现 applySave 不重置，上个会话（标题屏/上一读档）的 'collapse' 残留会让健康存档
     // 误吃 stability −8（societyTick L8598），直到下一次 ecoTick 重算才自愈
@@ -17640,6 +17660,34 @@ export class GameEngine {
     //    完全漏清（A=标题屏残留 vs B=玩段残留 → 商队目标/贸易路线选择分叉）。ideaModCache 同因
     //    （generate L936 有清、applySave 漏清——techModCache 原生已在 civs 段清零+预热重建）。
     //    三者动作移至下方 civs/buildings 恢复完成之后（确定性重建/惰性重建）。
+    // 【稳定性 v81】读档残留收口第四批（comm 差集审计 generate-vs-applySave 全量余量补齐）：
+    // ① shellMemory：炮击「近期弹着降权」记忆（D 炮击瞄准加权抽签的目标权重输入——打过的地方
+    //    ×0.3）——残留让新读档的炮击避开旧世界弹着点，加权抽签序列分叉（rng 相邻输入）。
+    // ② warHistory：近期战争窗（recentWars 门 L10005）——残留让健康档误判「战云密布」走战时分支。
+    // ③ phoenixAshes：凤凰灰烬复活队列（phoenixAshTick 每tick 复活 spawn 消费 rng）——残留让
+    //    新读档凭空复活旧世界的凤凰（不入档瞬态，generate 有清）。
+    // ④ statWars/statNukes 等 13 项成就/叙事计数器：pack2 WP_SCAL OFF_CNT 灌内核叙事门控同族
+    //    （#50 已清 firesOut 五件，本批补齐余量——残留让内核叙事门以旧世界计数决策）。
+    // ⑤ lastSiegeEventTick：围城事件节流钟；achProgressCache：成就进度缓存（纯展示缓存，
+    //    achievementsTick 每 600 tick 重建，achUnlocked 本体不经此路径）。
+    this.shellMemory.length = 0;
+    this.warHistory.length = 0;
+    this.phoenixAshes.length = 0;
+    this.statWars = 0;
+    this.statAnnihilations = 0;
+    this.statBlackholes = 0;
+    this.statBloomTiles = 0;
+    this.statCivsFallen = 0;
+    this.statFestivals = 0;
+    this.statHasteBeats = 0;
+    this.statHastePeak = 0;
+    this.statMeteorShowers = 0;
+    this.statNavalKills = 0;
+    this.statNukes = 0;
+    this.statPlasmas = 0;
+    this.statTerraform = 0;
+    this.lastSiegeEventTick = 0;
+    this.achProgressCache = {};
 
     // —— v3 涌现层早期恢复（emTechs/emIdeas/evoNodes/dynTraits —— 必须先于文明处理：research 校验/加成缓存/理念表依赖） ——
     const v3s = data as SaveDataV2;
