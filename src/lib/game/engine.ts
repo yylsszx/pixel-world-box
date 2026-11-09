@@ -19,7 +19,7 @@ import { NatureSystem, STORM_NAME_AT, AW, AH, CELL } from './nature';
 import { WorldSim } from './worldsim';
 import { AgentLawSystem, normalizeLaw } from './agentLaws';
 import { ep } from './engineParams';
-import { neuroAcc, neuroStance, neuroFlight, F_ACC, F_STANCE, F_FLIGHT, setNeuroEnabled, setFlightMode, neuroSnapshot, flightLastLogp } from './neuro';
+import { neuroAcc, neuroStance, neuroFlight, F_ACC, F_STANCE, F_FLIGHT, setNeuroEnabled, setFlightMode, neuroSnapshot, flightLastLogp, resetFlightRLWeights, normalizeNeuroWeightsVersion } from './neuro';
 import {
   collectDecision, collectKill, collectUnitDead, collectFleeEnd, collectEnemyGone,
 } from './online/collector';
@@ -822,12 +822,16 @@ export class GameEngine {
     this.fire = new Uint8Array(W * H);
     this.radiate = new Uint8Array(W * H);
     this.fireSet.clear();
+    this.snowman.fill(0); // 【稳定性 v80】重铸新世界雪人场清零（原漏清——上世界的雪人穿越新世界）
+    this.snowmanN = 0;
     // 原子级瞬态层重置（新世界无血迹/尸骸/冰面/洪水/湿沙）
     this.frozen.clear();
     this.flood.clear();
     this.wet.clear();
     this.blood.length = 0;
     this.corpses.length = 0;
+    this.footprints.length = 0; // 【稳定性 v80】脚印/鸟群 viz 数组清零（纯视觉无模拟消费，=generate 初值语义）
+    this.flocks.length = 0;
     this.phoenixAshes.length = 0;
     this.regrow.clear();
     this.radSet.clear();
@@ -17359,6 +17363,8 @@ export class GameEngine {
     const n = this.blood.length + this.corpses.length;
     this.blood.length = 0;
     this.corpses.length = 0;
+    this.footprints.length = 0; // 【稳定性 v80】脚印/鸟群 viz 数组清零（纯视觉无模拟消费，=generate 初值语义）
+    this.flocks.length = 0;
     this.toast('战场涤净', 'good', true);
     return n;
   }
@@ -17408,6 +17414,9 @@ export class GameEngine {
       victoryCiv: this.victoryCiv,
       multiCivSeen: this.multiCivSeen,
       frameCount: this.frameCount, // 【稳定性 v79】昼夜钟入档（dayPhase 基准；旧档缺省读档回落 0）
+      ecoRepopYear: this.ecoRepopYear, // 【稳定性 v80】生态再繁衍门控记账入档（残留则再繁衍时机漂移 → rng 序分叉）
+      ecoLastNoteYear: this.ecoLastNoteYear, // 【稳定性 v80】生态播报节流记账入档
+      wwIgniteTick: this.wwIgniteTick, // 【稳定性 v80】大战引燃冷却钟入档（残留则引燃时机漂移 → 战局分叉）
       terrain: rleEncode(this.terrain),
       variant: '', // v2 不存 variant：读档按 seed 确定性重算（worldgen hash2 纯函数）
       owner: rleEncode(ownerBytes),
@@ -17578,6 +17587,59 @@ export class GameEngine {
     this.armyNameSeq.clear();
     this.lastGovEventTick.clear();
     this.lastEcoPop.clear();
+    // 【稳定性 v80】同会话二次读档残留层第三批收口（bit-equal 字段级深查实锤 4 项；#49 遗留池首选）：
+    // ① ecoRepopYear/ecoLastNoteYear：生态再繁衍门控（ecoTick 内 yearNow-ecoRepopYear>25）与状态播报
+    //    节流（>15 年一笔）——不入档则读档取上个会话值（A 协议 0 vs B 协议 306 实锤），再繁衍触发
+    //    时机漂移 → spawn 消费 rng 序分叉。入档，旧档缺省 -999（generate 初值 L872-873 同源）。
+    // ② wwIgniteTick：终极世界大战引燃冷却钟（tickCount-wwIgniteTick>=400 门控 L9979）——不入档则
+    //    读档残留上个会话拨动值（A=30 vs B=12150 实锤），引燃时机漂移 → 全局战局分叉。
+    //    入档，旧档缺省 -400（字段初值 L8409 同源）。
+    // ③ preyGrid：猎物密度场缓存（ecoTick 每 120 tick 全量重灌 L13949，间隔期被捕食者嗅觉导航
+    //    消费 L4709）——读档清零（新世界初值即零场），防上个会话残留喂错导航分支 → 移动/rng 分叉。
+    const v80d = data as SaveDataV2;
+    this.ecoRepopYear = Number.isFinite(v80d.ecoRepopYear) ? (v80d.ecoRepopYear as number) : -999;
+    this.ecoLastNoteYear = Number.isFinite(v80d.ecoLastNoteYear) ? (v80d.ecoLastNoteYear as number) : -999;
+    this.wwIgniteTick = Number.isFinite(v80d.wwIgniteTick) ? (v80d.wwIgniteTick as number) : -400;
+    this.preyGrid.fill(0);
+    // ④ griefMem：哀悼缓释账本（societyTick 消费 stab -= amount，×0.85/轮衰减 L6095）——战争创伤属
+    //    上个世界的情感态（panic 瞬态不入档同哲学），读档清零；残留让新读档文明误吃旧哀悼减益
+    //    → stability 分支 → rng 序分叉（bit-equal 玩段协议 diffFields 实锤）。
+    // ⑤ reboundLast：灭绝物种回弹 seeding 冷却（ecoTick 加权掷签 ago=tickCount-last L14859）——
+    //    残留让再迁入权重漂移 → spawn rng 分叉。清零 = 全部灭绝种族按最高权重排队（generate 初值语义）。
+    // ⑥ homeCache/homeCacheAt/homeOf/homeOcc：归家户籍簇（夜归导航 300 tick 新鲜度门 L3413）——
+    //    generate 置 -99999 失效（L2087）；玩后读档 tickCount 倒退会让新鲜度误判为「新鲜」（
+    //    tickCount-homeCacheAt 为负），直接拿上个世界的归家缓存/户籍簿导航废墟；且户籍年检
+    //    （rebuildHomeCache）会保留「房在人在」的旧映射，残留穿越读档。全部清零（=新世界首夜重派）。
+    this.griefMem.clear();
+    this.reboundLast.clear();
+    this.homeCache = null;
+    this.homeCacheAt = -99999;
+    this.homeOf.clear();
+    this.homeOcc.clear();
+    // ⑦ 叙事/灭火/维修计数器五件（generate L860-863/883 有清、applySave 漏清）：firesOut/repairsDone/
+    //    lastFireOutEventTick/lastRepairEventTick/statDragonsSlain——pack2 WP_SCAL 全量灌入内核 OFF_CNT
+    //    （内核侧灭火/维修事件门控输入），残留让玩后读档的内核首批即以旧世界计数决策 → 行视图 tick-1
+    //    即分叉（deepdiff4 实锤）。重置 = generate 初值语义（-2400 = 事件门控全开）。
+    this.firesOut = 0;
+    this.repairsDone = 0;
+    this.lastFireOutEventTick = -2400;
+    this.lastRepairEventTick = -2400;
+    this.statDragonsSlain = 0;
+    // ⑪ snowman/snowmanN：雪人装饰场（snowmanTick 每 80 tick 重度消费 rng——融化/堆雪人分支
+    //   均多次掷骰；不入档、generate 也漏清）——残留让 A/B 的 snowmanTick 分支与 rng 序分叉
+    //   （deepdiff8 玩后全字段 diff 实锤）。清零 = 初雪从零堆起（generate 字段初值语义）。
+    this.snowman.fill(0);
+    this.snowmanN = 0;
+    // ⑩ 神经 RL 飞行头重置 + 版本归一：在线训练（玩段 PPO 奖励更新 flightRLHead）跨读档存活 →
+    //    pack2 NEUW 段权重重灌时 A（标题屏训练态）vs B（玩段训练态）不同 → 内核飞鸟决策
+    //    分叉（deepdiff6 blk918-938 实锤）。重置为离线导出权重（=页面刷新语义）；版本指纹
+    //    定值化（=1）——原 bump 版本随读档历史漂移（deepdiff13 实锤 A=6 vs B=7）。
+    resetFlightRLWeights();
+    normalizeNeuroWeightsVersion();
+    // ⑨ civBuildCounts/marketIdx：v79 只 clear 了 civBuildCounts（5 tick 窗口失真），marketIdx
+    //    完全漏清（A=标题屏残留 vs B=玩段残留 → 商队目标/贸易路线选择分叉）。ideaModCache 同因
+    //    （generate L936 有清、applySave 漏清——techModCache 原生已在 civs 段清零+预热重建）。
+    //    三者动作移至下方 civs/buildings 恢复完成之后（确定性重建/惰性重建）。
 
     // —— v3 涌现层早期恢复（emTechs/emIdeas/evoNodes/dynTraits —— 必须先于文明处理：research 校验/加成缓存/理念表依赖） ——
     const v3s = data as SaveDataV2;
@@ -17642,6 +17704,8 @@ export class GameEngine {
     // 瞬态 decals 清空（血迹/尸骸/洪水/湿沙不随存档走）
     this.blood.length = 0;
     this.corpses.length = 0;
+    this.footprints.length = 0; // 【稳定性 v80】脚印/鸟群 viz 数组清零（纯视觉无模拟消费，=generate 初值语义）
+    this.flocks.length = 0;
     this.flood.clear();
     this.wet.clear();
     // 恢复河道流向场（可选字段：旧存档无河 → 全 0）
@@ -17703,6 +17767,7 @@ export class GameEngine {
     }));
     // 科技/政体缓存重建 + 研究中的科技校验（防旧档脏数据；v3：涌现科技同样合法）
     this.techModCache.clear();
+    this.ideaModCache.clear(); // 【稳定性 v80】理念加成缓存清零（残留跨读档 → repro 生育门漂移）；惰性重建
     this.govCache.clear();
     for (const c of this.civs) {
       if (c.research && !TECH_BY_KEY[c.research] && !this.emTechs.get(c.research)) { c.research = null; c.researchP = 0; }
@@ -17711,6 +17776,10 @@ export class GameEngine {
     this.buildings = data.buildings.map((b) => ({ ...b }));
     this.bIdx.clear();
     this.buildings.forEach((b, i) => this.bIdx.set(b.i, i));
+    // 【稳定性 v80】⑨ civBuildCounts/marketIdx 确定性全量重建（v79 只 clear civBuildCounts——
+    // 5 tick 窗口失真；marketIdx 完全漏清——商队目标/贸易路线取旧世界残留）。放 buildings/bIdx
+    // 恢复完成后：从读档建筑重算，确定性且消除窗口失真。
+    this.rebuildCivBuildCounts();
     this.rel.clear();
     for (const [k, v] of data.rel) this.rel.set(k, v);
     this.met.clear();

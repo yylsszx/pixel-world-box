@@ -1854,6 +1854,14 @@ export interface SaveDataV2 {
   /** 【稳定性 v79】昼夜钟（渲染帧日钟，dayPhase 基准）：旧档缺省 = 0（黎明开局）。
    *  不入档时读档后取上个会话残留 —— 夜窗落点漂移 → 睡眠单位跳过生育/移动 → 模拟不可复现。 */
   frameCount?: number;
+  /** 【稳定性 v80】生态再繁衍记录年（ecoTick 门控 yearNow-ecoRepopYear>25）：旧档缺省 = -999（generate 初值）。
+   *  不入档时读档取上个会话残留 → 再繁衍触发时机漂移 → spawn 消费 rng 序分叉（同档重载不可复现）。 */
+  ecoRepopYear?: number;
+  /** 【稳定性 v80】生态状态变更播报节流年（>15 年才记一笔）：旧档缺省 = -999。同上因果链。 */
+  ecoLastNoteYear?: number;
+  /** 【稳定性 v80】终极世界大战引燃冷却钟（tickCount-wwIgniteTick>=400 门控）：旧档缺省 = -400（字段初值）。
+   *  不入档时读档残留上个会话拨动值 → 引燃时机漂移 → 全局战局分叉。 */
+  wwIgniteTick?: number;
   /** 世界法则（可选：旧存档回退默认值） */
   laws?: WorldLaws;
   /** 野生生物繁殖倍率（0-1；基准 = 最慢文明生物的 repro；旧档缺省 = 1） */

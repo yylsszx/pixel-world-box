@@ -598,6 +598,11 @@ class WbBatch {
   private ex: WbExports2 | null = null;
   private bootPromise: Promise<boolean> | null = null;
   private bw = -1; private bh = -1; private nu = 0;
+  /** 【稳定性 v80】boot 基线快照：ensureWorld 冷路径（wb_init 后）的线性内存字节镜像 ——
+   *  读档/generate 时 memcpy 回写，内核字节级回到 boot 态（静态区/行尾巴/全部槽位一网打尽）。
+   *  wb_reset 只清世界结构态，批运行态（bail 概率表/动作缓冲/内核内部静态/更大人口行尾巴）
+   *  跨读档存活 → 内核首 tick 以旧世界状态决策（deepdiff4/5/6 分块实锤）→ 位等分叉。 */
+  private arenaBaseline: Uint8Array | null = null;
   private tablesVersion = -1;
   private weightsVersion = -1;
   private traitsKeyCache = '';
@@ -648,12 +653,25 @@ class WbBatch {
 
   onWorldReset(engine: GameEngine): void {
     if (!this.active() || !this.ensureWorld(engine)) return;
-    this.ex!.wb_reset();
+    // 【稳定性 v80】boot 基线回写：wb_reset 只清世界结构态，批运行态（vBailP——wbResume 决策
+    // 输入、vAct 动作缓冲、vDlist 脏行表、内核内部静态、更大人口的行尾巴 [n,NU)）跨读档存活
+    // → 内核首 tick 以旧世界状态决策 → 位等分叉（deepdiff4/5/6 分块实锤）。
+    // 恢复 boot 基线 = 内核字节级零态（静态区/尾巴/全部槽位一网打尽，~4MB memcpy ≈1ms）。
+    // 注：不能用二次 wb_init 冷重建——实测 wb_init 重入会重定位 arena（actBase 漂移）并
+    // 增长线性内存（+3MB/次），读档频率下不可接受。
+    const mem = this.ex!.memory.buffer;
+    if (this.arenaBaseline && this.arenaBaseline.length === mem.byteLength) {
+      new Uint8Array(mem).set(this.arenaBaseline);
+    }
+    this.virtBoat.fill(0); // JS 侧虚拟船标志清零（=boot 初态）
+    if (this.nameCacheStr.length) this.nameCacheStr.fill(undefined); // 【稳定性 v80】名缓存清零（残留跨读档 → 写回跳过/误判）
+    if (this.rowDirty) this.rowDirty.fill(0); // 行脏标志清零（残留 = 旧世界脏行集；保守方向但违背 boot 等价）
     this.tablesVersion = -1; // 表格重灌
     this.weightsVersion = -1;
     this.traitsKeyCache = '';
     this.batchReady = false;
     this.metaDirty = true; // Stage 3：新世界全部行重灌
+    this.rowDirtyN = 0;
   }
 
   private ensureWorld(engine: GameEngine): boolean {
@@ -714,6 +732,9 @@ class WbBatch {
     this.vUdead = new Uint8Array(m, A(OFF_UDEAD), NU);
     this.vUHasPanic = new Uint8Array(m, A(OFF_UHASPANIC), NU);
     this.vUPanic = new Float64Array(m, A(OFF_UPANIC), NU);
+    // 【稳定性 v80】boot 基线快照：wb_init 后即刻镜像整块线性内存（~4MB，一次性）——
+    // 之后每次读档/generate 恢复此基线 = 内核零态，pack2 重灌 [0,n) 即完整重建。
+    this.arenaBaseline = new Uint8Array(ex.memory.buffer).slice();
     this.bw = engine.bw; this.bh = engine.bh;
     return true;
   }
@@ -1071,11 +1092,14 @@ class WbBatch {
     if (L.reproduction) laws |= 1; if (L.zombieInfect) laws |= 2; if (L.undeadRise) laws |= 4;
     new Uint8Array(m, A(OFF_LAWS), 1)[0] = laws;
     const F = engine.fxPrefs;
-    // 【性能 v75】高速档特效分层（≥8×）：伤害数字/氛围粒子在高速下内眼不可追，Rust 侧停生
-    // ——效果数组收缩，fx 队列打包与 replay 同步减压；低速档自动恢复（fxPrefs 用户设置不动）
-    const fxTier = engine.speed >= 8 ? 0 : 1;
+    // 【稳定性 v80】fxTier 不再写进内核（位等 QA 等速对照实锤：speed 恒 20 双侧 sameH=TRUE，
+    // 20×玩后读档 vs 1×首读速度不同即全局分叉）——内核 fx 生成的掷骰消费内核 rng，档位随
+    // 用户速度变化 → 同一存档在不同速度下模拟结果不同（20×快进 ≠ 1×游玩，真实模拟不一致）。
+    // 改为内核恒按全量 fxPrefs 生成动作（rng 消费恒定），速度档过滤平移到 replayActions
+    // （≥8× 跳过次要 fx 回放）—— #43 特效分层的收益保留在 fx 数组层面（高速下数组依旧
+    // 不涨），仅 ACT 缓冲多写少量动作（线性内存写，无分配无 GC）。
     let fxp = 0;
-    if (F.dmgNumbers && fxTier) fxp |= 1; if (F.ambience && fxTier) fxp |= 2; if (F.blood) fxp |= 4; if (F.corpses) fxp |= 8;
+    if (F.dmgNumbers) fxp |= 1; if (F.ambience) fxp |= 2; if (F.blood) fxp |= 4; if (F.corpses) fxp |= 8;
     fxp |= (F.fxDensity ?? 1) << 4;
     new Uint8Array(m, A(OFF_FXP), 1)[0] = fxp;
     // fx 虚拟队列
@@ -1396,7 +1420,13 @@ class WbBatch {
       const op = a[p];
       switch (op) {
         case ACT_FX: { // 76B: kind@1 quiet@2 textOp@3 textArg@4 src@8 ttl@16 x@24 y@32 r@40 x0@48 y0@56 dmg@64
-          const kind = a[p + 1];
+          const kindB = a[p + 1];
+          cur += 76;
+          // 【稳定性 v80】速度档过滤（原内核侧 fxTier 语义平移到回放层）：≥8× 跳过次要 fx 回放
+          // ——内核已按全量 prefs 生成动作（rng 消费恒定），此处只裁剪 JS fx 数组增长（#43 分层收益）。
+          // 置于字段解析前：被跳过的动作不做逐字段读取。
+          if (engine.speed >= 8 && FX_MINOR_KINDS.has(FX_KINDS[kindB])) break;
+          const kind = kindB;
           const quiet = a[p + 2] !== 0;
           const textOp = a[p + 3];
           const textArg = dv.getUint32(p + 4, true);
@@ -1408,7 +1438,6 @@ class WbBatch {
           const x0 = dv.getFloat64(p + 48, true);
           const y0 = dv.getFloat64(p + 56, true);
           const dmg = dv.getFloat64(p + 64, true);
-          cur += 76;
           const hasOpts = !Number.isNaN(x0);
           const opts: Record<string, unknown> = {};
           if (hasOpts) { opts.x0 = x0; opts.y0 = y0; }

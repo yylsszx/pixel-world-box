@@ -5977,3 +5977,29 @@ Stage Summary:
 **推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
 **版本节奏**: 不升位（v0.64 批次第七笔：写回段治理 + 读档确定性根治，攒清单）。
 **评估**: D3 性能——GC 长任务总时长 -73%（模拟路径分配治理收口），wb 段 -13%，20× simUps 历史新高 270.5；D6 稳定健壮——读档确定性根治（同档重载从不可复现 → 位等 IDENTICAL）+ 八项跨会话残留收口 + 昼夜钟入档（旧档双向兼容）；下一最大差距：pack2 重打包段画像与真机实测。
+
+## 2026-11-10 #50（02:48 触发轮）：读档确定性残留层大清剿——12 项残留收口 + 内核 boot 基线快照机制 + fxTier 跨速度一致性修复（D6 深挖轮）
+
+**上轮复核**: #49 推送闭环确认——Deploy 6903244 success（18:45Z）+ pages c4029e7 success 双绿（开轮查 Actions API 当场确认）；sync-github 幂等跳过（白名单零差）。dev server 沿用，无撞车。
+
+**本轮主攻（遗留池首选：同会话二次读档残留层专攻——#49 遗留）**:
+- **定位方法学（本轮最大资产）**: 位等协议升级为工具链——①指纹+simHash+紧凑 sig（scripts/pwb-fp.js，白名单 simHash 剥 viz 噪声）；②字段级深查 deepdiff3-13 系列（模块子字段/WBB·WB 内核单例盲区/4KB 分块内存二分/tick 网格首分叉定位/cycle-safe 全字段）。**fp 假阳性教训**：模块实例持 eng 引用，无环保护 ser 会把全引擎状态卷进单字段指纹（nature/worldsim/agentLaws 三度误判）——环安全序列化+子字段级 dig 才是真相比对。
+- **残留层清单（12+ 项，逐项 bit-equal 实锤）**:
+  1. **入档三件**（types.ts SaveDataV2 + serialize + applySave，旧档缺省回落 generate 初值）：ecoRepopYear/ecoLastNoteYear（生态再繁衍门控，A=0 vs B=306 实锤）、wwIgniteTick（大战引燃冷却钟，A=30 vs B=12150 实锤）。
+  2. **清零八件**（applySave v80 块）：preyGrid（猎物密度场，ecoTick 间隔期被捕食导航消费 L4709）、griefMem（哀悼账本，societyTick stab 消费）、reboundLast（灭绝物种回弹权重）、homeCache/homeCacheAt/homeOf/homeOcc（归家户籍簇——玩后 tickCount 倒退使 300 tick 新鲜度门误判+户籍年检保旧映射）、footprints/flocks（viz 清零对齐 generate）、snowman/snowmanN（**snowmanTick 每 80 tick 重度消费 rng**，generate 侧同修）。
+  3. **重置五件**：firesOut/repairsDone/lastFireOutEventTick/lastRepairEventTick/statDragonsSlain（pack2 OFF_CNT 灌内核的叙事门控计数器）。
+  4. **缓存重建**：ideaModCache 清零（repro 生育门漂移）、civBuildCounts+marketIdx 升级为 rebuildCivBuildCounts 确定性重建（v79 只 clear 前者留 5 tick 窗口失真，后者完全漏清——商队/贸易路线残留）。
+  5. **neuro 模块**：resetFlightRLWeights + **normalizeNeuroWeightsVersion**（版本指纹定值化 =1——原 bump 随读档历史漂移，deepdiff13 实锤 A=6 vs B=7）。
+  6. **内核 boot 基线快照机制（wbspatial.ts）**：ensureWorld 冷路径（wb_init 后）镜像整块线性内存（~4MB 一次性）；onWorldReset 时 memcpy 回写 = 内核字节级回 boot 态。**wb_reset 只清世界结构态**——批运行态（vBailP bail 概率表=wbResume 决策输入、vAct 动作缓冲、vDlist 脏行表、内核内部静态、更大人口行尾巴 [n,NU)）跨读档存活（deepdiff4/5/6 分块实锤 84 块差异）。**弃二次 wb_init 冷重建方案**（实测 actBase 重定位漂移 + 线性内存 +3MB/次增长——读档频率下不可接受）。附带 nameCacheStr/rowDirty 旗标清零。
+  7. **fxTier 跨速度一致性修复（pack2+replayActions）**: 原 `fxTier = speed>=8` 写进内核 FXP——**内核 fx 生成的掷骰消费内核 rng，档位随用户速度变化 → 同一存档 20× 快进与 1× 游玩模拟结果不同**（等速对照实锤：speed 恒 20 双侧 sameH=TRUE）。改为内核恒按全量 fxPrefs 生成动作（rng 消费恒定），速度档过滤平移到 replayActions（≥8× 跳过次要 fx 回放，置于字段解析前）——#43 特效分层收益保留在 fx 数组层面，ACT 缓冲多写少量动作（线性内存写零 GC）。
+
+**QA（位等里程碑 + 九路全绿）**:
+- **新页首读位等** ✓（h0 稳定复现）；**无玩双读位等** ✓✓（同页 load→300tick→load→300tick 哈希 910b7d90==910b7d90——本轮基线机制后达成，修前分叉）；**等速玩后读档位等** ✓（speed 恒 20 双侧 sameH=TRUE hA==hB==79dfd59c——fxTier 修复前实测）。
+- **诚实边界**: 跨速度（1× 首读 vs 20× 玩后读档）位等**尚未完全达成**（units 895 vs 888）——全部可见状态已证全等（引擎全字段 cycle-safe diff、三模块子字段、WBB/WB JS 侧、内核线性内存 pack 前后分块二分 n=0/13→0），残留通道高度疑似 Map/Set 内容级或 wasm 全局（线性内存之外），混沌显形（首分叉 tick 9 的 nature 疑似 csSig 共享引用伪影，子字段级复测全等）。**残留面较 #49 大幅收敛（806 vs 814 → 895 vs 888），定位方法与工具链已入 scripts/ 沉淀**，下轮专攻收尾。
+- tsc/eslint 零错误零告警；**CI 预验证 export-static 绿**（out/ 4.3M 49 文件 basePath 烧录正确）；控制台清屏复测零 error（HMR 窗口 [WB-LOAD] 瞬态已排除——模块换块期旧块引用，刷新即清）；世界截图无伪影（秋色森林/海岸/迷你地图/教程 UI 全正常）；存档双往返 ✓；旧档（manual1 v79 前格式）多次读档正常 ✓；**20× 性能零回归**（git stash 对照 tickMs 5.57 vs 5.74、simUps 88 vs 98——同区间，fxTier 改动每 tick 成本可忽略）；基线回写成本 ~4MB memcpy ≈2ms（读档总耗时 387ms 主导项为 canvas 重绘+气候重算，原价）。
+
+**遗留（下轮优先池）**: **跨速度位等最后残留通道专攻**（deepdiff 工具链现成——优先嫌疑：WBB/WB JS 侧 Map/Set 内容级 diff（deepdiff13 mods2 仅采 size）、wasm 可变全局、nature 内部再查；已知 weightsVersion 值非因果但已归一）；「继续旅程」不显示自动档候选 + 标题屏 auto 档元数据人口 0（UX bug 待查）；beachedAquatic retarget O(鲨×单位)/20tick；真机 vsync 路径实测；战争收束叙事调优；滑杆行可见性候选；raise 工具 GRASS 顶格候选；内核真停摆（待 rust 工具链）；rust 工具链（本轮 wb_reset 不彻底+wb_init 重入缺陷的根治路径）。
+
+**推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**版本节奏**: 不升位（v0.64 批次第八笔：读档确定性残留层大清剿，攒清单）。
+**评估**: D6 稳定健壮——读档确定性从「新页首读位等」推进到「无玩双读位等+等速玩后读档位等」（12 项跨会话残留收口+内核字节级回 boot 态机制），跨速度 1×/20× 模拟结果一致化（fxTier 根治）；D3 性能——零回归（stash 对照同区间）+ ACT 缓冲零 GC。下一最大差距：跨速度位等最后残留通道 + pack2 脏行重打包画像。
