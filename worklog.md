@@ -6045,3 +6045,22 @@ Stage Summary:
 **推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
 **版本节奏**: 不升位（v0.65 批次第一笔：内核 rng 双修+性能红利，无玩家可见语义变更）。
 **评估**: D6 稳定健壮——同页双载位等从三叉到哈希级全等（内核 rng 全局态重建+读档播种机制，读档确定性最后一层闭合）；D3 性能——模拟路径 -34%（4.56→3.0ms/tick）+ 跨速度大世界个体级分叉根治（速度纯化语义首次在大世界验证）；下一最大差距：pack2 重打包画像 + 真机 vsync 实测。
+
+## 2026-11-10 #53（06:13 触发轮）：pack2 热路径视图缓存 -14% + wbcore 修复版部署纠错（#52 误提交 arena 版）+ 载入序位等复验未闭合诚实记账
+
+**上轮复核**: #52 推送闭环——Deploy 56dc830 success + pages 双绿（开轮查 Actions API 当场确认）；dev server 沿用，agent-browser 遗留复用，无撞车。
+
+**本轮主攻（遗留池首选：pack2 脏行重打包画像）**:
+- **画像（monkey-patch pack2/packSail 分桶 + 9 截面逐段隔离计时）**: 每 tick 1 次常规 pack2(511)（L3571）0.412ms + bail 分级重打包 153 次/tick200（packSail 纯航行转发为主）；逐段独立计时 FAM 0.684ms 最贵（噪声大——segSum 2.10 > ALL511 0.412，冷缓存放大效应），packSail 0.656ms、FULL(true) 1.718ms；**核心发现：packTables/pack2/packOne/packSail 每次调用新建 72 个 TypedArray 局部视图**（每 tick 1-3 次 pack2 → 千 tick 万级分配，#48 qStyle 先例同族）。
+- **视图缓存优化（72 处替换）**: wbspatial.ts 增 vI8/vI16/vI32/vU8/vU16/vU32/vF32/vF64 缓存 helper（id+len 数字键 Map，mem 引用变化全量失效重建；同 id+len 全库同类型已核对、initTables 43 处实例字段初始化排除）；**公平 A/B（同协议 speed=0 冻结 loadFromSlot+100 热身+1000 tick）: 缓存版 3.997 vs 基线 4.661 ms/tick（-14%）**；tsc/eslint 零告警。
+- **重大事故发现与纠错（#52 提交错误）**: 本轮开画像时发现位等分叉，逐层隔离（基线/缓存 × 旧/新 wasm 四组合全分叉）→ **根因锁定：#52 提交进仓库的 public/wasm/wbcore.wasm 是 arena 版（178718B，有速度相关分叉缺陷），不是修复版（173316B）**——#52 性能对照时 git checkout 切旧 wasm + cp /tmp/wbcore-new.wasm（arena 版）恢复，修复版被覆盖丢失。本轮 cargo target 缓存命中（22:04 产物原样）重部署修复版并提交纠错。**教训：wasm 二进制部署后必须 md5 记账核销（本轮起 build-wasm.sh 后加 md5 输出习惯）**。
+- **槽键名陷阱再锤（#51 已记，本轮再中）**: loadFromSlot('slot_2')（带下划线）是非法键——SLOT_DATA_KEY 合法键 slot0/slot1/slot2（无下划线），非法键经 getItem(undefined) 落到 "undefined" 暂存键；QA 全程读写该暂存键自洽但**键内容跨轮被遗留页面自动存档改写**——#52 三等验证与本轮分叉验证用的存档不同，跨轮位等结论不可直接对比。**本轮起 QA 一律用合法键 slot2**。
+- **载入序位等复验未闭合（诚实边界）**: 受控新世界（seed 424242 存 slot_2 暂存键）loadSeq×3——h0 三侧全等（载入边界 OK）而 h1 三侧三值、units 783→829→842 载入序递增、rngA 分叉、sig diff 大面积模拟态分叉（terrain/units/ecoRepopYear/preyGrid/families/items...）；**基线（无视图缓存）同世界同样分叉——与视图缓存无关**（隔离实验已证）；繁衍潮活跃世界（618→864 暴涨）暴露的载入序累积通道 = #51 原始 bug 特征复现——#52 播种机制在该通道未闭合（当时三等的世界繁衍压力不同）。**下轮遗留池头部专攻**。
+
+**QA**: tsc 零错误 + eslint 零告警；CI 预验证 export-static 绿（out/ 4.3M 49 文件）；进入世界截图零伪影（森林/海洋/冰晶/单位群/minimap/UI 全正常，424242 世界 716 野生动物运行正常）；1000 tick 冻结跑批无崩溃；位等工具 pwb-fp.js v3 沿用。
+
+**遗留（下轮优先池）**: **载入序位等未闭合专攻**（受控世界复现 units 载入序递增+rngA 分叉——优先嫌疑：wb_reset→pack→首批播种时序在繁衍 bail 场景的缝隙（wb_grow live_len/st.n 全局 vs pack_len 重置窗口）、bail 接力 wbResume 的 rng 握手、第二次 load 的 RNG_SEED_PENDING 是否真置位（wb_reset 在 onWorldReset 内跑——applySave 时序核对）；方法：逐 tick 内核内存全字节哈希找首分叉 + 内核内存 diff 工具重建）；「继续旅程」不显示自动档+标题屏元数据人口 0（本轮截图再次复现）；beachedAquatic retarget O(鲨×单位)/20tick；真机 vsync 实测；战争收束叙事调优；滑杆行可见性；raise 工具 GRASS 顶格。
+
+**推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**版本节奏**: 不升位（v0.65 批次第二笔：视图缓存性能 + wasm 部署纠错回 #52 应有状态，无玩家可见新语义）。
+**评估**: D3 性能——pack 热路径视图缓存 -14%（3.997 vs 4.661 ms/tick 同协议 A/B），pack2 画像入账（每调用 72 视图分配清零）；D6 稳定健壮——**wbcore 修复版部署纠错**（#52 误提交 arena 版含速度相关分叉缺陷，本轮回归仓库正确二进制）+ 载入序位等在新世界未闭合诚实入账（下轮头部专攻）；下一最大差距：载入序位等通道 + 真机 vsync。

@@ -625,6 +625,28 @@ class WbBatch {
   private vUx!: Float64Array; private vUy!: Float64Array; private vUciv!: Int32Array; private vUrace!: Uint32Array;
   private vUid!: Uint32Array; private vUcell!: Uint32Array; private vUdead!: Uint8Array; private vUHasPanic!: Uint8Array; private vUPanic!: Float64Array;
 
+  // 【性能 #53】pack 热路径 TypedArray 视图缓存：packTables/pack2/packOne/packSail 原本
+  // 每次调用新建 ~50-70 个局部视图（每 tick 1-3 次 pack2 → 千 tick 万级分配，GC 压力显著；
+  // #48 qStyle 量化先例同族）。arena 布局 wb_init 后固定、偏移常量静态，视图可安全复用；
+  // mem.buffer 引用变化（grow/重建实例）时全量失效重建。同 id+len 全库同类型已核对。
+  private _vCache = new Map<string, ArrayBufferView>();
+  private _vBufRef: ArrayBufferLike | null = null;
+  private vGet<T extends ArrayBufferView>(key: string, make: () => T): T {
+    const buf = this.mem;
+    if (this._vBufRef !== buf) { this._vCache.clear(); this._vBufRef = buf; }
+    let v = this._vCache.get(key) as T | undefined;
+    if (!v) { v = make(); this._vCache.set(key, v); }
+    return v;
+  }
+  private vI8(id: number, len: number): Int8Array { return this.vGet('i8:' + id + ':' + len, () => new Int8Array(this.mem, this.at(id), len)); }
+  private vI16(id: number, len: number): Int16Array { return this.vGet('i16:' + id + ':' + len, () => new Int16Array(this.mem, this.at(id), len)); }
+  private vI32(id: number, len: number): Int32Array { return this.vGet('i32:' + id + ':' + len, () => new Int32Array(this.mem, this.at(id), len)); }
+  private vU8(id: number, len: number): Uint8Array { return this.vGet('u8:' + id + ':' + len, () => new Uint8Array(this.mem, this.at(id), len)); }
+  private vU16(id: number, len: number): Uint16Array { return this.vGet('u16:' + id + ':' + len, () => new Uint16Array(this.mem, this.at(id), len)); }
+  private vU32(id: number, len: number): Uint32Array { return this.vGet('u32:' + id + ':' + len, () => new Uint32Array(this.mem, this.at(id), len)); }
+  private vF32(id: number, len: number): Float32Array { return this.vGet('f32:' + id + ':' + len, () => new Float32Array(this.mem, this.at(id), len)); }
+  private vF64(id: number, len: number): Float64Array { return this.vGet('f64:' + id + ':' + len, () => new Float64Array(this.mem, this.at(id), len)); }
+
   active(): boolean { return this.enabledCheck() && this.ready && !this.failed; }
   private enabledCheck(): boolean { return (WB as unknown as { enabled: boolean }).enabled; } // 与 Stage 1 共享开关
 
@@ -748,10 +770,10 @@ class WbBatch {
       const keys = Object.keys(ITEM_DEFS);
       if (keys.length > MAX_ITEMDEFS) { this.failed = true; return; }
       keys.forEach((k, i) => { this.itemIdMap.set(k, i); this.itemIds[i] = k; });
-      const tbi = new Float64Array(m, A(OFF_TBI), MAX_ITEMDEFS * 12);
+      const tbi = this.vF64(OFF_TBI, MAX_ITEMDEFS * 12);
       tbi.fill(0);
-      const gunbm = new Uint32Array(m, A(OFF_GUNBM), 4);
-      const beambm = new Uint32Array(m, A(OFF_BEAMBM), 4);
+      const gunbm = this.vU32(OFF_GUNBM, 4);
+      const beambm = this.vU32(OFF_BEAMBM, 4);
       keys.forEach((k, i) => {
         const d = (ITEM_DEFS as unknown as Record<string, Record<string, number>>)[k];
         tbi[i * 12 + 0] = d.armor ?? 0; tbi[i * 12 + 1] = d.crit ?? 0; tbi[i * 12 + 2] = d.lifesteal ?? 0;
@@ -761,13 +783,13 @@ class WbBatch {
         if (k === 'musket' || k === 'rifle') gunbm[i >> 5] |= 1 << (i & 31);
         if (k === 'laser_rifle') beambm[i >> 5] |= 1 << (i & 31);
       });
-      new Int32Array(m, A(OFF_TBIN), 1)[0] = keys.length;
+      this.vI32(OFF_TBIN, 1)[0] = keys.length;
     }
     // —— FIRST 名池（静态：仅首灌；24B 定长条目 [len][bytes×23]）——
     if (this.firstPoolVersion !== 1) {
-      const pool = new Uint8Array(m, A(OFF_FRSTP), 16384);
-      const off = new Uint32Array(m, A(OFF_FRSTOFF), 512);
-      const cnt = new Uint32Array(m, A(OFF_FRSTN), 512);
+      const pool = this.vU8(OFF_FRSTP, 16384);
+      const off = this.vU32(OFF_FRSTOFF, 512);
+      const cnt = this.vU32(OFF_FRSTN, 512);
       let cur = 0;
       const enc = new TextEncoder();
       for (const k of Object.keys(FIRST)) {
@@ -790,14 +812,14 @@ class WbBatch {
     if (this.tablesVersion !== 1) {
       const GE = engine.constructor as unknown as Record<string, string[]>;
       const pre = GE['FAM_PRE'], post = GE['FAM_POST'];
-      const famp = new Uint8Array(m, A(OFF_FAMP), 1024);
+      const famp = this.vU8(OFF_FAMP, 1024);
       const enc = new TextEncoder();
       pre.forEach((s, i) => { const b = enc.encode(s).slice(0, 23); famp[i * 24] = b.length; famp.set(b, i * 24 + 1); });
       post.forEach((s, i) => { const b = enc.encode(s).slice(0, 23); famp[384 + i * 24] = b.length; famp.set(b, 384 + i * 24 + 1); });
       // —— 种族表 TBR/TBF ——
-      const tbr = new Float64Array(m, A(OFF_TBR), 512 * 12);
-      const tbf = new Uint8Array(m, A(OFF_TBF), 512 * 2);
-      const rf = new Uint8Array(m, A(11), 512); // OFF_RACE_FLAGS（与 Stage 1 语义一致）
+      const tbr = this.vF64(OFF_TBR, 512 * 12);
+      const tbf = this.vU8(OFF_TBF, 512 * 2);
+      const rf = this.vU8(11, 512); // OFF_RACE_FLAGS（与 Stage 1 语义一致）
       rf.fill(0);
       for (const k of Object.keys(RACES)) {
         const id = Number(k);
@@ -830,13 +852,13 @@ class WbBatch {
         if (d.flying) tbf[id * 2] |= 32;
       }
       // —— 职业 TBJ ——
-      const tbj = new Float64Array(m, A(OFF_TBJ), 7 * 5);
+      const tbj = this.vF64(OFF_TBJ, 7 * 5);
       JOBS.forEach((j, i) => {
         tbj[i * 5 + 0] = j.hpMul; tbj[i * 5 + 1] = j.dmgMul; tbj[i * 5 + 2] = j.speedMul;
         tbj[i * 5 + 3] = j.weight; tbj[i * 5 + 4] = j.ranged ?? 0;
       });
       // —— 地形掩码 TBT ——
-      const tbt = new Uint8Array(m, A(OFF_TBT), 16);
+      const tbt = this.vU8(OFF_TBT, 16);
       const TS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
       for (const t of TS) {
         let bits = 0;
@@ -848,9 +870,9 @@ class WbBatch {
         tbt[t] = bits;
       }
       // —— 巨怪掉落 / 野怪上限 / 巨怪上限 / 建筑血量 ——
-      const mloot = new Uint8Array(m, A(OFF_MLOOT), 512);
-      const wildcap = new Uint32Array(m, A(OFF_WILDCAP), 512);
-      const moncap = new Uint32Array(m, A(OFF_MONCAP), 512);
+      const mloot = this.vU8(OFF_MLOOT, 512);
+      const wildcap = this.vU32(OFF_WILDCAP, 512);
+      const moncap = this.vU32(OFF_MONCAP, 512);
       const caps: Record<number, number> = { 6: 240, 7: 90, 10: 160, 11: 110, 12: 90, 13: 60, 14: 80, 15: 70 };
       for (const k of Object.keys(RACES)) {
         const id = Number(k);
@@ -865,13 +887,13 @@ class WbBatch {
       for (const [k, v] of Object.entries(mcaps)) moncap[+k] = v;
       const ML = (engine.constructor as unknown as Record<string, Set<number>>)['MONSTER_LOOT'] ?? new Set<number>();
       for (const k of ML) mloot[k] = 1;
-      const tbhp = new Float64Array(m, A(OFF_TBHP), 16);
+      const tbhp = this.vF64(OFF_TBHP, 16);
       for (let k = 1; k <= 10; k++) tbhp[k] = BUILDING_DEFS[k]?.hp ?? 70;
       // —— MISC ——
       // misc[1] = 野生全局预算：同步三轨上界（陆 900 + 水生 520 = 1420）——
       // 若仍填 900，内核侧总预算会被羊群（陆生）先行占满，鱼群内核繁衍依旧被挤死
       // （实测 1220 时总单位顶格 1219：鱼 280 + 龟 90 + 蟹 90 已 460，陆生繁衍被挤到贴边）
-      const misc = new Int32Array(m, A(OFF_MISC), 32);
+      const misc = this.vI32(OFF_MISC, 32);
       misc[0] = 2400; misc[1] = 900 + 520;
       this.tablesVersion = 1;
     }
@@ -879,7 +901,7 @@ class WbBatch {
     // 非文明种族封顶 min(自身 repro, 倍率 × 繁殖基准数 civSlowestRepro())，文明种族原值直装。
     // 内核第一段繁衍骰（rng < repro）读 TBR[id*12+4]，在此封顶即免改 rust（约 45 写/ tick，可忽略）。
     if (!this.failed) {
-      const tbr2 = new Float64Array(m, A(OFF_TBR), 512 * 12);
+      const tbr2 = this.vF64(OFF_TBR, 512 * 12);
       const cap = engine.wildReproScale * engine.civSlowestRepro();
       for (const k of Object.keys(RACES)) {
         const id = Number(k);
@@ -924,7 +946,7 @@ class WbBatch {
 
     // —— 战争位图（atWar: rel<-20）——
     if (sections & WP_WAR) {
-      const atw = new Uint8Array(m, A(13), 64 * 64);
+      const atw = this.vU8(13, 64 * 64);
       atw.fill(0);
       for (const [k, v] of engine.rel) {
         if (v >= -20) continue;
@@ -933,7 +955,7 @@ class WbBatch {
         if (a >= 0 && a < 64 && b >= 0 && b < 64) { atw[a * 64 + b] = 1; atw[b * 64 + a] = 1; }
       }
       // dynRaces 父链
-      const dpar = new Int32Array(m, A(12), 512); dpar.fill(-1);
+      const dpar = this.vI32(12, 512); dpar.fill(-1);
       for (const [id, d] of engine.dynRaces) { if (id >= 0 && id < 512) dpar[id] = d.parent; }
     }
 
@@ -941,17 +963,17 @@ class WbBatch {
     const c0 = performance.now();
     if (sections & WP_CIV) {
       const civn = Math.min(engine.civs.length, 64);
-      new Int32Array(m, A(OFF_CIVN), 1)[0] = civn;
-      const cvPop = new Float64Array(m, A(OFF_CVPOP), 64);
-      const cvHou = new Float64Array(m, A(OFF_CVHOU), 64);
-      const cvGld = new Float64Array(m, A(OFF_CVGLD), 64);
-      const cvCap = new Int32Array(m, A(OFF_CVCAP), 64);
-      const cvAl = new Uint8Array(m, A(OFF_CVAL), 64);
-      const cvGov = new Int32Array(m, A(OFF_CVGOV), 64);
-      const cvTech = new Float64Array(m, A(OFF_CVTECH), 64 * 24);
-      const cvDir = new Uint8Array(m, A(OFF_CVDIR), 64);
-      const cvPc = new Float64Array(m, A(OFF_CVPC), 64);
-      const cvMkt = new Int32Array(m, A(OFF_CVMKT), 64);
+      this.vI32(OFF_CIVN, 1)[0] = civn;
+      const cvPop = this.vF64(OFF_CVPOP, 64);
+      const cvHou = this.vF64(OFF_CVHOU, 64);
+      const cvGld = this.vF64(OFF_CVGLD, 64);
+      const cvCap = this.vI32(OFF_CVCAP, 64);
+      const cvAl = this.vU8(OFF_CVAL, 64);
+      const cvGov = this.vI32(OFF_CVGOV, 64);
+      const cvTech = this.vF64(OFF_CVTECH, 64 * 24);
+      const cvDir = this.vU8(OFF_CVDIR, 64);
+      const cvPc = this.vF64(OFF_CVPC, 64);
+      const cvMkt = this.vI32(OFF_CVMKT, 64);
       for (let c = 0; c < civn; c++) {
         const civ = engine.civs[c];
         cvPop[c] = civ.pop; cvHou[c] = civ.houses; cvGld[c] = civ.gold ?? 0;
@@ -971,10 +993,10 @@ class WbBatch {
     if (sections & WP_FAM) {
       const fams = engine.families;
       const fn = Math.min(fams.size, MAX_FAM);
-      new Int32Array(m, A(OFF_FAMN), 1)[0] = fn;
-      const fmId = new Int32Array(m, A(OFF_FMID), MAX_FAM);
-      const fmRace = new Int32Array(m, A(OFF_FMRACE), MAX_FAM);
-      const fmNum = new Float64Array(m, A(OFF_FMNUM), MAX_FAM * 6);
+      this.vI32(OFF_FAMN, 1)[0] = fn;
+      const fmId = this.vI32(OFF_FMID, MAX_FAM);
+      const fmRace = this.vI32(OFF_FMRACE, MAX_FAM);
+      const fmNum = this.vF64(OFF_FMNUM, MAX_FAM * 6);
       let fi = 0;
       for (const f of fams.values()) {
         if (fi >= MAX_FAM) break;
@@ -983,7 +1005,7 @@ class WbBatch {
         fmNum[fi * 6 + 3] = f.peak; fmNum[fi * 6 + 4] = f.milestones; fmNum[fi * 6 + 5] = f.founded;
         fi++;
       }
-      new Int32Array(m, A(OFF_FMSEQ), 1)[0] = engine.familySeq;
+      this.vI32(OFF_FMSEQ, 1)[0] = engine.familySeq;
     }
 
     // —— 建筑 ——
@@ -991,11 +1013,11 @@ class WbBatch {
     if (sections & WP_BLD) {
       const bl = engine.buildings;
       const bn = Math.min(bl.length, MAX_BLD);
-      new Int32Array(m, A(OFF_BLDN), 1)[0] = bn;
-      const blI = new Int32Array(m, A(OFF_BLDI), MAX_BLD);
-      const blXY = new Int32Array(m, A(OFF_BLDXY), MAX_BLD * 2);
-      const blC = new Int32Array(m, A(OFF_BLDC), MAX_BLD);
-      const blHp = new Float64Array(m, A(OFF_BLDHP), MAX_BLD);
+      this.vI32(OFF_BLDN, 1)[0] = bn;
+      const blI = this.vI32(OFF_BLDI, MAX_BLD);
+      const blXY = this.vI32(OFF_BLDXY, MAX_BLD * 2);
+      const blC = this.vI32(OFF_BLDC, MAX_BLD);
+      const blHp = this.vF64(OFF_BLDHP, MAX_BLD);
       for (let b = 0; b < bn; b++) {
         const bd = bl[b];
         blI[b] = bd.i; blXY[b * 2] = bd.x; blXY[b * 2 + 1] = bd.y; blC[b] = bd.civ;
@@ -1004,10 +1026,10 @@ class WbBatch {
       }
       // damagedSet 有序镜像
       const dn = Math.min(engine.damagedSet.size, MAX_BLD);
-      const dml = new Int32Array(m, A(OFF_DMGL), MAX_BLD);
+      const dml = this.vI32(OFF_DMGL, MAX_BLD);
       let di = 0;
       for (const t of engine.damagedSet) { if (di >= dn) break; dml[di++] = t; }
-      new Int32Array(m, A(OFF_DMGN), 1)[0] = dn;
+      this.vI32(OFF_DMGN, 1)[0] = dn;
     }
     const c2 = performance.now();
 
@@ -1015,9 +1037,9 @@ class WbBatch {
     if (sections & WP_ITEM) {
       const its = engine.items;
       const in2 = Math.min(its.length, MAX_ITEMS2);
-      new Int32Array(m, A(OFF_ITMN), 1)[0] = in2;
-      const itK = new Int32Array(m, A(OFF_ITMK), MAX_ITEMS2);
-      const itXY = new Float64Array(m, A(OFF_ITMXY), MAX_ITEMS2 * 2);
+      this.vI32(OFF_ITMN, 1)[0] = in2;
+      const itK = this.vI32(OFF_ITMK, MAX_ITEMS2);
+      const itXY = this.vF64(OFF_ITMXY, MAX_ITEMS2 * 2);
       for (let i = 0; i < in2; i++) {
         itK[i] = this.itemIdMap.get(its[i].kind) ?? -1;
         itXY[i * 2] = its[i].x; itXY[i * 2 + 1] = its[i].y;
@@ -1032,11 +1054,11 @@ class WbBatch {
       this.traitKeys = tk;
       this.traitIdMap.clear();
       tk.forEach((k, i) => this.traitIdMap.set(k, i));
-      const trDmg = new Float64Array(m, A(OFF_TRDMG), MAX_TRAITS2);
-      const trHp = new Float64Array(m, A(OFF_TRHP), MAX_TRAITS2);
-      const trSpd = new Float64Array(m, A(OFF_TRSPD), MAX_TRAITS2);
-      const trReg = new Float64Array(m, A(OFF_TRREG), MAX_TRAITS2);
-      const trFl = new Uint8Array(m, A(OFF_TRFL), MAX_TRAITS2);
+      const trDmg = this.vF64(OFF_TRDMG, MAX_TRAITS2);
+      const trHp = this.vF64(OFF_TRHP, MAX_TRAITS2);
+      const trSpd = this.vF64(OFF_TRSPD, MAX_TRAITS2);
+      const trReg = this.vF64(OFF_TRREG, MAX_TRAITS2);
+      const trFl = this.vU8(OFF_TRFL, MAX_TRAITS2);
       trDmg.fill(1); trHp.fill(1); trSpd.fill(1); trReg.fill(0);
       tk.forEach((k, i) => {
         const t = (TRAITS as unknown as Record<string, Record<string, number | boolean | undefined>>)[k];
@@ -1051,14 +1073,14 @@ class WbBatch {
         if (k === 'swift') trFl[i] |= 16;
         if (k === 'berserk') trFl[i] |= 64;
       });
-      new Int32Array(m, A(OFF_TRN), 1)[0] = tk.length;
+      this.vI32(OFF_TRN, 1)[0] = tk.length;
       this.traitsKeyCache = tkSig;
     }
 
     // —— 神经权重（版本变化时重灌：ACC@0 STANCE@256 FLIGHT@576 RL@768）——
     const heads = neuroHeadsSnapshot();
     if (heads.version !== this.weightsVersion) {
-      const nw = new Float64Array(m, A(OFF_NEUW), 2048);
+      const nw = this.vF64(OFF_NEUW, 2048);
       const put = (base: number, h: { nIn: number; nH: number; nOut: number; w1: Float32Array; b1: Float32Array; w2: Float32Array; b2: Float32Array }) => {
         let k = 0;
         for (let i = 0; i < h.nIn * h.nH; i++) nw[base + k++] = h.w1[i];
@@ -1067,34 +1089,34 @@ class WbBatch {
         for (let j = 0; j < h.nOut; j++) nw[base + k++] = h.b2[j];
       };
       put(0, heads.acc); put(256, heads.stance); put(576, heads.flight); put(768, heads.rl);
-      const ctl = new Uint8Array(m, A(OFF_NCTL), 1);
+      const ctl = this.vU8(OFF_NCTL, 1);
       ctl[0] = (neuroStats.enabled ? 1 : 0) | ((neuroStats.flightMode === 'rl' ? 1 : 0) << 1);
       this.weightsVersion = heads.version;
     }
     // NCTL 每次都刷（开关/模式可随时切）
     {
-      const ctl = new Uint8Array(m, A(OFF_NCTL), 1);
+      const ctl = this.vU8(OFF_NCTL, 1);
       ctl[0] = (neuroStats.enabled ? 1 : 0) | ((neuroStats.flightMode === 'rl' ? 1 : 0) << 1);
     }
 
     // —— 标量（Task 50：WP_SCAL 截面 —— rng/tick/laws/fxp/fx 队列/wild/prey/speciesBase/计数）——
     if (sections & WP_SCAL) {
     this.vRng[0] = engine.rngA >>> 0;
-    const i32v = (id: number, len: number, off = 0) => new Int32Array(m, A(id), len);
+    const i32v = (id: number, len: number, off = 0) => this.vI32(id, len);
     i32v(OFF_TICK, 1)[0] = engine.tickCount;
     // 【稳定性 v81】世界时虚拟帧钟：旧值 engine.frameCount（渲染墙钟）在 20× 下每 tick 仅 +0.22，
     // 内核（现网二进制仍消费此值的 fx 节拍路径）决策随速度漂移 → 内核 rng 流分叉 → 1×/20× 两个世界
     // （JS 侧调用级 rng 日志 5864 次全同而 rngA@tick8 分叉实锤分叉在内核；rust 源已删读点但二进制未重建）。
     // 改写 tickCount*4：1×（15tps×60fps≈4帧/tick）节奏保真，高倍速随世界时间整体加速——速度纯化。
     i32v(OFF_FRAME, 1)[0] = engine.tickCount * 4;
-    new Uint8Array(m, A(OFF_PAR), 1)[0] = engine.tickCount % 2;
-    new Uint32Array(m, A(OFF_USEQ), 1)[0] = engine.unitSeq;
-    const eps = new Float64Array(m, A(OFF_EPS), 16);
+    this.vU8(OFF_PAR, 1)[0] = engine.tickCount % 2;
+    this.vU32(OFF_USEQ, 1)[0] = engine.unitSeq;
+    const eps = this.vF64(OFF_EPS, 16);
     EP_KEYS.forEach((k, i) => { eps[i] = getEp(k); });
     let laws = 0;
     const L = engine.laws;
     if (L.reproduction) laws |= 1; if (L.zombieInfect) laws |= 2; if (L.undeadRise) laws |= 4;
-    new Uint8Array(m, A(OFF_LAWS), 1)[0] = laws;
+    this.vU8(OFF_LAWS, 1)[0] = laws;
     const F = engine.fxPrefs;
     // 【稳定性 v80】fxTier 不再写进内核（位等 QA 等速对照实锤：speed 恒 20 双侧 sameH=TRUE，
     // 20×玩后读档 vs 1×首读速度不同即全局分叉）——内核 fx 生成的掷骰消费内核 rng，档位随
@@ -1105,11 +1127,11 @@ class WbBatch {
     let fxp = 0;
     if (F.dmgNumbers) fxp |= 1; if (F.ambience) fxp |= 2; if (F.blood) fxp |= 4; if (F.corpses) fxp |= 8;
     fxp |= (F.fxDensity ?? 1) << 4;
-    new Uint8Array(m, A(OFF_FXP), 1)[0] = fxp;
+    this.vU8(OFF_FXP, 1)[0] = fxp;
     // fx 虚拟队列
     i32v(OFF_FXLEN, 1)[0] = engine.effects.length;
     {
-      const fmin = new Int32Array(m, A(OFF_FXMIN), 1600);
+      const fmin = this.vI32(OFF_FXMIN, 1600);
       let k = 0;
       // 【性能 v75】MINOR 集提升至模块级（旧版每 tick 新建 Set —— 纯分配浪费）
       for (let i = 0; i < engine.effects.length && k < 1600; i++) {
@@ -1118,18 +1140,18 @@ class WbBatch {
       i32v(OFF_FXMINN, 1)[0] = k;
     }
     // wildCount（先清零防幽灵计数 —— JS 侧 map 删除的种族不得残留镜像）
-    const wild = new Int32Array(m, A(OFF_WILD), 512);
+    const wild = this.vI32(OFF_WILD, 512);
     wild.fill(0);
     for (const [r, v] of engine.wildCount) { if (r >= 0 && r < 512) wild[r] = v; }
-    const f64v = (id: number, len: number) => new Float64Array(m, A(id), len);
+    const f64v = (id: number, len: number) => this.vF64(id, len);
     f64v(OFF_GRASS, 1)[0] = engine.grassTiles;
     f64v(OFF_DAYPH, 1)[0] = engine.dayPhase();
     f64v(OFF_REPRM, 1)[0] = engine.nature.reproMul();
-    const prey = new Uint16Array(m, A(OFF_PREY), 640);
+    const prey = this.vU16(OFF_PREY, 640);
     prey.set(engine.preyGrid);
     // speciesBase
-    const spb = new Float64Array(m, A(OFF_SPB), 512 * 4);
-    const spbh = new Uint8Array(m, A(OFF_SPBH), 512);
+    const spb = this.vF64(OFF_SPB, 512 * 4);
+    const spbh = this.vU8(OFF_SPBH, 512);
     for (const [r, v] of engine.speciesBase) {
       if (r < 0 || r >= 512) continue;
       spb[r * 4] = v.gene.s; spb[r * 4 + 1] = v.gene.d; spb[r * 4 + 2] = v.gene.h; spb[r * 4 + 3] = v.gene.r;
@@ -1142,7 +1164,7 @@ class WbBatch {
     // 杂项
     const misc = i32v(OFF_MISC, 32);
     misc[2] = engine.dynTraits.size;
-    new Uint8Array(m, A(OFF_COLEN), 1)[0] = collectorStats.enabled ? 1 : 0;
+    this.vU8(OFF_COLEN, 1)[0] = collectorStats.enabled ? 1 : 0;
     // fireSet 计数
     i32v(OFF_FIREN, 1)[0] = engine.fireSet.size;
     } // WP_SCAL 结束
@@ -1316,10 +1338,10 @@ class WbBatch {
     // —— rng 同步（保险直写：接力段理论上不消耗）——
     this.vRng[0] = engine.rngA >>> 0;
     // —— fx 虚拟队列（回放/海难 fx 增长 —— Rust fx 预算依赖）——
-    const i32v = (id: number, len: number) => new Int32Array(m, A(id), len);
+    const i32v = (id: number, len: number) => this.vI32(id, len);
     i32v(OFF_FXLEN, 1)[0] = engine.effects.length;
     {
-      const fmin = new Int32Array(m, A(OFF_FXMIN), 1600);
+      const fmin = this.vI32(OFF_FXMIN, 1600);
       let k = 0;
       // 【性能 v75】MINOR 集提升至模块级（旧版每 tick 新建 Set —— 纯分配浪费）
       for (let i = 0; i < engine.effects.length && k < 1600; i++) {
@@ -1376,7 +1398,7 @@ class WbBatch {
   }
   getNeuroCalls(): [number, number, number] {
     const m = this.mem; const A = this.at;
-    const v = new Uint32Array(m, A(OFF_NEUCALL), 3);
+    const v = this.vU32(OFF_NEUCALL, 3);
     return [v[0], v[1], v[2]];
   }
   getActN(): number { return new Int32Array(this.mem, this.at(OFF_ACTN), 1)[0]; }
