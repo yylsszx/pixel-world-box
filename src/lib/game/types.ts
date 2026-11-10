@@ -364,6 +364,9 @@ export interface Unit {
   flip: boolean;
   name: string;
   hurt: number; // ticks of "recently damaged" flash
+  /** 受击击退方向 x 符号（±1=左右，0=来源正上/正下无水平分量）。运行时渲染辅助字段不入档；
+   *  各方向性伤害源写入（近战=背向攻击者/远程=弹道飞行方向/爆炸=离爆心向外），环境伤害不写（后仰退化 flip 背向） */
+  hitKx?: number;
   breath: number; // dragon breath timer
   /** 神经决策核心：战或逃/伤重脱离的接触冷却（tick；>0 期间脱离接触不接战 —— 瞬态不入档，读档自然消散） */
   fleeT?: number;

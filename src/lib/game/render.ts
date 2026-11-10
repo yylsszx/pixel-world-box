@@ -1555,13 +1555,14 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
       u.dpx = (u.rx ?? u.x) * 2 + lk * (u.flip ? -2.5 : 2.5);
       u.dpy = (u.ry ?? u.y) * 2;
     }
-    // 【表现 v0.66】受击后仰：hurt 高位段（>14，即受击后前 6 ticks）沿自身背向线性衰减位移
+    // 【表现 v0.66 #65】受击后仰：hurt 高位段（>14，即受击后前 6 ticks）沿击退方向线性衰减位移
     // （被打瞬间最大 → 弹性回位）。hurt 为 Rust 批内核 writeback 与 JS 双路径同步的公共字段——
-    // 两侧通吃无需引擎写入点；flip 背向 = 面对面战斗的击退方向（受害者面向攻击者）。
-    // 环境伤害（火/辐射/岩浆 hurt=20 顶满）同样踉跄——「在火里挣扎」语义成立；船/商队排除。
+    // 方向优先级：hitKx（方向性伤害源写入：近战背向攻击者/远程弹道飞行向/爆心向外冲）> flip 背向
+    // （环境伤害「在火里挣扎」与 hitKx 缺失/正上下来源的 fallback）；船/商队排除。
     if (u.hurt > 14 && !u.boat && (u.caravan ?? 0) === 0) {
       const hk = ((u.hurt - 14) / 6) * 2.2; // 1→0 线性衰减 × 峰值 2.2px（×2 画布空间）
-      u.dpx = (u.dpx ?? (u.rx ?? u.x) * 2) + hk * (u.flip ? 1 : -1);
+      const kx = (u.hitKx ?? 0) !== 0 ? (u.hitKx as number) : (u.flip ? 1 : -1);
+      u.dpx = (u.dpx ?? (u.rx ?? u.x) * 2) + hk * kx;
       u.dpy = (u.dpy ?? (u.ry ?? u.y) * 2);
     }
     drawUnitSprite(engine, u, wc);

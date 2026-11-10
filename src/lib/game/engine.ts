@@ -4350,6 +4350,7 @@ export class GameEngine {
           // —— 克拉肯：触手拖拽船只入渊（对航海者双倍伤害 + 击沉概率）——
           if (u.race === R.KRAKEN && enemy.boat) {
             enemy.hp -= u.dmg * 2;
+            enemy.hitKx = Math.sign(enemy.x - u.x); // 受击击退方向（背向攻击者）——触手拖拽也朝受力方向踉跄
             enemy.hurt = 20;
             if (this.rng() < 0.3) {
               enemy.dead = true;
@@ -4424,6 +4425,8 @@ export class GameEngine {
           }
           if (gD && gD.armor > 0) dmg *= 1 - gD.armor / 100;
           enemy.hp -= dmg;
+          // 受击击退方向（背向攻击者）：近战主路径写 hitKx，后仰不再假定为 flip 背向——背后偷袭/侧面夹击方向正确
+          enemy.hitKx = Math.sign(enemy.x - u.x);
           enemy.hurt = 20;
           this.fx('hit', (u.x + enemy.x) / 2, (u.y + enemy.y) / 2, 6);
           // 血溅：受击飞溅（原子级战斗反馈，可在画面设置中关闭）
@@ -6449,6 +6452,7 @@ export class GameEngine {
         const dmg = Math.round(dist * 2.6);
         u.hp -= dmg;
         u.hurt = 24;
+        u.hitKx = Math.sign(u.x - (u.thrX0 ?? u.x)); // 投掷飞行方向 = 落地踉跄方向
         u.grab = Math.max(u.grab ?? 0, 24); // 眩晕躺地（AI 暂停）
         u.thrT = 0;
         for (let k = 0; k < 3; k++) this.fx('dust', u.x + (this.rng() - 0.5) * 1.6, u.y + (this.rng() - 0.5) * 1.6, 20);
@@ -7814,6 +7818,7 @@ export class GameEngine {
         if (!u || u.dead) continue;
         if (Math.hypot(u.x - foe.x, u.y - foe.y) < 3.5) {
           u.hp -= 16 + this.rng() * 10;
+          u.hitKx = Math.sign(u.x - foe.x); // 机炮扫射：朝弹道方向踉跄
           u.hurt = 20;
           hits++;
           if (u.hp <= 0) { u.dead = true; this.wwCountKill(u); }
@@ -8194,6 +8199,7 @@ export class GameEngine {
       const u = this.unitById.get(target.members[(this.rng() * target.members.length) | 0]);
       if (!u || u.dead) continue;
       u.hp -= (13 + this.rng() * 11) * tm.dmg;
+      u.hitKx = Math.sign(u.x - sx); // 齐射弹道方向 = 后仰方向
       u.hurt = 20;
       if (u.hp <= 0) {
         u.dead = true;
@@ -8299,6 +8305,7 @@ export class GameEngine {
         if (u && !u.dead) {
           this.fx('arrow', u.x, u.y, 10, { x0: fort.x + 0.5, y0: fort.y + 0.5, src: fort.civ, r: 0, dmg });
           u.hp -= dmg;
+          u.hitKx = Math.sign(u.x - fort.x); // 岸炮弹道方向 = 后仰方向
           u.hurt = 20;
           if (u.hp <= 0) {
             u.dead = true;
@@ -11168,6 +11175,7 @@ export class GameEngine {
       const d = Math.hypot(u.x - x, u.y - y);
       if (d < r) {
         u.hp -= 600;
+        u.hitKx = Math.sign(u.x - x); // 湮灭爆心向外冲击
         u.hurt = 40;
         if (u.hp <= 0) { u.dead = true; this.wwCountKill(u); }
       }
@@ -11206,6 +11214,7 @@ export class GameEngine {
       const d = Math.hypot(u.x - x, u.y - y);
       if (d < r + 0.4) {
         u.hp -= dmg * Math.max(0.25, 1 - d / (r + 0.4));
+        u.hitKx = Math.sign(u.x - x); // 炮击爆心向外冲击
         u.hurt = 24;
         if (u.hp <= 0) {
           u.dead = true;
@@ -11459,6 +11468,7 @@ export class GameEngine {
               u.y = Math.max(0.5, Math.min(H - 0.5, ny));
             }
             u.hurt = 16;
+            u.hitKx = Math.sign(u.x - e.x); // 巨怪近身威压：向外踉跄（与推离位移同向）
             if (d < 2.2) u.hp -= 1.2;
           }
         }
@@ -11550,7 +11560,8 @@ export class GameEngine {
           const udy = u.y - e.y;
           const ud2 = udx * udx + udy * udy;
           if (ud2 >= prevR2 && ud2 < waveRu2 && !RACES[u.race].flying) {
-            u.hp -= 60; u.hurt = 24; if (u.hp <= 0) u.dead = true;
+            u.hp -= 60; u.hurt = 24; u.hitKx = Math.sign(udx); // 海啸波前冲撞方向 = 后仰方向
+            if (u.hp <= 0) u.dead = true;
           }
         }
         if (e.age === 1) this.shake = Math.max(this.shake, 6);
@@ -11974,7 +11985,8 @@ export class GameEngine {
           if (u.dead || u.boat) continue;
           const d = Math.hypot(u.x - e.x, u.y - e.y);
           if (d >= prevR && d < waveR + 0.5 && !RACES[u.race].flying) {
-            u.hp -= 55; u.hurt = 24; if (u.hp <= 0) u.dead = true;
+            u.hp -= 55; u.hurt = 24; u.hitKx = Math.sign(u.x - e.x); // 塔陷波前向外冲击 = 后仰方向
+            if (u.hp <= 0) u.dead = true;
           }
         }
       } else if (e.kind === 'iceage') {
@@ -12076,6 +12088,7 @@ export class GameEngine {
           const d = Math.hypot(u.x - e.x, u.y - e.y);
           if (d < 1.15) {
             u.hp -= e.r;
+            u.hitKx = Math.sign(u.x - e.x); // 火球爆心向外冲击
             u.hurt = 20;
             if (u.hp <= 0) u.dead = true;
           }
@@ -12107,8 +12120,8 @@ export class GameEngine {
           const gD = RACES[hit.race].isCiv ? this.gearBonus(hit) : null;
           const final = gD && gD.armor > 0 ? dmg * (1 - gD.armor / 100) : dmg;
           hit.hp -= final;
+          hit.hitKx = Math.sign(hit.x - (e.x0 ?? hit.x - 1)); // 弹道飞行方向 = 后仰方向（背后箭矢向箭尖踉跄）
           hit.hurt = 20;
-          this.fx('hit', e.x, e.y, 6);
           if (this.fxPrefs.dmgNumbers && (final >= 10 || this.rng() < 0.3)) this.fx('dmg', hit.x, hit.y, 24, { text: '-' + Math.round(final) });
           if (hit.hp <= 0) {
             hit.dead = true;
@@ -12173,6 +12186,7 @@ export class GameEngine {
           if (d < 0.75) {
             const final = t / llen > 0.85 ? ldmg : ldmg * 0.7; // 焦点（弹道末段）全伤
             u.hp -= final;
+            u.hitKx = Math.sign(lux); // 激光沿光束传播方向灼穿踉跄（0=正交 fallback flip）
             u.hurt = 22;
             this.fx('hit', u.x, u.y, 6);
             if (this.fxPrefs.dmgNumbers && this.rng() < 0.4) this.fx('dmg', u.x, u.y, 24, { text: '-' + Math.round(final) });
@@ -12378,7 +12392,8 @@ export class GameEngine {
       if (d < 1.6) {
         // 冷血体质对剧烈环境冲击更脆弱（×1.4）；冬季在暴雨中僵直的爬虫首当其冲
         const mult = RACES[u.race].coldBlood ? 1.4 : 1;
-        u.hp -= 26 * mult; u.hurt = 22; if (u.hp <= 0) u.dead = true;
+        u.hp -= 26 * mult; u.hurt = 22; u.hitKx = Math.sign(u.x - x); // 雷击落点向外冲击 = 后仰方向
+        if (u.hp <= 0) u.dead = true;
       }
     }
   }
