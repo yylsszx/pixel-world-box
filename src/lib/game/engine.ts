@@ -4151,6 +4151,9 @@ export class GameEngine {
     //    迭代序/敌意判定/恐慌传染与下方 JS 环逐行为一致（Rust 侧 js_min 已对齐 NaN 语义）；
     //    任何超限（血仇>32/传染溢出/未打包）自动回退 JS 原路径
     let wbScanApplied = false;
+    // 【稳定性 #67】panicSlots 槽位防御：风暴软降级尾部/JS 回退路径中 WB 空间镜像可能陈旧
+    // （批内核就绪后 WB.pack 停更）——扫描返回的槽位可能 ≥ units.length，直接索引崩溃。
+    // 槽位防御只挡越界写（合法槽位行为不变，零轨迹变化）；陈旧镜像数据质量问题为预存行为，留待专项轮处理。
     if (WB.active() && !this._wbBatch) {
       const r = WB.scan(this, u, contagious, cx, cy);
       if (r) {
@@ -4161,7 +4164,7 @@ export class GameEngine {
         }
         allies = r.allies;
         foes = r.foes;
-        for (let pk = 0; pk < r.panicN; pk++) this.units[r.panicSlots[pk]].panic = r.panicVals[pk];
+        for (let pk = 0; pk < r.panicN; pk++) { const su = this.units[r.panicSlots[pk]]; if (su) su.panic = r.panicVals[pk]; }
         wbScanApplied = true;
       }
     }

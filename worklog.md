@@ -6371,3 +6371,24 @@ Stage Summary:
 **推送**: render.ts（zk 增幅）+ sprites.ts（hydra v2）+ version.ts（v0.67+CHANGELOG）+ 4 QA 脚本（旧会话提交 2e77873）+ 两脚本枚举勘误 + worklog 本条 → push-web.sh（结果见下轮复核）。
 **版本节奏**: 升位 v0.67-preview（GAME_VERSION + CHANGELOG 头部已插，#61-#66 批次）。
 **评估**: D5 手感与表现——九头蛇从「三团块糊作一体」重做为「任意摆相位头头分离/暗窝竖瞳聚焦/躯干圆角有方向感」的精绘 v2（64 组合枚举零重叠的数学保证 + 净地特写实拍验收），受击踉跄在百人战场主视野增幅 42-43% 从亚像素不可读变为肉眼可辨；D5 特写细节与动效可读性双补课。
+
+## 2026-11-10 #67（v3）：战争风暴 20× 画像深潜——p2rows 错误归因纠正 + 风暴崩溃防护；距离门控方案实证废弃
+
+**上轮复核**: #66 代码与 worklog 均在远端（快照 60bb91c 与本地 aa25c96 零差异），CI 最近 3 连绿（42761336956 等）。dev server + agent-browser 遗留进程复用。
+
+**本轮主攻（遗留池①：战争风暴场景 20× 波动收口——战斗 AI 分桶/rng 消耗画像）**:
+- **战争风暴受控场景搭建**（scripts/p67-warstorm.js）：两国立国（各 400 兵 6 战士 4 弓手）+ 20× 定居 60 年 + 宣战 total war + 500ms 采样器（prof 六段 + uprof 五段 + bailKinds）。和平期 simMs 3.52/simUps 116（38%）；战争期 4.69/98（32%）——桥接三段（pack2+batch+wb）占 prof.units 83%。
+- **p2rows 2.53ms 错误归因纠正（本轮最大发现）**: 浏览器内分段实测（SCAL/HOT/META 截面隔离）——**热列灌仅 6µs/包**（19 列微基准 0.4ns/单位），p2rows 的大头是 **meta 行段全表重灌（312µs@849，metaDirty 由每次 spawn 触发）+ wb_pack_end 固定开销（BIDX 40960 格 tile 循环 ~100µs/包）**。距离门控方案（#67 原案：bail 中截面按半径 28 跳过圈外热列）**实证废弃**——全列探针（18 列 NaN 哨兵等价比较）证明跳过行逐列等值、r280 匹配基线而 r28 分歧、存在未识别的圈外变异通道（嫌疑：wb_pack_end 每次调用清 dirty bitmap/ACTN/DLISTN 的内核侧写事件耦合），且目标段仅 6µs 无收益价值。门控机制已全部回退（wbspatial.ts 零残留）。
+- **风暴崩溃防护（保留项）**: 风暴软降级尾部（guard>24 JS 接力）中 `_wbBatch=false` 但 WB 空间镜像自批内核就绪起停更——WB.scan 返回的 panicSlots 越界 `this.units[stale]` 直接崩溃（本轮实战复现 `Cannot set properties of undefined (setting 'panic')`）。修复：panicSlots 槽位防御（合法槽位行为不变）。曾尝试连 `!WBB.batchReady` 条件一并修（陈旧扫描数据质量）——实证该条件**改变模拟轨迹**（合法但陈旧的敌槽/恐慌数据被跳过），为守住位等回退条件、仅保留越界防护；陈旧扫描数据质量问题记遗留池专项。
+
+**QA（全绿）**:
+- **位等**: 防护版 1000 手动 ticks h0 6a5408ba → h1 **16c767c4 === 16c767c4 赛前基线位等 true**（防护零轨迹变化实证；回退后全套门控残留清零）。
+- **崩溃回归**: 门控开发期触发过的崩溃路径（风暴尾部+陈旧扫描）在防护版下 1000 ticks 零异常。
+- **1× 节拍**: 14.55 tps = 基准 96.1%（simMs 2.5ms 健康；fps 31 为无头软渲染瓶颈——tps 短板在帧预算不在模拟成本）。
+- **console 零 error**（干净页复测；开发期中间态的旧编译块报错为历史缓冲非现行代码）。
+- tsc 零错误 + eslint 零告警（engine.ts +4/-1 一处防护；wbspatial.ts 完全回退归零）。
+
+**遗留（下轮优先池）**: ① **meta 行段行级化**（312µs@849 全表重灌——spawn 触发 metaDirty 后每个 lite pack 全表重灌 meta 列；方向：touchMeta 携带行号 / spawn 行 rowDirty 扩展到 meta 段 / meta 列哨兵逐行比对——本轮距离门控的教训：先分段实测再动手，meta 段才是真 312µs 大头）；② **wb_pack_end BIDX 按建筑表变化门控**（Rust 改造：BIDX 仅依赖 BLDN+BLDI，append-only+splice 下 BLDN 变化⇔内容变化，~100µs×3.6 包/tick——需 rust 重建+位等 QA）；③ FXMIN O(effects) 循环（每 pack 全 effects 扫描+Set.has，战争 fx 风暴下放大）；④ 陈旧 WB 扫描数据质量专项（风暴尾部合法但陈旧的敌槽/恐慌数据——修复会改轨迹，需独立轮+专项 QA）；⑤ 战争风暴 20× 波动收口（本轮画像后重新定义：单包固定开销 ~0.46ms×2.6 bail + writeback 1.4ms 是主矛盾，热列灌洗清嫌疑）；⑥ troll/ogre VLM 特写终审；⑦ 战争收束叙事调优；⑧ 滑杆行可见性；⑨ raise GRASS 顶格。
+**推送**: engine.ts（panicSlots 防护）+ scripts/p67-warstorm.js（战争风暴画像器）+ scripts/p67-abtrace.js（A/B 逐 tick 追踪器）+ worklog 本条 → push-web.sh（结果见下轮复核）。
+**版本节奏**: 不升位（v0.67 第五笔：稳定性防护+画像轮，存档格式零变更——五笔未升位，下轮可考虑合并升位 v0.68 + CHANGELOG）。
+**评估**: D3 性能与规模——战争风暴 20× 波动的病灶画像完成质变：p2rows 2.53ms 从「热列灌冗余」纠正为「meta 全表重灌 + wb_pack_end 固定开销」的真因（分段实测 6µs/312µs/150µs 铁证），20× 收口的下一刀有了精确坐标（meta 行级化+BIDX 门控）；顺带修复风暴尾部真实崩溃（陈旧扫描越界写）并实证防护零轨迹变化（16c767c4 位等）。距离门控方案的探索-证明-废弃全程留痕，防止后续轮重蹈「优化 6µs 段冒语义险」的覆辙。
