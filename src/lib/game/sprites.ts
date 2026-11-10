@@ -1358,51 +1358,6 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       ctx.fillRect(px + 1, py - 4 + flap, 1, 2);
       return;
     }
-    case 13: {
-      // seaFort：【机制③】海上要塞（钉入海面的石台堡垒——桩基破浪 + 垛口炮位 + 瞭望旗）
-      // 浪圈（基座白沫：相位交替的环带——海浪拍桩的呼吸感）
-      const wake = (fc >> 4) & 1;
-      ctx.fillStyle = wake ? 'rgba(235,246,255,0.85)' : 'rgba(210,228,242,0.6)';
-      ctx.fillRect(px - 3, py + 12, 6, 1);
-      ctx.fillRect(px + 9, py + 12, 6, 1);
-      // 石桩（深入海面的墩基）
-      ctx.fillStyle = '#5a5a62';
-      ctx.fillRect(px, py + 9, 3, 6);
-      ctx.fillRect(px + 9, py + 9, 3, 6);
-      ctx.fillStyle = '#3e3e46';
-      ctx.fillRect(px, py + 13, 3, 2);
-      ctx.fillRect(px + 9, py + 13, 3, 2);
-      // 要塞主体（礁石浇筑的圆台壁垒）
-      ctx.fillStyle = '#75757e';
-      ctx.fillRect(px - 1, py + 3, 14, 7);
-      ctx.fillStyle = '#63636c';
-      ctx.fillRect(px - 1, py + 8, 14, 2);
-      // 炮眼（正面三孔——黑洞洞的炮口）
-      ctx.fillStyle = '#14100c';
-      ctx.fillRect(px + 2, py + 5, 2, 2);
-      ctx.fillRect(px + 6, py + 5, 2, 2);
-      ctx.fillRect(px + 10, py + 5, 2, 2);
-      // 垛口雉堞（顶部齿纹）
-      ctx.fillStyle = '#8a8a93';
-      ctx.fillRect(px - 1, py + 1, 14, 2);
-      ctx.fillStyle = '#9c9ca5';
-      ctx.fillRect(px - 1, py + 1, 2, 2);
-      ctx.fillRect(px + 4, py + 1, 2, 2);
-      ctx.fillRect(px + 9, py + 1, 2, 2);
-      // 瞭望塔 + 国旗（旗尾拍浪而动——海风更急）
-      ctx.fillStyle = '#4a4a52';
-      ctx.fillRect(px + 5, py - 6, 2, 8);
-      ctx.fillStyle = rgb(color);
-      ctx.fillRect(px + 7, py - 6, 3, 2);
-      ctx.fillRect(px + 10, py - 6 + flap, 1, 2);
-      // 塔顶信标（燃点——风摆里常亮的火苗）
-      const flare = ((fc + b.i * 3) >> 3) & 1;
-      ctx.fillStyle = flare ? '#ffb24a' : '#e8862a';
-      ctx.fillRect(px + 5, py - 8 + flare, 2, 2);
-      ctx.fillStyle = 'rgba(255,220,140,0.75)';
-      ctx.fillRect(px + 5, py - 9 + flare, 1, 1);
-      return;
-    }
   }
   // ---- house(1) / capital(2)：科技阶位外观（0 茅屋 / 1 石屋 / 2 堡垒宅 / 3 哥特庄园） ----
   const big = b.kind === 2;
@@ -2151,27 +2106,14 @@ export function drawTroll(ctx: CanvasRenderingContext2D, u: Unit, frame: number)
     ctx.fillRect(px - 2, y + 2, 1, 2);
     ctx.fillRect(px + 1, y + 2, 1, 2);
   }
-  // 长臂：及地的巨臂（攻击三段帧 #59：预备高举→蓄势顶点→砸落前伸+冲击白光——挥击有了过程）
+  // 长臂：及地的巨臂（攻击时双臂高举过头）
   ctx.fillStyle = body;
-  const atkT = u.atk ?? 0;
-  if (atkT >= 9) {
-    // 预备：双臂高举过头（肩位上移），白光聚于前拳
-    ctx.fillRect(px - 4, y - 6, 1, 5);
-    ctx.fillRect(px + 3, y - 6, 1, 5);
+  if ((u.atk ?? 0) > 0) {
+    ctx.fillRect(px - 4, y - 5, 1, 4);
+    ctx.fillRect(px + 3, y - 5, 1, 4);
+    // 挥击白光
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(px + 4 * f, y - 6, 1, 1);
-  } else if (atkT >= 4) {
-    // 蓄势顶点：双臂伸直最高，白光聚拳待落
-    ctx.fillRect(px - 4, y - 7, 1, 6);
-    ctx.fillRect(px + 3, y - 7, 1, 6);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(px + 4 * f, y - 7, 1, 1);
-  } else if (atkT > 0) {
-    // 砸落：双臂前伸下压，冲击白光拍在地面
-    ctx.fillRect(px + 2 * f, y, 1, 4);
-    ctx.fillRect(px + 4 * f, y - 1, 1, 4);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(px + 5 * f, y + 2, 2, 1);
+    ctx.fillRect(px + 4 * f, y - 4, 1, 1);
   } else if (isMoving && step === 1) {
     ctx.fillRect(px - 4, y - 1, 1, 4);
     ctx.fillRect(px + 3, y, 1, 3);
@@ -2242,27 +2184,16 @@ export function drawOgre(ctx: CanvasRenderingContext2D, u: Unit, frame: number) 
   ctx.fillRect(px - 1, y - 1, 3, 2);
   ctx.fillStyle = '#3a342c';
   ctx.fillRect(px - 2, y + 1, 5, 1);
-  // 巨臂 + 骨棒（攻击三段帧 #59：抡臂后引→高举过头→砸地冲击——饕餮巨棒的重量感）
+  // 巨臂 + 骨棒（攻击时抡过头顶）
   ctx.fillStyle = skin;
   ctx.fillRect(px - 3, y - 2, 1, 3);
   ctx.fillRect(px + 2, y - 2, 1, 3);
   ctx.fillStyle = '#8a6a4a';
-  const atkO = u.atk ?? 0;
-  if (atkO >= 9) {
-    // 抡臂后引：棒斜向后上方蓄力
-    ctx.fillRect(px + f, y - 6, 1, 4);
+  if ((u.atk ?? 0) > 0) {
+    ctx.fillRect(px + 3 * f, y - 6, 1, 4);
+    ctx.fillRect(px + 2 * f, y - 6, 1, 1);
     ctx.fillStyle = '#f2ead8';
-    ctx.fillRect(px + f, y - 6, 1, 1);
-  } else if (atkO >= 4) {
-    // 高举过头：棒竖直举到最高
-    ctx.fillRect(px + 2 * f, y - 7, 1, 5);
-    ctx.fillStyle = '#f2ead8';
-    ctx.fillRect(px + 2 * f, y - 7, 1, 1);
-  } else if (atkO > 0) {
-    // 砸地：棒头触地 + 冲击白光
-    ctx.fillRect(px + 3 * f, y - 1, 1, 4);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(px + 3 * f, y + 2, 2, 1);
+    ctx.fillRect(px + 3 * f, y - 6, 1, 1);
   } else {
     ctx.fillRect(px + 3 * f, y - 3, 1, 4);
   }
@@ -2645,8 +2576,6 @@ export function drawHydra(ctx: CanvasRenderingContext2D, u: Unit, frame: number)
     if ((isMoving ? (k + step) % 2 === 0 : k % 2 === 0)) ctx.fillRect(wx, y - bodyH - 1, 1, 1);
   }
   // 多颈多头：中央颈恒在，两侧颈按世代存留；每颈 2 段相位摆动（低血时颈弯垂 1px）
-  // #59 攻击啮咬：atk 窗口内朝向侧颈强制前探下压 + 獠牙白光 + 毒液飞溅（原攻击零表现补件）
-  const atkH = u.atk ?? 0;
   const droop = low ? 1 : 0;
   const necks: Array<{ nx: number; swayBase: number }> = heads >= 3
     ? [{ nx: -3, swayBase: 0 }, { nx: 0, swayBase: 2 }, { nx: 3, swayBase: 4 }]
@@ -2655,34 +2584,28 @@ export function drawHydra(ctx: CanvasRenderingContext2D, u: Unit, frame: number)
       : [{ nx: 0, swayBase: 2 }];
   for (const { nx, swayBase } of necks) {
     const sway = ((frame >> 2) + swayBase) & 3; // 0..3 摆动相位
-    const biting = atkH > 0 && (necks.length === 1 || nx * f > 0);
-    const lift = biting ? 3 : sway === 0 ? 0 : sway === 1 ? 1 : sway === 2 ? 2 : 1;
+    const lift = sway === 0 ? 0 : sway === 1 ? 1 : sway === 2 ? 2 : 1;
     const cx = px + nx;
     ctx.fillStyle = dark;
     ctx.fillRect(cx - 1, y - bodyH - 1, 2, 1); // 颈根
     ctx.fillStyle = body;
-    // 两段颈：下段固定 + 上段随相位横偏（S 形蠕动）；啮咬颈强制前探 2px
+    // 两段颈：下段固定 + 上段随相位横偏（S 形蠕动）
     ctx.fillRect(cx - 1 + (lift > 1 ? f : 0), y - bodyH - 2, 2, 1);
     ctx.fillRect(cx - 1 + (lift > 1 ? f * 2 : lift > 0 ? f : 0), y - bodyH - 3 + droop, 2, 1);
-    // 蛇头（2x2）：三角形轮廓 + 猩红竖瞳 + 周期性眨灭；啮咬时额外前探 1px 下压低咬
-    const hx = cx + (lift > 1 ? f * 2 : lift > 0 ? f : 0) + (biting ? f : 0);
-    const hy = y - bodyH - 4 + droop + (biting ? 1 : 0);
+    // 蛇头（2x2）：三角形轮廓 + 猩红竖瞳 + 周期性眨灭
+    const hx = cx + (lift > 1 ? f * 2 : lift > 0 ? f : 0);
+    const hy = y - bodyH - 4 + droop;
     ctx.fillStyle = body;
     ctx.fillRect(hx - 1, hy, 3, 2);
     ctx.fillStyle = scale;
     ctx.fillRect(hx - 1, hy, 1, 1); // 头顶亮鳞
-    const blink = !biting && frame % 23 < 2;
+    const blink = frame % 23 < 2;
     if (!blink) {
       ctx.fillStyle = low ? '#8c2317' : '#ff4030';
       ctx.fillRect(hx + (f > 0 ? 1 : 0), hy, 1, 1); // 猩红竖瞳
     }
-    // 分叉吐信（低血时不再吐信 —— 虚弱）；啮咬颈改喷獠牙白光 + 毒液飞溅
-    if (biting) {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(hx + (f > 0 ? 3 : -2), hy + 2, 1, 1);
-      ctx.fillStyle = '#9fd42e';
-      ctx.fillRect(hx + (f > 0 ? 3 : -2), hy + 3, 1, 1);
-    } else if (!low && frame % 16 < 5) {
+    // 分叉吐信（低血时不再吐信 —— 虚弱）
+    if (!low && frame % 16 < 5) {
       ctx.fillStyle = '#d556c0';
       ctx.fillRect(hx + (f > 0 ? 2 : -1), hy + 1, 1, 1);
     }
@@ -4149,326 +4072,4 @@ function mix3(hex: string, hex2: string, t: number): string {
   const a = p(hex);
   const b = p(hex2);
   return rgb([Math.round(a[0] + (b[0] - a[0]) * t), Math.round(a[1] + (b[1] - a[1]) * t), Math.round(a[2] + (b[2] - a[2]) * t)]);
-}
-
-// ================= 精绘巨怪三兄弟（zoom≥8 ×4 精细网格：1 单位 = 0.25 tile） =================
-// 换算约定：中档像素（2px/tile）→ 精绘 2×2 细像素（每中档偏移 d → 精绘 2d，脚底基线对齐 fy）；
-// 结构逐段对照中档 drawTroll/drawOgre/drawHydra（#59 三段挥击帧全保留），2×2 内部补受光/背阴列——
-// 巨怪特写从 8×8 CSS 像素块到 2×2 细节，精度增益 4×。
-
-/** 石魔精绘：佝背巨躯 + 及地长臂 + 三段砸落（预备高举→蓄势顶点→砸落前伸+冲击白光） */
-export function drawTrollFine(ctx: CanvasRenderingContext2D, u: Unit, t = 0) {
-  const fx = Math.round(u.rx ?? u.x);
-  const fy = Math.round(u.ry ?? u.y) + 1;
-  const f = u.flip ? -1 : 1;
-  const isMoving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
-  const step = isMoving ? ((t >> 2) & 1) : 0;
-  const bob = isMoving && step === 1 ? 2 : 0;
-  const breath = !isMoving && ((t >> 4) & 1) === 1 ? 2 : 0;
-  const fy2 = fy - bob - breath; // 躯体基线（脚底行）
-  const hurt = u.hurt > 0;
-  const body = hurt ? '#ff6b5e' : '#4a7c3a';
-  const bodyDk = hurt ? '#cf3f2e' : '#3a6630';
-  const bodyLt = hurt ? '#ffc4b8' : '#5e9348';
-  const dark = '#2c5e24';
-  // 地面阴影（14×2 椭圆感：中段全宽两端缩进）
-  ctx.fillStyle = 'rgba(0,0,0,0.32)';
-  ctx.fillRect(fx - 5, fy2 - 2, 12, 2);
-  ctx.fillRect(fx - 6, fy2 - 2, 1, 1);
-  ctx.fillRect(fx + 5, fy2 - 2, 1, 1);
-  // 短腿跨步（2×4 粗腿）
-  ctx.fillStyle = dark;
-  if (isMoving && step === 1) {
-    ctx.fillRect(fx - 4, fy2 - 4, 2, 4);
-    ctx.fillRect(fx + 2, fy2 - 2, 2, 2);
-  } else if (isMoving) {
-    ctx.fillRect(fx - 4, fy2 - 2, 2, 2);
-    ctx.fillRect(fx + 2, fy2 - 4, 2, 4);
-  } else {
-    ctx.fillRect(fx - 4, fy2 - 4, 2, 4);
-    ctx.fillRect(fx + 2, fy2 - 4, 2, 4);
-  }
-  // 及地长臂三段帧（#59：预备高举→蓄势顶点→砸落前伸+冲击白光）
-  ctx.fillStyle = body;
-  const atkT = u.atk ?? 0;
-  if (atkT >= 9) {
-    // 预备：双臂高举过头（受光内侧列）
-    ctx.fillRect(fx - 8, fy2 - 20, 2, 10);
-    ctx.fillRect(fx + 6, fy2 - 20, 2, 10);
-    ctx.fillStyle = bodyLt;
-    ctx.fillRect(fx - 8, fy2 - 20, 1, 10);
-    ctx.fillRect(fx + 7, fy2 - 20, 1, 10);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(fx + 8 * f, fy2 - 20, 2, 2);
-  } else if (atkT >= 4) {
-    // 蓄势顶点：双臂伸直最高
-    ctx.fillRect(fx - 8, fy2 - 22, 2, 12);
-    ctx.fillRect(fx + 6, fy2 - 22, 2, 12);
-    ctx.fillStyle = bodyLt;
-    ctx.fillRect(fx - 8, fy2 - 22, 1, 12);
-    ctx.fillRect(fx + 7, fy2 - 22, 1, 12);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(fx + 8 * f, fy2 - 22, 2, 2);
-  } else if (atkT > 0) {
-    // 砸落：双臂前伸下压 + 冲击白光拍地（4×2 冲击带）
-    ctx.fillRect(fx + 4 * f, fy2 - 8, 2, 8);
-    ctx.fillRect(fx + 8 * f, fy2 - 10, 2, 8);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(fx + 10 * f, fy2 - 4, 4, 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillRect(fx + 10 * f, fy2 - 2, 4, 1);
-  } else if (isMoving && step === 1) {
-    ctx.fillRect(fx - 8, fy2 - 10, 2, 8);
-    ctx.fillRect(fx + 6, fy2 - 8, 2, 6);
-  } else if (isMoving) {
-    ctx.fillRect(fx - 8, fy2 - 8, 2, 6);
-    ctx.fillRect(fx + 6, fy2 - 10, 2, 8);
-  } else {
-    ctx.fillRect(fx - 8, fy2 - 10, 2, 8);
-    ctx.fillRect(fx + 6, fy2 - 10, 2, 8);
-  }
-  // 佝背躯干（10×8：顶部受光 + 底部背阴 + 后侧列暗）
-  ctx.fillStyle = body;
-  ctx.fillRect(fx - 4, fy2 - 14, 10, 8);
-  ctx.fillStyle = bodyLt;
-  ctx.fillRect(fx - 4, fy2 - 14, 10, 1); // 肩背受光
-  ctx.fillStyle = bodyDk;
-  ctx.fillRect(fx - 4, fy2 - 7, 10, 1); // 腹底背阴
-  ctx.fillRect(fx + 5, fy2 - 14, 1, 8); // 后侧列暗
-  // 苔藓肩斑（2×2 三斑，再生微光闪烁）
-  ctx.fillStyle = t % 20 < 10 ? '#6b8f4e' : '#7fa93c';
-  ctx.fillRect(fx - 4, fy2 - 14, 2, 2);
-  ctx.fillRect(fx + 4, fy2 - 14, 2, 2);
-  ctx.fillRect(fx + 2, fy2 - 12, 2, 2);
-  // 头（6×4 前伸低垂 + 独眼 + 双獠牙 + 下颌暗行）
-  ctx.fillStyle = body;
-  ctx.fillRect(fx + (f > 0 ? 0 : -4), fy2 - 18, 6, 4);
-  ctx.fillStyle = bodyDk;
-  ctx.fillRect(fx + (f > 0 ? 0 : -4), fy2 - 15, 6, 1); // 下颌暗
-  ctx.fillStyle = '#ffd93d';
-  ctx.fillRect(fx + (f > 0 ? 2 : -4), fy2 - 16, 2, 2); // 独眼
-  ctx.fillStyle = '#8a6a1a';
-  ctx.fillRect(fx + (f > 0 ? 3 : -4), fy2 - 16, 1, 1); // 瞳
-  ctx.fillStyle = '#f2ead8';
-  ctx.fillRect(fx + (f > 0 ? 0 : -2), fy2 - 12, 2, 1); // 獠牙 ×2
-  ctx.fillRect(fx + (f > 0 ? 4 : -6), fy2 - 12, 2, 1);
-  // 低血量警示（12×2 红条）
-  if (u.hp < u.maxHp * 0.4) {
-    ctx.fillStyle = '#cf3f2e';
-    ctx.fillRect(fx - 4, fy2 - 22, 12, 2);
-  }
-}
-
-/** 食人魔精绘：巨腹饕餮 + 骨棒三段抡击（后引→高举过头→砸地冲击）+ 圆耳/鼻环/獠牙 */
-export function drawOgreFine(ctx: CanvasRenderingContext2D, u: Unit, t = 0) {
-  const fx = Math.round(u.rx ?? u.x);
-  const fy = Math.round(u.ry ?? u.y) + 1;
-  const f = u.flip ? -1 : 1;
-  const isMoving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
-  const step = isMoving ? ((t >> 2) & 1) : 0;
-  const bob = isMoving && step === 1 ? 2 : 0;
-  const breath = !isMoving && ((t >> 4) & 1) === 1 ? 2 : 0;
-  const fy2 = fy - bob - breath;
-  const hurt = u.hurt > 0;
-  const skin = hurt ? '#ff6b5e' : '#c98d5a';
-  const skinDk = hurt ? '#cf3f2e' : '#a8724a';
-  const skinLt = hurt ? '#ffc4b8' : '#dfb27e';
-  const dark = '#6e4a2b';
-  const belly = '#e3b98a';
-  // 地面阴影
-  ctx.fillStyle = 'rgba(0,0,0,0.32)';
-  ctx.fillRect(fx - 5, fy2 - 2, 12, 2);
-  ctx.fillRect(fx - 6, fy2 - 2, 1, 1);
-  ctx.fillRect(fx + 5, fy2 - 2, 1, 1);
-  // 粗短双腿跨步
-  ctx.fillStyle = dark;
-  if (isMoving && step === 1) {
-    ctx.fillRect(fx - 4, fy2 - 4, 2, 4);
-    ctx.fillRect(fx + 2, fy2 - 2, 2, 2);
-  } else if (isMoving) {
-    ctx.fillRect(fx - 4, fy2 - 2, 2, 2);
-    ctx.fillRect(fx + 2, fy2 - 4, 2, 4);
-  } else {
-    ctx.fillRect(fx - 4, fy2 - 4, 2, 4);
-    ctx.fillRect(fx + 2, fy2 - 4, 2, 4);
-  }
-  // 巨腹躯体（10×8：顶受光/腹底背阴/后列暗）
-  ctx.fillStyle = skin;
-  ctx.fillRect(fx - 4, fy2 - 14, 10, 8);
-  ctx.fillStyle = skinLt;
-  ctx.fillRect(fx - 4, fy2 - 14, 10, 1);
-  ctx.fillStyle = skinDk;
-  ctx.fillRect(fx + 5, fy2 - 13, 1, 7);
-  // 大腹（6×4 暖腹 + 肚脐暗点）
-  ctx.fillStyle = belly;
-  ctx.fillRect(fx - 2, fy2 - 10, 6, 4);
-  ctx.fillStyle = skinDk;
-  ctx.fillRect(fx + 1, fy2 - 8, 1, 1);
-  // 腰布（10×2 + 布纹受光）
-  ctx.fillStyle = '#3a342c';
-  ctx.fillRect(fx - 4, fy2 - 6, 10, 2);
-  ctx.fillStyle = '#54493a';
-  ctx.fillRect(fx - 4, fy2 - 6, 10, 1);
-  // 双臂 + 骨棒三段帧（#59）
-  ctx.fillStyle = skin;
-  ctx.fillRect(fx - 6, fy2 - 12, 2, 6);
-  ctx.fillRect(fx + 4, fy2 - 12, 2, 6);
-  ctx.fillStyle = skinLt;
-  ctx.fillRect(fx - 6, fy2 - 12, 1, 6);
-  ctx.fillRect(fx + 4, fy2 - 12, 1, 6);
-  ctx.fillStyle = '#8a6a4a';
-  const atkO = u.atk ?? 0;
-  if (atkO >= 9) {
-    // 抡臂后引：棒斜向后上方蓄力（2×8 + 骨白尖）
-    ctx.fillRect(fx + 2 * f, fy2 - 20, 2, 8);
-    ctx.fillStyle = '#f2ead8';
-    ctx.fillRect(fx + 2 * f, fy2 - 20, 2, 2);
-  } else if (atkO >= 4) {
-    // 高举过头：棒竖直举到最高（2×10）
-    ctx.fillRect(fx + 4 * f, fy2 - 22, 2, 10);
-    ctx.fillStyle = '#f2ead8';
-    ctx.fillRect(fx + 4 * f, fy2 - 22, 2, 2);
-  } else if (atkO > 0) {
-    // 砸地：棒头触地 + 冲击白光
-    ctx.fillRect(fx + 6 * f, fy2 - 10, 2, 8);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(fx + 6 * f, fy2 - 4, 4, 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillRect(fx + 6 * f, fy2 - 2, 4, 1);
-  } else {
-    ctx.fillRect(fx + 6 * f, fy2 - 14, 2, 8);
-  }
-  // 小圆头（6×4）+ 双圆耳 + 鼻环 + 眼 + 双獠牙
-  ctx.fillStyle = skin;
-  ctx.fillRect(fx - 2, fy2 - 18, 6, 4);
-  ctx.fillStyle = dark;
-  ctx.fillRect(fx - 2, fy2 - 16, 2, 2); // 左耳
-  ctx.fillRect(fx + 2, fy2 - 16, 2, 2); // 右耳
-  ctx.fillStyle = '#d9a13a';
-  ctx.fillRect(fx, fy2 - 14, 2, 1); // 鼻环
-  ctx.fillStyle = '#ffd93d';
-  ctx.fillRect(fx, fy2 - 17, 2, 2); // 眼
-  ctx.fillStyle = '#8a6a1a';
-  ctx.fillRect(fx + 1, fy2 - 17, 1, 1); // 瞳
-  ctx.fillStyle = '#f2ead8';
-  ctx.fillRect(fx - 4, fy2 - 16, 2, 2); // 獠牙 ×2
-  ctx.fillRect(fx + 4, fy2 - 16, 2, 2);
-  // 低血量警示
-  if (u.hp < u.maxHp * 0.4) {
-    ctx.fillStyle = '#cf3f2e';
-    ctx.fillRect(fx - 4, fy2 - 22, 12, 2);
-  }
-}
-
-/** 九头蛇精绘 v2（#66 池⑥重做，VLM 实拍核验驱动）：三头分离可读 + 躯干收束 + 竖瞳聚焦。
- *  #62 版结构病灶（zoom 24 实拍）：3 头各 6 宽、中心距 6 → 头头零隙相接糊成一团；
- *  竖瞳无暗窝散如装饰点；躯干四角方正如砖；吐信/毒滴位置跳变悬空。
- *  本版：头 3 宽 × 中心距 5/6（任意摆相位下头间恒 ≥1 隙）；中颈拔高 2（金字塔错落）；
- *  暗窝 2×2 + 猩红 1×2 竖瞳；躯干顶/底缘内收圆角 + 尾端暗肩坡；鳞阵双排横贯；
- *  吐信贴口缘、毒滴锚定口侧单柱。语义钩子全保留：gen 3/2/1 头 / S 摆相位 /
- *  啮咬前探下压 + 獠牙白光 + 毒液飞溅 / 眨眼 / 低血 droop + 警示条 + 毒雾 /
- *  泥浆涟漪 / 移动步态起伏 / 受击红闪 */
-export function drawHydraFine(ctx: CanvasRenderingContext2D, u: Unit, t = 0) {
-  const fx = Math.round(u.rx ?? u.x);
-  const fy = Math.round(u.ry ?? u.y) + 1;
-  const f = u.flip ? -1 : 1;
-  const isMoving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
-  const gen = u.gen ?? 0;
-  const heads = [3, 2, 1][gen];
-  const bh = [3, 2, 1][gen]; // 中档躯干半高
-  const topOff = bh * 4 + 2; // 躯干顶距脚底的精绘单位数（中档 dy=-2bh-1 → 精 ×2）
-  const low = u.hp < u.maxHp * 0.35;
-  const step = isMoving ? ((t >> 2) & 1) : 0;
-  const fy2 = fy - (isMoving ? step * 2 : 0);
-  const hurt = u.hurt > 0;
-  const body = hurt ? '#ff6b5e' : low ? '#2c5223' : '#3f7a2e';
-  const dark = low ? '#1c3a17' : '#25501d';
-  const scale = low ? '#3a6e2c' : '#4f9e3a';
-  const scaleLt = low ? '#4f8a3c' : '#63b84a';
-  const belly = low ? '#6b8544' : '#8fae55';
-  // 泥浆涟漪环（三段扩散相位）
-  ctx.fillStyle = 'rgba(90,110,60,0.4)';
-  const ripple = (t >> 3) % 3;
-  if (ripple === 0) ctx.fillRect(fx - 8, fy2, 18, 2);
-  else if (ripple === 1) { ctx.fillRect(fx - 10, fy2, 6, 2); ctx.fillRect(fx + 6, fy2, 6, 2); }
-  else { ctx.fillRect(fx - 12, fy2, 4, 2); ctx.fillRect(fx + 10, fy2, 4, 2); }
-  // 毒液滴落（确定性 40 帧周期；#66 锚定口侧单柱且抬离地面——读作「嘴边滴毒」不再与涟漪同格互吞）
-  if (t % 40 < 3) {
-    ctx.fillStyle = '#9fd42e';
-    ctx.fillRect(fx + (f > 0 ? 5 : -7), fy2 - 4 - (t % 40) * 2, 2, 2);
-  }
-  // —— 宽扁巨躯（18 宽 × topOff 高；三段轮廓收束消「砖感」：顶缘 16 内收、主体 18、底缘 14 内收）——
-  ctx.fillStyle = body;
-  ctx.fillRect(fx - 7, fy2 - topOff, 16, 2); // 顶缘（内收 1，颈根群承托）
-  ctx.fillRect(fx - 8, fy2 - topOff + 2, 18, topOff - 4); // 躯干主体
-  ctx.fillRect(fx - 6, fy2 - 2, 14, 2); // 底缘（内收 2 圆角）
-  ctx.fillStyle = dark;
-  ctx.fillRect(fx - 7, fy2 - topOff, 16, 1); // 背线（顶缘首行）
-  ctx.fillStyle = belly;
-  ctx.fillRect(fx - 6, fy2 - 3, 14, 1); // 腹线（底缘上一行，圆底内）
-  // 交错鳞阵双排（#66 对比度：深色排 × 亮色排交替——黑/亮菱形节奏在墨绿躯干上才立得住）
-  ctx.fillStyle = dark;
-  for (let k = 0; k < 4; k++) ctx.fillRect(fx - 6 + k * 4, fy2 - topOff + 3, 2, 2);
-  ctx.fillStyle = scaleLt;
-  for (let k = 0; k < 3; k++) ctx.fillRect(fx - 4 + k * 4, fy2 - topOff + 6, 2, 2);
-  // 尾端暗肩坡（朝向反侧 2×3 暗收坡——巨躯有了方向感；在鳞阵之后绘制盖住尾侧鳞点）
-  ctx.fillStyle = dark;
-  ctx.fillRect(f > 0 ? fx - 8 : fx + 6, fy2 - topOff + 2, 2, 3);
-  // —— 多颈多头（#59 啮咬语义全保留；#66 分离重构：头 3 宽 × 中心距 5/6，恒 ≥1 隙）——
-  const atkH = u.atk ?? 0;
-  const droop = low ? 2 : 0;
-  const necks: Array<{ nx: number; swayBase: number; tall: number }> = heads >= 3
-    ? [{ nx: -5, swayBase: 0, tall: 0 }, { nx: 0, swayBase: 2, tall: 2 }, { nx: 5, swayBase: 4, tall: 0 }]
-    : heads === 2
-      ? [{ nx: -4, swayBase: 1, tall: 0 }, { nx: 4, swayBase: 3, tall: 0 }]
-      : [{ nx: 0, swayBase: 2, tall: 0 }];
-  for (const { nx, swayBase, tall } of necks) {
-    const sway = ((t >> 2) + swayBase) & 3;
-    const biting = atkH > 0 && (necks.length === 1 || nx * f > 0);
-    const lift = biting ? 3 : sway === 0 ? 0 : sway === 1 ? 1 : sway === 2 ? 2 : 1;
-    const cx = fx + nx;
-    // 小步 S 形蠕动（#66 不变量证明驱动：摆动错位统一半步 f*1——静止头隙 2，半步闭合 1 后仍恒 ≥1；
-    // 啮咬颈才额外前探 f*2 成扑咬姿态，p66-gap-proof 枚举 64 组合零重叠）
-    const lean2 = lift > 0 ? f : 0;
-    ctx.fillStyle = dark;
-    ctx.fillRect(cx - 2, fy2 - topOff - 2, 4, 2); // 颈根（4 宽，三根正好铺满顶缘成冠）
-    ctx.fillStyle = body;
-    // 两段颈（各 4×2）：下段立正 + 上段半步（S 形蠕动）；中颈拔高 2；啮咬颈头位额外前探
-    ctx.fillRect(cx - 2, fy2 - topOff - 4, 4, 2);
-    ctx.fillRect(cx - 2 + lean2, fy2 - topOff - 6 - tall + droop, 4, 2);
-    // 蛇头（3×4 贴颈顶脸侧错 1：头间恒 ≥1 隙）；啮咬时额外前探 2 下压 2 低咬
-    const hx = cx - 1 + lean2 + (biting ? f * 2 : 0) + (f > 0 ? 1 : 0);
-    const hy = fy2 - topOff - 8 - tall + droop + (biting ? 2 : 0);
-    ctx.fillStyle = body;
-    ctx.fillRect(hx, hy, 3, 4);
-    ctx.fillStyle = scaleLt;
-    ctx.fillRect(hx + (f > 0 ? 0 : 1), hy, 2, 1); // 头顶亮鳞眉（后侧，亮色——头颅轮廓与颈部区分）
-    // 竖瞳聚焦（#66）：暗窝近黑（与墨绿体色拉开两档）+ 猩红 1×2 竖瞳——红点有了黑底衬托不再是散装饰
-    const blink = !biting && t % 23 < 2;
-    ctx.fillStyle = '#131f0c';
-    ctx.fillRect(hx + (f > 0 ? 1 : 0), hy + 1, 2, 2); // 暗窝（近黑）
-    if (!blink) {
-      ctx.fillStyle = low ? '#8c2317' : '#ff4030';
-      ctx.fillRect(hx + (f > 0 ? 1 : 0), hy + 1, 2, 1); // 猩红瞳 2×1（暗窝上沿——红面积加倍，远距仍可辨）
-      ctx.fillStyle = low ? '#5a120c' : '#b82418';
-      ctx.fillRect(hx + (f > 0 ? 2 : 0), hy + 2, 1, 1); // 瞳下暗影点（竖瞳纵深）
-    }
-    // 吐信贴口（脸缘 2×1 粉信）；啮咬颈改喷獠牙白光 + 毒液飞溅（贴口向下）
-    if (biting) {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(hx + (f > 0 ? 3 : -2), hy + 2, 2, 2);
-      ctx.fillStyle = '#9fd42e';
-      ctx.fillRect(hx + (f > 0 ? 3 : -2), hy + 4, 2, 2);
-    } else if (!low && t % 16 < 5) {
-      ctx.fillStyle = '#d556c0';
-      ctx.fillRect(hx + (f > 0 ? 3 : -2), hy + 2, 2, 1);
-    }
-  }
-  // 低血量警示 + 灰暗毒雾（将死的巨蟒；警示条上移避开拔高中颈）
-  if (low) {
-    ctx.fillStyle = '#cf3f2e';
-    ctx.fillRect(fx - 6, fy2 - topOff - 14, 14, 2);
-    ctx.fillStyle = 'rgba(120,140,80,0.25)';
-    ctx.fillRect(fx - 10, fy2 - 2, 22, 2);
-  }
 }
