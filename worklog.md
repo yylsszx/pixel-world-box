@@ -5895,5 +5895,6 @@ Stage Summary:
 - **QA 方法论沉淀**: ①headless 下 agent-browser mouse down/up 不触发页面 pointer 事件（探针实证）——合成 PointerEvent dispatchEvent 是可靠替代（bubbles+composed+pointerId+pointerType 必填）；②Fast Refresh 编辑引擎依赖链文件会重置 zustand store（boot 回 title、speed 复位）——测试中途改代码必须重进游戏再测，勿用旧 __qa 坐标；③合成事件测选中链要防「单位移动/死亡漂移」：冻结 speed=0 且坐标计算与点击同一 eval 内完成（暂停后单位仍有末帧 1-2 格位移，跨命令间隔坐标即失准）；④「点文明弹生物」类 UI 状态 bug 的定罪关键在分层——store 层（selCiv 是否正确）→ 引擎层（getCivInfo 是否正常）→ 渲染层（内容判定源），三层各验一遍再动刀，避免误修好链路。
 
 **遗留（下轮优先池）**: 帧循环 43ms/23fps 缺口画像（真机影响待估）、贴花 rgba LUT、writeback 标量段免写、beachedAquatic retarget；「继续旅程」不显示自动档候选（UX）；滑杆行可见性（法则面板滚动区底部）；ecoTick/statsTick 尖峰尾部；raise 工具 GRASS 顶格；战争收束叙事调优；内核真停摆（待 rust 工具链）；rust 工具链。
-**推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**推送**: 代码 + worklog 本条 → push-web.sh → **SYNC_OK 5478c99 → origin/main**（凭证自愈后一次通过，CI 构建中，下轮复核双绿）。
 **版本节奏**: **升位 v0.65**（用户钦定大 bug 修复；CHANGELOG 一条玩家视角要点）。
+**评估：D5/D6 检视面板是玩家最高频交互面，选中错乱（点谁不变/点文明弹生物）直接击穿手感与可用性——本轮渲染条件单源化+拾取 dead 过滤把「点谁显谁」恢复为铁律，六维最大短板 D5 的基础体验缺口收口；D6 稳定性同受益（两处潜在错乱源根除）。
