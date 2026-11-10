@@ -6210,3 +6210,25 @@ Stage Summary:
 **版本节奏**: 不升位（v0.65 批次第七笔：纯视觉层零模拟语义变更；**#52-59 已 8 笔未升位——下轮强烈建议合并升位 v0.66+CHANGELOG**）。
 **推送**: 代码（render/sprites）+ worklog 本条 → push-web.sh（结果见下轮复核）。
 **评估**: D5 手感与表现——四足动物中档 LOD 从两相交替提腿升级为 walk 四拍韵律+推进起伏（与全绘档节奏统一），三巨怪攻击从静态高举/零表现升级为三段挥击过程动画（砸地冲击/啮咬毒液，画布哈希 4 态全唯一实证）；表现线三连击后 D5 短板持续收窄，下轮按规则轮换主攻 20× 收口或 UX bug 实修。
+
+## 2026-11-10 #60（触发轮，v3）：遗留池③「继续旅程」UX bug 升优先实修（连续 5 轮复现）+ v0.66 合并升位
+
+**上轮复核**: #59 推送 6acb0e7——Deploy 2e61806 success + pages 485be2f success 双绿（Actions API 确认；deploy-bot 快照 hash 与原提交不同属管线重写正常态）；dev server/agent-browser 存活复用，无撞车。
+
+**本轮主攻（选题规则②换题轮换；#59 遗留池①候选二选一取 UX bug 实修，20× 真机 vsync 留待有真实设备时机——headless swiftshader 测不出真 vsync）**:
+- **根因 1——metaFromData 列索引硬编码错位（pop 恒 0 的根因，100% 实锤）**: v2 列式存档 meta 统计硬编码 row[1]=race/row[22]=dead——但 UNIT_FIELDS[22] 实为 **breath（呼吸相位）**、dead 在 [24]；slot1 全量统计 **774/774 单位 breath truthy（活单位全被误判死亡）**、真实 dead=0 → 所有槽位「人口0」「文明0」。修法：按首行表头（UNIT_FIELDS 快照）`indexOf('race'/'dead')` 定位列——字段名映射防未来列序演进再错位（race 保留 row[1] fallback）。slot1 pop=0 本身为真实值（774 单位纯野生动物世界、civs 数组空——文明确实全灭），非统计错。
+- **根因 2——listSlots 数据孤儿永不复活（「继续旅程」隐身的场景根因）**: 存档数据在但 meta 索引缺失（meta 写失败/被单独清理/旧版本无 meta 系统）时，旧逻辑什么都不做——auto 档永久隐身。修法：孤儿态 parse 存档一次用 metaFromData 重建 meta 并写回（600KB parse 仅首次发生，随后走快路径）；meta 孤儿（数据已清）仍删展示信息。legacy 分支同款逻辑不变。
+- **改动 3——「继续旅程」档位来源角标**: auto 档琥珀「自动」角标、手动槽「槽位N」、旧档「旧档」灰角标——玩家一眼看出载的是哪个档（此前看不出，配合「自动档不显示」的历史困惑加剧不信任）。
+- **顺带完成**: v0.66-preview 升位 + CHANGELOG 5 条（#52-60 合并要点：动画三连击/四相步态/巨怪挥击/pop 修复/自动档复活——#52-59 已 8 笔未升位的欠账清偿）。
+
+**QA（全绿）**:
+- **端到端实证**: 进入世界 spawnUnit 放 5 人（自动立国 civs=1）→ saveGame('auto') 分片落盘 → auto meta **pop=5/civs=1**（此前恒 0）→ 与数据侧表头映射交叉核对**精确一致**；reload 标题屏「继续旅程 [自动] 第67年 · 人口11」（文明持续繁衍 5→11，人口真实在动）+「预览版 v0.66」徽章生效，截图布局零溢出。
+- **点击链路**: 「继续旅程」click → loadFromSlot('auto') → enterWorld 全通（422 单位/year 68 与 meta 一致）。
+- **回归**: slot1 大档读档 true（774 单位/year 2340）；20× 十秒 +1567 ticks 繁衍 774→805 无崩溃；孤儿复活机制实机验证（清 meta 索引 → refreshSlots → 三槽全重建写回）。
+- tsc 零错误 + eslint 零告警（改动 3 文件 56+/12-）。
+
+**遗留（下轮优先池）**: ① 20× 收口：真机 vsync 实测（refreshMs/drawMs 探针画像）+ pack 内核提速 ~2ms/tick（真机路径，headless 不可测）；② D5 剩余：精绘档巨怪挥击帧（tryDrawFine ×4 分支）+人形受击后仰；③ beachedAquatic retarget 470 draws/tick 降频；④ 战争收束叙事调优；⑤ 滑杆行可见性；⑥ raise GRASS 顶格；⑦ 桶消费点语义面复查；⑧ 线上读档 slot2 大世界实验档复核（本轮 auto 已被 QA 会话覆盖为新实验世界）。
+
+**推送**: 代码（gameStore/TitleScreen/version）+ worklog 本条 → push-web.sh（结果见下轮复核）。
+**版本节奏**: **v0.65-preview → v0.66-preview 升位**（#52-60 十轮合并升位 + CHANGELOG 5 条；version.ts GAME_VERSION 已改）。
+**评估**: D5 手感与表现 + D6 稳定健壮——「继续旅程」与存档槽人口从恒 0 到真实可信（呼吸相位误判根除，774/774 实锤→表头映射根治），自动档隐身场景根除（孤儿复活），档位来源可见化；连续 5 轮复现的 UX 债清偿，存档 UI 数字自此值得玩家信任。
