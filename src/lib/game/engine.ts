@@ -14500,11 +14500,15 @@ export class GameEngine {
    *     TS 扣血会被回读覆写 —— 实测无效 —— 故用瞬态计数）。
    *  近岸个体形成「挣扎回海」窗口，深内陆个体窒息终局 —— 陆生鱼群无法自续，退化生态自愈。 */
   private beachedAquaticTick() {
-    const retarget = this.tickCount % 20 === 0; // 目标采样每 20 tick 一次；断言逐 tick 廉价
     for (const u of this.units) {
       if (u.dead) continue;
       const def = RACES[u.race];
       if (!def.aquatic || def.beach) continue;
+      // 相位错峰 retarget（#63）：采样判定从「全体同 tick 齐步」（tickCount%20==0）改为按单位 id
+      // 相位分散——每单位仍严格 20 tick 一采（统计等价：游走散布/猎游粘性/窒息节拍全部不变），
+      // 采样不再扎堆在同一个 tick。id 为 UNIT_FIELDS 首列入档字段：读档后相位与原世界逐位一致，
+      // 位等确定性不破坏。
+      const retarget = (this.tickCount + u.id) % 20 === 0;
       const ti = idx(Math.floor(u.x), Math.floor(u.y));
       if (isWater(this.terrain[ti])) {
         u.beachT = 0;
@@ -14573,10 +14577,12 @@ export class GameEngine {
           if (u.beachTx != null && u.beachTy != null) { u.tx = u.beachTx; u.ty = u.beachTy; }
           continue;
         }
-        u.beachTx = undefined; u.beachTy = undefined;
         if (retarget || u.beachTx == null) {
           // 水域内随机游走：采样 8 个候选点，取首个「实体水」（自身+≥5 邻水）—— 防止指向孤水坑/岸边
           // 25% 远散布（±14）：鱼群低频外溢 —— 高密鱼团让鲨鱼的校际通勤饿毙（Task 96 实测 102 格通勤）
+          // 清空仅在采样时执行（#63 死 gate 修复：原「先清后判」让 beachTx==null 恒真、retarget
+          // 形同虚设，鱼群实际每 tick 重采样 8 候选——#61 rng 直方图 470 draws/tick 恒定大头）
+          u.beachTx = undefined; u.beachTy = undefined;
           const far = this.rng() < 0.25;
           const spread = far ? 14 : 6;
           for (let k = 0; k < 8; k++) {
