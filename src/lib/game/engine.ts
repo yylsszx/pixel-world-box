@@ -286,6 +286,13 @@ export class GameEngine {
   marketIdx = new Map<number, number>();
   /** 每文明下一次可派商队的 tick */
   tradeNext = new Map<number, number>();
+  // ---------------- 职业宏观调控（#68 机制①：文明自动宏观调控职业比例） ----------------
+  /** 各文明职业调控期数计数器（每 6 期 economyTick 全量调控一次；粮食缺口期期必调）——瞬态不入档，载档清零（保同页双载位等） */
+  profT = new Map<number, number>();
+  /** 各文明出生职业权重偏置（国情 → 新生儿营生倾向；profBalance 刷新）——瞬态不入档 */
+  jobBias = new Map<number, number[]>();
+  /** 猎场丰饶期（civHuntTick 每 20 tick 普查：陆生野味 ≥400 → 猎手编制放开；猎期终结猎手归田）——瞬态不入档 */
+  preyAbundant = false;
   /** 画面效果开关（UI store 同步，render 读取；伤害数字关闭时引擎也不再生成特效） */
   fxPrefs: FxPrefs = { dmgNumbers: true, battleFlash: true, riverFlow: true, ambience: true, fxDensity: 1, blood: true, corpses: true, hpBars: true, dayNight: true };
 
@@ -996,6 +1003,9 @@ export class GameEngine {
     this.road.fill(0);
     this.tradeNext.clear();
     this.marketIdx.clear();
+    this.profT.clear();
+    this.jobBias.clear();
+    this.preyAbundant = false;
     this.rebuildWaterTiers();
     for (let i = 0; i < W * H; i++) this.dirty.add(i);
     this.flushDirty();
@@ -1402,10 +1412,11 @@ export class GameEngine {
     const td = trait ? TRAITS[trait] : null;
     // —— 基因（野生动物）：出生即携带母代基因（进化遗传）；人工放置的野生动物从物种基线取样 ——
     const gene = opts?.gene !== undefined ? opts.gene : this.baseGene(race); // v3：全体单位（含文明）携带基因 —— 万物皆在演化
-    // 职业：文明生物加权抽取（战士/弓手/农民/建筑师/商人/贵族），可由 opts 指定（开发者/兵营）
+    // 职业：文明生物加权抽取（战士/弓手/农民/建筑师/商人/贵族），可由 opts 指定（开发者/兵营）；
+    // #68 职业分工：出生抽取叠加文明宏观调控的国情偏置（缺粮之国多生农、临战之国多生兵）
     let job = 0;
     if (def.isCiv && civ >= 0) {
-      job = opts?.job ?? this.rollJob();
+      job = opts?.job ?? this.rollJob(civ);
     }
     const jd = def.isCiv ? JOBS[job] : null;
     // —— 科技加成：青铜/铁器/钢铁提升伤害与生命（文明的国家武备水平）——
@@ -1554,12 +1565,20 @@ export class GameEngine {
     return keys[Math.floor(this.rng() * keys.length)];
   }
 
-  /** 加权抽取职业（文明生物出生时） */
-  rollJob(): number {
+  /** 加权抽取职业（文明生物出生时；civ 传入时叠加宏观调控的出生偏置——国情决定新生儿的营生倾向。
+   *  偏置只放大不归零（下限 0.2）：调控引导而非命令经济，专职工种（weight 0）仍只能改派产生） */
+  rollJob(civ?: number): number {
+    const bias = civ != null && civ >= 0 ? this.jobBias.get(civ) : null;
     let total = 0;
-    for (const j of JOBS) total += j.weight;
+    const w: number[] = [];
+    for (let i = 0; i < JOBS.length; i++) {
+      const wt = JOBS[i].weight * (bias && JOBS[i].weight > 0 ? Math.max(0.2, bias[i] ?? 1) : 1);
+      w.push(wt);
+      total += wt;
+    }
+    if (total <= 0) return 0;
     let r = this.rng() * total;
-    for (let i = 0; i < JOBS.length; i++) { r -= JOBS[i].weight; if (r <= 0) return i; }
+    for (let i = 0; i < w.length; i++) { r -= w[i]; if (r <= 0) return i; }
     return 0;
   }
 
@@ -4599,8 +4618,9 @@ export class GameEngine {
             }
           }
         }
-        // —— 路过国民顺手修缮身边受损建筑（平民皆可搭把手）——
-        if (u.army == null && job !== 2 && job !== 3 && u.cd <= 0 && this.damagedSet.size > 0 && this.rng() < 0.12) {
+        // —— 路过国民顺手修缮身边受损建筑（#68 职业分工：修缮是工匠本职，唯平民杂役可搭把手——
+        //    农渔商猎贵族各安其业，不再越权代工）——
+        if (u.army == null && (job === 0 || job === 4) && u.cd <= 0 && this.damagedSet.size > 0 && this.rng() < 0.12) {
           const di = this.damagedNear(u, 1.9);
           if (di >= 0) {
             u.cd = 22;
@@ -4681,6 +4701,17 @@ export class GameEngine {
             u.tx = Math.max(1, Math.min(W - 2, cx + this.rng() * 6 - 3));
             u.ty = Math.max(1, Math.min(H - 2, cy + this.rng() * 6 - 3));
           }
+        } else if (job === 8 && this.rng() < 0.06) {
+          // 渔民：在高脚渔屋与泊舟码头之间劳作（#68 职业分工：渔场是渔民的工作台）
+          const f = this.nearestBuildingOf(u, BUILD_KINDS.FISHERY);
+          if (f) {
+            u.tx = Math.max(1, Math.min(W - 2, f.x + this.rng() * 5 - 2.5));
+            u.ty = Math.max(1, Math.min(H - 2, f.y + this.rng() * 5 - 2.5));
+          }
+        } else if (job === 9 && this.rng() < 0.08) {
+          // 猎手：离村巡猎——向村野边缘游走（猎获归仓引擎通道的行进叙事面，猎人常在猎场）
+          u.tx = Math.max(1, Math.min(W - 2, u.x + this.rng() * 16 - 8));
+          u.ty = Math.max(1, Math.min(H - 2, u.y + this.rng() * 16 - 8));
         } else if (this.rng() < 0.02) {
           // march to war
           const target = this.warTarget(u.civ);
@@ -5682,22 +5713,27 @@ export class GameEngine {
     const fisheries = counts[BUILD_KINDS.FISHERY] ?? 0;
     // 旧档引导：首次结算时按存量建筑补一笔开仓粮（不追溯惩罚旧王国）
     if (c.food == null) c.food = 60 + farms * 12 + fisheries * 10;
-    // —— 在岗农民清点（职农 job 1；一处 6 格内即视作在田/在港劳作）——
+    // —— 在岗清点（职农 job 1 / 职渔 job 8 —— #68 职业分工：渔场须渔民，农民不越权出海；
+    //    一处 6 格内即视作在田/在港劳作）——
     const farmers: Unit[] = [];
+    const fishers: Unit[] = [];
     for (const u of this.units) {
-      if (u.dead || u.civ !== c.id || u.job !== 1) continue;
-      farmers.push(u);
-      if (farmers.length >= 40) break; // 清点上限（超大帝国抽样足够）
+      if (u.dead || u.civ !== c.id) continue;
+      if (u.job === 1) farmers.push(u);
+      else if (u.job === 8) fishers.push(u);
+      if (farmers.length >= 40 && fishers.length >= 40) break; // 清点上限（超大帝国抽样足够）
     }
     let workedFarms = 0;
     let workedFisheries = 0;
-    if (farmers.length > 0) {
+    if (farmers.length > 0 || fishers.length > 0) {
       for (const b of this.buildings) {
         if (b.civ !== c.id) continue;
         if (b.kind !== BUILD_KINDS.FARM && b.kind !== BUILD_KINDS.FISHERY) continue;
+        // 职业分工（#68）：田归职农、港归职渔——各安其业互不越权（无渔民的渔场空转，等宏观调控编户）
+        const pool = b.kind === BUILD_KINDS.FARM ? farmers : fishers;
         let staffed = false;
-        for (const f of farmers) {
-          if (f.sleep) continue; // 昼夜节律：熟睡的农民不在岗 —— 夜晚粮产自然停摆（经济随昼夜呼吸）
+        for (const f of pool) {
+          if (f.sleep) continue; // 昼夜节律：熟睡的农渔不在岗 —— 夜晚粮产自然停摆（经济随昼夜呼吸）
           if (Math.abs(f.x - b.x) <= 6 && Math.abs(f.y - b.y) <= 6) { staffed = true; break; }
         }
         // 兵临城下：敌军团 9 格内的田港绝收（围城粮道——军团压到哪片田，哪片田就荒）
@@ -5717,14 +5753,9 @@ export class GameEngine {
     const rpF = RACES[c.race];
     const winterF = this.nature.season === 3 ? 0.85 : 1;
     const foodProd = (forage + workedFarms * 1.45 + workedFisheries * 1.25) * tm.repro * (0.85 + (rpF?.industry ?? 0.5) * 0.3) * winterF;
-    // —— 职业再平衡：有田无农 → 每期劝课农桑（平民转职农民，自然 staffing 之外的保险）——
-    if (farms + fisheries > 0 && workedFarms + workedFisheries < farms + fisheries) {
-      for (const u of this.units) {
-        if (u.dead || u.civ !== c.id || (u.job ?? 0) !== 0 || u.army != null) continue;
-        this.setJob(u, 1);
-        break; // 每期一人（渐进转职，不冲击社会结构）
-      }
-    }
+    // —— 职业宏观调控（#68 机制①：文明自动宏观调控职业比例——吸收原「劝课农桑」单向保险，
+    //    升级为田/港/工/商/猎/战六维目标编制 + 出生偏置 + 盈缺双向改派）——
+    this.profBalance(c, { farms, fisheries, workedFarms, workedFisheries, farmers: farmers.length, fishers: fishers.length });
     // 消耗：每 3 年一结的人口口粮（一田养四口；兵额加成——行军打仗吃得多）
     let armyMouths = 0;
     for (const a of this.armies) if (a.civ === c.id && a.state !== 'retreat') armyMouths += a.members.length;
@@ -5762,6 +5793,96 @@ export class GameEngine {
         this.addEvent('famine', `「${c.name}」闹起粮荒——仓廪空虚，民有饥色（垦农田、建渔场方能止饥）`, { colorHex: c.colorHex });
       }
     }
+  }
+
+  /** 文明职业宏观调控（#68 机制①核心）：粮账清点刚过（盈缺在手）→ 定目标编制 → 限期改派。
+   *  · 粮食维度（农/渔）期期必调——饥荒关键路径，接管原「劝课农桑」的保险职能；
+   *    其余维度（工/商/猎/战）每 6 期一调（约 720 tick，社会结构调整宜缓不宜急）。
+   *  · 改派唯一来源是平民流动池（新生默认平民，余缺由文明调度）；军人/国王不参与改派
+   *    （行伍与王统自有其序）。配额渐进防社会结构震荡。
+   *  · 盈缺双向：缺口补员、过剩归农（猎期终结猎手归田 / 渔场尽毁渔民上岸）。
+   *  · 出生偏置 jobBias 同步刷新：缺粮之国新生儿多入农籍、临战之国多入行伍。
+   *  · 纯引擎级通道零额外 rng 消耗（战备征募档位除外）；瞬态 Map 不入档，载档清零（保双载位等）。 */
+  private profBalance(c: Civ, gap: { farms: number; fisheries: number; workedFarms: number; workedFisheries: number; farmers: number; fishers: number }) {
+    const pt = (this.profT.get(c.id) ?? 0) + 1;
+    this.profT.set(c.id, pt);
+    const due = pt % 6 === 0;
+    const needFarmer = gap.farms > 0 && gap.workedFarms < gap.farms;
+    const needFisher = gap.fisheries > 0 && gap.workedFisheries < gap.fisheries;
+    if (!due && !needFarmer && !needFisher) return;
+    // —— 职业普查（O(n) 全扫收编入册；economyTick 每 120 tick 一次，与 foodTick 清点同量级）——
+    const census = new Array<number>(JOBS.length).fill(0);
+    const pool: Unit[] = [];
+    for (const u of this.units) {
+      if (u.dead || u.civ !== c.id) continue;
+      const j = u.job ?? 0;
+      census[j]++;
+      if (j === 0 && u.army == null && !u.king) pool.push(u); // 平民流动池（改派唯一来源）
+    }
+    const pop = Math.max(1, c.pop);
+    // —— 目标编制（田→农 / 港→渔 / 损→工 / 市→商 / 猎期→猎 / 战→行伍）——
+    const atWar = this.civAtWar(c.id);
+    const counts = this.civBuildCounts.get(c.id);
+    const markets = counts ? (counts[BUILD_KINDS.MARKET] ?? 0) + (counts[BUILD_KINDS.PORT] ?? 0) : 0;
+    const tFarmer = gap.farms > 0 ? Math.min(gap.farms + 2, Math.ceil(pop * 0.45)) : 0;
+    const tFisher = gap.fisheries > 0 ? Math.min(gap.fisheries + 1, Math.ceil(pop * 0.25)) : 0;
+    const tBuilder = pop >= 10 ? 1 + Math.floor(pop / 30) : 0;
+    const tMerchant = markets > 0 ? Math.min(1 + Math.floor(markets / 3), Math.ceil(pop * 0.12)) : 0;
+    const tHunter = this.preyAbundant && pop >= 12 ? 1 + Math.floor(pop / 40) : 0;
+    // —— 出生偏置刷新（新生儿营生倾向随国情流动）——
+    const bias = new Array<number>(JOBS.length).fill(1);
+    if (census[1] < tFarmer) bias[1] = 3;
+    if (atWar) { bias[2] = 2; bias[3] = 2; }
+    this.jobBias.set(c.id, bias);
+    // —— 改派（配额渐进：每期至多 2 + pop/20 人；渔籍引导期可放宽编满为止）——
+    let quota = 2 + Math.floor(pop / 20);
+    const convert = (job: number) => {
+      const u = pool.pop();
+      if (!u) return false;
+      this.setJob(u, job);
+      census[job]++;
+      census[0]--;
+      return true;
+    };
+    // ① 渔籍引导（新机制落地/旧档迁移）：有渔场而渔民未满编 → 优先编户（超出常规配额的饥荒级通道）
+    if (needFisher) {
+      const t = Math.max(1, Math.min(gap.fisheries, Math.ceil(pop * 0.25)));
+      let n = 0;
+      while (census[8] < t && pool.length > 0 && n < 4) { if (!convert(8)) break; n++; }
+      if (n > 0 && gap.fishers === 0) {
+        const cx = c.capital >= 0 ? (c.capital % W) + 0.5 : 0.5;
+        const cy = c.capital >= 0 ? ((c.capital / W) | 0) + 0.5 : 0.5;
+        this.addEvent('eco', `「${c.name}」编户渔民——高脚渔屋下有了向海谋生的人`, { colorHex: c.colorHex, x: cx, y: cy });
+      }
+    }
+    // ② 劝课农桑（原职能保留）：有田荒着 → 平民入农籍
+    if (needFarmer) {
+      while (census[1] < tFarmer && pool.length > 0 && quota > 0) { if (!convert(1)) break; quota--; }
+    }
+    if (!due) return; // 粮食维度的期期必调到此为止（其余维度 6 期一调）
+    // ③ 专职工种补编（渔籍常规补员 / 工匠 / 商贾 / 猎手）
+    if (census[8] < tFisher && pool.length > 0 && quota > 0) { if (convert(8)) quota--; }
+    if (census[4] < tBuilder && pool.length > 0 && quota > 0) { if (convert(4)) quota--; }
+    if (census[5] < tMerchant && pool.length > 0 && quota > 0) { if (convert(5)) quota--; }
+    if (census[9] < tHunter && pool.length > 0 && quota > 0) { if (convert(9)) quota--; }
+    // ④ 战备扩编（兵营主力，调控补充：行伍缺员从平民征募）
+    if (atWar) {
+      const tWar = Math.ceil(pop * 0.18);
+      if (census[2] + census[3] < tWar && pool.length > 0 && quota > 0) { if (convert(this.rng() < 0.7 ? 2 : 3)) quota--; }
+    }
+    // —— 过剩归农（社会流动的双向面：每期每类至多 1 人回流，渐进不震荡）——
+    const pickOf = (job: number): Unit | null => {
+      for (const u of this.units) {
+        if (u.dead || u.civ !== c.id || (u.job ?? 0) !== job || u.army != null || u.king) continue;
+        return u;
+      }
+      return null;
+    };
+    if (census[9] > 0 && !this.preyAbundant) { const u = pickOf(9); if (u) this.setJob(u, 0); } // 猎期终结：猎手归田
+    if (gap.fisheries === 0 && census[8] > 0) { const u = pickOf(8); if (u) this.setJob(u, 0); } // 渔场尽毁：渔民上岸
+    if (gap.farms === 0 && census[1] > 2) { const u = pickOf(1); if (u) this.setJob(u, 0); } // 田尽毁：农民归流动池
+    if (census[4] > tBuilder + 1) { const u = pickOf(4); if (u) this.setJob(u, 0); } // 匠超编
+    if (census[5] > tMerchant + 1) { const u = pickOf(5); if (u) this.setJob(u, 0); } // 商超编
   }
 
   // ================== 地形工程体系（文明改造自然：凿山/运河/填海） ==================
@@ -14764,6 +14885,7 @@ export class GameEngine {
       if (qd.isCiv || qd.aquatic || !this.isHerbivoreRace(q.race)) continue;
       preyAlive++;
     }
+    this.preyAbundant = preyAlive >= 400; // 猎场丰欠旗（职业宏观调控共享：丰饶期编猎手，猎尽则猎手归田）
     if (preyAlive < 400) return; // 保护期：猎物承压即收弓（LV 崩盘线 150 的 2.6 倍余量，繁荣期才开猎）
     // 秋储加成：秋粮入仓前的传统猎季（冬季休耕前的肉干储备——季节节律的另一条文明侧回声）
     const roll = this.nature.season === 2 ? 0.4 : 0.2;
@@ -14779,8 +14901,10 @@ export class GameEngine {
         if (u.dead || (u.grab ?? 0) > 0) continue; // 神明手中之物不入册
         const ud = RACES[u.race];
         if (ud.isCiv) {
-          // 猎手资格：本国民、非熟睡、非行军、非国王、非伤员——弓手即猎手（远程射程更远）
-          if (u.civ !== c.id || u.sleep || u.army != null || u.job === 7 || (u.hurt ?? 0) > 0) continue;
+          // 猎手资格（#68 职业分工·越权门控）：职业猎手（job 9）与弓手（job 3，行伍弓马娴熟惯例巡猎）——
+          // 其余国民（农/渔/工/商/贵族/平民）不再越权狩猎，猎获归仓成为专职工种的营生
+          if (u.civ !== c.id || u.sleep || u.army != null || (u.hurt ?? 0) > 0) continue;
+          if (u.job !== 9 && u.job !== 3) continue;
           if (hu.length < 16) hu.push(u);
         } else if (!ud.aquatic && this.isHerbivoreRace(u.race)) {
           pr.push(u);
@@ -14792,7 +14916,7 @@ export class GameEngine {
       let bp: Unit | null = null;
       let bd2 = Infinity;
       for (const u of hu) {
-        const reach2 = u.job === 3 ? 144 : 64;
+        const reach2 = u.job === 9 ? 144 : 64; // 职业猎手巡猎半径 12（离村巡猎的行家）；弓手惯例 8
         for (const q of pr) {
           const dx = q.x - u.x, dy = q.y - u.y;
           const d2 = dx * dx + dy * dy;
@@ -14805,6 +14929,7 @@ export class GameEngine {
       this.fx('blood', bp.x, bp.y, 12);
       c.gold = (c.gold ?? 0) + 2 + Math.floor(this.rng() * 4); // 猎获归仓：肉干皮毛折市易之利（2-6，拾取同口径）
       this.fx('coin', bp.x, bp.y - 1, 16); // 猎获就地打包（巡猎抽象：猎手在猎场边取物）
+      bu.tx = bp.x; bu.ty = bp.y; // 猎手奔赴猎场取物（引擎 leash 的行进叙事面：猎队走向猎获处）
       kills++;
       if (this.rng() < 0.3) this.addEvent('eco', `「${c.name}」的猎队满载而归——猎获入仓，市易得金`, { colorHex: c.colorHex, x: bp.x, y: bp.y });
     }
@@ -16704,9 +16829,12 @@ export class GameEngine {
     let army = 0;
     let armedN = 0;
     let popN = 0;
+    const jobCensus = new Array<number>(JOBS.length).fill(0); // #68 职业分工：职业普查（文明面板「职业」行数据源）
     for (const u of this.units) {
       if (u.dead || u.civ !== c.id) continue;
-      if (u.job === 2 || u.job === 3) army++;
+      const j = u.job ?? 0;
+      jobCensus[j]++;
+      if (j === 2 || j === 3) army++;
       if (!u.boat) {
         popN++;
         if (u.wep) armedN++;
@@ -16731,6 +16859,7 @@ export class GameEngine {
     return {
       ...c,
       tiles,
+      jobCensus, // #68 职业分工：各职业在册人数（CivPanel「职业」行）
       wars,
       occPushing,
       occPushAvg: occPushing > 0 ? Math.round(occPushStr / occPushing) : 0,
@@ -17801,6 +17930,9 @@ export class GameEngine {
     this.road = ((data as SaveDataV2).road ? dec((data as SaveDataV2).road!, W * H) : new Uint8Array(W * H)) as Uint8Array<ArrayBuffer>;
     this.tradeNext.clear();
     this.marketIdx.clear();
+    this.profT.clear(); // #68 职业调控瞬态：载档清零重新积累（保同页双载位等——调控期相与首载一致）
+    this.jobBias.clear();
+    this.preyAbundant = false;
     this.regrow.clear();
     for (const [i, at] of data.regrow) this.regrow.set(i, at);
     this.radSet.clear();

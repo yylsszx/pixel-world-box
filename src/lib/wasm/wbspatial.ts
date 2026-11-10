@@ -878,7 +878,11 @@ class WbBatch {
         if (d.flying) tbf[id * 2] |= 32;
       }
       // —— 职业 TBJ ——
-      const tbj = this.vF64(OFF_TBJ, 7 * 5);
+      // 视图尺寸随 JOBS.length 扩容（#68 职业分工：渔民 8/猎手 9 尾追；旧硬编码 7*5 会把第 8 行起
+      // 的写入静默丢出界——TypedArray 越界写零报错零生效，国王行（idx7）在旧视图本就被丢弃）。
+      // 内核 rollJob 硬编码 0..7 只掷 0-6，专职工种（weight 0）永不入掷；内核对现役 job 列
+      // 仅字面量比较（2/3/4），新职业索引天然落入平民分支——零 rust 改动即安全。
+      const tbj = this.vF64(OFF_TBJ, JOBS.length * 5);
       JOBS.forEach((j, i) => {
         tbj[i * 5 + 0] = j.hpMul; tbj[i * 5 + 1] = j.dmgMul; tbj[i * 5 + 2] = j.speedMul;
         tbj[i * 5 + 3] = j.weight; tbj[i * 5 + 4] = j.ranged ?? 0;

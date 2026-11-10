@@ -4,7 +4,7 @@
 // 布局：桌面右侧固定面板 / 移动端底部抽屉 —— 三个页签：概览 · 科技树 · 社会
 import { useEffect, useMemo, useState } from 'react';
 import { useGameStore } from '@/store/gameStore';
-import { RACES, BUILDING_DEFS } from '@/lib/game/types';
+import { RACES, BUILDING_DEFS, JOBS } from '@/lib/game/types';
 import { TECHS, TECH_BY_KEY, TECH_CATS, ERAS, GOV_DEFS } from '@/lib/game/tech';
 import type { TechCat } from '@/lib/game/tech';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,8 @@ interface CivInfo {
   colorHex: string;
   pop: number;
   tiles: number;
+  /** 各职业在册人数（#68 职业分工：与 JOBS 下标对应；getCivInfo 普查） */
+  jobCensus: number[];
   houses: number;
   houseCap: number;
   kingName: string;
@@ -338,6 +340,28 @@ function SocietyTab({ civ }: { civ: CivInfo }) {
             </p>
           )}
         </div>
+      </section>
+
+      {/* —— 职业（#68 机制①：文明自动宏观调控的编制实况） —— */}
+      <section className="rounded-sm border-2 border-teal-800/60 bg-zinc-900/70">
+        <header className="flex items-center gap-1.5 border-b-2 border-zinc-800 px-2 py-1">
+          <Users className="h-3.5 w-3.5 text-teal-300" aria-hidden />
+          <h4 className="text-[10px] font-bold uppercase tracking-widest text-teal-200">社会 · 职业编制</h4>
+        </header>
+        <div className="flex flex-wrap gap-1 px-2 py-1.5">
+          {(civ.jobCensus ?? []).map((n, i) => n > 0 ? (
+            <span key={i} className="flex items-center gap-1 rounded-sm border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 text-[9px] text-zinc-300" title={JOBS[i]?.desc ?? ''}>
+              <span className="inline-block h-2 w-2 rounded-full" style={{ background: JOBS[i]?.color ?? '#666' }} aria-hidden />
+              {JOBS[i]?.name ?? '?'} <b className="font-mono text-zinc-100">{n}</b>
+            </span>
+          ) : null)}
+          {(civ.jobCensus ?? []).every((n) => n === 0) && (
+            <p className="text-[9px] text-zinc-500">尚无在册国民</p>
+          )}
+        </div>
+        <p className="px-2 pb-1.5 text-[8px] leading-relaxed text-zinc-500">
+          文明按田港工商与战备猎期自动调控编制：缺口补员、过剩归农；各安其业互不越权，新生儿营生倾向亦随国情流动。
+        </p>
       </section>
 
       {/* —— 文化 —— */}

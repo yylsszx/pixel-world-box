@@ -303,6 +303,11 @@ export const JOBS: JobDef[] = [
   { key: 'noble', name: '贵族', desc: '居于王都，供养国库', hpMul: 1.25, dmgMul: 1.1, speedMul: 1, weight: 1, color: '#b56cf0' },
   // 国王：唯一（建国/继承加冕产生；weight 0 = 永不自然出生），hp/dmg ×1.5
   { key: 'king', name: '国王', desc: '一国之主：驾崩则举国缟素，继承者加冕', hpMul: 1.5, dmgMul: 1.5, speedMul: 1, weight: 0, color: '#ffd700' },
+  // —— 职业分工（#68 机制①·复杂精细职业）：专职工种尾追追加（旧档 job 索引 0-7 全稳定）——
+  // 渔民：渔场 staffing 专职工种（渔场须渔民在岗方产出——农民不再越权出海）；weight 0 = 仅由文明宏观调控改派产生
+  { key: 'fisher', name: '渔民', desc: '驻渔场出海捕捞，向海要粮', hpMul: 1, dmgMul: 0.95, speedMul: 1.1, weight: 0, color: '#4ecdc4' },
+  // 猎手：村野专职工种（猎获归仓通道的资格主体；猎期野味丰饶时编入、猎期终结归田）；weight 0 = 仅由宏观调控改派产生
+  { key: 'hunter', name: '猎手', desc: '巡猎村野，猎获归仓', hpMul: 1.05, dmgMul: 1.1, speedMul: 1.15, weight: 0, color: '#c9a227' },
 ];
 export type JobId = number; // index into JOBS
 export const JOB_KEY: Record<string, number> = Object.fromEntries(JOBS.map((j, i) => [j.key, i]));
