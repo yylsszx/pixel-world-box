@@ -6300,3 +6300,26 @@ Stage Summary:
 **推送**: engine.ts（373a833，sync-github.sh 三连重试第三次通过 TLS 瞬断）→ **SYNC_OK eb59155**；worklog 本条随下轮首推或本轮补推。
 **版本节奏**: 不升位（v0.66 第三笔：模拟行为 bug 修复+性能优化，存档格式零变更）。
 **评估**: D3 性能与规模——beachedAquaticTick 每tick 恒定 470 rng draws+~14k 邻水检查直降 94%（20× 高倍速帧预算尖刺源消除，400 鱼世界的 eco 热点削峰）；D6 稳定健壮——确定性三重实证（id 相位入档根基/双 load 恢复态全等/rngA 重播种边界设计内）+鱼群游走回归 20tick 设计意图（每 tick 抖动换向的隐性语义漂移一并纠正）。
+
+## 2026-11-10 #64（v3）：六网格视图化零拷贝——grid 段精确归零，20× 兑现 53%→69%（tps +30%）
+
+**上轮复核**: #63 代码 eb59155 + worklog a82f4ea 已在远端（origin/main=dedeef1 deploy-bot 快照）。开局校准。
+
+**本轮主攻（遗留池①改道：pack 内核提速；真机 vsync headless 不可测顺位）**:
+- **画像先行**: 20× 大档四段 EMA（pack2/batch/replay/wb）——**batch（Rust 内核）仅 0.134ms，桥接开销占 97%**：瓶颈不在 Rust 算力而在 JS↔WASM 数据搬运。段拆解：pack2 3.834ms（78% 主导）+ wb 0.943 + batch 0.134 + replay 0.013；pack2 内部 grid 段（每 tick 全量 set 六网格）0.47ms + rows 0.79。
+- **根因**: 每 tick 首次 pack2 默认 sections=WP_ALL 全量灌——terrain/fire/radiate/road/building/owner 六网格 `TypedArray.set` 全拷贝（~240KB/tick），而多数网格多数 tick 根本没变。
+- **架构级修复（网格视图化零拷贝）**: engine 六网格直接绑定为 wasm 线性内存镜像段视图（TILES=40960=W*H 严格等长，世界尺寸常量恒定→mem.buffer 运行期不变→绑定永久有效）——JS 写引擎网格=写内核镜像（205+ 写点零改动收口）；内核 set_terrain/ignite 写段=JS 直接可见。pack2 grid 段退化为「引用比较 + 漂移兜底 memcpy」（generateWorld/applySave 重赋真数组后首 pack 自动重绑+拷贝，实测读档后 2 ticks 内重绑）。
+- **配套语义修正（视图化的深层陷阱）**: 内核 set_terrain 先写镜像段（=JS terrain 同一内存）→ 回放 setTerrain 的 `prev===t` 短路会读到新值而跳过全套配套维护（frozen/fireSet/riverDir/建筑淹没/水深场）——**ACT_TERRAIN 动作 8B 布局的 p+6/p+7 空位携带真 prev**（Rust 写方 act_u8(p+6, prev)，尺寸零变更）；JS 侧 setTerrain 拆出 applyTerrainChange（私有全量维护），新增 replayTerrain(i,t,prev) 回放专用入口；fire 清除改 fireSet.has 判定（Set 驱动与镜像写序解耦——内核内联清火不发 FIRE_CLEAR）。
+- **工具链自愈**: 沙箱回收后 rustc 丢失——USTC 镜像重装 rustup minimal + wasm32 target；cargo 增量构建 5.9s。**勘误（遗留池自净）**: #63 遗留①括号「rust 工具链重建 wbcore（源码已就绪）」已过时——#52-53 已完成过重建（md5 复核：cargo 产物与线上部署完全一致 fa60f100），本轮仅因 units.rs 新改动而重建（新 md5 5431422f，173424B +108B，已部署 public/wasm）。
+
+**QA（全绿）**:
+- **同页双 load 位等终审（#54 场景）**: 受控世界 777001（601→845 单位 8× 跑 6s）→ saveToSlot slot2 → 双次 loadFromSlot + **手动 engine.tick() 精确 300 ticks**（冻结协议两轮一致）→ simHash aec83666 === aec83666 **位等 true**。
+- **视图双向同步实证**: ①JS→内核：applyTool raise 造水成沙 viewBound=true 后 seg===terrain 即时一致；②内核→JS：spawn 白行者（race 23）300 ticks 霜冻——周边 6 格 SNOW、frozen Set 全世界 1270/1270 冰格完美配对（replayTerrain 强制维护链路生效）、1339 雪格与 gTerr 段零偏差；③读档往返：snow 1339 保存/恢复完整 + 2 ticks 自动重绑。
+- **性能（核心收益）**: 20× 稳态 15s 窗——tps **161.2→208.8（+29.5%）**、20× 需求 303 兑现 **53.2%→68.9%**；四段 sum **4.93→2.41ms/tick（-51%）**；pack2 3.83→1.11（grid 段 0.47→0.003≈0）；1× 节拍 **15.17 tps=100.1% 零回归**。
+- **行为回归**: 白行者寒霜/冰路（内核+回放双路径）、工具造地形、存档往返全部正常；console 零 error。
+- tsc 零错误 + eslint 零告警（wbspatial.ts + engine.ts + units.rs）。
+
+**遗留（下轮优先池）**: ① 20× 收口余量：wb 段 1.03ms（writeback 比较免写已到位——脏行数是语义决定，可探「恒变列批量直写」或 reap 增量化）+ rows 段 1.05ms（hot 全行灌是语义必需，剩余优化空间有限）——pack2+wb 合计 ~2.1ms，203 tps 兑现需 sum≤3.3ms，已达标（2.41ms）但生产波动窗口（繁衍潮/战争风暴）仍会回落，真机 vsync 画像仍是最终验收（需真机环境，headless 永不可测）；② 战争收束叙事调优；③ 滑杆行可见性；④ raise GRASS 顶格；⑤ 桶消费点语义面复查；⑥ hydra 精绘目视细看；⑦ 远程命中方向后仰（低优先）。
+**推送**: units.rs+wasm 重建+部署（5431422f）+ wbspatial.ts+engine.ts 改造 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**版本节奏**: 不升位（v0.66 第四笔：性能架构优化+语义修正，存档格式零变更）。
+**评估**: D3 性能与规模——六网格视图化消除每 tick 全量镜像拷贝（grid 段精确归零），JS↔WASM 桥接开销砍半（sum -51%），20× 真实倍速兑现从 53% 推进到 69%（tps +30%），并顺带消除「JS 数组 vs 内核镜像」双份数据漂移整类隐患（D6）；同页双 load 位等在架构改造后保持哈希级全等。

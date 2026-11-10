@@ -389,6 +389,10 @@ fn set_terrain(ctx: &mut Ctx, i: usize, t: u8) {
         ctx.act_u8(p, ACT_TERRAIN);
         ctx.act_i32(p + 1, i as i32);
         ctx.act_u8(p + 5, t);
+        // 【性能 #64】网格视图化：JS engine.terrain 即内核镜像段同一内存——回放 setTerrain 的
+        // prev 短路会读到本函数已写入的新值而跳过全套配套维护（frozen/fireSet/riverDir/建筑淹没…）。
+        // 动作布局 8B 的 p+6/p+7 原为空位，携带真 prev 供 JS replayTerrain 强制应用（尺寸零变更）。
+        ctx.act_u8(p + 6, prev);
     }
 }
 

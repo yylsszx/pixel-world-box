@@ -943,6 +943,30 @@ class WbBatch {
   /** full：强制 meta 全行重灌（未知爆炸面保险）；sections：WP_* 截面位掩码（默认全量）。
    *  正确性约定：轻量截面只跳过「JS 接力段证明未触碰」的段；meta 行永远由 touchMeta/touchRow
    *  漏斗 + 抽样哨兵（轻量模式下 32 行）兑底 —— 漏检自愈，位等不破。 */
+  /** 【性能 #64】六网格视图绑定：engine.terrain/fire/radiate/road/building/owner 直接绑定为
+   *  wasm 线性内存镜像段视图（TILES=W*H=40960 严格等长）——JS 写引擎网格=写内核镜像，零拷贝零同步；
+   *  内核 set_terrain/ignite 等写镜像段=JS 直接可见。消除 pack2 每 tick 全量 set 六网格（grid 段
+   *  ~0.47ms/tick，20× 下占 simMs ~10%）+ 消除「JS 数组 vs 内核镜像」双份数据漂移整类隐患。
+   *  绑定漂移兜底：generateWorld/applySave 重赋真数组后引用不等 → 拷贝最新内容进镜像段并重绑
+   *  （onWorldReset 的 boot 基线回写总发生在真数组重赋之后，视图内容被覆盖亦被兜底覆盖修正）。
+   *  世界尺寸恒定（W/H 常量 → ensureWorld 永不重建实例 → mem.buffer 运行期不变 → 绑定永久有效）。 */
+  private bindGridViews(engine: GameEngine): void {
+    // wasm Memory.buffer 类型层为 ArrayBufferLike（运行时恒为普通 ArrayBuffer——memory 非 shared），
+    // 引擎字段按 TS5.7 严格签名 *Array<ArrayBuffer> 声明，此处统一窄化断言（同一运行时对象，安全）。
+    const gT = this.gTerr as unknown as Uint8Array<ArrayBuffer>;
+    const gF = this.gFire as unknown as Uint8Array<ArrayBuffer>;
+    const gR = this.gRad as unknown as Uint8Array<ArrayBuffer>;
+    const gRd = this.gRoad as unknown as Uint8Array<ArrayBuffer>;
+    const gB = this.gBldk as unknown as Uint8Array<ArrayBuffer>;
+    const gO = this.gOwn as unknown as Int16Array<ArrayBuffer>;
+    if (engine.terrain !== gT) { gT.set(engine.terrain); engine.terrain = gT; }
+    if (engine.fire !== gF) { gF.set(engine.fire); engine.fire = gF; }
+    if (engine.radiate !== gR) { gR.set(engine.radiate); engine.radiate = gR; }
+    if (engine.road !== gRd) { gRd.set(engine.road); engine.road = gRd; }
+    if (engine.building !== gB) { gB.set(engine.building); engine.building = gB; }
+    if (engine.owner !== gO) { gO.set(engine.owner); engine.owner = gO; }
+  }
+
   pack2(engine: GameEngine, full = false, sections = WP_ALL): void {
     if (!this.ensureWorld(engine)) return;
     const t0 = performance.now();
@@ -958,16 +982,9 @@ class WbBatch {
     // 瞬时单位峰（>4096）冷却后自愈；持续性溢出每次重试代价 ≈ 一次 packTables（~0.1ms/4800tick，可忽略）。
     if (n > this.nu) { this.failed = true; this.scheduleRetry(engine.tickCount); return; }
 
-    // —— 网格（bulk copy）——
+    // —— 网格（【性能 #64】视图绑定兜底：引用相等时零成本，漂移时 memcpy 一次）——
     const g0 = performance.now();
-    if (sections & WP_GRIDS) {
-      this.gTerr.set(engine.terrain);
-      this.gFire.set(engine.fire);
-      this.gRad.set(engine.radiate);
-      this.gRoad.set(engine.road);
-      this.gBldk.set(engine.building);
-      this.gOwn.set(engine.owner);
-    }
+    this.bindGridViews(engine);
     const g1 = performance.now();
 
     // —— 战争位图（atWar: rel<-20）——
@@ -1573,11 +1590,13 @@ class WbBatch {
           else if (kind === 2) engine.toast(`${engine.unitById.get(ta)?.name ?? '?'} 拾取了${this.itemIds[tb] ?? ''}`, 'good');
           break;
         }
-        case ACT_TERRAIN: { // 8B: i@1 t@5（写方 act_i32(p+1)+act_u8(p+5)）+ 边界护栏
+        case ACT_TERRAIN: { // 8B: i@1 t@5 prev@6（【性能 #64】网格视图化后 JS 侧 terrain 即镜像段，
+          // 内核 set_terrain 先写段——setTerrain 的 prev 短路会读到新值，动作携带真 prev 强制维护）+ 边界护栏
           const i = dv.getInt32(p + 1, true);
           const t = a[p + 5];
+          const prev = a[p + 6];
           cur += 8;
-          if (i >= 0 && i < 40960) engine.setTerrain(i, t);
+          if (i >= 0 && i < 40960) engine.replayTerrain(i, t, prev);
           break;
         }
         case ACT_IGNITE: { // 8B: i@1 val@5 + 边界护栏

@@ -1019,6 +1019,20 @@ export class GameEngine {
   setTerrain(i: number, t: number) {
     const prev = this.terrain[i];
     if (prev === t) return;
+    this.applyTerrainChange(i, prev, t);
+  }
+
+  /** 【性能 #64】网格视图化回放专用：内核 set_terrain 已把镜像段（=本视图）写入新值，
+   *  此处 prev 由 ACT_TERRAIN 动作携带（p+6 空位字节），强制走全套配套维护——
+   *  不得用 setTerrain（其 prev 短路会读到新值跳过维护 → frozen/fireSet/riverDir/建筑淹没分叉）。
+   *  fire 清除以 fireSet（JS 真相）判定而非段值：内核 set_terrain 内联清火已把段值归零、
+   *  不发 FIRE_CLEAR 动作，fireSet.delete 的触发条件必须与段值解耦。 */
+  replayTerrain(i: number, t: number, prev: number) {
+    if (prev === t) return;
+    this.applyTerrainChange(i, prev, t);
+  }
+
+  private applyTerrainChange(i: number, prev: number, t: number) {
     this.terrain[i] = t;
     // Task 48-A2：氛围候选表增量维护（本格 + 4 邻贴岸状态）
     this.ambTouch(i);
@@ -1037,7 +1051,9 @@ export class GameEngine {
       this.riverDir[i] = 0;
       this.riverTiles.delete(i);
     }
-    if (this.fire[i] > 0) {
+    // fire 清除以 fireSet（JS 真相）判定：视图化后内核 set_terrain 内联清火已把段值归零
+    // （且不发 FIRE_CLEAR），按段值判定会漏删 fireSet —— Set 驱动配对才与镜像写序解耦。
+    if (this.fireSet.has(i)) {
       this.fire[i] = 0;
       this.fireSet.delete(i);
     }
