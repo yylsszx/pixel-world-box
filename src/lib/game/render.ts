@@ -1,7 +1,7 @@
 // ============ WorldBox Replica — Rendering pipeline ============
 import type { Army, Effect, Unit } from './types';
 import { T, R, RACES } from './types';
-import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawHydra, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster, drawPersonFine, drawQuadFine, drawChicken, drawPig, drawRabbit, drawFox, drawFish, drawCrab, drawTurtle, drawShark } from './sprites';
+import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawHydra, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster, drawPersonFine, drawQuadFine, drawTrollFine, drawOgreFine, drawHydraFine, drawChicken, drawPig, drawRabbit, drawFox, drawFish, drawCrab, drawTurtle, drawShark } from './sprites';
 import { visCacheFor } from './emergence';
 import { BUILDING_DEFS, BUILD_KINDS } from './types';
 import { GameEngine } from './engine';
@@ -2278,6 +2278,18 @@ function tryDrawFine(engine: GameEngine, u: Unit, def: (typeof RACES)[number], w
     drawQuadFine(wc, u, quad, engine.frameCount + unitPhaseSeed(u), king);
     wc.restore();
     return true;
+  }
+  // 精绘巨怪三兄弟（#62）：troll/ogre/hydra ×4 精细网格版——结构逐段对照中档（#59 三段挥击帧全保留）
+  if (!def.vis) {
+    const bossFine = def.sprite === 'troll' ? drawTrollFine : def.sprite === 'ogre' ? drawOgreFine : def.sprite === 'hydra' ? drawHydraFine : null;
+    if (bossFine) {
+      wc.save();
+      wc.scale(0.5, 0.5);
+      wc.translate(tx, ty);
+      bossFine(wc, u, engine.frameCount + unitPhaseSeed(u));
+      wc.restore();
+      return true;
+    }
   }
   return false;
 }
