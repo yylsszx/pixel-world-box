@@ -2106,14 +2106,27 @@ export function drawTroll(ctx: CanvasRenderingContext2D, u: Unit, frame: number)
     ctx.fillRect(px - 2, y + 2, 1, 2);
     ctx.fillRect(px + 1, y + 2, 1, 2);
   }
-  // 长臂：及地的巨臂（攻击时双臂高举过头）
+  // 长臂：及地的巨臂（攻击三段帧 #59：预备高举→蓄势顶点→砸落前伸+冲击白光——挥击有了过程）
   ctx.fillStyle = body;
-  if ((u.atk ?? 0) > 0) {
-    ctx.fillRect(px - 4, y - 5, 1, 4);
-    ctx.fillRect(px + 3, y - 5, 1, 4);
-    // 挥击白光
+  const atkT = u.atk ?? 0;
+  if (atkT >= 9) {
+    // 预备：双臂高举过头（肩位上移），白光聚于前拳
+    ctx.fillRect(px - 4, y - 6, 1, 5);
+    ctx.fillRect(px + 3, y - 6, 1, 5);
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(px + 4 * f, y - 4, 1, 1);
+    ctx.fillRect(px + 4 * f, y - 6, 1, 1);
+  } else if (atkT >= 4) {
+    // 蓄势顶点：双臂伸直最高，白光聚拳待落
+    ctx.fillRect(px - 4, y - 7, 1, 6);
+    ctx.fillRect(px + 3, y - 7, 1, 6);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(px + 4 * f, y - 7, 1, 1);
+  } else if (atkT > 0) {
+    // 砸落：双臂前伸下压，冲击白光拍在地面
+    ctx.fillRect(px + 2 * f, y, 1, 4);
+    ctx.fillRect(px + 4 * f, y - 1, 1, 4);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(px + 5 * f, y + 2, 2, 1);
   } else if (isMoving && step === 1) {
     ctx.fillRect(px - 4, y - 1, 1, 4);
     ctx.fillRect(px + 3, y, 1, 3);
@@ -2184,16 +2197,27 @@ export function drawOgre(ctx: CanvasRenderingContext2D, u: Unit, frame: number) 
   ctx.fillRect(px - 1, y - 1, 3, 2);
   ctx.fillStyle = '#3a342c';
   ctx.fillRect(px - 2, y + 1, 5, 1);
-  // 巨臂 + 骨棒（攻击时抡过头顶）
+  // 巨臂 + 骨棒（攻击三段帧 #59：抡臂后引→高举过头→砸地冲击——饕餮巨棒的重量感）
   ctx.fillStyle = skin;
   ctx.fillRect(px - 3, y - 2, 1, 3);
   ctx.fillRect(px + 2, y - 2, 1, 3);
   ctx.fillStyle = '#8a6a4a';
-  if ((u.atk ?? 0) > 0) {
-    ctx.fillRect(px + 3 * f, y - 6, 1, 4);
-    ctx.fillRect(px + 2 * f, y - 6, 1, 1);
+  const atkO = u.atk ?? 0;
+  if (atkO >= 9) {
+    // 抡臂后引：棒斜向后上方蓄力
+    ctx.fillRect(px + f, y - 6, 1, 4);
     ctx.fillStyle = '#f2ead8';
-    ctx.fillRect(px + 3 * f, y - 6, 1, 1);
+    ctx.fillRect(px + f, y - 6, 1, 1);
+  } else if (atkO >= 4) {
+    // 高举过头：棒竖直举到最高
+    ctx.fillRect(px + 2 * f, y - 7, 1, 5);
+    ctx.fillStyle = '#f2ead8';
+    ctx.fillRect(px + 2 * f, y - 7, 1, 1);
+  } else if (atkO > 0) {
+    // 砸地：棒头触地 + 冲击白光
+    ctx.fillRect(px + 3 * f, y - 1, 1, 4);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(px + 3 * f, y + 2, 2, 1);
   } else {
     ctx.fillRect(px + 3 * f, y - 3, 1, 4);
   }
@@ -2576,6 +2600,8 @@ export function drawHydra(ctx: CanvasRenderingContext2D, u: Unit, frame: number)
     if ((isMoving ? (k + step) % 2 === 0 : k % 2 === 0)) ctx.fillRect(wx, y - bodyH - 1, 1, 1);
   }
   // 多颈多头：中央颈恒在，两侧颈按世代存留；每颈 2 段相位摆动（低血时颈弯垂 1px）
+  // #59 攻击啮咬：atk 窗口内朝向侧颈强制前探下压 + 獠牙白光 + 毒液飞溅（原攻击零表现补件）
+  const atkH = u.atk ?? 0;
   const droop = low ? 1 : 0;
   const necks: Array<{ nx: number; swayBase: number }> = heads >= 3
     ? [{ nx: -3, swayBase: 0 }, { nx: 0, swayBase: 2 }, { nx: 3, swayBase: 4 }]
@@ -2584,28 +2610,34 @@ export function drawHydra(ctx: CanvasRenderingContext2D, u: Unit, frame: number)
       : [{ nx: 0, swayBase: 2 }];
   for (const { nx, swayBase } of necks) {
     const sway = ((frame >> 2) + swayBase) & 3; // 0..3 摆动相位
-    const lift = sway === 0 ? 0 : sway === 1 ? 1 : sway === 2 ? 2 : 1;
+    const biting = atkH > 0 && (necks.length === 1 || nx * f > 0);
+    const lift = biting ? 3 : sway === 0 ? 0 : sway === 1 ? 1 : sway === 2 ? 2 : 1;
     const cx = px + nx;
     ctx.fillStyle = dark;
     ctx.fillRect(cx - 1, y - bodyH - 1, 2, 1); // 颈根
     ctx.fillStyle = body;
-    // 两段颈：下段固定 + 上段随相位横偏（S 形蠕动）
+    // 两段颈：下段固定 + 上段随相位横偏（S 形蠕动）；啮咬颈强制前探 2px
     ctx.fillRect(cx - 1 + (lift > 1 ? f : 0), y - bodyH - 2, 2, 1);
     ctx.fillRect(cx - 1 + (lift > 1 ? f * 2 : lift > 0 ? f : 0), y - bodyH - 3 + droop, 2, 1);
-    // 蛇头（2x2）：三角形轮廓 + 猩红竖瞳 + 周期性眨灭
-    const hx = cx + (lift > 1 ? f * 2 : lift > 0 ? f : 0);
-    const hy = y - bodyH - 4 + droop;
+    // 蛇头（2x2）：三角形轮廓 + 猩红竖瞳 + 周期性眨灭；啮咬时额外前探 1px 下压低咬
+    const hx = cx + (lift > 1 ? f * 2 : lift > 0 ? f : 0) + (biting ? f : 0);
+    const hy = y - bodyH - 4 + droop + (biting ? 1 : 0);
     ctx.fillStyle = body;
     ctx.fillRect(hx - 1, hy, 3, 2);
     ctx.fillStyle = scale;
     ctx.fillRect(hx - 1, hy, 1, 1); // 头顶亮鳞
-    const blink = frame % 23 < 2;
+    const blink = !biting && frame % 23 < 2;
     if (!blink) {
       ctx.fillStyle = low ? '#8c2317' : '#ff4030';
       ctx.fillRect(hx + (f > 0 ? 1 : 0), hy, 1, 1); // 猩红竖瞳
     }
-    // 分叉吐信（低血时不再吐信 —— 虚弱）
-    if (!low && frame % 16 < 5) {
+    // 分叉吐信（低血时不再吐信 —— 虚弱）；啮咬颈改喷獠牙白光 + 毒液飞溅
+    if (biting) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(hx + (f > 0 ? 3 : -2), hy + 2, 1, 1);
+      ctx.fillStyle = '#9fd42e';
+      ctx.fillRect(hx + (f > 0 ? 3 : -2), hy + 3, 1, 1);
+    } else if (!low && frame % 16 < 5) {
       ctx.fillStyle = '#d556c0';
       ctx.fillRect(hx + (f > 0 ? 2 : -1), hy + 1, 1, 1);
     }

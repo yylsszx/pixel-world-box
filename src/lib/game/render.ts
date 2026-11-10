@@ -2356,15 +2356,17 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
         const w = lod[2], h = lod[3];
         const hw = w >> 1;
         const bx = px - hw;
-        const by = py - h;
         const f = u.flip ? -1 : 1;
         const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
-        const g = moving ? ((fc + unitPhaseSeed(u)) >> 3) & 1 : -1;
-        // 四肢步态：前后腿常驻；中腿按对角相位起落（提起的腿藏进躯干不画）
+        const g = moving ? ((fc + unitPhaseSeed(u)) >> 3) & 3 : -1;
+        // walk 四相步态（表现线 v3 #59：两相交替提腿 → 左中/全着地/右中/全着地四拍韵律，
+        // 与全绘档对角步态节奏一致；推进相（1/3）躯干前倾起伏 1px——提起的腿藏进躯干不画）
+        const lope = moving && (g === 1 || g === 3) ? 1 : 0;
+        const by = py - h - lope;
         wc.fillStyle = hurt ? '#cf3f2e' : lod[1];
         wc.fillRect(bx, py, 1, 1);
         wc.fillRect(bx + w - 1, py, 1, 1);
-        if (g !== 1) wc.fillRect(bx + 1, py, 1, 1);
+        if (g !== 2) wc.fillRect(bx + 1, py, 1, 1);
         if (w >= 4 && g !== 0) wc.fillRect(bx + w - 2, py, 1, 1);
         // 躯干
         wc.fillStyle = hurt ? '#ff6b5e' : lod[0];
