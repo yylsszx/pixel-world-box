@@ -1548,6 +1548,13 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
   // units
   for (const u of engine.units) {
     if (u.x < x0 || u.x > x1 || u.y < y0 || u.y > y1) continue;
+    // 【表现 v0.66】攻击前扑 lunge：atk 窗口（12→0）内向朝向方向正弦包络位移脉冲（弹出→回弹），
+    // 经 dpx/dpy 通道覆盖全 LOD（色点/迷你/全精灵/精绘）；下帧 engine 重写 dpx 不受影响，本帧内生效
+    if ((u.atk ?? 0) > 0 && !u.boat && (u.caravan ?? 0) === 0) {
+      const lk = Math.sin(Math.PI * (1 - (u.atk ?? 0) / 12)); // 0→1→0 平滑包络
+      u.dpx = (u.rx ?? u.x) * 2 + lk * (u.flip ? -2.5 : 2.5);
+      u.dpy = (u.ry ?? u.y) * 2;
+    }
     drawUnitSprite(engine, u, wc);
     // —— 原子级：受损单位头顶血条（受损时才显示；可关闭）——
     // 质感工程 v3：血条/恐慌标记门限 zoom≥4 → zoom≥6（746 单位规模下逐单位标记

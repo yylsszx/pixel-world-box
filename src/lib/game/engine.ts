@@ -4294,7 +4294,7 @@ export class GameEngine {
         // 法师远程火球：拉开距离释放（风筝走位）
         if (u.cd <= 0) {
           u.cd = rd.cd;
-          u.atk = 10; // 施法动画
+          u.atk = 12; // 施法动画（【表现 v0.66】窗口统一 12：前扑 lunge 包络 t 从 0 起点弹出）
           this.castFireball(u, enemy.x + this.rng() * 0.6 - 0.3, enemy.y + this.rng() * 0.6 - 0.3, rd.dmg);
         }
         if (stance === 2) {
@@ -4310,7 +4310,7 @@ export class GameEngine {
         const beam = u.wep === 'laser_rifle';
         if (u.cd <= 0) {
           u.cd = beam ? 12 : gun ? 15 : 18; // 能量武器射速最快
-          u.atk = 10; // 拉弓/瞄准动画
+          u.atk = 12; // 拉弓/瞄准动画（窗口统一 12）
           const mul = def.isCiv && u.civ >= 0 ? this.techModsOf(u.civ).archer : 1;
           // 弹道预测：瞄准目标提前量（飞行期间目标仍在移动）
           const aim = this.leadAim(enemy, beam ? 8 : gun ? 5 : 12);
@@ -4567,7 +4567,7 @@ export class GameEngine {
             const bdy = b.y + 0.5 - u.y;
             if (bdx * bdx + bdy * bdy < 3.24) { // 1.8²：平方距离判定（纯阈值比较）
               u.cd = 16;
-              u.atk = 10; // 敲击动画
+              u.atk = 12; // 敲击动画（窗口统一 12）
               this.repairBuilding(di, 12 * this.techModsOf(u.civ).repair, u);
             } else {
               u.tx = b.x + 0.5;
@@ -7872,7 +7872,7 @@ export class GameEngine {
         else if (gun) this.castBullet(u, aim.x, aim.y, u.dmg * mul);
         else this.castArrow(u, aim.x, aim.y, u.dmg * mul);
         u.cd = beam ? 12 : gun ? 15 : 18;
-        u.atk = 10;
+        u.atk = 12; // 普攻挥击（窗口统一 12）
         volleyN++;
       }
       if (volleyN >= 4) {
