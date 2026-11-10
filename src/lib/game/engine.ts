@@ -3082,9 +3082,9 @@ export class GameEngine {
     if (this.blood.length > GameEngine.BLOOD_MAX) this.blood.splice(0, this.blood.length - GameEngine.BLOOD_MAX);
   }
 
-  addCorpse(x: number, y: number, stone: boolean, undead: boolean) {
+  addCorpse(x: number, y: number, stone: boolean, undead: boolean, race?: number, flip?: boolean) {
     if (!this.fxPrefs.corpses) return;
-    this.corpses.push({ x, y, age: 0, stone, undead });
+    this.corpses.push({ x, y, age: 0, stone, undead, race, flip });
     if (this.corpses.length > GameEngine.CORPSE_MAX) this.corpses.splice(0, this.corpses.length - GameEngine.CORPSE_MAX);
   }
 
@@ -3893,7 +3893,7 @@ export class GameEngine {
       // 尸骸残留 + 死亡血泊（原子级死亡反馈；亡者化为骨尘、无血可流）
       const undead = RACES[u.race].undead;
       if (u.race !== R.SANDWORM) { // 被吞噬者无残骸（已在吞噬处单独处理）
-        if (this.fxPrefs.corpses) this.addCorpse(u.x, u.y, false, undead);
+        if (this.fxPrefs.corpses) this.addCorpse(u.x, u.y, false, undead, u.race, u.flip);
         if (this.fxPrefs.blood && !undead) this.addBlood(u.x, u.y, true);
       }
       // —— 战争缴获与巨怪宝藏（Task 34 去虚务实）：装备随死者落回大地 ——
@@ -5731,7 +5731,7 @@ export class GameEngine {
           if (starved >= 1 + sev) break;
           v.u.hp = 0;
           v.u.dead = true;
-          this.addCorpse(v.u.x, v.u.y, false, false);
+          this.addCorpse(v.u.x, v.u.y, false, false, v.u.race, v.u.flip);
           collectUnitDead(v.u.id, true);
           starved++;
         }
@@ -7511,7 +7511,7 @@ export class GameEngine {
             if (victim && !victim.dead) {
               victim.hp = 0;
               victim.dead = true;
-              this.addCorpse(victim.x, victim.y, false, false);
+              this.addCorpse(victim.x, victim.y, false, false, victim.race, victim.flip);
               this.wwCountKill(victim);
               o.losses++;
               o.morale = Math.max(5, o.morale - 3);
@@ -8181,7 +8181,7 @@ export class GameEngine {
       u.hurt = 20;
       if (u.hp <= 0) {
         u.dead = true;
-        this.addCorpse(u.x, u.y, false, false);
+        this.addCorpse(u.x, u.y, false, false, u.race, u.flip);
         collectUnitDead(u.id, false);
         this.wwCountKill(u);
         const ix = target.members.indexOf(u.id);

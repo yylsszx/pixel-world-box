@@ -1617,6 +1617,10 @@ export interface CorpseDecal {
   stone: boolean;
   /** 亡灵残骸（暗色骨尘） */
   undead: boolean;
+  /** 【表现 v0.66】死亡倒下过渡：种族 id（渲染侧躺本体剪影→骸骨交叉淡化；瞬态不入档） */
+  race?: number;
+  /** 死亡瞬间朝向（倒下剪影头端方向） */
+  flip?: boolean;
 }
 
 // ---------------- 神谕 AI（Oracle LLM，专门打造的 AI 大模型融入） ----------------

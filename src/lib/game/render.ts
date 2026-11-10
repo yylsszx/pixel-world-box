@@ -1513,8 +1513,28 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
         wc.fillRect(bx - 1, by - 5, 1, 1);
         if (frameCount % 90 < 45) { wc.fillRect(bx, by - 2, 1, 1); }
       } else {
-        // 骸骨堆：白色/暗色骨点组合（头骨+散乱骨片）；亡者为暗色骨尘
-        const bone = c.undead ? qStyle(70, 64, 58, 0.7 * fade) : qStyle(226, 222, 212, 0.85 * fade); // 【GC v77】
+        // 【表现 v0.66】死亡倒下过渡：age<FALL 先画侧躺本体剪影（头朝死亡瞬间朝向），
+        // 与骸骨堆交叉淡化（剪影渐隐 + 骨堆渐显）—— 消除「站立瞬变骨堆」的跳变
+        const FALL = 14;
+        const cr = c.race;
+        const rdef = cr !== undefined ? RACES[cr] : null;
+        const rt = rdef && !c.undead ? 1 - c.age / FALL : 0;
+        if (rt > 0) {
+          const lod = rdef ? ANIMAL_LOD[rdef.sprite] : null;
+          const col = lod ? lod[0] : rdef && rdef.sprite === 'person' ? '#c9a06a' : '#9a8460';
+          const dark = lod ? lod[1] : '#6e685e';
+          const cf = c.flip ? -1 : 1;
+          wc.globalAlpha = rt * 0.95;
+          wc.fillStyle = col;
+          wc.fillRect(bx - 1, by, 3, 1); // 侧躺躯干（贴地）
+          wc.fillStyle = dark;
+          wc.fillRect(bx + (cf > 0 ? 2 : -2), by, 1, 1); // 头（死亡朝向前缘）
+          wc.fillRect(bx - (cf > 0 ? 2 : -2), by, 1, 1); // 腿（后缘）
+          wc.globalAlpha = 1;
+        }
+        // 骸骨堆：白色/暗色骨点组合（头骨+散乱骨片）；亡者为暗色骨尘；前段随倒下过渡渐显
+        const boneT = cr !== undefined && !c.undead ? Math.min(1, c.age / FALL) : 1;
+        const bone = c.undead ? qStyle(70, 64, 58, 0.7 * fade) : qStyle(226, 222, 212, 0.85 * fade * boneT); // 【GC v77】
         wc.fillStyle = bone;
         wc.fillRect(bx - 1, by, 2, 2); // 主骨堆
         wc.fillRect(bx, by - 1, 1, 1); // 头骨点
@@ -2080,18 +2100,24 @@ function drawArmyBanner(engine: GameEngine, a: Army, wc: CanvasRenderingContext2
   }
 }
 
+/** 【表现 v0.66】每单位固定相位种子（Knuth 乘法散列 → 0..255 帧偏移）：
+ *  步态/呼吸/摆尾等个体动画以 frameCount+seed 驱动 —— 去全局同步（原千人一律阅兵式相位 → 各自节奏的生命感） */
+function unitPhaseSeed(u: Unit): number {
+  return (u.id * 0x9e3779b1) >>> 24;
+}
+
 function drawUnitSprite(engine: GameEngine, u: Unit, wc: CanvasRenderingContext2D) {
   // 殖民船优先：航海中的单位画船而非本体
   if (u.boat) {
     const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-    drawBoat(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount);
+    drawBoat(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount + unitPhaseSeed(u));
     return;
   }
   const def = RACES[u.race];
   // 深度打磨：贸易商队 — 满载行商画驮马货车（王国尖旗 + 货物堆）
   if ((u.caravan ?? 0) > 0) {
     const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-    drawCaravan(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount);
+    drawCaravan(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount + unitPhaseSeed(u));
     return;
   }
   // —— 深度打磨：统一脚下软阴影（陆行单位半透明椭圆，水生/飞行除外） ——
@@ -2224,7 +2250,7 @@ function tryDrawFine(engine: GameEngine, u: Unit, def: (typeof RACES)[number], w
     wc.save();
     wc.scale(0.5, 0.5);
     wc.translate(tx, ty);
-    drawPersonFine(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount, king);
+    drawPersonFine(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount + unitPhaseSeed(u), king);
     wc.restore();
     return true;
   }
@@ -2233,7 +2259,7 @@ function tryDrawFine(engine: GameEngine, u: Unit, def: (typeof RACES)[number], w
     wc.save();
     wc.scale(0.5, 0.5);
     wc.translate(tx, ty);
-    drawQuadFine(wc, u, quad, engine.frameCount, king);
+    drawQuadFine(wc, u, quad, engine.frameCount + unitPhaseSeed(u), king);
     wc.restore();
     return true;
   }
@@ -2244,6 +2270,7 @@ function tryDrawFine(engine: GameEngine, u: Unit, def: (typeof RACES)[number], w
 function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], wc: CanvasRenderingContext2D) {
   const zoom = engine.cam.zoom;
   const fc = engine.frameCount;
+  const fcU = fc + unitPhaseSeed(u); // 【表现 v0.66】个体相位：全绘档步态/呼吸/摆尾去同步
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
   const king = !!u.king;
@@ -2284,7 +2311,7 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
       const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
       const bx0 = f > 0 ? px : px - 1; // 身体左缘（朝向对齐）
       const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
-      const g = moving ? (fc >> 3) & 1 : -1;
+      const g = moving ? ((fc + unitPhaseSeed(u)) >> 3) & 1 : -1;
       // 双腿（两相步态；暗色裤装 —— 免国色系暗化字符串拼接）
       wc.fillStyle = '#3a342c';
       if (g === 0) {
@@ -2325,7 +2352,7 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
         const by = py - h;
         const f = u.flip ? -1 : 1;
         const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
-        const g = moving ? (fc >> 3) & 1 : -1;
+        const g = moving ? ((fc + unitPhaseSeed(u)) >> 3) & 1 : -1;
         // 四肢步态：前后腿常驻；中腿按对角相位起落（提起的腿藏进躯干不画）
         wc.fillStyle = hurt ? '#cf3f2e' : lod[1];
         wc.fillRect(bx, py, 1, 1);
@@ -2371,7 +2398,7 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
   switch (def.sprite) {
     case 'person': {
       const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-      drawPerson(wc, u, civ && civ.alive ? civ.color : null, fc);
+      drawPerson(wc, u, civ && civ.alive ? civ.color : null, fcU);
       break;
     }
     case 'sheep': drawSheep(wc, u); break;
@@ -2379,36 +2406,36 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
     case 'snowwolf': drawSnowWolf(wc, u); break;
     case 'bear': drawBear(wc, u); break;
     case 'deer': drawDeer(wc, u); break;
-    case 'penguin': drawPenguin(wc, u, fc); break;
-    case 'camel': drawCamel(wc, u, fc); break;
-    case 'scorpion': drawScorpion(wc, u, fc); break;
-    case 'snake': drawSnake(wc, u, fc); break;
-    case 'dragon': drawDragon(wc, u, fc); break;
-    case 'skeleton': drawSkeleton(wc, u, fc); break;
-    case 'demon': drawDemon(wc, u, fc); break;
+    case 'penguin': drawPenguin(wc, u, fcU); break;
+    case 'camel': drawCamel(wc, u, fcU); break;
+    case 'scorpion': drawScorpion(wc, u, fcU); break;
+    case 'snake': drawSnake(wc, u, fcU); break;
+    case 'dragon': drawDragon(wc, u, fcU); break;
+    case 'skeleton': drawSkeleton(wc, u, fcU); break;
+    case 'demon': drawDemon(wc, u, fcU); break;
     // —— 神话种族（仓库线：光明/浴火/守护/死灵/九头）——
-    case 'angel': drawAngel(wc, u, fc); break;
-    case 'phoenix': drawPhoenix(wc, u, fc); break;
-    case 'ent': drawEnt(wc, u, fc); break;
-    case 'lich': drawLich(wc, u, fc); break;
-    case 'hydra': drawHydra(wc, u, fc); break;
-    case 'mage': drawMage(wc, u, fc); break;
-    case 'troll': drawTroll(wc, u, fc); break;
-    case 'ogre': drawOgre(wc, u, fc); break;
-    case 'whitewalker': drawWhiteWalker(wc, u, fc); break;
-    case 'vampire': drawVampire(wc, u, fc); break;
-    case 'kraken': drawKraken(wc, u, fc); break;
-    case 'sandworm': drawSandworm(wc, u, fc); break;
-    case 'basilisk': drawBasilisk(wc, u, fc); break;
+    case 'angel': drawAngel(wc, u, fcU); break;
+    case 'phoenix': drawPhoenix(wc, u, fcU); break;
+    case 'ent': drawEnt(wc, u, fcU); break;
+    case 'lich': drawLich(wc, u, fcU); break;
+    case 'hydra': drawHydra(wc, u, fcU); break;
+    case 'mage': drawMage(wc, u, fcU); break;
+    case 'troll': drawTroll(wc, u, fcU); break;
+    case 'ogre': drawOgre(wc, u, fcU); break;
+    case 'whitewalker': drawWhiteWalker(wc, u, fcU); break;
+    case 'vampire': drawVampire(wc, u, fcU); break;
+    case 'kraken': drawKraken(wc, u, fcU); break;
+    case 'sandworm': drawSandworm(wc, u, fcU); break;
+    case 'basilisk': drawBasilisk(wc, u, fcU); break;
     // —— P2：八新动物（完整档；水生已在函数头顶门控） ——
-    case 'chicken': drawChicken(wc, u, fc); break;
-    case 'pig': drawPig(wc, u, fc); break;
-    case 'rabbit': drawRabbit(wc, u, fc); break;
-    case 'fox': drawFox(wc, u, fc); break;
-    case 'fish': drawFish(wc, u, fc); break;
-    case 'crab': drawCrab(wc, u, fc); break;
-    case 'turtle': drawTurtle(wc, u, fc); break;
-    case 'shark': drawShark(wc, u, fc); break;
+    case 'chicken': drawChicken(wc, u, fcU); break;
+    case 'pig': drawPig(wc, u, fcU); break;
+    case 'rabbit': drawRabbit(wc, u, fcU); break;
+    case 'fox': drawFox(wc, u, fcU); break;
+    case 'fish': drawFish(wc, u, fcU); break;
+    case 'crab': drawCrab(wc, u, fcU); break;
+    case 'turtle': drawTurtle(wc, u, fcU); break;
+    case 'shark': drawShark(wc, u, fcU); break;
     // —— P2：未知精灵安全回退 —— 走 ANIMAL_LOD 色块（新种族接线遗漏时单位不消失、不崩溃） ——
     default: {
       const lod = ANIMAL_LOD[def.sprite];
