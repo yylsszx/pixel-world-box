@@ -1555,6 +1555,15 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
       u.dpx = (u.rx ?? u.x) * 2 + lk * (u.flip ? -2.5 : 2.5);
       u.dpy = (u.ry ?? u.y) * 2;
     }
+    // 【表现 v0.66】受击后仰：hurt 高位段（>14，即受击后前 6 ticks）沿自身背向线性衰减位移
+    // （被打瞬间最大 → 弹性回位）。hurt 为 Rust 批内核 writeback 与 JS 双路径同步的公共字段——
+    // 两侧通吃无需引擎写入点；flip 背向 = 面对面战斗的击退方向（受害者面向攻击者）。
+    // 环境伤害（火/辐射/岩浆 hurt=20 顶满）同样踉跄——「在火里挣扎」语义成立；船/商队排除。
+    if (u.hurt > 14 && !u.boat && (u.caravan ?? 0) === 0) {
+      const hk = ((u.hurt - 14) / 6) * 2.2; // 1→0 线性衰减 × 峰值 2.2px（×2 画布空间）
+      u.dpx = (u.dpx ?? (u.rx ?? u.x) * 2) + hk * (u.flip ? 1 : -1);
+      u.dpy = (u.dpy ?? (u.ry ?? u.y) * 2);
+    }
     drawUnitSprite(engine, u, wc);
     // —— 原子级：受损单位头顶血条（受损时才显示；可关闭）——
     // 质感工程 v3：血条/恐慌标记门限 zoom≥4 → zoom≥6（746 单位规模下逐单位标记
