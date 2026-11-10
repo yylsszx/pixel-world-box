@@ -577,6 +577,17 @@ class WbBatch {
   noteGood(): void {
     if (this.failStreak > 0 && ++this.goodStreak >= 1800) { this.failStreak = 0; this.goodStreak = 0; }
   }
+  /** 【稳定性 v79】读档会话态重置：failed/退避四字段是单例运行态，不入存档——
+   *  旧实现 applySave 不重置：上个世界的 bail 风暴冷却若跨读档存活，新世界起步即走 JS 接力
+   *  （rng 消费序不同）→ 同档二次读档与新页首读分叉（bit-equal QA 同会话协议实锤 823 vs 806）。 */
+  resetSessionState(): void {
+    this.failed = false;
+    this.failStreak = 0;
+    this.retryAtTick = -1;
+    this.goodStreak = 0;
+    this.metaDirty = true; // 新世界全量 meta 重灌（与 touchMeta 同向，双保险）
+    this.rowDirtyN = 0;
+  }
   /** Stage 3 行级分层：meta 列（id/civ/race/装备/基因/名/血仇等稀疏变异列）脏标记 —— 变异收口方法 touchMeta() 触发，下 tick 重灌 */
   metaDirty = true;
   /** Stage 3+ 行级增量：仅重灌标记行（spawn 新行 / reap 移位行）—— 避免繁衍活跃期全表重灌 */
@@ -587,6 +598,15 @@ class WbBatch {
   private ex: WbExports2 | null = null;
   private bootPromise: Promise<boolean> | null = null;
   private bw = -1; private bh = -1; private nu = 0;
+  /** 【稳定性 v80】boot 基线快照：ensureWorld 冷路径（wb_init 后）的线性内存字节镜像 ——
+   *  读档/generate 时 memcpy 回写，内核字节级回到 boot 态（静态区/行尾巴/全部槽位一网打尽）。
+   *  wb_reset 只清世界结构态，批运行态（bail 概率表/动作缓冲/内核内部静态/更大人口行尾巴）
+   *  跨读档存活 → 内核首 tick 以旧世界状态决策（deepdiff4/5/6 分块实锤）→ 位等分叉。 */
+  private arenaBaseline: Uint8Array | null = null;
+  /** 【稳定性 #54】新页 boot 竞态标志：WBB 未 ready（wasm 异步加载中）时 onWorldReset 被跳过
+   *  → 基线回写/wb_reset 全部丢失 → 新页前几载内核生命周期状态不一致 → 位等分叉。
+   *  置 pending，ensureWorld 冷启成功后补跑完整 reset（arenaBaseline 已建=boot 态，补跑即冷启等价）。 */
+  private pendingWorldReset = false;
   private tablesVersion = -1;
   private weightsVersion = -1;
   private traitsKeyCache = '';
@@ -608,6 +628,28 @@ class WbBatch {
   private vBailP!: Float64Array; private vDlist!: Uint32Array; private vRng!: Uint32Array;
   private vUx!: Float64Array; private vUy!: Float64Array; private vUciv!: Int32Array; private vUrace!: Uint32Array;
   private vUid!: Uint32Array; private vUcell!: Uint32Array; private vUdead!: Uint8Array; private vUHasPanic!: Uint8Array; private vUPanic!: Float64Array;
+
+  // 【性能 #53】pack 热路径 TypedArray 视图缓存：packTables/pack2/packOne/packSail 原本
+  // 每次调用新建 ~50-70 个局部视图（每 tick 1-3 次 pack2 → 千 tick 万级分配，GC 压力显著；
+  // #48 qStyle 量化先例同族）。arena 布局 wb_init 后固定、偏移常量静态，视图可安全复用；
+  // mem.buffer 引用变化（grow/重建实例）时全量失效重建。同 id+len 全库同类型已核对。
+  private _vCache = new Map<string, ArrayBufferView>();
+  private _vBufRef: ArrayBufferLike | null = null;
+  private vGet<T extends ArrayBufferView>(key: string, make: () => T): T {
+    const buf = this.mem;
+    if (this._vBufRef !== buf) { this._vCache.clear(); this._vBufRef = buf; }
+    let v = this._vCache.get(key) as T | undefined;
+    if (!v) { v = make(); this._vCache.set(key, v); }
+    return v;
+  }
+  private vI8(id: number, len: number): Int8Array { return this.vGet('i8:' + id + ':' + len, () => new Int8Array(this.mem, this.at(id), len)); }
+  private vI16(id: number, len: number): Int16Array { return this.vGet('i16:' + id + ':' + len, () => new Int16Array(this.mem, this.at(id), len)); }
+  private vI32(id: number, len: number): Int32Array { return this.vGet('i32:' + id + ':' + len, () => new Int32Array(this.mem, this.at(id), len)); }
+  private vU8(id: number, len: number): Uint8Array { return this.vGet('u8:' + id + ':' + len, () => new Uint8Array(this.mem, this.at(id), len)); }
+  private vU16(id: number, len: number): Uint16Array { return this.vGet('u16:' + id + ':' + len, () => new Uint16Array(this.mem, this.at(id), len)); }
+  private vU32(id: number, len: number): Uint32Array { return this.vGet('u32:' + id + ':' + len, () => new Uint32Array(this.mem, this.at(id), len)); }
+  private vF32(id: number, len: number): Float32Array { return this.vGet('f32:' + id + ':' + len, () => new Float32Array(this.mem, this.at(id), len)); }
+  private vF64(id: number, len: number): Float64Array { return this.vGet('f64:' + id + ':' + len, () => new Float64Array(this.mem, this.at(id), len)); }
 
   active(): boolean { return this.enabledCheck() && this.ready && !this.failed; }
   private enabledCheck(): boolean { return (WB as unknown as { enabled: boolean }).enabled; } // 与 Stage 1 共享开关
@@ -636,13 +678,33 @@ class WbBatch {
   }
 
   onWorldReset(engine: GameEngine): void {
-    if (!this.active() || !this.ensureWorld(engine)) return;
-    this.ex!.wb_reset();
+    if (!this.active() || !this.ensureWorld(engine)) {
+      // 【稳定性 #54】boot 竞态窗口：WBB 未 ready（wasm 异步加载中）时基线回写/wb_reset 全部
+      // 被跳过 → 新页前几载内核生命周期状态不一致 → 位等分叉（#53 误判「未闭合」根因）。
+      // 置 pending，ensureWorld 冷启成功后补跑完整 reset（arenaBaseline 已建=boot 态，等价冷启）。
+      this.pendingWorldReset = true;
+      return;
+    }
+    this.pendingWorldReset = false; // 正常路径清残留标志
+    // 【稳定性 v80】boot 基线回写：wb_reset 只清世界结构态，批运行态（vBailP——wbResume 决策
+    // 输入、vAct 动作缓冲、vDlist 脏行表、内核内部静态、更大人口的行尾巴 [n,NU)）跨读档存活
+    // → 内核首 tick 以旧世界状态决策 → 位等分叉（deepdiff4/5/6 分块实锤）。
+    // 恢复 boot 基线 = 内核字节级零态（静态区/尾巴/全部槽位一网打尽，~4MB memcpy ≈1ms）。
+    // 注：不能用二次 wb_init 冷重建——实测 wb_init 重入会重定位 arena（actBase 漂移）并
+    // 增长线性内存（+3MB/次），读档频率下不可接受。
+    const mem = this.ex!.memory.buffer;
+    if (this.arenaBaseline && this.arenaBaseline.length === mem.byteLength) {
+      new Uint8Array(mem).set(this.arenaBaseline);
+    }
+    this.virtBoat.fill(0); // JS 侧虚拟船标志清零（=boot 初态）
+    if (this.nameCacheStr.length) this.nameCacheStr.fill(undefined); // 【稳定性 v80】名缓存清零（残留跨读档 → 写回跳过/误判）
+    if (this.rowDirty) this.rowDirty.fill(0); // 行脏标志清零（残留 = 旧世界脏行集；保守方向但违背 boot 等价）
     this.tablesVersion = -1; // 表格重灌
     this.weightsVersion = -1;
     this.traitsKeyCache = '';
     this.batchReady = false;
     this.metaDirty = true; // Stage 3：新世界全部行重灌
+    this.rowDirtyN = 0;
   }
 
   private ensureWorld(engine: GameEngine): boolean {
@@ -703,6 +765,24 @@ class WbBatch {
     this.vUdead = new Uint8Array(m, A(OFF_UDEAD), NU);
     this.vUHasPanic = new Uint8Array(m, A(OFF_UHASPANIC), NU);
     this.vUPanic = new Float64Array(m, A(OFF_UPANIC), NU);
+    // 【稳定性 v80】boot 基线快照：wb_init 后即刻镜像整块线性内存（~4MB，一次性）——
+    // 之后每次读档/generate 恢复此基线 = 内核零态，pack2 重灌 [0,n) 即完整重建。
+    this.arenaBaseline = new Uint8Array(ex.memory.buffer).slice();
+    // 【稳定性 #54】boot 竞态补偿：冷启前曾有 onWorldReset 被跳过 → 此处补跑完整 reset
+    // （wb_reset 清结构态 + 基线回写 = 内核字节级回 boot 态，与未跳过场景完全等价）
+    if (this.pendingWorldReset) {
+      this.pendingWorldReset = false;
+      ex.wb_reset();
+      const memR = ex.memory.buffer;
+      if (this.arenaBaseline.length === memR.byteLength) {
+        new Uint8Array(memR).set(this.arenaBaseline);
+      }
+      this.tablesVersion = -1; this.weightsVersion = -1; this.traitsKeyCache = '';
+      this.batchReady = false; this.metaDirty = true; this.rowDirtyN = 0;
+      if (this.virtBoat.length) this.virtBoat.fill(0);
+      if (this.nameCacheStr.length) this.nameCacheStr.fill(undefined);
+      if (this.rowDirty) this.rowDirty.fill(0);
+    }
     this.bw = engine.bw; this.bh = engine.bh;
     return true;
   }
@@ -716,10 +796,10 @@ class WbBatch {
       const keys = Object.keys(ITEM_DEFS);
       if (keys.length > MAX_ITEMDEFS) { this.failed = true; return; }
       keys.forEach((k, i) => { this.itemIdMap.set(k, i); this.itemIds[i] = k; });
-      const tbi = new Float64Array(m, A(OFF_TBI), MAX_ITEMDEFS * 12);
+      const tbi = this.vF64(OFF_TBI, MAX_ITEMDEFS * 12);
       tbi.fill(0);
-      const gunbm = new Uint32Array(m, A(OFF_GUNBM), 4);
-      const beambm = new Uint32Array(m, A(OFF_BEAMBM), 4);
+      const gunbm = this.vU32(OFF_GUNBM, 4);
+      const beambm = this.vU32(OFF_BEAMBM, 4);
       keys.forEach((k, i) => {
         const d = (ITEM_DEFS as unknown as Record<string, Record<string, number>>)[k];
         tbi[i * 12 + 0] = d.armor ?? 0; tbi[i * 12 + 1] = d.crit ?? 0; tbi[i * 12 + 2] = d.lifesteal ?? 0;
@@ -729,13 +809,13 @@ class WbBatch {
         if (k === 'musket' || k === 'rifle') gunbm[i >> 5] |= 1 << (i & 31);
         if (k === 'laser_rifle') beambm[i >> 5] |= 1 << (i & 31);
       });
-      new Int32Array(m, A(OFF_TBIN), 1)[0] = keys.length;
+      this.vI32(OFF_TBIN, 1)[0] = keys.length;
     }
     // —— FIRST 名池（静态：仅首灌；24B 定长条目 [len][bytes×23]）——
     if (this.firstPoolVersion !== 1) {
-      const pool = new Uint8Array(m, A(OFF_FRSTP), 16384);
-      const off = new Uint32Array(m, A(OFF_FRSTOFF), 512);
-      const cnt = new Uint32Array(m, A(OFF_FRSTN), 512);
+      const pool = this.vU8(OFF_FRSTP, 16384);
+      const off = this.vU32(OFF_FRSTOFF, 512);
+      const cnt = this.vU32(OFF_FRSTN, 512);
       let cur = 0;
       const enc = new TextEncoder();
       for (const k of Object.keys(FIRST)) {
@@ -758,14 +838,14 @@ class WbBatch {
     if (this.tablesVersion !== 1) {
       const GE = engine.constructor as unknown as Record<string, string[]>;
       const pre = GE['FAM_PRE'], post = GE['FAM_POST'];
-      const famp = new Uint8Array(m, A(OFF_FAMP), 1024);
+      const famp = this.vU8(OFF_FAMP, 1024);
       const enc = new TextEncoder();
       pre.forEach((s, i) => { const b = enc.encode(s).slice(0, 23); famp[i * 24] = b.length; famp.set(b, i * 24 + 1); });
       post.forEach((s, i) => { const b = enc.encode(s).slice(0, 23); famp[384 + i * 24] = b.length; famp.set(b, 384 + i * 24 + 1); });
       // —— 种族表 TBR/TBF ——
-      const tbr = new Float64Array(m, A(OFF_TBR), 512 * 12);
-      const tbf = new Uint8Array(m, A(OFF_TBF), 512 * 2);
-      const rf = new Uint8Array(m, A(11), 512); // OFF_RACE_FLAGS（与 Stage 1 语义一致）
+      const tbr = this.vF64(OFF_TBR, 512 * 12);
+      const tbf = this.vU8(OFF_TBF, 512 * 2);
+      const rf = this.vU8(11, 512); // OFF_RACE_FLAGS（与 Stage 1 语义一致）
       rf.fill(0);
       for (const k of Object.keys(RACES)) {
         const id = Number(k);
@@ -798,13 +878,17 @@ class WbBatch {
         if (d.flying) tbf[id * 2] |= 32;
       }
       // —— 职业 TBJ ——
-      const tbj = new Float64Array(m, A(OFF_TBJ), 7 * 5);
+      // 视图尺寸随 JOBS.length 扩容（#68 职业分工：渔民 8/猎手 9 尾追；旧硬编码 7*5 会把第 8 行起
+      // 的写入静默丢出界——TypedArray 越界写零报错零生效，国王行（idx7）在旧视图本就被丢弃）。
+      // 内核 rollJob 硬编码 0..7 只掷 0-6，专职工种（weight 0）永不入掷；内核对现役 job 列
+      // 仅字面量比较（2/3/4），新职业索引天然落入平民分支——零 rust 改动即安全。
+      const tbj = this.vF64(OFF_TBJ, JOBS.length * 5);
       JOBS.forEach((j, i) => {
         tbj[i * 5 + 0] = j.hpMul; tbj[i * 5 + 1] = j.dmgMul; tbj[i * 5 + 2] = j.speedMul;
         tbj[i * 5 + 3] = j.weight; tbj[i * 5 + 4] = j.ranged ?? 0;
       });
       // —— 地形掩码 TBT ——
-      const tbt = new Uint8Array(m, A(OFF_TBT), 16);
+      const tbt = this.vU8(OFF_TBT, 16);
       const TS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
       for (const t of TS) {
         let bits = 0;
@@ -816,9 +900,9 @@ class WbBatch {
         tbt[t] = bits;
       }
       // —— 巨怪掉落 / 野怪上限 / 巨怪上限 / 建筑血量 ——
-      const mloot = new Uint8Array(m, A(OFF_MLOOT), 512);
-      const wildcap = new Uint32Array(m, A(OFF_WILDCAP), 512);
-      const moncap = new Uint32Array(m, A(OFF_MONCAP), 512);
+      const mloot = this.vU8(OFF_MLOOT, 512);
+      const wildcap = this.vU32(OFF_WILDCAP, 512);
+      const moncap = this.vU32(OFF_MONCAP, 512);
       const caps: Record<number, number> = { 6: 240, 7: 90, 10: 160, 11: 110, 12: 90, 13: 60, 14: 80, 15: 70 };
       for (const k of Object.keys(RACES)) {
         const id = Number(k);
@@ -833,13 +917,13 @@ class WbBatch {
       for (const [k, v] of Object.entries(mcaps)) moncap[+k] = v;
       const ML = (engine.constructor as unknown as Record<string, Set<number>>)['MONSTER_LOOT'] ?? new Set<number>();
       for (const k of ML) mloot[k] = 1;
-      const tbhp = new Float64Array(m, A(OFF_TBHP), 16);
+      const tbhp = this.vF64(OFF_TBHP, 16);
       for (let k = 1; k <= 10; k++) tbhp[k] = BUILDING_DEFS[k]?.hp ?? 70;
       // —— MISC ——
       // misc[1] = 野生全局预算：同步三轨上界（陆 900 + 水生 520 = 1420）——
       // 若仍填 900，内核侧总预算会被羊群（陆生）先行占满，鱼群内核繁衍依旧被挤死
       // （实测 1220 时总单位顶格 1219：鱼 280 + 龟 90 + 蟹 90 已 460，陆生繁衍被挤到贴边）
-      const misc = new Int32Array(m, A(OFF_MISC), 32);
+      const misc = this.vI32(OFF_MISC, 32);
       misc[0] = 2400; misc[1] = 900 + 520;
       this.tablesVersion = 1;
     }
@@ -847,7 +931,7 @@ class WbBatch {
     // 非文明种族封顶 min(自身 repro, 倍率 × 繁殖基准数 civSlowestRepro())，文明种族原值直装。
     // 内核第一段繁衍骰（rng < repro）读 TBR[id*12+4]，在此封顶即免改 rust（约 45 写/ tick，可忽略）。
     if (!this.failed) {
-      const tbr2 = new Float64Array(m, A(OFF_TBR), 512 * 12);
+      const tbr2 = this.vF64(OFF_TBR, 512 * 12);
       const cap = engine.wildReproScale * engine.civSlowestRepro();
       for (const k of Object.keys(RACES)) {
         const id = Number(k);
@@ -863,6 +947,30 @@ class WbBatch {
   /** full：强制 meta 全行重灌（未知爆炸面保险）；sections：WP_* 截面位掩码（默认全量）。
    *  正确性约定：轻量截面只跳过「JS 接力段证明未触碰」的段；meta 行永远由 touchMeta/touchRow
    *  漏斗 + 抽样哨兵（轻量模式下 32 行）兑底 —— 漏检自愈，位等不破。 */
+  /** 【性能 #64】六网格视图绑定：engine.terrain/fire/radiate/road/building/owner 直接绑定为
+   *  wasm 线性内存镜像段视图（TILES=W*H=40960 严格等长）——JS 写引擎网格=写内核镜像，零拷贝零同步；
+   *  内核 set_terrain/ignite 等写镜像段=JS 直接可见。消除 pack2 每 tick 全量 set 六网格（grid 段
+   *  ~0.47ms/tick，20× 下占 simMs ~10%）+ 消除「JS 数组 vs 内核镜像」双份数据漂移整类隐患。
+   *  绑定漂移兜底：generateWorld/applySave 重赋真数组后引用不等 → 拷贝最新内容进镜像段并重绑
+   *  （onWorldReset 的 boot 基线回写总发生在真数组重赋之后，视图内容被覆盖亦被兜底覆盖修正）。
+   *  世界尺寸恒定（W/H 常量 → ensureWorld 永不重建实例 → mem.buffer 运行期不变 → 绑定永久有效）。 */
+  private bindGridViews(engine: GameEngine): void {
+    // wasm Memory.buffer 类型层为 ArrayBufferLike（运行时恒为普通 ArrayBuffer——memory 非 shared），
+    // 引擎字段按 TS5.7 严格签名 *Array<ArrayBuffer> 声明，此处统一窄化断言（同一运行时对象，安全）。
+    const gT = this.gTerr as unknown as Uint8Array<ArrayBuffer>;
+    const gF = this.gFire as unknown as Uint8Array<ArrayBuffer>;
+    const gR = this.gRad as unknown as Uint8Array<ArrayBuffer>;
+    const gRd = this.gRoad as unknown as Uint8Array<ArrayBuffer>;
+    const gB = this.gBldk as unknown as Uint8Array<ArrayBuffer>;
+    const gO = this.gOwn as unknown as Int16Array<ArrayBuffer>;
+    if (engine.terrain !== gT) { gT.set(engine.terrain); engine.terrain = gT; }
+    if (engine.fire !== gF) { gF.set(engine.fire); engine.fire = gF; }
+    if (engine.radiate !== gR) { gR.set(engine.radiate); engine.radiate = gR; }
+    if (engine.road !== gRd) { gRd.set(engine.road); engine.road = gRd; }
+    if (engine.building !== gB) { gB.set(engine.building); engine.building = gB; }
+    if (engine.owner !== gO) { gO.set(engine.owner); engine.owner = gO; }
+  }
+
   pack2(engine: GameEngine, full = false, sections = WP_ALL): void {
     if (!this.ensureWorld(engine)) return;
     const t0 = performance.now();
@@ -878,21 +986,14 @@ class WbBatch {
     // 瞬时单位峰（>4096）冷却后自愈；持续性溢出每次重试代价 ≈ 一次 packTables（~0.1ms/4800tick，可忽略）。
     if (n > this.nu) { this.failed = true; this.scheduleRetry(engine.tickCount); return; }
 
-    // —— 网格（bulk copy）——
+    // —— 网格（【性能 #64】视图绑定兜底：引用相等时零成本，漂移时 memcpy 一次）——
     const g0 = performance.now();
-    if (sections & WP_GRIDS) {
-      this.gTerr.set(engine.terrain);
-      this.gFire.set(engine.fire);
-      this.gRad.set(engine.radiate);
-      this.gRoad.set(engine.road);
-      this.gBldk.set(engine.building);
-      this.gOwn.set(engine.owner);
-    }
+    this.bindGridViews(engine);
     const g1 = performance.now();
 
     // —— 战争位图（atWar: rel<-20）——
     if (sections & WP_WAR) {
-      const atw = new Uint8Array(m, A(13), 64 * 64);
+      const atw = this.vU8(13, 64 * 64);
       atw.fill(0);
       for (const [k, v] of engine.rel) {
         if (v >= -20) continue;
@@ -901,7 +1002,7 @@ class WbBatch {
         if (a >= 0 && a < 64 && b >= 0 && b < 64) { atw[a * 64 + b] = 1; atw[b * 64 + a] = 1; }
       }
       // dynRaces 父链
-      const dpar = new Int32Array(m, A(12), 512); dpar.fill(-1);
+      const dpar = this.vI32(12, 512); dpar.fill(-1);
       for (const [id, d] of engine.dynRaces) { if (id >= 0 && id < 512) dpar[id] = d.parent; }
     }
 
@@ -909,17 +1010,17 @@ class WbBatch {
     const c0 = performance.now();
     if (sections & WP_CIV) {
       const civn = Math.min(engine.civs.length, 64);
-      new Int32Array(m, A(OFF_CIVN), 1)[0] = civn;
-      const cvPop = new Float64Array(m, A(OFF_CVPOP), 64);
-      const cvHou = new Float64Array(m, A(OFF_CVHOU), 64);
-      const cvGld = new Float64Array(m, A(OFF_CVGLD), 64);
-      const cvCap = new Int32Array(m, A(OFF_CVCAP), 64);
-      const cvAl = new Uint8Array(m, A(OFF_CVAL), 64);
-      const cvGov = new Int32Array(m, A(OFF_CVGOV), 64);
-      const cvTech = new Float64Array(m, A(OFF_CVTECH), 64 * 24);
-      const cvDir = new Uint8Array(m, A(OFF_CVDIR), 64);
-      const cvPc = new Float64Array(m, A(OFF_CVPC), 64);
-      const cvMkt = new Int32Array(m, A(OFF_CVMKT), 64);
+      this.vI32(OFF_CIVN, 1)[0] = civn;
+      const cvPop = this.vF64(OFF_CVPOP, 64);
+      const cvHou = this.vF64(OFF_CVHOU, 64);
+      const cvGld = this.vF64(OFF_CVGLD, 64);
+      const cvCap = this.vI32(OFF_CVCAP, 64);
+      const cvAl = this.vU8(OFF_CVAL, 64);
+      const cvGov = this.vI32(OFF_CVGOV, 64);
+      const cvTech = this.vF64(OFF_CVTECH, 64 * 24);
+      const cvDir = this.vU8(OFF_CVDIR, 64);
+      const cvPc = this.vF64(OFF_CVPC, 64);
+      const cvMkt = this.vI32(OFF_CVMKT, 64);
       for (let c = 0; c < civn; c++) {
         const civ = engine.civs[c];
         cvPop[c] = civ.pop; cvHou[c] = civ.houses; cvGld[c] = civ.gold ?? 0;
@@ -939,10 +1040,10 @@ class WbBatch {
     if (sections & WP_FAM) {
       const fams = engine.families;
       const fn = Math.min(fams.size, MAX_FAM);
-      new Int32Array(m, A(OFF_FAMN), 1)[0] = fn;
-      const fmId = new Int32Array(m, A(OFF_FMID), MAX_FAM);
-      const fmRace = new Int32Array(m, A(OFF_FMRACE), MAX_FAM);
-      const fmNum = new Float64Array(m, A(OFF_FMNUM), MAX_FAM * 6);
+      this.vI32(OFF_FAMN, 1)[0] = fn;
+      const fmId = this.vI32(OFF_FMID, MAX_FAM);
+      const fmRace = this.vI32(OFF_FMRACE, MAX_FAM);
+      const fmNum = this.vF64(OFF_FMNUM, MAX_FAM * 6);
       let fi = 0;
       for (const f of fams.values()) {
         if (fi >= MAX_FAM) break;
@@ -951,7 +1052,7 @@ class WbBatch {
         fmNum[fi * 6 + 3] = f.peak; fmNum[fi * 6 + 4] = f.milestones; fmNum[fi * 6 + 5] = f.founded;
         fi++;
       }
-      new Int32Array(m, A(OFF_FMSEQ), 1)[0] = engine.familySeq;
+      this.vI32(OFF_FMSEQ, 1)[0] = engine.familySeq;
     }
 
     // —— 建筑 ——
@@ -959,11 +1060,11 @@ class WbBatch {
     if (sections & WP_BLD) {
       const bl = engine.buildings;
       const bn = Math.min(bl.length, MAX_BLD);
-      new Int32Array(m, A(OFF_BLDN), 1)[0] = bn;
-      const blI = new Int32Array(m, A(OFF_BLDI), MAX_BLD);
-      const blXY = new Int32Array(m, A(OFF_BLDXY), MAX_BLD * 2);
-      const blC = new Int32Array(m, A(OFF_BLDC), MAX_BLD);
-      const blHp = new Float64Array(m, A(OFF_BLDHP), MAX_BLD);
+      this.vI32(OFF_BLDN, 1)[0] = bn;
+      const blI = this.vI32(OFF_BLDI, MAX_BLD);
+      const blXY = this.vI32(OFF_BLDXY, MAX_BLD * 2);
+      const blC = this.vI32(OFF_BLDC, MAX_BLD);
+      const blHp = this.vF64(OFF_BLDHP, MAX_BLD);
       for (let b = 0; b < bn; b++) {
         const bd = bl[b];
         blI[b] = bd.i; blXY[b * 2] = bd.x; blXY[b * 2 + 1] = bd.y; blC[b] = bd.civ;
@@ -972,10 +1073,10 @@ class WbBatch {
       }
       // damagedSet 有序镜像
       const dn = Math.min(engine.damagedSet.size, MAX_BLD);
-      const dml = new Int32Array(m, A(OFF_DMGL), MAX_BLD);
+      const dml = this.vI32(OFF_DMGL, MAX_BLD);
       let di = 0;
       for (const t of engine.damagedSet) { if (di >= dn) break; dml[di++] = t; }
-      new Int32Array(m, A(OFF_DMGN), 1)[0] = dn;
+      this.vI32(OFF_DMGN, 1)[0] = dn;
     }
     const c2 = performance.now();
 
@@ -983,9 +1084,9 @@ class WbBatch {
     if (sections & WP_ITEM) {
       const its = engine.items;
       const in2 = Math.min(its.length, MAX_ITEMS2);
-      new Int32Array(m, A(OFF_ITMN), 1)[0] = in2;
-      const itK = new Int32Array(m, A(OFF_ITMK), MAX_ITEMS2);
-      const itXY = new Float64Array(m, A(OFF_ITMXY), MAX_ITEMS2 * 2);
+      this.vI32(OFF_ITMN, 1)[0] = in2;
+      const itK = this.vI32(OFF_ITMK, MAX_ITEMS2);
+      const itXY = this.vF64(OFF_ITMXY, MAX_ITEMS2 * 2);
       for (let i = 0; i < in2; i++) {
         itK[i] = this.itemIdMap.get(its[i].kind) ?? -1;
         itXY[i * 2] = its[i].x; itXY[i * 2 + 1] = its[i].y;
@@ -1000,11 +1101,11 @@ class WbBatch {
       this.traitKeys = tk;
       this.traitIdMap.clear();
       tk.forEach((k, i) => this.traitIdMap.set(k, i));
-      const trDmg = new Float64Array(m, A(OFF_TRDMG), MAX_TRAITS2);
-      const trHp = new Float64Array(m, A(OFF_TRHP), MAX_TRAITS2);
-      const trSpd = new Float64Array(m, A(OFF_TRSPD), MAX_TRAITS2);
-      const trReg = new Float64Array(m, A(OFF_TRREG), MAX_TRAITS2);
-      const trFl = new Uint8Array(m, A(OFF_TRFL), MAX_TRAITS2);
+      const trDmg = this.vF64(OFF_TRDMG, MAX_TRAITS2);
+      const trHp = this.vF64(OFF_TRHP, MAX_TRAITS2);
+      const trSpd = this.vF64(OFF_TRSPD, MAX_TRAITS2);
+      const trReg = this.vF64(OFF_TRREG, MAX_TRAITS2);
+      const trFl = this.vU8(OFF_TRFL, MAX_TRAITS2);
       trDmg.fill(1); trHp.fill(1); trSpd.fill(1); trReg.fill(0);
       tk.forEach((k, i) => {
         const t = (TRAITS as unknown as Record<string, Record<string, number | boolean | undefined>>)[k];
@@ -1019,14 +1120,14 @@ class WbBatch {
         if (k === 'swift') trFl[i] |= 16;
         if (k === 'berserk') trFl[i] |= 64;
       });
-      new Int32Array(m, A(OFF_TRN), 1)[0] = tk.length;
+      this.vI32(OFF_TRN, 1)[0] = tk.length;
       this.traitsKeyCache = tkSig;
     }
 
     // —— 神经权重（版本变化时重灌：ACC@0 STANCE@256 FLIGHT@576 RL@768）——
     const heads = neuroHeadsSnapshot();
     if (heads.version !== this.weightsVersion) {
-      const nw = new Float64Array(m, A(OFF_NEUW), 2048);
+      const nw = this.vF64(OFF_NEUW, 2048);
       const put = (base: number, h: { nIn: number; nH: number; nOut: number; w1: Float32Array; b1: Float32Array; w2: Float32Array; b2: Float32Array }) => {
         let k = 0;
         for (let i = 0; i < h.nIn * h.nH; i++) nw[base + k++] = h.w1[i];
@@ -1035,42 +1136,49 @@ class WbBatch {
         for (let j = 0; j < h.nOut; j++) nw[base + k++] = h.b2[j];
       };
       put(0, heads.acc); put(256, heads.stance); put(576, heads.flight); put(768, heads.rl);
-      const ctl = new Uint8Array(m, A(OFF_NCTL), 1);
+      const ctl = this.vU8(OFF_NCTL, 1);
       ctl[0] = (neuroStats.enabled ? 1 : 0) | ((neuroStats.flightMode === 'rl' ? 1 : 0) << 1);
       this.weightsVersion = heads.version;
     }
     // NCTL 每次都刷（开关/模式可随时切）
     {
-      const ctl = new Uint8Array(m, A(OFF_NCTL), 1);
+      const ctl = this.vU8(OFF_NCTL, 1);
       ctl[0] = (neuroStats.enabled ? 1 : 0) | ((neuroStats.flightMode === 'rl' ? 1 : 0) << 1);
     }
 
     // —— 标量（Task 50：WP_SCAL 截面 —— rng/tick/laws/fxp/fx 队列/wild/prey/speciesBase/计数）——
     if (sections & WP_SCAL) {
     this.vRng[0] = engine.rngA >>> 0;
-    const i32v = (id: number, len: number, off = 0) => new Int32Array(m, A(id), len);
+    const i32v = (id: number, len: number, off = 0) => this.vI32(id, len);
     i32v(OFF_TICK, 1)[0] = engine.tickCount;
-    i32v(OFF_FRAME, 1)[0] = engine.frameCount;
-    new Uint8Array(m, A(OFF_PAR), 1)[0] = engine.tickCount % 2;
-    new Uint32Array(m, A(OFF_USEQ), 1)[0] = engine.unitSeq;
-    const eps = new Float64Array(m, A(OFF_EPS), 16);
+    // 【稳定性 v81】世界时虚拟帧钟：旧值 engine.frameCount（渲染墙钟）在 20× 下每 tick 仅 +0.22，
+    // 内核（现网二进制仍消费此值的 fx 节拍路径）决策随速度漂移 → 内核 rng 流分叉 → 1×/20× 两个世界
+    // （JS 侧调用级 rng 日志 5864 次全同而 rngA@tick8 分叉实锤分叉在内核；rust 源已删读点但二进制未重建）。
+    // 改写 tickCount*4：1×（15tps×60fps≈4帧/tick）节奏保真，高倍速随世界时间整体加速——速度纯化。
+    i32v(OFF_FRAME, 1)[0] = engine.tickCount * 4;
+    this.vU8(OFF_PAR, 1)[0] = engine.tickCount % 2;
+    this.vU32(OFF_USEQ, 1)[0] = engine.unitSeq;
+    const eps = this.vF64(OFF_EPS, 16);
     EP_KEYS.forEach((k, i) => { eps[i] = getEp(k); });
     let laws = 0;
     const L = engine.laws;
     if (L.reproduction) laws |= 1; if (L.zombieInfect) laws |= 2; if (L.undeadRise) laws |= 4;
-    new Uint8Array(m, A(OFF_LAWS), 1)[0] = laws;
+    this.vU8(OFF_LAWS, 1)[0] = laws;
     const F = engine.fxPrefs;
-    // 【性能 v75】高速档特效分层（≥8×）：伤害数字/氛围粒子在高速下内眼不可追，Rust 侧停生
-    // ——效果数组收缩，fx 队列打包与 replay 同步减压；低速档自动恢复（fxPrefs 用户设置不动）
-    const fxTier = engine.speed >= 8 ? 0 : 1;
+    // 【稳定性 v80】fxTier 不再写进内核（位等 QA 等速对照实锤：speed 恒 20 双侧 sameH=TRUE，
+    // 20×玩后读档 vs 1×首读速度不同即全局分叉）——内核 fx 生成的掷骰消费内核 rng，档位随
+    // 用户速度变化 → 同一存档在不同速度下模拟结果不同（20×快进 ≠ 1×游玩，真实模拟不一致）。
+    // 改为内核恒按全量 fxPrefs 生成动作（rng 消费恒定），速度档过滤平移到 replayActions
+    // （≥8× 跳过次要 fx 回放）—— #43 特效分层的收益保留在 fx 数组层面（高速下数组依旧
+    // 不涨），仅 ACT 缓冲多写少量动作（线性内存写，无分配无 GC）。
     let fxp = 0;
-    if (F.dmgNumbers && fxTier) fxp |= 1; if (F.ambience && fxTier) fxp |= 2; if (F.blood) fxp |= 4; if (F.corpses) fxp |= 8;
+    if (F.dmgNumbers) fxp |= 1; if (F.ambience) fxp |= 2; if (F.blood) fxp |= 4; if (F.corpses) fxp |= 8;
     fxp |= (F.fxDensity ?? 1) << 4;
-    new Uint8Array(m, A(OFF_FXP), 1)[0] = fxp;
+    this.vU8(OFF_FXP, 1)[0] = fxp;
     // fx 虚拟队列
     i32v(OFF_FXLEN, 1)[0] = engine.effects.length;
     {
-      const fmin = new Int32Array(m, A(OFF_FXMIN), 1600);
+      const fmin = this.vI32(OFF_FXMIN, 1600);
       let k = 0;
       // 【性能 v75】MINOR 集提升至模块级（旧版每 tick 新建 Set —— 纯分配浪费）
       for (let i = 0; i < engine.effects.length && k < 1600; i++) {
@@ -1079,18 +1187,18 @@ class WbBatch {
       i32v(OFF_FXMINN, 1)[0] = k;
     }
     // wildCount（先清零防幽灵计数 —— JS 侧 map 删除的种族不得残留镜像）
-    const wild = new Int32Array(m, A(OFF_WILD), 512);
+    const wild = this.vI32(OFF_WILD, 512);
     wild.fill(0);
     for (const [r, v] of engine.wildCount) { if (r >= 0 && r < 512) wild[r] = v; }
-    const f64v = (id: number, len: number) => new Float64Array(m, A(id), len);
+    const f64v = (id: number, len: number) => this.vF64(id, len);
     f64v(OFF_GRASS, 1)[0] = engine.grassTiles;
     f64v(OFF_DAYPH, 1)[0] = engine.dayPhase();
     f64v(OFF_REPRM, 1)[0] = engine.nature.reproMul();
-    const prey = new Uint16Array(m, A(OFF_PREY), 640);
+    const prey = this.vU16(OFF_PREY, 640);
     prey.set(engine.preyGrid);
     // speciesBase
-    const spb = new Float64Array(m, A(OFF_SPB), 512 * 4);
-    const spbh = new Uint8Array(m, A(OFF_SPBH), 512);
+    const spb = this.vF64(OFF_SPB, 512 * 4);
+    const spbh = this.vU8(OFF_SPBH, 512);
     for (const [r, v] of engine.speciesBase) {
       if (r < 0 || r >= 512) continue;
       spb[r * 4] = v.gene.s; spb[r * 4 + 1] = v.gene.d; spb[r * 4 + 2] = v.gene.h; spb[r * 4 + 3] = v.gene.r;
@@ -1103,7 +1211,7 @@ class WbBatch {
     // 杂项
     const misc = i32v(OFF_MISC, 32);
     misc[2] = engine.dynTraits.size;
-    new Uint8Array(m, A(OFF_COLEN), 1)[0] = collectorStats.enabled ? 1 : 0;
+    this.vU8(OFF_COLEN, 1)[0] = collectorStats.enabled ? 1 : 0;
     // fireSet 计数
     i32v(OFF_FIREN, 1)[0] = engine.fireSet.size;
     } // WP_SCAL 结束
@@ -1277,10 +1385,10 @@ class WbBatch {
     // —— rng 同步（保险直写：接力段理论上不消耗）——
     this.vRng[0] = engine.rngA >>> 0;
     // —— fx 虚拟队列（回放/海难 fx 增长 —— Rust fx 预算依赖）——
-    const i32v = (id: number, len: number) => new Int32Array(m, A(id), len);
+    const i32v = (id: number, len: number) => this.vI32(id, len);
     i32v(OFF_FXLEN, 1)[0] = engine.effects.length;
     {
-      const fmin = new Int32Array(m, A(OFF_FXMIN), 1600);
+      const fmin = this.vI32(OFF_FXMIN, 1600);
       let k = 0;
       // 【性能 v75】MINOR 集提升至模块级（旧版每 tick 新建 Set —— 纯分配浪费）
       for (let i = 0; i < engine.effects.length && k < 1600; i++) {
@@ -1337,7 +1445,7 @@ class WbBatch {
   }
   getNeuroCalls(): [number, number, number] {
     const m = this.mem; const A = this.at;
-    const v = new Uint32Array(m, A(OFF_NEUCALL), 3);
+    const v = this.vU32(OFF_NEUCALL, 3);
     return [v[0], v[1], v[2]];
   }
   getActN(): number { return new Int32Array(this.mem, this.at(OFF_ACTN), 1)[0]; }
@@ -1385,7 +1493,13 @@ class WbBatch {
       const op = a[p];
       switch (op) {
         case ACT_FX: { // 76B: kind@1 quiet@2 textOp@3 textArg@4 src@8 ttl@16 x@24 y@32 r@40 x0@48 y0@56 dmg@64
-          const kind = a[p + 1];
+          const kindB = a[p + 1];
+          cur += 76;
+          // 【稳定性 v80】速度档过滤（原内核侧 fxTier 语义平移到回放层）：≥8× 跳过次要 fx 回放
+          // ——内核已按全量 prefs 生成动作（rng 消费恒定），此处只裁剪 JS fx 数组增长（#43 分层收益）。
+          // 置于字段解析前：被跳过的动作不做逐字段读取。
+          if (engine.speed >= 8 && FX_MINOR_KINDS.has(FX_KINDS[kindB])) break;
+          const kind = kindB;
           const quiet = a[p + 2] !== 0;
           const textOp = a[p + 3];
           const textArg = dv.getUint32(p + 4, true);
@@ -1397,7 +1511,6 @@ class WbBatch {
           const x0 = dv.getFloat64(p + 48, true);
           const y0 = dv.getFloat64(p + 56, true);
           const dmg = dv.getFloat64(p + 64, true);
-          cur += 76;
           const hasOpts = !Number.isNaN(x0);
           const opts: Record<string, unknown> = {};
           if (hasOpts) { opts.x0 = x0; opts.y0 = y0; }
@@ -1481,11 +1594,13 @@ class WbBatch {
           else if (kind === 2) engine.toast(`${engine.unitById.get(ta)?.name ?? '?'} 拾取了${this.itemIds[tb] ?? ''}`, 'good');
           break;
         }
-        case ACT_TERRAIN: { // 8B: i@1 t@5（写方 act_i32(p+1)+act_u8(p+5)）+ 边界护栏
+        case ACT_TERRAIN: { // 8B: i@1 t@5 prev@6（【性能 #64】网格视图化后 JS 侧 terrain 即镜像段，
+          // 内核 set_terrain 先写段——setTerrain 的 prev 短路会读到新值，动作携带真 prev 强制维护）+ 边界护栏
           const i = dv.getInt32(p + 1, true);
           const t = a[p + 5];
+          const prev = a[p + 6];
           cur += 8;
-          if (i >= 0 && i < 40960) engine.setTerrain(i, t);
+          if (i >= 0 && i < 40960) engine.replayTerrain(i, t, prev);
           break;
         }
         case ACT_IGNITE: { // 8B: i@1 val@5 + 边界护栏
@@ -1727,30 +1842,57 @@ class WbBatch {
       const i = dlist[k];
       if (i >= units.length) continue;
       const u = units[i];
-      u.x = this.vUx[i]; u.y = this.vUy[i]; u.civ = this.vUciv[i]; u.race = this.vUrace[i];
-      u.dead = this.vUdead[i] !== 0;
-      u.panic = this.vUHasPanic[i] ? this.vUPanic[i] : undefined;
-      u.tx = R.tx[i]; u.ty = R.ty[i]; u.hp = R.hp[i]; u.maxHp = R.maxHp[i]; u.dmg = R.dmg[i];
-      u.speed = R.speed[i]; u.age = R.age[i]; u.maxAge = R.maxAge[i]; u.kills = R.kills[i]; u.cd = R.cd[i];
+      // 【性能 v79】标量段比较免写：转换后值 !== 当前值才写 —— 值语义严格等价（写回真相未变），
+      // 省下脏行 ~35 次无条件属性 store + 隐藏类校验；驻留/入睡/冷却中单位整行大面积命中免写。
+      // v75 装备槽比较免写同款模式扩展到全标量段（画像：wb 段 0.63ms/tick ≈ tick 的 19%）。
+      let nv: number | undefined = this.vUx[i]; if (u.x !== nv) u.x = nv;
+      nv = this.vUy[i]; if (u.y !== nv) u.y = nv;
+      nv = this.vUciv[i]; if (u.civ !== nv) u.civ = nv;
+      nv = this.vUrace[i]; if (u.race !== nv) u.race = nv;
+      const deadN = this.vUdead[i] !== 0; if (u.dead !== deadN) u.dead = deadN;
+      nv = this.vUHasPanic[i] ? this.vUPanic[i] : undefined; if (u.panic !== nv) u.panic = nv;
+      nv = R.tx[i]; if (u.tx !== nv) u.tx = nv;
+      nv = R.ty[i]; if (u.ty !== nv) u.ty = nv;
+      nv = R.hp[i]; if (u.hp !== nv) u.hp = nv;
+      nv = R.maxHp[i]; if (u.maxHp !== nv) u.maxHp = nv;
+      nv = R.dmg[i]; if (u.dmg !== nv) u.dmg = nv;
+      nv = R.speed[i]; if (u.speed !== nv) u.speed = nv;
+      nv = R.age[i]; if (u.age !== nv) u.age = nv;
+      nv = R.maxAge[i]; if (u.maxAge !== nv) u.maxAge = nv;
+      nv = R.kills[i]; if (u.kills !== nv) u.kills = nv;
+      nv = R.cd[i]; if (u.cd !== nv) u.cd = nv;
       const fd = R.fd[i];
-      u.food = Number.isNaN(fd) ? undefined : fd;
-      u.breath = R.breath[i];
-      const lx = R.lx[i]; u.lx = Number.isNaN(lx) ? undefined : lx;
-      const ly = R.ly[i]; u.ly = Number.isNaN(ly) ? undefined : ly;
-      const sxk = R.sxk[i]; u.sxk = Number.isNaN(sxk) ? undefined : sxk;
-      const syk = R.syk[i]; u.syk = Number.isNaN(sykk(syk)) ? undefined : syk;
-      u.stk = R.stk[i] === -2147483648 ? undefined : R.stk[i]; // MIN=undefined；真 0 保留
-      u.atk = nz(R.atk[i]); u.chill = nz(R.chill[i]);
-      u.fleeT = nz(R.fleet[i]); u.bless = nz(R.bless[i]);
-      u.curse = nz(R.curse[i]); u.fert = nz(R.fert[i]);
-      u.detour = nz(R.detour[i]); u.hurt = R.hurt[i] ?? 0;
-      const job = R.job[i]; u.job = job >= 0 ? job : undefined;
-      const tr = R.trait[i]; u.trait = tr >= 0 ? (this.traitKeys[tr] ?? null) : null;
-      u.infected = R.inf[i] !== 0; u.flip = R.flip[i] !== 0;
+      nv = Number.isNaN(fd) ? undefined : fd; if (u.food !== nv) u.food = nv;
+      nv = R.breath[i]; if (u.breath !== nv) u.breath = nv;
+      const lx = R.lx[i];
+      nv = Number.isNaN(lx) ? undefined : lx; if (u.lx !== nv) u.lx = nv;
+      const ly = R.ly[i];
+      nv = Number.isNaN(ly) ? undefined : ly; if (u.ly !== nv) u.ly = nv;
+      const sxk = R.sxk[i];
+      nv = Number.isNaN(sxk) ? undefined : sxk; if (u.sxk !== nv) u.sxk = nv;
+      const syk = R.syk[i];
+      nv = Number.isNaN(sykk(syk)) ? undefined : syk; if (u.syk !== nv) u.syk = nv;
+      nv = R.stk[i] === -2147483648 ? undefined : R.stk[i]; if (u.stk !== nv) u.stk = nv; // MIN=undefined；真 0 保留
+      nv = nz(R.atk[i]); if (u.atk !== nv) u.atk = nv;
+      nv = nz(R.chill[i]); if (u.chill !== nv) u.chill = nv;
+      nv = nz(R.fleet[i]); if (u.fleeT !== nv) u.fleeT = nv;
+      nv = nz(R.bless[i]); if (u.bless !== nv) u.bless = nv;
+      nv = nz(R.curse[i]); if (u.curse !== nv) u.curse = nv;
+      nv = nz(R.fert[i]); if (u.fert !== nv) u.fert = nv;
+      nv = nz(R.detour[i]); if (u.detour !== nv) u.detour = nv;
+      nv = R.hurt[i] ?? 0; if (u.hurt !== nv) u.hurt = nv;
+      const job = R.job[i];
+      nv = job >= 0 ? job : undefined; if (u.job !== nv) u.job = nv;
+      const tr = R.trait[i];
+      const tv = tr >= 0 ? (this.traitKeys[tr] ?? null) : null; if (u.trait !== tv) u.trait = tv;
+      const infN = R.inf[i] !== 0; if (u.infected !== infN) u.infected = infN;
+      const flipN = R.flip[i] !== 0; if (u.flip !== flipN) u.flip = flipN;
       // Task 50：虚拟船感知写回 —— 商队行的镜像 boat=1 不得实体化为 JS 真船（否则接力段会误入 updateBoat）；
       // u.caravan 不再从 wasm 回写（cvn 列因步长错位已休眠 —— JS 为唯一权威）
-      u.boat = (R.boat[i] && !this.virtBoat[i]) ? 1 : undefined; u.boatTTL = R.btl[i] || undefined;
-      const army = R.army[i]; u.army = army >= 0 ? army : undefined;
+      const boatN = (R.boat[i] && !this.virtBoat[i]) ? 1 : undefined; if (u.boat !== boatN) u.boat = boatN;
+      nv = R.btl[i] || undefined; if (u.boatTTL !== nv) u.boatTTL = nv;
+      const army = R.army[i];
+      nv = army >= 0 ? army : undefined; if (u.army !== nv) u.army = nv;
       // 【性能 v75】装备槽比较免写：itemIds 返回驻留字符串引用，未变时引用相等 O(1) 短路 ——
       // 旧版逐槽无条件写（Record 键控 store 慢于命名 store），脏行全量×7 槽纯浪费
       const ur = u as unknown as Record<string, unknown>;
@@ -1759,10 +1901,20 @@ class WbBatch {
         const s = gi >= 0 ? this.itemIds[gi] : null;
         if (ur[GEAR_KEYS[g] as string] !== s) ur[GEAR_KEYS[g] as string] = s;
       }
+      // 【性能 v79】gene 对象分配治理：旧版每脏行每 tick 无条件新建 {s,d,h,r}（移动单位 ≈ 数万对象/s
+      // 进 GC 堆——模拟路径此前不在渲染分配画像内）；四值逐项比较未变则复用现对象 —— 值语义等价
       const gs = R.gene[i * 4];
-      if (!Number.isNaN(gs)) u.gene = { s: gs, d: R.gene[i * 4 + 1], h: R.gene[i * 4 + 2], r: R.gene[i * 4 + 3] };
-      const fam = R.fam[i]; u.fam = fam >= 0 ? fam : undefined;
-      const fgn = R.fgn[i]; u.fgn = fgn >= 0 ? fgn : undefined;
+      if (!Number.isNaN(gs)) {
+        const gd = R.gene[i * 4 + 1], gh = R.gene[i * 4 + 2], gr = R.gene[i * 4 + 3];
+        const g = u.gene;
+        if (g === undefined || g.s !== gs || g.d !== gd || g.h !== gh || g.r !== gr) {
+          u.gene = { s: gs, d: gd, h: gh, r: gr };
+        }
+      }
+      const fam = R.fam[i];
+      nv = fam >= 0 ? fam : undefined; if (u.fam !== nv) u.fam = nv;
+      const fgn = R.fgn[i];
+      nv = fgn >= 0 ? fgn : undefined; if (u.fgn !== nv) u.fgn = nv;
       const nl = R.name[i * 32 + 31];
       if (nl > 0) {
         // 【性能 v75】名字快路径：wasm 字节 vs pack 缓存字节逐字节比对（~60ns），一致则免
@@ -1778,12 +1930,24 @@ class WbBatch {
         }
         u.name = hit ? (this.nameCacheStr[i] as string) : this.dec.decode(R.name.subarray(base, base + nl));
       }
+      // 【性能 v79】gIds/gVal 分配治理：gl≥0 行数组逐元素比较未变则复用（稀少路径，与 gene 同款）
       const gl = R.gln[i];
       if (gl >= 0) {
-        const ids: number[] = []; const vals: number[] = [];
-        for (let g = 0; g < gl && g < 8; g++) { ids.push(R.gids[i * 8 + g]); vals.push(R.gval[i * 8 + g]); }
-        u.gIds = ids; u.gVal = vals;
-      } else { u.gIds = undefined; u.gVal = undefined; }
+        const n = gl < 8 ? gl : 8;
+        const oid = u.gIds;
+        const ovl = u.gVal;
+        let same = oid !== undefined && ovl !== undefined && oid.length === n;
+        if (same) {
+          for (let g = 0; g < n; g++) {
+            if (oid![g] !== R.gids[i * 8 + g] || ovl![g] !== R.gval[i * 8 + g]) { same = false; break; }
+          }
+        }
+        if (!same) {
+          const ids: number[] = []; const vals: number[] = [];
+          for (let g = 0; g < n; g++) { ids.push(R.gids[i * 8 + g]); vals.push(R.gval[i * 8 + g]); }
+          u.gIds = ids; u.gVal = vals;
+        }
+      } else if (u.gIds !== undefined) { u.gIds = undefined; u.gVal = undefined; }
       // 名缓存随行同步（Rust spawn 写入的名与 JS 对象一致化）
       if (this.nameCacheStr[i] !== u.name) this.nameCacheStr[i] = undefined;
     }

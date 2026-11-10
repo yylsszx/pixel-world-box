@@ -443,6 +443,21 @@ pub fn is_enemy_slot(a: usize, b: usize) -> bool {
     }
 }
 
+// 【稳定性 #52】RNG 全局自续流 + 读档播种：
+// - 全局自续流：速度无关——arena 逐调读写的方案（v81 前源码）让真玩 rAF 路径 pack 期
+//   写入 L95 的时机与内核消费耦合，20×/1×/手动三角 units 生死分叉（实测 922/983/918）。
+//   改回全局自续流后内核 rng 流与 pack 频率彻底解耦（速度纯化语义恢复）。
+// - 读档播种：wb_init/wb_reset 置 RNG_SEED_PENDING，wb_units_batch 入口一次性从 L95
+//   取新档 rngA（load 流程 wb_reset → pack(写 L95) → 首批，时序闭合）→ 同页双载位等。
+// - 批出口写回：所有 return 路径把全局写回 L95 → JS getRng()（bail 接力/批结束）无缝续流。
+pub static mut RNG_STATE: u32 = 0;
+pub static mut RNG_SEED_PENDING: bool = true;
+
+#[inline(always)]
+pub fn rng_seed_pending_set() {
+    unsafe { RNG_SEED_PENDING = true; }
+}
+
 static mut LUT_OFF: usize = 0;
 
 fn lut_get(key: usize) -> u8 {
@@ -471,6 +486,8 @@ pub extern "C" fn wb_init(bw: u32, bh: u32, max_units: u32) -> u32 {
     if bw == 0 || bh == 0 || bw > 4096 || bh > 4096 || max_units == 0 || max_units as usize > MAX_UNITS {
         return 0;
     }
+    // 【稳定性 #52】init 后置播种 pendding：首批入口从 L95 取 JS pack 写入的 rngA
+    rng_seed_pending_set();
     let cells = bw as usize * bh as usize;
     let nu = MAX_UNITS;
     let mut off = 0usize;
@@ -877,6 +894,8 @@ pub extern "C" fn wb_reset() {
     set_u32_at(OFF_ITMN, 0, 0);
     set_u32_at(OFF_DMGN, 0, 0);
     set_u32_at(OFF_FIREN, 0, 0);
+    // 【稳定性 #52】重置后置播种 pendding：首批入口从 L95 取新档 rngA
+    rng_seed_pending_set();
 }
 
 /// pack 完成（Stage 1 兼容）：构建 counting-sort 网格

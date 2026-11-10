@@ -1,5 +1,5 @@
 // ============ WorldBox Replica — Simulation Engine ============
-import type { Army, ArmyState, Building, CasusKind, Civ, Cyclone, Directive, DirectiveKind, Effect, EmergentWeapon, FxPrefs, Gene, GroundItem, ItemDef, ItemKind, BloodDecal, CorpseDecal, OverlayMode, RaceDef, RaceId, SaveData, SaveDataV1, SaveDataV2, SoundKind, SpeciesEco, StatsSnapshot, ToastMsg, TriggerCond, TriggerDef, TriggerRow, Unit, WarInfo, WeaponDefense, WeaponDoctrine, WorldEvent, WorldEventKind, WorldLaws, WorldWarState, Alliance, Family } from './types';
+import type { Army, ArmyState, Building, CasusKind, Civ, CivCore, CivPersona, Cyclone, Directive, DirectiveKind, Effect, EmergentWeapon, FxPrefs, Gene, GroundItem, ItemDef, ItemKind, BloodDecal, CorpseDecal, OverlayMode, RaceDef, RaceId, SaveData, SaveDataV1, SaveDataV2, SoundKind, SpeciesEco, StatsSnapshot, ToastMsg, TriggerCond, TriggerDef, TriggerRow, Unit, WarInfo, WeaponDefense, WeaponDoctrine, WorldEvent, WorldEventKind, WorldLaws, WorldWarState, Alliance, Family } from './types';
 import { T, R, RACES, TRAITS, CIV_RACES, DEFAULT_LAWS, ITEM_DEFS, describeCond, JOBS, JOB_KEY, BUILDING_DEFS, BUILD_KINDS, CAPTURABLE, SLOT_FIELD, SLOT_ORDER, RARITY_META, BEST_BY_SLOT, CASUS_META, RACE_REL_BASE, ALLIANCE_COLORS } from './types';
 import { EVO_KIND_META, applyEmTechMods, describeVis, inventIdea, inventTech, inventTrait, invalidateVisCache, mutateVis, tupleToVis, visFromGene, visToTuple } from './emergence';
 import type { EmModKey, EmTech, EvoKind, EvoNode, IdeaDef, VisGenome } from './emergence';
@@ -19,7 +19,7 @@ import { NatureSystem, STORM_NAME_AT, AW, AH, CELL } from './nature';
 import { WorldSim } from './worldsim';
 import { AgentLawSystem, normalizeLaw } from './agentLaws';
 import { ep } from './engineParams';
-import { neuroAcc, neuroStance, neuroFlight, F_ACC, F_STANCE, F_FLIGHT, setNeuroEnabled, setFlightMode, neuroSnapshot, flightLastLogp } from './neuro';
+import { neuroAcc, neuroStance, neuroFlight, F_ACC, F_STANCE, F_FLIGHT, setNeuroEnabled, setFlightMode, neuroSnapshot, flightLastLogp, resetFlightRLWeights, normalizeNeuroWeightsVersion } from './neuro';
 import {
   collectDecision, collectKill, collectUnitDead, collectFleeEnd, collectEnemyGone,
 } from './online/collector';
@@ -160,6 +160,10 @@ export class GameEngine {
   variant: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
   owner: Int16Array<ArrayBuffer> = new Int16Array(W * H).fill(-1);
   building: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
+  /** 【机制②耕地土地化】垦田覆盖层（0=荒 1=垦）：田是类土地而非建筑——无实体无耐久，随领土易主、可被战火琚毁 */
+  farmland: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
+  /** 垦田总数（渲染层快速门控；不入档——读档后重算） */
+  farmN = 0;
   fire: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
   radiate: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
 
@@ -184,6 +188,9 @@ export class GameEngine {
   speed = 1;
   shake = 0;
   frameCount = 0;
+  /** 【稳定性 v81】昼夜 tick 钟相位随档偏移（dayPhase = (tickCount+dayTickOff)%DAY_TICKS）：
+   *  新档随档序列化保读档日相无缝；旧档按 v79 帧钟相位一次性折算；generate 归零（黎明开局）。 */
+  dayTickOff = 0;
   acc = 0;
   /** 渲染插值进度 0..1（acc/TICK_MS；frame() 每帧更新，渲染层与镜头跟随使用） */
   tickAlpha = 1;
@@ -283,6 +290,13 @@ export class GameEngine {
   marketIdx = new Map<number, number>();
   /** 每文明下一次可派商队的 tick */
   tradeNext = new Map<number, number>();
+  // ---------------- 职业宏观调控（#68 机制①：文明自动宏观调控职业比例） ----------------
+  /** 各文明职业调控期数计数器（每 6 期 economyTick 全量调控一次；粮食缺口期期必调）——瞬态不入档，载档清零（保同页双载位等） */
+  profT = new Map<number, number>();
+  /** 各文明出生职业权重偏置（国情 → 新生儿营生倾向；profBalance 刷新）——瞬态不入档 */
+  jobBias = new Map<number, number[]>();
+  /** 猎场丰饶期（civHuntTick 每 20 tick 普查：陆生野味 ≥400 → 猎手编制放开；猎期终结猎手归田）——瞬态不入档 */
+  preyAbundant = false;
   /** 画面效果开关（UI store 同步，render 读取；伤害数字关闭时引擎也不再生成特效） */
   fxPrefs: FxPrefs = { dmgNumbers: true, battleFlash: true, riverFlow: true, ambience: true, fxDensity: 1, blood: true, corpses: true, hpBars: true, dayNight: true };
 
@@ -694,8 +708,9 @@ export class GameEngine {
   private _lastTickAt = 0;
 
   // ---------------- 性能仪表（Task 42-a：纯数据采集，供后续性能 HUD 低频轮询，不走 zustand 不入档） ----------------
-  /** 引擎侧指标 EMA：simMs 单次 tick 模拟耗时 / simUps 每秒模拟 tick 数；drawMs/fps 由渲染帧循环回写 */
-  perf = { simMs: 0, simUps: 0, drawMs: 0, fps: 0 };
+  /** 引擎侧指标 EMA：simMs 单次 tick 模拟耗时 / simUps 每秒模拟 tick 数；drawMs 由渲染帧循环回写；
+   *  interpMs=帧内插值+视觉推进段耗时 EMA（v76）；fps 自 v76 改 1s 真窗口计数（dt-EMA 在长尾帧下虚高 ~2×，#46 画像实测 41.1 vs 真值 ~22） */
+  perf = { simMs: 0, simUps: 0, drawMs: 0, interpMs: 0, fps: 0 };
   /** simUps 采样窗口：窗口内 tick 计数与窗口起始时刻（每 500ms 结算一次，热路径仅一次加法与比较） */
   private _perfWinT = 0;
   private _perfWinN = 0;
@@ -755,9 +770,6 @@ export class GameEngine {
   readonly bw = Math.ceil(W / 4);
   readonly bh = Math.ceil(H / 4);
   buckets: Unit[][] = [];
-  /** 懒清空世代戳（Stage 3）：bucketStampArr[ci] === bucketStamp ⇒ buckets[ci] 为本世代有效数据 */
-  bucketStampArr!: Int32Array;
-  bucketStamp = 0;
 
   /** mulberry32 状态（Stage 2：批内核镜像同步点；rng 闭包读它） */
   rngA = 0;
@@ -797,9 +809,6 @@ export class GameEngine {
     this.overlayCanvas.height = H * 4;
     this.overlayCtx = this.overlayCanvas.getContext('2d')!;
     for (let i = 0; i < this.bw * this.bh; i++) this.buckets.push([]);
-    // 懒清空世代戳（Rust 重构 Stage 3：rebuildBuckets 只清本 tick 有单位的桶，4096 全清 → 按需 ~N 清）
-    this.bucketStampArr = new Int32Array(this.bw * this.bh);
-    this.bucketStamp = 0;
     this.generate(seed ?? Math.floor(Math.random() * 1e9));
     // Task 38：恢复在线训练权重（localStorage；离线权重指纹不匹配时自动作废 —— Q6 共存）
     onlineRestore();
@@ -818,15 +827,21 @@ export class GameEngine {
     this.overlayDirty = true;
     this.owner = new Int16Array(W * H).fill(-1);
     this.building = new Uint8Array(W * H);
+    this.farmland = new Uint8Array(W * H); // 【机制②】新世界无垦田
+    this.farmN = 0;
     this.fire = new Uint8Array(W * H);
     this.radiate = new Uint8Array(W * H);
     this.fireSet.clear();
+    this.snowman.fill(0); // 【稳定性 v80】重铸新世界雪人场清零（原漏清——上世界的雪人穿越新世界）
+    this.snowmanN = 0;
     // 原子级瞬态层重置（新世界无血迹/尸骸/冰面/洪水/湿沙）
     this.frozen.clear();
     this.flood.clear();
     this.wet.clear();
     this.blood.length = 0;
     this.corpses.length = 0;
+    this.footprints.length = 0; // 【稳定性 v80】脚印/鸟群 viz 数组清零（纯视觉无模拟消费，=generate 初值语义）
+    this.flocks.length = 0;
     this.phoenixAshes.length = 0;
     this.regrow.clear();
     this.radSet.clear();
@@ -967,6 +982,7 @@ export class GameEngine {
     this.civSeq = 0;
     this.toastSeq = 1;
     this.tickCount = 0;
+    this.dayTickOff = 0; // 【稳定性 v81】新世界黎明开局（昼夜钟已改世界时）
     this.yearF = 0;
     this.victoryCiv = null;
     this.multiCivSeen = false;
@@ -993,6 +1009,9 @@ export class GameEngine {
     this.road.fill(0);
     this.tradeNext.clear();
     this.marketIdx.clear();
+    this.profT.clear();
+    this.jobBias.clear();
+    this.preyAbundant = false;
     this.rebuildWaterTiers();
     for (let i = 0; i < W * H; i++) this.dirty.add(i);
     this.flushDirty();
@@ -1016,6 +1035,20 @@ export class GameEngine {
   setTerrain(i: number, t: number) {
     const prev = this.terrain[i];
     if (prev === t) return;
+    this.applyTerrainChange(i, prev, t);
+  }
+
+  /** 【性能 #64】网格视图化回放专用：内核 set_terrain 已把镜像段（=本视图）写入新值，
+   *  此处 prev 由 ACT_TERRAIN 动作携带（p+6 空位字节），强制走全套配套维护——
+   *  不得用 setTerrain（其 prev 短路会读到新值跳过维护 → frozen/fireSet/riverDir/建筑淹没分叉）。
+   *  fire 清除以 fireSet（JS 真相）判定而非段值：内核 set_terrain 内联清火已把段值归零、
+   *  不发 FIRE_CLEAR 动作，fireSet.delete 的触发条件必须与段值解耦。 */
+  replayTerrain(i: number, t: number, prev: number) {
+    if (prev === t) return;
+    this.applyTerrainChange(i, prev, t);
+  }
+
+  private applyTerrainChange(i: number, prev: number, t: number) {
     this.terrain[i] = t;
     // Task 48-A2：氛围候选表增量维护（本格 + 4 邻贴岸状态）
     this.ambTouch(i);
@@ -1034,7 +1067,9 @@ export class GameEngine {
       this.riverDir[i] = 0;
       this.riverTiles.delete(i);
     }
-    if (this.fire[i] > 0) {
+    // fire 清除以 fireSet（JS 真相）判定：视图化后内核 set_terrain 内联清火已把段值归零
+    // （且不发 FIRE_CLEAR），按段值判定会漏删 fireSet —— Set 驱动配对才与镜像写序解耦。
+    if (this.fireSet.has(i)) {
       this.fire[i] = 0;
       this.fireSet.delete(i);
     }
@@ -1383,10 +1418,11 @@ export class GameEngine {
     const td = trait ? TRAITS[trait] : null;
     // —— 基因（野生动物）：出生即携带母代基因（进化遗传）；人工放置的野生动物从物种基线取样 ——
     const gene = opts?.gene !== undefined ? opts.gene : this.baseGene(race); // v3：全体单位（含文明）携带基因 —— 万物皆在演化
-    // 职业：文明生物加权抽取（战士/弓手/农民/建筑师/商人/贵族），可由 opts 指定（开发者/兵营）
+    // 职业：文明生物加权抽取（战士/弓手/农民/建筑师/商人/贵族），可由 opts 指定（开发者/兵营）；
+    // #68 职业分工：出生抽取叠加文明宏观调控的国情偏置（缺粮之国多生农、临战之国多生兵）
     let job = 0;
     if (def.isCiv && civ >= 0) {
-      job = opts?.job ?? this.rollJob();
+      job = opts?.job ?? this.rollJob(civ);
     }
     const jd = def.isCiv ? JOBS[job] : null;
     // —— 科技加成：青铜/铁器/钢铁提升伤害与生命（文明的国家武备水平）——
@@ -1535,12 +1571,20 @@ export class GameEngine {
     return keys[Math.floor(this.rng() * keys.length)];
   }
 
-  /** 加权抽取职业（文明生物出生时） */
-  rollJob(): number {
+  /** 加权抽取职业（文明生物出生时；civ 传入时叠加宏观调控的出生偏置——国情决定新生儿的营生倾向。
+   *  偏置只放大不归零（下限 0.2）：调控引导而非命令经济，专职工种（weight 0）仍只能改派产生） */
+  rollJob(civ?: number): number {
+    const bias = civ != null && civ >= 0 ? this.jobBias.get(civ) : null;
     let total = 0;
-    for (const j of JOBS) total += j.weight;
+    const w: number[] = [];
+    for (let i = 0; i < JOBS.length; i++) {
+      const wt = JOBS[i].weight * (bias && JOBS[i].weight > 0 ? Math.max(0.2, bias[i] ?? 1) : 1);
+      w.push(wt);
+      total += wt;
+    }
+    if (total <= 0) return 0;
     let r = this.rng() * total;
-    for (let i = 0; i < JOBS.length; i++) { r -= JOBS[i].weight; if (r <= 0) return i; }
+    for (let i = 0; i < w.length; i++) { r -= w[i]; if (r <= 0) return i; }
     return 0;
   }
 
@@ -1659,6 +1703,7 @@ export class GameEngine {
     };
     this.civs.push(civ);
     this.civs[civ.id] = civ; // ids are dense anyway
+    civ.core = this.makeCore(civ); // 【机制④】建国即挂中枢核心（人格六维各不相同）
 
     // find capital spot（半径扩到 5：建国点贴海/贴山也能找到可建地块）
     let cap = -1;
@@ -1701,7 +1746,7 @@ export class GameEngine {
             if (xx < 1 || yy < 1 || xx >= W - 1 || yy >= H - 1) continue;
             const fi = idx(xx, yy);
             if (this.terrain[fi] === T.GRASS && this.building[fi] === 0 && this.owner[fi] === civ.id) {
-              this.buildBuilding(fi, BUILD_KINDS.FARM, civ.id);
+              this.openFarmlandAt(fi, civ.id);
               break outer2;
             }
           }
@@ -1863,6 +1908,8 @@ export class GameEngine {
 
   // ---------------- buildings ----------------
   buildBuilding(i: number, kind: number, civId: number) {
+    // 【机制②耕地土地化】农田不再产生建筑实体：放田＝开垦地块（玩家/AI/立国/QA 共用本入口，语义无缝迁移）
+    if (kind === BUILD_KINDS.FARM) { this.openFarmlandAt(i, civId); return; }
     if (this.building[i] > 0) return;
     const b: Building = { i, x: i % W, y: (i / W) | 0, kind, civ: civId };
     this.buildings.push(b);
@@ -2074,7 +2121,7 @@ export class GameEngine {
     }
   }
 
-  destroyBuilding(i: number) {
+  destroyBuilding(i: number, silent = false) {
     const bi = this.bIdx.get(i);
     if (bi === undefined) return;
     const b = this.buildings[bi];
@@ -2093,13 +2140,16 @@ export class GameEngine {
     this.building[i] = 0;
     this.bHp.delete(i);
     this.damagedSet.delete(i);
-    this.fx('smoke', b.x, b.y, 36, { r: 1.5 });
+    if (!silent) this.fx('smoke', b.x, b.y, 36, { r: 1.5 });
   }
 
   /** 建筑选址：领土内随机采样，按类别约束（港口/渔场需邻水/农田允许密排） */
   tryBuildBuilding(civ: Civ, kind: number): boolean {
+    // 【机制②】农田改道开垦（不再走建筑选址）；【机制③】海上要塞独立水域选址（数量克制）
+    if (kind === BUILD_KINDS.FARM) return this.openFarmland(civ);
+    if (kind === BUILD_KINDS.SEA_FORT) return this.buildSeaFort(civ);
     const needWater = kind === BUILD_KINDS.PORT || kind === BUILD_KINDS.FISHERY;
-    const spacing = kind === BUILD_KINDS.FARM || kind === BUILD_KINDS.FISHERY ? 2 : 3;
+    const spacing = kind === BUILD_KINDS.FISHERY ? 2 : 3;
     for (let attempt = 0; attempt < 24; attempt++) {
       if (civ.tiles.length === 0) return false;
       const i = civ.tiles[Math.floor(this.rng() * civ.tiles.length)];
@@ -2132,6 +2182,94 @@ export class GameEngine {
       if (kind === BUILD_KINDS.CASTLE || kind === BUILD_KINDS.TEMPLE || kind === BUILD_KINDS.LIBRARY || kind === BUILD_KINDS.PORT || kind === BUILD_KINDS.FISHERY) {
         this.addEvent('build', `「${civ.name}」建成${BUILDING_DEFS[kind].name}，国力日盛`, { colorHex: civ.colorHex, x, y });
       }
+      return true;
+    }
+    return false;
+  }
+
+  /** 【机制②耕地土地化】开垦一块田（地块级：写 farmland 覆盖层，不产建筑实体）
+   *  玩家工具 / AI / 立国 / QA 全部经 buildBuilding(FARM) 或本入口——放田语义无缝迁移 */
+  openFarmlandAt(i: number, civId: number): boolean {
+    if (i < 0 || i >= W * H) return false;
+    if (this.farmland[i] > 0 || this.building[i] > 0) return false;
+    const t = this.terrain[i];
+    if (t !== T.GRASS && t !== T.SAND) return false; // 垦田择沃土：草地为正途，滩涂可改良（山林不可垦）
+    this.farmland[i] = 1;
+    this.farmN++;
+    if (this.civs[civId]?.alive) this.owner[i] = civId; // 垦田即入版图
+    return true;
+  }
+
+  /** AI 垦田选址：领土采样 24 次择草地空地（文明恳田入口——tryBuildBuilding(FARM) 改道于此） */
+  openFarmland(civ: Civ): boolean {
+    for (let attempt = 0; attempt < 24; attempt++) {
+      if (civ.tiles.length === 0) return false;
+      const i = civ.tiles[Math.floor(this.rng() * civ.tiles.length)];
+      if (this.owner[i] !== civ.id) continue;
+      if (this.terrain[i] !== T.GRASS || this.building[i] > 0 || this.farmland[i] > 0) continue;
+      if (this.openFarmlandAt(i, civ.id)) return true;
+    }
+    return false;
+  }
+
+  /** 本国垦田块数（civ.tiles 全扫纯读零 rng——foodTick / 建造候选 / 中枢核心共用） */
+  farmTileCountOf(civ: Civ): number {
+    let n = 0;
+    for (let i = 0; i < civ.tiles.length; i++) if (this.farmland[civ.tiles[i]] > 0) n++;
+    return n;
+  }
+
+  /** 就近寻一块本国垦田（农民巡田/中枢核心部署用；24×24 窗口，找不到 -1） */
+  nearestFarmlandTile(u: Unit): number {
+    const cx = u.x | 0, cy = u.y | 0;
+    let best = -1, bestD = 1e9;
+    for (let dy = -12; dy <= 12; dy++) {
+      const yy = cy + dy;
+      if (yy < 0 || yy >= H) continue;
+      for (let dx = -12; dx <= 12; dx++) {
+        const xx = cx + dx;
+        if (xx < 0 || xx >= W) continue;
+        const ti = yy * W + xx;
+        if (this.farmland[ti] === 0 || this.owner[ti] !== u.civ) continue;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = ti; }
+      }
+    }
+    return best;
+  }
+
+  /** 【机制③海上设施】海上要塞选址：钉入邻疆海面（距己领土≤3 格的水格）——
+   *  每国至多 2 座、彼此间距≥8（「不能太多」的数量克制）；须先有港口（先港后塞） */
+  buildSeaFort(civ: Civ): boolean {
+    const cnt = this.civBuildCounts.get(civ.id);
+    if ((cnt?.[BUILD_KINDS.SEA_FORT] ?? 0) >= 2) return false; // 数量上限：每国至多 2 座
+    for (let attempt = 0; attempt < 24; attempt++) {
+      if (civ.tiles.length === 0) return false;
+      const i = civ.tiles[Math.floor(this.rng() * civ.tiles.length)];
+      const x = i % W, y = (i / W) | 0;
+      const xx = x + Math.floor(this.rng() * 7) - 3, yy = y + Math.floor(this.rng() * 7) - 3;
+      if (xx < 1 || yy < 1 || xx >= W - 1 || yy >= H - 1) continue;
+      const j = yy * W + xx;
+      if (!isWater(this.terrain[j]) || this.building[j] > 0) continue;
+      // 须为「邻疆海面」：距要塞 3 格内有本国领土（孤悬远海不可筑）
+      let nearOwn = false;
+      for (let cy = -3; cy <= 3 && !nearOwn; cy++) {
+        for (let cx = -3; cx <= 3; cx++) {
+          const ox = xx + cx, oy = yy + cy;
+          if (ox < 0 || oy < 0 || ox >= W || oy >= H) continue;
+          if (this.owner[oy * W + ox] === civ.id) { nearOwn = true; break; }
+        }
+      }
+      if (!nearOwn) continue;
+      let ok = true;
+      for (const b of this.buildings) {
+        if (b.kind !== BUILD_KINDS.SEA_FORT || b.civ !== civ.id) continue;
+        if (Math.abs(b.x - xx) < 8 && Math.abs(b.y - yy) < 8) { ok = false; break; }
+      }
+      if (!ok) continue;
+      this.buildBuilding(j, BUILD_KINDS.SEA_FORT, civ.id);
+      this.fx('smoke', xx, yy, 26, { r: 1 });
+      this.addEvent('build', `「${civ.name}」在海上筑起要塞，波涛之上有了立足的钉子`, { colorHex: civ.colorHex, x: xx, y: yy });
       return true;
     }
     return false;
@@ -2175,6 +2313,127 @@ export class GameEngine {
     }
   }
 
+  // ---------------- 文明中枢核心（机制④：每文明完全分开的超级决策智能体） ----------------
+  /** 铸造中枢核心：人格六维按种族底色 + 确定性扰动初始化（零 rng 消耗——建国与旧档补挂同路径，位等安全）。
+   *  各文明人格各不相同；此后由国情事件动态漂移（civCoreTick）——本地判断逻辑是活的。 */
+  makeCore(c: Civ): CivCore {
+    const r = RACES[c.race];
+    const jit = (salt: number) => (hash2(c.id * 31 + 7, this.seed + salt, 0x51ab) - 0.5) * 0.3; // ±0.15 各文明不同
+    const cl = (v: number) => Math.max(0.05, Math.min(0.95, v));
+    return {
+      mode: 'local',
+      persona: {
+        war: cl((r?.aggr ?? 0.4) + jit(1)),
+        build: cl((r?.industry ?? 0.5) + jit(2)),
+        farm: cl(0.5 + ((r?.industry ?? 0.5) - 0.5) * 0.6 + jit(3)),
+        trade: cl((r?.diplo ?? 0.5) * 0.6 + (r?.greed ?? 0.4) * 0.4 + jit(4)),
+        sea: cl(0.45 + (r?.aggr ?? 0.4) * 0.15 + jit(5)),
+        faith: cl((r?.piety ?? 0.4) + jit(6)),
+      },
+      gen: 0,
+      notes: [],
+    };
+  }
+
+  /** 中枢核心周期运转（每经济期一次，随 foodTick 同频）：本地人格随国情漂移；API 模式异步外接。零 rng——位等安全 */
+  civCoreTick(c: Civ) {
+    const core = c.core;
+    if (!core) return;
+    const per = core.persona;
+    const push = (note: string) => { core.notes.unshift(note); if (core.notes.length > 5) core.notes.pop(); };
+    // —— API 模式：每期向所接大模型递交国情（fire-and-forget 不阻塞 tick；pending 期交给 API，失败回退本地）——
+    if (core.mode === 'api') {
+      const cfgStr = typeof localStorage !== 'undefined' ? localStorage.getItem(`wb_civ_api_${c.id}`) : null;
+      if (cfgStr) {
+        if (this.dispatchCivBrain(c, cfgStr)) return; // 本期已外接——人格以 API 回执为准
+      } else {
+        this.civBrainFail(c, '未配置 API（面板「中枢核心」段可配置）');
+      }
+    }
+    // —— 本地智能判断：国情反馈驱动人格漂移（动态变化，各文明不同——同一饥荒，好战国思考战争而农耕国思考恳田）——
+    const drift = (dim: keyof CivPersona, dv: number) => { per[dim] = Math.max(0.05, Math.min(0.95, per[dim] + dv)); };
+    const food = c.food ?? 60;
+    const atWar = this.civAtWar(c.id);
+    const pop = Math.max(1, c.pop);
+    if (food < 30) {
+      drift('farm', 0.05);
+      if (per.war > 0.6 && core.gen % 4 === 0) push(`饥荒逼近——中枢权衡后选择「以战就食」而非恳田`);
+      else if (core.gen % 4 === 0) push(`粮仓见底——中枢把「恳田」写进国策首位`);
+    } else if (food > 120 && pop > 20) {
+      drift('build', 0.02);
+      if (core.gen % 6 === 0) push(`仓廪充实——中枢转向大兴土木`);
+    }
+    if (atWar) {
+      drift('war', 0.04);
+      if (per.war > 0.75 && core.gen % 5 === 0) push(`战火正酣——中枢的战争人格愈发炽烈`);
+    } else {
+      drift('war', -0.03);
+    }
+    const gold = c.gold ?? 0;
+    if (gold > 80) { drift('trade', 0.03); drift('sea', 0.01); }
+    else if (gold < 10 && pop > 8) { drift('trade', 0.02); }
+    if ((c.stability ?? 50) < 35) { drift('faith', 0.04); if (core.gen % 5 === 0) push(`人心浮动——中枢寻求神明的锚点`); }
+    if ((c.culture ?? 0) > 60) drift('faith', 0.01);
+    // 沿海国（有渔场/港——零 rng 海岸代理）向海维自然生长
+    const counts = this.civBuildCounts.get(c.id);
+    if ((counts?.[BUILD_KINDS.FISHERY] ?? 0) > 0 || (counts?.[BUILD_KINDS.PORT] ?? 0) > 0) drift('sea', 0.015);
+    const lastBad = Math.max(this.breachMem.get(c.id) ?? -1e9, this.predMem.get(c.id) ?? -1e9);
+    if (this.tickCount - lastBad < 600) drift('war', 0.02);
+    core.gen++;
+  }
+
+  /** 【机制④】中枢核心模式切换（CivPanel「接入外脑 API」保存时调用；配置存 localStorage wb_civ_api_<id> 由面板直写） */
+  setCivCoreMode(id: number, mode: 'local' | 'api') {
+    const c = this.civs[id];
+    if (!c || !c.core) return;
+    c.core.mode = mode;
+    c.core.apiFails = 0;
+    if (mode === 'local') c.core.apiBusy = 0;
+  }
+
+  /** API 模式：递交文明国情给所接大模型（fire-and-forget——回执白名单校验后应用于下期） */
+  dispatchCivBrain(c: Civ, cfgStr: string): boolean {
+    const core = c.core!;
+    if ((core.apiBusy ?? 0) > 0) return true; // 上期回执未到：本期静候（不重复派发）
+    let cfg: unknown;
+    try { cfg = JSON.parse(cfgStr); } catch { this.civBrainFail(c, 'API 配置 JSON 非法'); return false; }
+    const body = {
+      provider: cfg,
+      civ: { name: c.name, race: RACES[c.race]?.name ?? '?', pop: c.pop, gold: c.gold, food: c.food, knowledge: c.knowledge, stability: c.stability, militarism: c.militarism, atWar: this.civAtWar(c.id), farms: this.farmTileCountOf(c), gov: c.gov },
+      persona: core.persona,
+    };
+    core.apiBusy = (core.apiBusy ?? 0) + 1;
+    fetch('/api/civ-brain', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        core.apiBusy = Math.max(0, (core.apiBusy ?? 1) - 1);
+        if (!j || typeof j !== 'object') { this.civBrainFail(c, '模型响应非 JSON'); return; }
+        const patch = (j as { personaPatch?: Record<string, unknown> }).personaPatch ?? {};
+        const dims: (keyof CivPersona)[] = ['war', 'build', 'farm', 'trade', 'sea', 'faith'];
+        for (const d of dims) {
+          const v = patch[d];
+          if (typeof v === 'number' && Number.isFinite(v)) core.persona[d] = Math.max(0.05, Math.min(0.95, v));
+        }
+        core.apiFails = 0;
+        const raw = typeof (j as { note?: unknown }).note === 'string' ? String((j as { note: string }).note) : '';
+        core.lastApiNote = (raw || `「${c.name}」外脑决策更新`).slice(0, 80);
+        core.notes.unshift(`[外脑] ${core.lastApiNote}`.slice(0, 96));
+        if (core.notes.length > 5) core.notes.pop();
+        core.gen++;
+      })
+      .catch(() => { core.apiBusy = Math.max(0, (core.apiBusy ?? 1) - 1); this.civBrainFail(c, '网络/模型不可达'); });
+    return true;
+  }
+
+  /** API 失败记账：3 连败自动回落本地模式（中枢永不当机） */
+  civBrainFail(c: Civ, why: string) {
+    const core = c.core;
+    if (!core) return;
+    core.apiFails = (core.apiFails ?? 0) + 1;
+    core.lastApiNote = `${why}——本地判断接管`;
+    if (core.apiFails >= 3) { core.mode = 'local'; core.apiFails = 0; core.lastApiNote = `${why}——连续失败回落本地模式`; }
+  }
+
   // ---------------- diplomacy ----------------
   diplomacyMeet(a: number, b: number) {
     const key = pairKey(a, b);
@@ -2188,7 +2447,10 @@ export class GameEngine {
     const rb = RACES[cb.race];
     // —— 种族系统 v2：种族外交底色（兽人难交朋友，人类八面玲珑）——
     const raceDiplo = ((ra?.diplo ?? 0.5) + (rb?.diplo ?? 0.5)) / 2; // 0-1
-    const warChance = Math.max(0.08, Math.min(0.8, 0.2 + ((ca.militarism ?? 30) + (cb.militarism ?? 30)) / 400 + ((ca.gov === 4 || cb.gov === 4) ? 0.1 : 0) - ((ca.gov === 3 || cb.gov === 3) ? 0.12 : 0) - (raceDiplo - 0.5) * 0.3));
+    // 【机制④】中枢核心人格注入：好战国遇好战国，火药味自然浓（双边的战争人格都算数）
+    const perA = ca.core?.persona.war ?? 0.5;
+    const perB = cb.core?.persona.war ?? 0.5;
+    const warChance = Math.max(0.04, Math.min(0.92, (0.2 + ((ca.militarism ?? 30) + (cb.militarism ?? 30)) / 400 + ((ca.gov === 4 || cb.gov === 4) ? 0.1 : 0) - ((ca.gov === 3 || cb.gov === 3) ? 0.12 : 0) - (raceDiplo - 0.5) * 0.3) * (0.6 + (perA + perB) * 0.4)));
     if (this.laws.wars && this.rng() < warChance) {
       // 战争必须有名有实：按社会气质/复仇记忆/实力对比挑选开战理由
       const pick = this.pickCasus(ca, cb);
@@ -2837,13 +3099,21 @@ export class GameEngine {
     }
   }
 
-  // ================== 昼夜光影（渲染层驱动：帧计数推进，视觉与模拟节奏解耦） ==================
-  /** 一天的帧数（60fps ≈ 40 秒/昼夜：足够慢以营造氛围、足够快以被观察到） */
+  // ================== 昼夜光影（世界时驱动：模拟 tick 推进，随速度真实加速） ==================
+  /** 一天的帧数（v81 前的渲染帧日钟；仅作旧档相位迁移基准，模拟不再消费） */
   static readonly DAY_FRAMES = 2400;
+  /** 一天的模拟 tick 数：600 tick ≈ 1×（15tps）下 40 秒/昼夜——与旧帧钟（2400 帧 @60fps）1× 视觉节奏一致。
+   *  【稳定性 v81】昼夜钟改世界时（tickCount）驱动：帧钟在 20× 下每 tick 仅推进 ~0.22 帧（隔帧渲染更甚），
+   *  夜窗落点随速度漂移 → 睡眠/夜战/彩虹/流星门控与内核 OFF_DAYPH 镜像的 rng 消费序列分叉 →
+   *  1× 与 20× 是两个世界（相位对偶实验实锤：同档同 300 手动 tick，仅相位不同 →
+   *  哈希 7781e6b6 vs 3b623475，同相复跑位等排除残留混淆）。tick 钟使模拟速度纯化——
+   *  20× 真实倍速 = 世界时间（含昼夜）整体 20× 加速；暂停时时间凝固（帧钟时代暂停仍流昼）。 */
+  static readonly DAY_TICKS = 600;
 
   /** 当前昼夜相位 0..1（0..0.45 白昼 · 0.45..0.5 黄昏 · 0.5..0.9 夜晚 · 0.9..1 破晓） */
   dayPhase(): number {
-    return (this.frameCount % GameEngine.DAY_FRAMES) / GameEngine.DAY_FRAMES;
+    const t = (((this.tickCount + this.dayTickOff) % GameEngine.DAY_TICKS) + GameEngine.DAY_TICKS) % GameEngine.DAY_TICKS;
+    return t / GameEngine.DAY_TICKS;
   }
 
   /** 太阳状态（渲染管线共享同一光源）：level 光照 0..1；sx/sy 阴影方向单位向量；len 阴影长度系数
@@ -2877,6 +3147,20 @@ export class GameEngine {
 
   frame(dtMs: number) {
     this.frameCount++;
+    // 【性能 v76】刷新率探针 + fps 真窗口（字段注释见 renderSkip 下方）
+    this.dtRing.push(dtMs);
+    if (this.dtRing.length > 120) this.dtRing.shift();
+    if ((this.frameCount & 63) === 0 && this.dtRing.length >= 60) {
+      const s = [...this.dtRing].sort((a, b) => a - b);
+      this.refreshMs = Math.max(8, Math.min(33.5, s[Math.floor(s.length * 0.1)]));
+    }
+    this._fpsWinN++;
+    this._fpsWinT += dtMs;
+    if (this._fpsWinT >= 1000) {
+      this.perf.fps = this._fpsWinN * 1000 / this._fpsWinT;
+      this._fpsWinN = 0;
+      this._fpsWinT = 0;
+    }
     this.updateZoomAnim(dtMs);
     // 【性能 v75】≥12× 隔帧渲染：奇数帧不绘制 —— 模拟独占帧（budget 内嵌感知），渲染半频 ≈30fps
     // 在高速档内眼足够；速度回落自动恢复逐帧渲染。GameCanvas 每帧读取本标记。
@@ -2889,8 +3173,15 @@ export class GameEngine {
       // —— 帧时长目标 ≤30ms（≥33fps 平移下限），渲染越便宜模拟吃越多；隔帧渲染帧无渲染开销吃满 24ms。
       // 注：预算不可依赖实测 fps（自反馈收缩：帧变慢→周期变大→预算变大→帧更慢的发散成收缩部）。
       // 旧 acc 截断（≤2 tick）与 30 步硬顶语义不变。
+      // 【性能 v76】vsync 感知预算：低渲染成本环境（drawMs<8ms，真机 GPU）预算目标从「帧时长 ≤30ms」
+      // 改为「单个 vsync 量子内」—— 60Hz 下 body∈(16.7,33.3] 必错一拍恒锁 30fps（#46 画像：沙箱 40% 帧
+      // 滑到 ≥50ms）；对齐量子后 60fps 稳定、模拟占空比 ~79% 反升。reserve=插值+视觉推进实测 EMA+调度余量。
+      // 沙箱软渲染 drawMs≥8 自动走 v75 旧公式（长 body 让出 vsync 换模拟吞吐，画像证实为高 drawMs 环境最优）。
+      const reserve = this.perf.interpMs + 1.2;
       const budget = this.speed >= 3
-        ? Math.max(8, Math.min(24, 30 - (this.renderSkip ? 0 : this.perf.drawMs)))
+        ? (this.refreshMs >= 12 && this.perf.drawMs >= 2 && this.perf.drawMs < 8
+          ? Math.max(6, Math.min(24, this.refreshMs - (this.renderSkip ? 0 : this.perf.drawMs) - reserve))
+          : Math.max(8, Math.min(24, 30 - (this.renderSkip ? 0 : this.perf.drawMs))))
         : 9;
       const tStart = performance.now();
       let steps = 0;
@@ -2905,6 +3196,8 @@ export class GameEngine {
         if (++steps >= 30) { this.acc = Math.min(this.acc, TICK_MS - 1); break; }
       }
     }
+    // 【性能 v76】插值+视觉推进段计时起点（该段此前不在任何仪表内，是预算公式的隐性成本）
+    const tInterp0 = performance.now();
     // —— 渲染插值：tick 内位置已定格，按 tick 进度（acc/TICK_MS）计算每单位的平滑渲染坐标 ——
     // 暂停时定格在终点（alpha=1），避免单位悬浮在半格位置
     this.tickAlpha = this.speed > 0 ? Math.min(1, this.acc / TICK_MS) : 1;
@@ -2943,6 +3236,9 @@ export class GameEngine {
       if (u) { this.cam.x = u.rx ?? u.x; this.cam.y = u.ry ?? u.y; }
       else this.followId = null;
     }
+    // 【性能 v76】插值+视觉推进段耗时 EMA（预算 reserve 用，随单位数自适应）
+    const ims = performance.now() - tInterp0;
+    this.perf.interpMs = this.perf.interpMs > 0 ? this.perf.interpMs * 0.9 + ims * 0.1 : ims;
   }
 
   // ---------------- fire ----------------
@@ -3045,9 +3341,9 @@ export class GameEngine {
     if (this.blood.length > GameEngine.BLOOD_MAX) this.blood.splice(0, this.blood.length - GameEngine.BLOOD_MAX);
   }
 
-  addCorpse(x: number, y: number, stone: boolean, undead: boolean) {
+  addCorpse(x: number, y: number, stone: boolean, undead: boolean, race?: number, flip?: boolean) {
     if (!this.fxPrefs.corpses) return;
-    this.corpses.push({ x, y, age: 0, stone, undead });
+    this.corpses.push({ x, y, age: 0, stone, undead, race, flip });
     if (this.corpses.length > GameEngine.CORPSE_MAX) this.corpses.splice(0, this.corpses.length - GameEngine.CORPSE_MAX);
   }
 
@@ -3476,10 +3772,12 @@ export class GameEngine {
   // ---------------- units sim ----------------
   rebuildBuckets() {
     const buckets = this.buckets;
-    // Rust 重构 Stage 3（懒清空）：世代戳递增 → 仅本 tick 实际有单位落入的桶才清空。
-    // 4096 桶全清 → 按需 ~N 清（N=存活单位数）；桶内容仍严格是本世代数据，消费者零改动。
-    const cur = (this.bucketStamp = (this.bucketStamp + 1) | 0);
-    const st = this.bucketStampArr;
+    // 【稳定性 #55】全量清空取代懒清空世代戳：懒清空下未触桶保留跨世代单位引用（旧位置残影），
+    // 而全部桶消费者（meatSweepTick 吃肉判定 / 建筑目标搜索 / 炮击瞄准等 10 处）均未查
+    // bucketStampArr —— 距离过滤被旧位置命中 → 「隔空吃肉」，且残留内容随会话历史（真玩时长）
+    // 变化 → 同档读档位等分叉（QA 首分歧 tick19：meatSweep rng 消费 48 vs 76 实锤）。
+    // 全量 length=0 每 tick ~万次整型写（µs 级），换消费者零协议依赖的语义确定性。
+    for (let i = 0; i < buckets.length; i++) buckets[i].length = 0;
     // 索引循环 + 局部量（bw/bh/buckets 提出循环，避免逐单位属性链访问；热路径每 tick 全量重排）
     const units = this.units;
     const bw = this.bw;
@@ -3492,9 +3790,7 @@ export class GameEngine {
       let cy = (u.y / 4) | 0;
       if (cx > maxX) cx = maxX; else if (cx < 0) cx = 0;
       if (cy > maxY) cy = maxY; else if (cy < 0) cy = 0;
-      const ci = cy * bw + cx;
-      if (st[ci] !== cur) { buckets[ci].length = 0; st[ci] = cur; }
-      buckets[ci].push(u);
+      buckets[cy * bw + cx].push(u);
     }
     // WASM 空间内核镜像打包（Task 45-a：SoA 镜像 + counting-sort 网格；扫描环位精确替代）
     if (WB.active() && !WBB.batchReady) WB.pack(this); // 批内核就绪后由 pack2 全量接管（Stage 1 扫描镜像停更）
@@ -3504,6 +3800,14 @@ export class GameEngine {
   uprof = { pack2: 0, batch: 0, replay: 0, wb: 0, js: 0 };
   /** 【性能 v75】≥12× 隔帧渲染标记：本帧建议跳过渲染（模拟独占帧）—— frame() 每 rAF 置位，GameCanvas 读取 */
   renderSkip = false;
+  /** 【性能 v76】刷新率探针：dt 滚动窗（120 帧）每 64 帧取 p10 估 vsync 周期。取 p10 而非中位数：
+   *  只要 ≥10% 帧命中单个量子（body≤quantum）p10 即真周期。#46 画像证实 60Hz 下 body∈(16.7,33.3]
+   *  必错一拍恒锁 30fps——预算公式对齐量子后可 60fps 稳定。 */
+  private dtRing: number[] = [];
+  refreshMs = 16.7;
+  /** 【性能 v76】fps 1s 真窗口计数（替代 GameCanvas 的 dt-EMA） */
+  private _fpsWinN = 0;
+  private _fpsWinT = 0;
   /** TEMP-48: bail 类型诊断直方图（1=船 2=涌现 3=建筑摧毁 4=商队 5=殖民建城） */
   bailKinds: Record<number, number> = {};
   /** 本 tick 单位是否由 wasm 批内核接管（effectsTick 时域补偿的门控：内核接管时 JS 主循环不跑，
@@ -3848,7 +4152,7 @@ export class GameEngine {
       // 尸骸残留 + 死亡血泊（原子级死亡反馈；亡者化为骨尘、无血可流）
       const undead = RACES[u.race].undead;
       if (u.race !== R.SANDWORM) { // 被吞噬者无残骸（已在吞噬处单独处理）
-        if (this.fxPrefs.corpses) this.addCorpse(u.x, u.y, false, undead);
+        if (this.fxPrefs.corpses) this.addCorpse(u.x, u.y, false, undead, u.race, u.flip);
         if (this.fxPrefs.blood && !undead) this.addBlood(u.x, u.y, true);
       }
       // —— 战争缴获与巨怪宝藏（Task 34 去虚务实）：装备随死者落回大地 ——
@@ -4090,6 +4394,9 @@ export class GameEngine {
     //    迭代序/敌意判定/恐慌传染与下方 JS 环逐行为一致（Rust 侧 js_min 已对齐 NaN 语义）；
     //    任何超限（血仇>32/传染溢出/未打包）自动回退 JS 原路径
     let wbScanApplied = false;
+    // 【稳定性 #67】panicSlots 槽位防御：风暴软降级尾部/JS 回退路径中 WB 空间镜像可能陈旧
+    // （批内核就绪后 WB.pack 停更）——扫描返回的槽位可能 ≥ units.length，直接索引崩溃。
+    // 槽位防御只挡越界写（合法槽位行为不变，零轨迹变化）；陈旧镜像数据质量问题为预存行为，留待专项轮处理。
     if (WB.active() && !this._wbBatch) {
       const r = WB.scan(this, u, contagious, cx, cy);
       if (r) {
@@ -4100,7 +4407,7 @@ export class GameEngine {
         }
         allies = r.allies;
         foes = r.foes;
-        for (let pk = 0; pk < r.panicN; pk++) this.units[r.panicSlots[pk]].panic = r.panicVals[pk];
+        for (let pk = 0; pk < r.panicN; pk++) { const su = this.units[r.panicSlots[pk]]; if (su) su.panic = r.panicVals[pk]; }
         wbScanApplied = true;
       }
     }
@@ -4249,7 +4556,7 @@ export class GameEngine {
         // 法师远程火球：拉开距离释放（风筝走位）
         if (u.cd <= 0) {
           u.cd = rd.cd;
-          u.atk = 10; // 施法动画
+          u.atk = 12; // 施法动画（【表现 v0.66】窗口统一 12：前扑 lunge 包络 t 从 0 起点弹出）
           this.castFireball(u, enemy.x + this.rng() * 0.6 - 0.3, enemy.y + this.rng() * 0.6 - 0.3, rd.dmg);
         }
         if (stance === 2) {
@@ -4265,7 +4572,7 @@ export class GameEngine {
         const beam = u.wep === 'laser_rifle';
         if (u.cd <= 0) {
           u.cd = beam ? 12 : gun ? 15 : 18; // 能量武器射速最快
-          u.atk = 10; // 拉弓/瞄准动画
+          u.atk = 12; // 拉弓/瞄准动画（窗口统一 12）
           const mul = def.isCiv && u.civ >= 0 ? this.techModsOf(u.civ).archer : 1;
           // 弹道预测：瞄准目标提前量（飞行期间目标仍在移动）
           const aim = this.leadAim(enemy, beam ? 8 : gun ? 5 : 12);
@@ -4289,6 +4596,7 @@ export class GameEngine {
           // —— 克拉肯：触手拖拽船只入渊（对航海者双倍伤害 + 击沉概率）——
           if (u.race === R.KRAKEN && enemy.boat) {
             enemy.hp -= u.dmg * 2;
+            enemy.hitKx = Math.sign(enemy.x - u.x); // 受击击退方向（背向攻击者）——触手拖拽也朝受力方向踉跄
             enemy.hurt = 20;
             if (this.rng() < 0.3) {
               enemy.dead = true;
@@ -4363,6 +4671,8 @@ export class GameEngine {
           }
           if (gD && gD.armor > 0) dmg *= 1 - gD.armor / 100;
           enemy.hp -= dmg;
+          // 受击击退方向（背向攻击者）：近战主路径写 hitKx，后仰不再假定为 flip 背向——背后偷袭/侧面夹击方向正确
+          enemy.hitKx = Math.sign(enemy.x - u.x);
           enemy.hurt = 20;
           this.fx('hit', (u.x + enemy.x) / 2, (u.y + enemy.y) / 2, 6);
           // 血溅：受击飞溅（原子级战斗反馈，可在画面设置中关闭）
@@ -4522,7 +4832,7 @@ export class GameEngine {
             const bdy = b.y + 0.5 - u.y;
             if (bdx * bdx + bdy * bdy < 3.24) { // 1.8²：平方距离判定（纯阈值比较）
               u.cd = 16;
-              u.atk = 10; // 敲击动画
+              u.atk = 12; // 敲击动画（窗口统一 12）
               this.repairBuilding(di, 12 * this.techModsOf(u.civ).repair, u);
             } else {
               u.tx = b.x + 0.5;
@@ -4532,8 +4842,9 @@ export class GameEngine {
             }
           }
         }
-        // —— 路过国民顺手修缮身边受损建筑（平民皆可搭把手）——
-        if (u.army == null && job !== 2 && job !== 3 && u.cd <= 0 && this.damagedSet.size > 0 && this.rng() < 0.12) {
+        // —— 路过国民顺手修缮身边受损建筑（#68 职业分工：修缮是工匠本职，唯平民杂役可搭把手——
+        //    农渔商猎贵族各安其业，不再越权代工）——
+        if (u.army == null && (job === 0 || job === 4) && u.cd <= 0 && this.damagedSet.size > 0 && this.rng() < 0.12) {
           const di = this.damagedNear(u, 1.9);
           if (di >= 0) {
             u.cd = 22;
@@ -4579,11 +4890,12 @@ export class GameEngine {
             }
           }
         } else if (job === 1 && this.rng() < 0.06) {
-          // 农民：在王国农田周边劳作
-          const f = this.nearestBuildingOf(u, BUILD_KINDS.FARM);
-          if (f) {
-            u.tx = Math.max(1, Math.min(W - 2, f.x + this.rng() * 5 - 2.5));
-            u.ty = Math.max(1, Math.min(H - 2, f.y + this.rng() * 5 - 2.5));
+          // 农民：在自家田块间劳作（【机制②耕地土地化】：田是地块覆盖——寻的是田不是建筑）
+          const ft = this.nearestFarmlandTile(u);
+          if (ft >= 0) {
+            const fx = ft % W, fy = (ft / W) | 0;
+            u.tx = Math.max(1, Math.min(W - 2, fx + this.rng() * 5 - 2.5));
+            u.ty = Math.max(1, Math.min(H - 2, fy + this.rng() * 5 - 2.5));
           }
         } else if (job === 5) {
           // 商人：往来集市/王都贸易，抵达时为国库入账
@@ -4614,6 +4926,17 @@ export class GameEngine {
             u.tx = Math.max(1, Math.min(W - 2, cx + this.rng() * 6 - 3));
             u.ty = Math.max(1, Math.min(H - 2, cy + this.rng() * 6 - 3));
           }
+        } else if (job === 8 && this.rng() < 0.06) {
+          // 渔民：在高脚渔屋与泊舟码头之间劳作（#68 职业分工：渔场是渔民的工作台）
+          const f = this.nearestBuildingOf(u, BUILD_KINDS.FISHERY);
+          if (f) {
+            u.tx = Math.max(1, Math.min(W - 2, f.x + this.rng() * 5 - 2.5));
+            u.ty = Math.max(1, Math.min(H - 2, f.y + this.rng() * 5 - 2.5));
+          }
+        } else if (job === 9 && this.rng() < 0.08) {
+          // 猎手：离村巡猎——向村野边缘游走（猎获归仓引擎通道的行进叙事面，猎人常在猎场）
+          u.tx = Math.max(1, Math.min(W - 2, u.x + this.rng() * 16 - 8));
+          u.ty = Math.max(1, Math.min(H - 2, u.y + this.rng() * 16 - 8));
         } else if (this.rng() < 0.02) {
           // march to war
           const target = this.warTarget(u.civ);
@@ -5202,10 +5525,11 @@ export class GameEngine {
       }
     }
     for (const b of this.buildings) {
-      if (b.kind !== BUILD_KINDS.TOWER && b.kind !== BUILD_KINDS.CASTLE) continue;
+      if (b.kind !== BUILD_KINDS.TOWER && b.kind !== BUILD_KINDS.CASTLE && b.kind !== BUILD_KINDS.SEA_FORT) continue;
       if (!this.civs[b.civ]?.alive) continue;
-      const range = b.kind === BUILD_KINDS.CASTLE ? 5.5 : 4.5;
-      const dmg = b.kind === BUILD_KINDS.CASTLE ? 12 : 7;
+      // 【机制③】海上要塞：射程 6.5 / 炮伤 11——敌舰（乘船单位）与登陆之敌通吃
+      const range = b.kind === BUILD_KINDS.CASTLE ? 5.5 : b.kind === BUILD_KINDS.SEA_FORT ? 6.5 : 4.5;
+      const dmg = b.kind === BUILD_KINDS.CASTLE ? 12 : b.kind === BUILD_KINDS.SEA_FORT ? 11 : 7;
       // 空间分桶检索最近敌人
       const bx0 = Math.max(0, Math.floor((b.x - range) / 4));
       const bx1 = Math.min(this.bw - 1, Math.floor((b.x + range) / 4));
@@ -5596,6 +5920,8 @@ export class GameEngine {
       c.knowledge = (c.knowledge ?? 0) + (knowGain - spent);
       // —— 粮食经济（资源不凭空产生）：农田要有农民耕作、渔场要有渔民出海，人口张嘴吃饭 ——
       this.foodTick(c, counts);
+      // ——【机制④】中枢核心周期运转（每经济期：人格随国情漂移 / API 异步递交）——
+      this.civCoreTick(c);
     }
   }
 
@@ -5611,35 +5937,67 @@ export class GameEngine {
       if (!this.atWar(a.civ, c.id)) continue;
       threatX.push(a.x); threatY.push(a.y);
     }
-    const farms = counts[BUILD_KINDS.FARM] ?? 0;
+    // 【机制②耕地土地化】田块计数从建筑表改道地块覆盖层清点（farmTileCountOf 纯扫描零 rng——位等安全）
+    const farms = this.farmTileCountOf(c);
     const fisheries = counts[BUILD_KINDS.FISHERY] ?? 0;
     // 旧档引导：首次结算时按存量建筑补一笔开仓粮（不追溯惩罚旧王国）
     if (c.food == null) c.food = 60 + farms * 12 + fisheries * 10;
-    // —— 在岗农民清点（职农 job 1；一处 6 格内即视作在田/在港劳作）——
+    // —— 在岗清点（职农 job 1 / 职渔 job 8 —— #68 职业分工：渔场须渔民，农民不越权出海；
+    //    一处 6 格内即视作在田/在港劳作）——
     const farmers: Unit[] = [];
+    const fishers: Unit[] = [];
     for (const u of this.units) {
-      if (u.dead || u.civ !== c.id || u.job !== 1) continue;
-      farmers.push(u);
-      if (farmers.length >= 40) break; // 清点上限（超大帝国抽样足够）
+      if (u.dead || u.civ !== c.id) continue;
+      if (u.job === 1) farmers.push(u);
+      else if (u.job === 8) fishers.push(u);
+      if (farmers.length >= 40 && fishers.length >= 40) break; // 清点上限（超大帝国抽样足够）
     }
     let workedFarms = 0;
     let workedFisheries = 0;
+    // ——【机制②耕地土地化】在田清点：以农为锄，每人认领周边 6 格内一块本国田块——
+    //    田是地不是房：农民找的是自家田块而非建筑实体；一农至多耕一田（claimed 防多农重记）——
     if (farmers.length > 0) {
+      const claimed = new Set<number>();
+      for (const f of farmers) {
+        if (f.sleep) continue; // 昼夜节律：熟睡的农人不在田——夜晚粮产自然停摆
+        const fx = f.x | 0, fy = f.y | 0;
+        for (let dy = -6; dy <= 6; dy++) {
+          let hit = false;
+          for (let dx = -6; dx <= 6; dx++) {
+            const xx = fx + dx, yy = fy + dy;
+            if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+            const ti = yy * W + xx;
+            if (this.farmland[ti] === 0 || this.owner[ti] !== c.id || claimed.has(ti)) continue;
+            // 兵临城下：敌军团 9 格内的田绝收（围城粮道——军团压到哪片田，哪片田就荒）
+            if (threatX.length > 0) {
+              let besieged = false;
+              for (let k = 0; k < threatX.length; k++) {
+                if (Math.abs(threatX[k] - xx) <= 9 && Math.abs(threatY[k] - yy) <= 9) { besieged = true; break; }
+              }
+              if (besieged) continue;
+            }
+            claimed.add(ti); workedFarms++; hit = true; break;
+          }
+          if (hit) break;
+        }
+      }
+    }
+    // —— 渔场清点（仍是建筑：出海渔民 6 格内在港即视作出海）——
+    if (fishers.length > 0) {
       for (const b of this.buildings) {
         if (b.civ !== c.id) continue;
-        if (b.kind !== BUILD_KINDS.FARM && b.kind !== BUILD_KINDS.FISHERY) continue;
+        if (b.kind !== BUILD_KINDS.FISHERY) continue;
         let staffed = false;
-        for (const f of farmers) {
-          if (f.sleep) continue; // 昼夜节律：熟睡的农民不在岗 —— 夜晚粮产自然停摆（经济随昼夜呼吸）
+        for (const f of fishers) {
+          if (f.sleep) continue;
           if (Math.abs(f.x - b.x) <= 6 && Math.abs(f.y - b.y) <= 6) { staffed = true; break; }
         }
-        // 兵临城下：敌军团 9 格内的田港绝收（围城粮道——军团压到哪片田，哪片田就荒）
         if (staffed && threatX.length > 0) {
           for (let k = 0; k < threatX.length; k++) {
             if (Math.abs(threatX[k] - b.x) <= 9 && Math.abs(threatY[k] - b.y) <= 9) { staffed = false; break; }
           }
         }
-        if (staffed) { if (b.kind === BUILD_KINDS.FARM) workedFarms++; else workedFisheries++; }
+        if (staffed) workedFisheries++;
       }
     }
     // —— 采集基线（文明黎明期）：无田无渔的小部落靠采集渔猎糊口（人口 ≤ 8 的温饱线）——
@@ -5650,14 +6008,9 @@ export class GameEngine {
     const rpF = RACES[c.race];
     const winterF = this.nature.season === 3 ? 0.85 : 1;
     const foodProd = (forage + workedFarms * 1.45 + workedFisheries * 1.25) * tm.repro * (0.85 + (rpF?.industry ?? 0.5) * 0.3) * winterF;
-    // —— 职业再平衡：有田无农 → 每期劝课农桑（平民转职农民，自然 staffing 之外的保险）——
-    if (farms + fisheries > 0 && workedFarms + workedFisheries < farms + fisheries) {
-      for (const u of this.units) {
-        if (u.dead || u.civ !== c.id || (u.job ?? 0) !== 0 || u.army != null) continue;
-        this.setJob(u, 1);
-        break; // 每期一人（渐进转职，不冲击社会结构）
-      }
-    }
+    // —— 职业宏观调控（#68 机制①：文明自动宏观调控职业比例——吸收原「劝课农桑」单向保险，
+    //    升级为田/港/工/商/猎/战六维目标编制 + 出生偏置 + 盈缺双向改派）——
+    this.profBalance(c, { farms, fisheries, workedFarms, workedFisheries, farmers: farmers.length, fishers: fishers.length });
     // 消耗：每 3 年一结的人口口粮（一田养四口；兵额加成——行军打仗吃得多）
     let armyMouths = 0;
     for (const a of this.armies) if (a.civ === c.id && a.state !== 'retreat') armyMouths += a.members.length;
@@ -5686,7 +6039,7 @@ export class GameEngine {
           if (starved >= 1 + sev) break;
           v.u.hp = 0;
           v.u.dead = true;
-          this.addCorpse(v.u.x, v.u.y, false, false);
+          this.addCorpse(v.u.x, v.u.y, false, false, v.u.race, v.u.flip);
           collectUnitDead(v.u.id, true);
           starved++;
         }
@@ -5695,6 +6048,96 @@ export class GameEngine {
         this.addEvent('famine', `「${c.name}」闹起粮荒——仓廪空虚，民有饥色（垦农田、建渔场方能止饥）`, { colorHex: c.colorHex });
       }
     }
+  }
+
+  /** 文明职业宏观调控（#68 机制①核心）：粮账清点刚过（盈缺在手）→ 定目标编制 → 限期改派。
+   *  · 粮食维度（农/渔）期期必调——饥荒关键路径，接管原「劝课农桑」的保险职能；
+   *    其余维度（工/商/猎/战）每 6 期一调（约 720 tick，社会结构调整宜缓不宜急）。
+   *  · 改派唯一来源是平民流动池（新生默认平民，余缺由文明调度）；军人/国王不参与改派
+   *    （行伍与王统自有其序）。配额渐进防社会结构震荡。
+   *  · 盈缺双向：缺口补员、过剩归农（猎期终结猎手归田 / 渔场尽毁渔民上岸）。
+   *  · 出生偏置 jobBias 同步刷新：缺粮之国新生儿多入农籍、临战之国多入行伍。
+   *  · 纯引擎级通道零额外 rng 消耗（战备征募档位除外）；瞬态 Map 不入档，载档清零（保双载位等）。 */
+  private profBalance(c: Civ, gap: { farms: number; fisheries: number; workedFarms: number; workedFisheries: number; farmers: number; fishers: number }) {
+    const pt = (this.profT.get(c.id) ?? 0) + 1;
+    this.profT.set(c.id, pt);
+    const due = pt % 6 === 0;
+    const needFarmer = gap.farms > 0 && gap.workedFarms < gap.farms;
+    const needFisher = gap.fisheries > 0 && gap.workedFisheries < gap.fisheries;
+    if (!due && !needFarmer && !needFisher) return;
+    // —— 职业普查（O(n) 全扫收编入册；economyTick 每 120 tick 一次，与 foodTick 清点同量级）——
+    const census = new Array<number>(JOBS.length).fill(0);
+    const pool: Unit[] = [];
+    for (const u of this.units) {
+      if (u.dead || u.civ !== c.id) continue;
+      const j = u.job ?? 0;
+      census[j]++;
+      if (j === 0 && u.army == null && !u.king) pool.push(u); // 平民流动池（改派唯一来源）
+    }
+    const pop = Math.max(1, c.pop);
+    // —— 目标编制（田→农 / 港→渔 / 损→工 / 市→商 / 猎期→猎 / 战→行伍）——
+    const atWar = this.civAtWar(c.id);
+    const counts = this.civBuildCounts.get(c.id);
+    const markets = counts ? (counts[BUILD_KINDS.MARKET] ?? 0) + (counts[BUILD_KINDS.PORT] ?? 0) : 0;
+    const tFarmer = gap.farms > 0 ? Math.min(gap.farms + 2, Math.ceil(pop * 0.45)) : 0;
+    const tFisher = gap.fisheries > 0 ? Math.min(gap.fisheries + 1, Math.ceil(pop * 0.25)) : 0;
+    const tBuilder = pop >= 10 ? 1 + Math.floor(pop / 30) : 0;
+    const tMerchant = markets > 0 ? Math.min(1 + Math.floor(markets / 3), Math.ceil(pop * 0.12)) : 0;
+    const tHunter = this.preyAbundant && pop >= 12 ? 1 + Math.floor(pop / 40) : 0;
+    // —— 出生偏置刷新（新生儿营生倾向随国情流动）——
+    const bias = new Array<number>(JOBS.length).fill(1);
+    if (census[1] < tFarmer) bias[1] = 3;
+    if (atWar) { bias[2] = 2; bias[3] = 2; }
+    this.jobBias.set(c.id, bias);
+    // —— 改派（配额渐进：每期至多 2 + pop/20 人；渔籍引导期可放宽编满为止）——
+    let quota = 2 + Math.floor(pop / 20);
+    const convert = (job: number) => {
+      const u = pool.pop();
+      if (!u) return false;
+      this.setJob(u, job);
+      census[job]++;
+      census[0]--;
+      return true;
+    };
+    // ① 渔籍引导（新机制落地/旧档迁移）：有渔场而渔民未满编 → 优先编户（超出常规配额的饥荒级通道）
+    if (needFisher) {
+      const t = Math.max(1, Math.min(gap.fisheries, Math.ceil(pop * 0.25)));
+      let n = 0;
+      while (census[8] < t && pool.length > 0 && n < 4) { if (!convert(8)) break; n++; }
+      if (n > 0 && gap.fishers === 0) {
+        const cx = c.capital >= 0 ? (c.capital % W) + 0.5 : 0.5;
+        const cy = c.capital >= 0 ? ((c.capital / W) | 0) + 0.5 : 0.5;
+        this.addEvent('eco', `「${c.name}」编户渔民——高脚渔屋下有了向海谋生的人`, { colorHex: c.colorHex, x: cx, y: cy });
+      }
+    }
+    // ② 劝课农桑（原职能保留）：有田荒着 → 平民入农籍
+    if (needFarmer) {
+      while (census[1] < tFarmer && pool.length > 0 && quota > 0) { if (!convert(1)) break; quota--; }
+    }
+    if (!due) return; // 粮食维度的期期必调到此为止（其余维度 6 期一调）
+    // ③ 专职工种补编（渔籍常规补员 / 工匠 / 商贾 / 猎手）
+    if (census[8] < tFisher && pool.length > 0 && quota > 0) { if (convert(8)) quota--; }
+    if (census[4] < tBuilder && pool.length > 0 && quota > 0) { if (convert(4)) quota--; }
+    if (census[5] < tMerchant && pool.length > 0 && quota > 0) { if (convert(5)) quota--; }
+    if (census[9] < tHunter && pool.length > 0 && quota > 0) { if (convert(9)) quota--; }
+    // ④ 战备扩编（兵营主力，调控补充：行伍缺员从平民征募）
+    if (atWar) {
+      const tWar = Math.ceil(pop * 0.18);
+      if (census[2] + census[3] < tWar && pool.length > 0 && quota > 0) { if (convert(this.rng() < 0.7 ? 2 : 3)) quota--; }
+    }
+    // —— 过剩归农（社会流动的双向面：每期每类至多 1 人回流，渐进不震荡）——
+    const pickOf = (job: number): Unit | null => {
+      for (const u of this.units) {
+        if (u.dead || u.civ !== c.id || (u.job ?? 0) !== job || u.army != null || u.king) continue;
+        return u;
+      }
+      return null;
+    };
+    if (census[9] > 0 && !this.preyAbundant) { const u = pickOf(9); if (u) this.setJob(u, 0); } // 猎期终结：猎手归田
+    if (gap.fisheries === 0 && census[8] > 0) { const u = pickOf(8); if (u) this.setJob(u, 0); } // 渔场尽毁：渔民上岸
+    if (gap.farms === 0 && census[1] > 2) { const u = pickOf(1); if (u) this.setJob(u, 0); } // 田尽毁：农民归流动池
+    if (census[4] > tBuilder + 1) { const u = pickOf(4); if (u) this.setJob(u, 0); } // 匠超编
+    if (census[5] > tMerchant + 1) { const u = pickOf(5); if (u) this.setJob(u, 0); } // 商超编
   }
 
   // ================== 地形工程体系（文明改造自然：凿山/运河/填海） ==================
@@ -6388,6 +6831,7 @@ export class GameEngine {
         const dmg = Math.round(dist * 2.6);
         u.hp -= dmg;
         u.hurt = 24;
+        u.hitKx = Math.sign(u.x - (u.thrX0 ?? u.x)); // 投掷飞行方向 = 落地踉跄方向
         u.grab = Math.max(u.grab ?? 0, 24); // 眩晕躺地（AI 暂停）
         u.thrT = 0;
         for (let k = 0; k < 3; k++) this.fx('dust', u.x + (this.rng() - 0.5) * 1.6, u.y + (this.rng() - 0.5) * 1.6, 20);
@@ -7065,7 +7509,7 @@ export class GameEngine {
     cands.push({ kind: BUILD_KINDS.HOUSE, w: buildDir ? 30 : 10 });
     // 农田：供养扩张（v0.54 粮食经济：一田养四口——按人口比例恳田；粮荒时权重飙到最高）
     const foodStock = civ.food ?? 60;
-    const nFed = c(BUILD_KINDS.FARM) + c(BUILD_KINDS.FISHERY);
+    const nFed = this.farmTileCountOf(civ) + c(BUILD_KINDS.FISHERY);
     if (nFed < Math.ceil(pop * 0.27)) cands.push({ kind: BUILD_KINDS.FARM, w: foodStock < 30 ? 34 : foodStock < 90 ? 14 : 7 });
     // 渔场：向海要粮（仅沿海国候选——预检领土采样，避免内陆国浪费建筑档位）
     if (know >= (BUILDING_DEFS[BUILD_KINDS.FISHERY].needKnowledge ?? 6) && c(BUILD_KINDS.FISHERY) < 2 + houses / 7 && this.civHasCoast(civ)) {
@@ -7085,6 +7529,24 @@ export class GameEngine {
     if (know >= (BUILDING_DEFS[BUILD_KINDS.TEMPLE].needKnowledge ?? 0) && c(BUILD_KINDS.TEMPLE) < 1 + houses / 15) cands.push({ kind: BUILD_KINDS.TEMPLE, w: templeDir ? 18 : 3 });
     // 城堡：终极防御
     if (know >= (BUILDING_DEFS[BUILD_KINDS.CASTLE].needKnowledge ?? 0) && c(BUILD_KINDS.CASTLE) < 1 + houses / 25) cands.push({ kind: BUILD_KINDS.CASTLE, w: 6 });
+    // 【机制③】海上要塞：沿海国的制海权抓手（知识≥12 且已有港口；每国至多 2 座——「不能太多」）
+    if (know >= (BUILDING_DEFS[BUILD_KINDS.SEA_FORT].needKnowledge ?? 0) && c(BUILD_KINDS.PORT) > 0 && c(BUILD_KINDS.SEA_FORT) < 2 && this.civHasCoast(civ) && atWar) {
+      cands.push({ kind: BUILD_KINDS.SEA_FORT, w: 7 });
+    }
+    // ——【机制④】中枢核心人格加权：各文明截然不同的战略禀性直接缩放置建候选（零 rng——纯乘法）——
+    const per = civ.core?.persona;
+    if (per) {
+      for (const cd of cands) {
+        let m = 1;
+        if (cd.kind === BUILD_KINDS.BARRACKS || cd.kind === BUILD_KINDS.TOWER || cd.kind === BUILD_KINDS.CASTLE || cd.kind === BUILD_KINDS.SEA_FORT) m = 0.4 + per.war;
+        else if (cd.kind === BUILD_KINDS.FARM) m = 0.4 + per.farm;
+        else if (cd.kind === BUILD_KINDS.FISHERY || cd.kind === BUILD_KINDS.PORT) m = 0.4 + per.sea;
+        else if (cd.kind === BUILD_KINDS.MARKET) m = 0.4 + per.trade;
+        else if (cd.kind === BUILD_KINDS.TEMPLE) m = 0.4 + per.faith;
+        else if (cd.kind === BUILD_KINDS.HOUSE || cd.kind === BUILD_KINDS.LIBRARY) m = 0.4 + per.build;
+        cd.w = Math.max(1, Math.round(cd.w * m));
+      }
+    }
     // 过滤财富不足的候选
     const afford = cands.filter((x) => gold >= (BUILDING_DEFS[x.kind].cost ?? 0));
     const pool = afford.length > 0 ? afford : [{ kind: BUILD_KINDS.HOUSE, w: 1 }];
@@ -7171,7 +7633,7 @@ export class GameEngine {
       if (this.tickCount % 120 === 0 && civ.pop > 0) {
         const cap = this.popCapOf(civ);
         const cnt = this.civBuildCounts.get(civ.id);
-        const nFarms = cnt ? (cnt[BUILD_KINDS.FARM] ?? 0) + (cnt[BUILD_KINDS.FISHERY] ?? 0) : 0;
+        const nFarms = this.farmTileCountOf(civ) + (cnt ? (cnt[BUILD_KINDS.FISHERY] ?? 0) : 0);
         const foodPressure = (civ.food ?? 60) < 150 && nFarms < Math.ceil(civ.pop * 0.27);
         if (civ.pop > cap - 2 || foodPressure) {
           const kind = this.pickBuildingKind(civ);
@@ -7466,7 +7928,7 @@ export class GameEngine {
             if (victim && !victim.dead) {
               victim.hp = 0;
               victim.dead = true;
-              this.addCorpse(victim.x, victim.y, false, false);
+              this.addCorpse(victim.x, victim.y, false, false, victim.race, victim.flip);
               this.wwCountKill(victim);
               o.losses++;
               o.morale = Math.max(5, o.morale - 3);
@@ -7753,6 +8215,7 @@ export class GameEngine {
         if (!u || u.dead) continue;
         if (Math.hypot(u.x - foe.x, u.y - foe.y) < 3.5) {
           u.hp -= 16 + this.rng() * 10;
+          u.hitKx = Math.sign(u.x - foe.x); // 机炮扫射：朝弹道方向踉跄
           u.hurt = 20;
           hits++;
           if (u.hp <= 0) { u.dead = true; this.wwCountKill(u); }
@@ -7827,7 +8290,7 @@ export class GameEngine {
         else if (gun) this.castBullet(u, aim.x, aim.y, u.dmg * mul);
         else this.castArrow(u, aim.x, aim.y, u.dmg * mul);
         u.cd = beam ? 12 : gun ? 15 : 18;
-        u.atk = 10;
+        u.atk = 12; // 普攻挥击（窗口统一 12）
         volleyN++;
       }
       if (volleyN >= 4) {
@@ -8133,10 +8596,11 @@ export class GameEngine {
       const u = this.unitById.get(target.members[(this.rng() * target.members.length) | 0]);
       if (!u || u.dead) continue;
       u.hp -= (13 + this.rng() * 11) * tm.dmg;
+      u.hitKx = Math.sign(u.x - sx); // 齐射弹道方向 = 后仰方向
       u.hurt = 20;
       if (u.hp <= 0) {
         u.dead = true;
-        this.addCorpse(u.x, u.y, false, false);
+        this.addCorpse(u.x, u.y, false, false, u.race, u.flip);
         collectUnitDead(u.id, false);
         this.wwCountKill(u);
         const ix = target.members.indexOf(u.id);
@@ -8232,12 +8696,13 @@ export class GameEngine {
     }
     if (fort) {
       // 岸炮射击舰队
-      const dmg = fort.kind === BUILD_KINDS.CASTLE ? 15 : fort.kind === BUILD_KINDS.TOWER ? 9 : 6;
+      const dmg = fort.kind === BUILD_KINDS.CASTLE ? 15 : fort.kind === BUILD_KINDS.SEA_FORT ? 14 : fort.kind === BUILD_KINDS.TOWER ? 9 : 6;
       if (a.members.length > 0 && this.rng() < 0.5) {
         const u = this.unitById.get(a.members[(this.rng() * a.members.length) | 0]);
         if (u && !u.dead) {
           this.fx('arrow', u.x, u.y, 10, { x0: fort.x + 0.5, y0: fort.y + 0.5, src: fort.civ, r: 0, dmg });
           u.hp -= dmg;
+          u.hitKx = Math.sign(u.x - fort.x); // 岸炮弹道方向 = 后仰方向
           u.hurt = 20;
           if (u.hp <= 0) {
             u.dead = true;
@@ -10960,7 +11425,7 @@ export class GameEngine {
       if (b.civ !== foe.id) continue;
       let w = 0;
       let label = BUILDING_DEFS[b.kind]?.name ?? '建筑';
-      if (b.kind === BUILD_KINDS.TOWER || b.kind === BUILD_KINDS.CASTLE) w = profile === 'arty' ? 5 : 3; // 工事压制
+      if (b.kind === BUILD_KINDS.TOWER || b.kind === BUILD_KINDS.CASTLE || b.kind === BUILD_KINDS.SEA_FORT) w = profile === 'arty' ? 5 : 3; // 工事压制（【机制③】海上要塞同列）
       else if (b.kind === BUILD_KINDS.BARRACKS) w = profile === 'air' ? 5 : 3.5; // 兵营（斩断兵源）
       else if (b.kind === BUILD_KINDS.MARKET || b.kind === BUILD_KINDS.LIBRARY || b.kind === BUILD_KINDS.FISHERY || b.kind === BUILD_KINDS.FARM) w = profile === 'air' ? 4 : 2.5; // 经济命脉
       else if (b.kind === BUILD_KINDS.PORT) w = 2;
@@ -11107,6 +11572,7 @@ export class GameEngine {
       const d = Math.hypot(u.x - x, u.y - y);
       if (d < r) {
         u.hp -= 600;
+        u.hitKx = Math.sign(u.x - x); // 湮灭爆心向外冲击
         u.hurt = 40;
         if (u.hp <= 0) { u.dead = true; this.wwCountKill(u); }
       }
@@ -11145,6 +11611,7 @@ export class GameEngine {
       const d = Math.hypot(u.x - x, u.y - y);
       if (d < r + 0.4) {
         u.hp -= dmg * Math.max(0.25, 1 - d / (r + 0.4));
+        u.hitKx = Math.sign(u.x - x); // 炮击爆心向外冲击
         u.hurt = 24;
         if (u.hp <= 0) {
           u.dead = true;
@@ -11398,6 +11865,7 @@ export class GameEngine {
               u.y = Math.max(0.5, Math.min(H - 0.5, ny));
             }
             u.hurt = 16;
+            u.hitKx = Math.sign(u.x - e.x); // 巨怪近身威压：向外踉跄（与推离位移同向）
             if (d < 2.2) u.hp -= 1.2;
           }
         }
@@ -11489,7 +11957,8 @@ export class GameEngine {
           const udy = u.y - e.y;
           const ud2 = udx * udx + udy * udy;
           if (ud2 >= prevR2 && ud2 < waveRu2 && !RACES[u.race].flying) {
-            u.hp -= 60; u.hurt = 24; if (u.hp <= 0) u.dead = true;
+            u.hp -= 60; u.hurt = 24; u.hitKx = Math.sign(udx); // 海啸波前冲撞方向 = 后仰方向
+            if (u.hp <= 0) u.dead = true;
           }
         }
         if (e.age === 1) this.shake = Math.max(this.shake, 6);
@@ -11547,7 +12016,8 @@ export class GameEngine {
             const t = this.terrain[j];
             if (t === T.GRASS && this.rng() < 0.6) this.setTerrain(j, T.BURNT);
             else if (t === T.FOREST && this.rng() < 0.25) this.setTerrain(j, T.GRASS);
-            if (this.building[j] === BUILD_KINDS.FARM) this.attackBuilding(j, 4, -1);
+            // 【机制②】琚田：战火踏过的田块荒芜（田是地——烧的是植被覆盖层）
+            if (this.farmland[j] > 0) { this.farmland[j] = 0; this.farmN--; this.fx('smoke', j % W, (j / W) | 0, 20, { r: 1 }); }
           }
         }
       } else if (e.kind === 'drought') {
@@ -11913,7 +12383,8 @@ export class GameEngine {
           if (u.dead || u.boat) continue;
           const d = Math.hypot(u.x - e.x, u.y - e.y);
           if (d >= prevR && d < waveR + 0.5 && !RACES[u.race].flying) {
-            u.hp -= 55; u.hurt = 24; if (u.hp <= 0) u.dead = true;
+            u.hp -= 55; u.hurt = 24; u.hitKx = Math.sign(u.x - e.x); // 塔陷波前向外冲击 = 后仰方向
+            if (u.hp <= 0) u.dead = true;
           }
         }
       } else if (e.kind === 'iceage') {
@@ -11955,7 +12426,8 @@ export class GameEngine {
           const rr = this.rng() * e.r;
           const j = idx(Math.floor(e.x + Math.cos(ang) * rr), Math.floor(e.y + Math.sin(ang) * rr));
           if (j >= 0 && j < W * H) {
-            if (this.building[j] === BUILD_KINDS.FARM) this.attackBuilding(j, 4, -1);
+            // 【机制②】琚田：灾厄过境田块荒芜
+            if (this.farmland[j] > 0) { this.farmland[j] = 0; this.farmN--; this.fx('smoke', j % W, (j / W) | 0, 20, { r: 1 }); }
             else if (this.terrain[j] === T.GRASS && this.rng() < 0.12) this.setTerrain(j, T.BURNT); // 寸草不生
           }
         }
@@ -12015,6 +12487,7 @@ export class GameEngine {
           const d = Math.hypot(u.x - e.x, u.y - e.y);
           if (d < 1.15) {
             u.hp -= e.r;
+            u.hitKx = Math.sign(u.x - e.x); // 火球爆心向外冲击
             u.hurt = 20;
             if (u.hp <= 0) u.dead = true;
           }
@@ -12046,8 +12519,8 @@ export class GameEngine {
           const gD = RACES[hit.race].isCiv ? this.gearBonus(hit) : null;
           const final = gD && gD.armor > 0 ? dmg * (1 - gD.armor / 100) : dmg;
           hit.hp -= final;
+          hit.hitKx = Math.sign(hit.x - (e.x0 ?? hit.x - 1)); // 弹道飞行方向 = 后仰方向（背后箭矢向箭尖踉跄）
           hit.hurt = 20;
-          this.fx('hit', e.x, e.y, 6);
           if (this.fxPrefs.dmgNumbers && (final >= 10 || this.rng() < 0.3)) this.fx('dmg', hit.x, hit.y, 24, { text: '-' + Math.round(final) });
           if (hit.hp <= 0) {
             hit.dead = true;
@@ -12112,6 +12585,7 @@ export class GameEngine {
           if (d < 0.75) {
             const final = t / llen > 0.85 ? ldmg : ldmg * 0.7; // 焦点（弹道末段）全伤
             u.hp -= final;
+            u.hitKx = Math.sign(lux); // 激光沿光束传播方向灼穿踉跄（0=正交 fallback flip）
             u.hurt = 22;
             this.fx('hit', u.x, u.y, 6);
             if (this.fxPrefs.dmgNumbers && this.rng() < 0.4) this.fx('dmg', u.x, u.y, 24, { text: '-' + Math.round(final) });
@@ -12317,7 +12791,8 @@ export class GameEngine {
       if (d < 1.6) {
         // 冷血体质对剧烈环境冲击更脆弱（×1.4）；冬季在暴雨中僵直的爬虫首当其冲
         const mult = RACES[u.race].coldBlood ? 1.4 : 1;
-        u.hp -= 26 * mult; u.hurt = 22; if (u.hp <= 0) u.dead = true;
+        u.hp -= 26 * mult; u.hurt = 22; u.hitKx = Math.sign(u.x - x); // 雷击落点向外冲击 = 后仰方向
+        if (u.hp <= 0) u.dead = true;
       }
     }
   }
@@ -14455,11 +14930,15 @@ export class GameEngine {
    *     TS 扣血会被回读覆写 —— 实测无效 —— 故用瞬态计数）。
    *  近岸个体形成「挣扎回海」窗口，深内陆个体窒息终局 —— 陆生鱼群无法自续，退化生态自愈。 */
   private beachedAquaticTick() {
-    const retarget = this.tickCount % 20 === 0; // 目标采样每 20 tick 一次；断言逐 tick 廉价
     for (const u of this.units) {
       if (u.dead) continue;
       const def = RACES[u.race];
       if (!def.aquatic || def.beach) continue;
+      // 相位错峰 retarget（#63）：采样判定从「全体同 tick 齐步」（tickCount%20==0）改为按单位 id
+      // 相位分散——每单位仍严格 20 tick 一采（统计等价：游走散布/猎游粘性/窒息节拍全部不变），
+      // 采样不再扎堆在同一个 tick。id 为 UNIT_FIELDS 首列入档字段：读档后相位与原世界逐位一致，
+      // 位等确定性不破坏。
+      const retarget = (this.tickCount + u.id) % 20 === 0;
       const ti = idx(Math.floor(u.x), Math.floor(u.y));
       if (isWater(this.terrain[ti])) {
         u.beachT = 0;
@@ -14528,10 +15007,12 @@ export class GameEngine {
           if (u.beachTx != null && u.beachTy != null) { u.tx = u.beachTx; u.ty = u.beachTy; }
           continue;
         }
-        u.beachTx = undefined; u.beachTy = undefined;
         if (retarget || u.beachTx == null) {
           // 水域内随机游走：采样 8 个候选点，取首个「实体水」（自身+≥5 邻水）—— 防止指向孤水坑/岸边
           // 25% 远散布（±14）：鱼群低频外溢 —— 高密鱼团让鲨鱼的校际通勤饿毙（Task 96 实测 102 格通勤）
+          // 清空仅在采样时执行（#63 死 gate 修复：原「先清后判」让 beachTx==null 恒真、retarget
+          // 形同虚设，鱼群实际每 tick 重采样 8 候选——#61 rng 直方图 470 draws/tick 恒定大头）
+          u.beachTx = undefined; u.beachTy = undefined;
           const far = this.rng() < 0.25;
           const spread = far ? 14 : 6;
           for (let k = 0; k < 8; k++) {
@@ -14679,6 +15160,7 @@ export class GameEngine {
       if (qd.isCiv || qd.aquatic || !this.isHerbivoreRace(q.race)) continue;
       preyAlive++;
     }
+    this.preyAbundant = preyAlive >= 400; // 猎场丰欠旗（职业宏观调控共享：丰饶期编猎手，猎尽则猎手归田）
     if (preyAlive < 400) return; // 保护期：猎物承压即收弓（LV 崩盘线 150 的 2.6 倍余量，繁荣期才开猎）
     // 秋储加成：秋粮入仓前的传统猎季（冬季休耕前的肉干储备——季节节律的另一条文明侧回声）
     const roll = this.nature.season === 2 ? 0.4 : 0.2;
@@ -14694,8 +15176,10 @@ export class GameEngine {
         if (u.dead || (u.grab ?? 0) > 0) continue; // 神明手中之物不入册
         const ud = RACES[u.race];
         if (ud.isCiv) {
-          // 猎手资格：本国民、非熟睡、非行军、非国王、非伤员——弓手即猎手（远程射程更远）
-          if (u.civ !== c.id || u.sleep || u.army != null || u.job === 7 || (u.hurt ?? 0) > 0) continue;
+          // 猎手资格（#68 职业分工·越权门控）：职业猎手（job 9）与弓手（job 3，行伍弓马娴熟惯例巡猎）——
+          // 其余国民（农/渔/工/商/贵族/平民）不再越权狩猎，猎获归仓成为专职工种的营生
+          if (u.civ !== c.id || u.sleep || u.army != null || (u.hurt ?? 0) > 0) continue;
+          if (u.job !== 9 && u.job !== 3) continue;
           if (hu.length < 16) hu.push(u);
         } else if (!ud.aquatic && this.isHerbivoreRace(u.race)) {
           pr.push(u);
@@ -14707,7 +15191,7 @@ export class GameEngine {
       let bp: Unit | null = null;
       let bd2 = Infinity;
       for (const u of hu) {
-        const reach2 = u.job === 3 ? 144 : 64;
+        const reach2 = u.job === 9 ? 144 : 64; // 职业猎手巡猎半径 12（离村巡猎的行家）；弓手惯例 8
         for (const q of pr) {
           const dx = q.x - u.x, dy = q.y - u.y;
           const d2 = dx * dx + dy * dy;
@@ -14720,6 +15204,7 @@ export class GameEngine {
       this.fx('blood', bp.x, bp.y, 12);
       c.gold = (c.gold ?? 0) + 2 + Math.floor(this.rng() * 4); // 猎获归仓：肉干皮毛折市易之利（2-6，拾取同口径）
       this.fx('coin', bp.x, bp.y - 1, 16); // 猎获就地打包（巡猎抽象：猎手在猎场边取物）
+      bu.tx = bp.x; bu.ty = bp.y; // 猎手奔赴猎场取物（引擎 leash 的行进叙事面：猎队走向猎获处）
       kills++;
       if (this.rng() < 0.3) this.addEvent('eco', `「${c.name}」的猎队满载而归——猎获入仓，市易得金`, { colorHex: c.colorHex, x: bp.x, y: bp.y });
     }
@@ -16620,9 +17105,12 @@ export class GameEngine {
     let army = 0;
     let armedN = 0;
     let popN = 0;
+    const jobCensus = new Array<number>(JOBS.length).fill(0); // #68 职业分工：职业普查（文明面板「职业」行数据源）
     for (const u of this.units) {
       if (u.dead || u.civ !== c.id) continue;
-      if (u.job === 2 || u.job === 3) army++;
+      const j = u.job ?? 0;
+      jobCensus[j]++;
+      if (j === 2 || j === 3) army++;
       if (!u.boat) {
         popN++;
         if (u.wep) armedN++;
@@ -16647,6 +17135,7 @@ export class GameEngine {
     return {
       ...c,
       tiles,
+      jobCensus, // #68 职业分工：各职业在册人数（CivPanel「职业」行）
       wars,
       occPushing,
       occPushAvg: occPushing > 0 ? Math.round(occPushStr / occPushing) : 0,
@@ -16699,6 +17188,14 @@ export class GameEngine {
       armamentName: ['木石时代', '青铜时代', '铁器时代', '钢铁时代', '火器时代', '现代军备', '未来军备'][this.armamentOf(c)],
       houseTier: this.houseTierOf(c),
       houseTierName: ['茅屋村', '石砌村', '堡垒宅', '哥特庄园'][this.houseTierOf(c)],
+      // —— 【机制④】中枢核心快照（CivPanel 展示：模式/人格/决策纪要）——
+      core: c.core ? {
+        mode: c.core.mode,
+        persona: { ...c.core.persona },
+        gen: c.core.gen,
+        notes: [...c.core.notes],
+        lastApiNote: c.core.lastApiNote ?? '',
+      } : null,
     };
   }
 
@@ -17325,6 +17822,8 @@ export class GameEngine {
     const n = this.blood.length + this.corpses.length;
     this.blood.length = 0;
     this.corpses.length = 0;
+    this.footprints.length = 0; // 【稳定性 v80】脚印/鸟群 viz 数组清零（纯视觉无模拟消费，=generate 初值语义）
+    this.flocks.length = 0;
     this.toast('战场涤净', 'good', true);
     return n;
   }
@@ -17373,10 +17872,16 @@ export class GameEngine {
       toastSeq: this.toastSeq,
       victoryCiv: this.victoryCiv,
       multiCivSeen: this.multiCivSeen,
+      frameCount: this.frameCount, // 【稳定性 v81】旧档迁移源保留（dayPhase 已改 tick 钟，本字段模拟不再消费）
+      dayTickOff: this.dayTickOff, // 【稳定性 v81】昼夜 tick 钟相位随档（读档日相无缝续日）
+      ecoRepopYear: this.ecoRepopYear, // 【稳定性 v80】生态再繁衍门控记账入档（残留则再繁衍时机漂移 → rng 序分叉）
+      ecoLastNoteYear: this.ecoLastNoteYear, // 【稳定性 v80】生态播报节流记账入档
+      wwIgniteTick: this.wwIgniteTick, // 【稳定性 v80】大战引燃冷却钟入档（残留则引燃时机漂移 → 战局分叉）
       terrain: rleEncode(this.terrain),
       variant: '', // v2 不存 variant：读档按 seed 确定性重算（worldgen hash2 纯函数）
       owner: rleEncode(ownerBytes),
       building: rleEncode(this.building),
+      farmland: rleEncode(this.farmland), // 【机制②耕地土地化】垦田覆盖层随档
       fire: rleEncode(this.fire),
       radiate: rleEncode(this.radiate),
       regrow: [...this.regrow.entries()],
@@ -17481,6 +17986,7 @@ export class GameEngine {
   /** 读档：恢复世界状态并全量重绘。数据损坏时抛错（由调用方捕获后 toast 提示）
    *  兼容 v1（base64 平铺）与 v2（RLE 压缩）两种格式 */
   applySave(data: SaveData): void {
+    WBB.resetSessionState(); // 【稳定性 v79】内核退避/失败态跨读档清零（单例运行态不入档——不清则同档二次读档走 JS 起步，与新页首读分叉）
     WBB.touchMeta(); // Stage 3：读档后全部行重建
     const version = data.v;
     if (version !== 1 && version !== 2) throw new Error(`不支持的存档版本: ${version}`);
@@ -17494,6 +18000,8 @@ export class GameEngine {
     const isV2 = data.v === 2;
     const dec = (s: string, expect: number) => (isV2 ? rleDecode(s, expect) : b64ToBytes(s, expect));
     const terrain = dec(data.terrain, W * H);
+    // 【机制②耕地土地化】垦田覆盖层随档（旧档缺省 = 全荒，稍后旧 FARM 建筑实体一次性迁移）
+    const farmland = isV2 && (data as SaveDataV2).farmland ? dec((data as SaveDataV2).farmland!, W * H) : new Uint8Array(W * H);
     // v2 不存 variant（纯随机色彩抖动）：按 seed 确定性重算，与生成时一致（hash2 纯函数）
     const variant = isV2 ? new Uint8Array(W * H) : dec(data.variant, W * H);
     if (isV2) {
@@ -17520,6 +18028,116 @@ export class GameEngine {
     }
     // 随机数无法序列化闭包状态，用 seed+tick 重新播种即可
     this.rngA = ((this.seed ^ 0x9e3779b9) + this.tickCount) >>> 0;
+    // 【稳定性 v79→v81】昼夜钟：v81 起 dayPhase() 改读 tickCount（世界时 tick 钟，速度纯化——
+    // 帧钟在 20× 下夜窗落点随速度漂移 → 睡眠/夜战/彩虹/流星/内核镜像的 rng 序分叉，
+    // 1× 与 20× 是两个世界）。frameCount 保留恢复仅为旧档迁移源；相位连续性由 dayTickOff 承载：
+    // 新档直接恢复随档 offset（读档日相无缝）；旧档（无该字段）按 v79 帧钟相位一次性折算到 tick 钟位相；
+    // 再旧档（连 frameCount 也无，v79 前）回落 0（黎明开局，确定性）。
+    this.frameCount = Number.isFinite((data as SaveDataV2).frameCount) ? ((data as SaveDataV2).frameCount as number) : 0;
+    const dayOffField = (data as SaveDataV2).dayTickOff;
+    if (Number.isFinite(dayOffField)) {
+      this.dayTickOff = dayOffField as number;
+    } else {
+      const legacyDayPhase = (((this.frameCount % GameEngine.DAY_FRAMES) + GameEngine.DAY_FRAMES) % GameEngine.DAY_FRAMES) / GameEngine.DAY_FRAMES;
+      this.dayTickOff = Math.round(legacyDayPhase * GameEngine.DAY_TICKS) - (((this.tickCount % GameEngine.DAY_TICKS) + GameEngine.DAY_TICKS) % GameEngine.DAY_TICKS);
+    }
+    // 【稳定性 v79】读档重置生态态：ecoState 不入档（仅 stats UI 快照），初始值 'balanced'——
+    // 旧实现 applySave 不重置，上个会话（标题屏/上一读档）的 'collapse' 残留会让健康存档
+    // 误吃 stability −8（societyTick L8598），直到下一次 ecoTick 重算才自愈
+    this.ecoState = 'balanced';
+    // 【稳定性 v79】读档残留收口（generate 有清、applySave 漏清的跨会话污染面 —— bit-equal QA 差集）：
+    // bHp/damagedSet：存档不存建筑 HP —— 语义应为满血重建；残留会把上个世界同格建筑的残血/受损态
+    // 带进新读档（箭塔伤害、内核 OFF_DMGL 镜像随之失真）；civBuildCounts：经济计数（5 tick 重建，
+    // 窗口期失真）；totalWars：终战计数（存档不序列化，残留错乱宣战节奏）；armyNameSeq（军团命名序，
+    // 读取回落 0）；lastGovEventTick（政体播报节流）；lastEcoPop（生态趋势展示缓存，首次 ecoTick 重灌）。
+    this.bHp.clear();
+    this.damagedSet.clear();
+    this.civBuildCounts.clear();
+    this.totalWars.clear();
+    this.armyNameSeq.clear();
+    this.lastGovEventTick.clear();
+    this.lastEcoPop.clear();
+    // 【稳定性 v80】同会话二次读档残留层第三批收口（bit-equal 字段级深查实锤 4 项；#49 遗留池首选）：
+    // ① ecoRepopYear/ecoLastNoteYear：生态再繁衍门控（ecoTick 内 yearNow-ecoRepopYear>25）与状态播报
+    //    节流（>15 年一笔）——不入档则读档取上个会话值（A 协议 0 vs B 协议 306 实锤），再繁衍触发
+    //    时机漂移 → spawn 消费 rng 序分叉。入档，旧档缺省 -999（generate 初值 L872-873 同源）。
+    // ② wwIgniteTick：终极世界大战引燃冷却钟（tickCount-wwIgniteTick>=400 门控 L9979）——不入档则
+    //    读档残留上个会话拨动值（A=30 vs B=12150 实锤），引燃时机漂移 → 全局战局分叉。
+    //    入档，旧档缺省 -400（字段初值 L8409 同源）。
+    // ③ preyGrid：猎物密度场缓存（ecoTick 每 120 tick 全量重灌 L13949，间隔期被捕食者嗅觉导航
+    //    消费 L4709）——读档清零（新世界初值即零场），防上个会话残留喂错导航分支 → 移动/rng 分叉。
+    const v80d = data as SaveDataV2;
+    this.ecoRepopYear = Number.isFinite(v80d.ecoRepopYear) ? (v80d.ecoRepopYear as number) : -999;
+    this.ecoLastNoteYear = Number.isFinite(v80d.ecoLastNoteYear) ? (v80d.ecoLastNoteYear as number) : -999;
+    this.wwIgniteTick = Number.isFinite(v80d.wwIgniteTick) ? (v80d.wwIgniteTick as number) : -400;
+    this.preyGrid.fill(0);
+    // ④ griefMem：哀悼缓释账本（societyTick 消费 stab -= amount，×0.85/轮衰减 L6095）——战争创伤属
+    //    上个世界的情感态（panic 瞬态不入档同哲学），读档清零；残留让新读档文明误吃旧哀悼减益
+    //    → stability 分支 → rng 序分叉（bit-equal 玩段协议 diffFields 实锤）。
+    // ⑤ reboundLast：灭绝物种回弹 seeding 冷却（ecoTick 加权掷签 ago=tickCount-last L14859）——
+    //    残留让再迁入权重漂移 → spawn rng 分叉。清零 = 全部灭绝种族按最高权重排队（generate 初值语义）。
+    // ⑥ homeCache/homeCacheAt/homeOf/homeOcc：归家户籍簇（夜归导航 300 tick 新鲜度门 L3413）——
+    //    generate 置 -99999 失效（L2087）；玩后读档 tickCount 倒退会让新鲜度误判为「新鲜」（
+    //    tickCount-homeCacheAt 为负），直接拿上个世界的归家缓存/户籍簿导航废墟；且户籍年检
+    //    （rebuildHomeCache）会保留「房在人在」的旧映射，残留穿越读档。全部清零（=新世界首夜重派）。
+    this.griefMem.clear();
+    this.reboundLast.clear();
+    this.homeCache = null;
+    this.homeCacheAt = -99999;
+    this.homeOf.clear();
+    this.homeOcc.clear();
+    // ⑦ 叙事/灭火/维修计数器五件（generate L860-863/883 有清、applySave 漏清）：firesOut/repairsDone/
+    //    lastFireOutEventTick/lastRepairEventTick/statDragonsSlain——pack2 WP_SCAL 全量灌入内核 OFF_CNT
+    //    （内核侧灭火/维修事件门控输入），残留让玩后读档的内核首批即以旧世界计数决策 → 行视图 tick-1
+    //    即分叉（deepdiff4 实锤）。重置 = generate 初值语义（-2400 = 事件门控全开）。
+    this.firesOut = 0;
+    this.repairsDone = 0;
+    this.lastFireOutEventTick = -2400;
+    this.lastRepairEventTick = -2400;
+    this.statDragonsSlain = 0;
+    // ⑪ snowman/snowmanN：雪人装饰场（snowmanTick 每 80 tick 重度消费 rng——融化/堆雪人分支
+    //   均多次掷骰；不入档、generate 也漏清）——残留让 A/B 的 snowmanTick 分支与 rng 序分叉
+    //   （deepdiff8 玩后全字段 diff 实锤）。清零 = 初雪从零堆起（generate 字段初值语义）。
+    this.snowman.fill(0);
+    this.snowmanN = 0;
+    // ⑩ 神经 RL 飞行头重置 + 版本归一：在线训练（玩段 PPO 奖励更新 flightRLHead）跨读档存活 →
+    //    pack2 NEUW 段权重重灌时 A（标题屏训练态）vs B（玩段训练态）不同 → 内核飞鸟决策
+    //    分叉（deepdiff6 blk918-938 实锤）。重置为离线导出权重（=页面刷新语义）；版本指纹
+    //    定值化（=1）——原 bump 版本随读档历史漂移（deepdiff13 实锤 A=6 vs B=7）。
+    resetFlightRLWeights();
+    normalizeNeuroWeightsVersion();
+    // ⑨ civBuildCounts/marketIdx：v79 只 clear 了 civBuildCounts（5 tick 窗口失真），marketIdx
+    //    完全漏清（A=标题屏残留 vs B=玩段残留 → 商队目标/贸易路线选择分叉）。ideaModCache 同因
+    //    （generate L936 有清、applySave 漏清——techModCache 原生已在 civs 段清零+预热重建）。
+    //    三者动作移至下方 civs/buildings 恢复完成之后（确定性重建/惰性重建）。
+    // 【稳定性 v81】读档残留收口第四批（comm 差集审计 generate-vs-applySave 全量余量补齐）：
+    // ① shellMemory：炮击「近期弹着降权」记忆（D 炮击瞄准加权抽签的目标权重输入——打过的地方
+    //    ×0.3）——残留让新读档的炮击避开旧世界弹着点，加权抽签序列分叉（rng 相邻输入）。
+    // ② warHistory：近期战争窗（recentWars 门 L10005）——残留让健康档误判「战云密布」走战时分支。
+    // ③ phoenixAshes：凤凰灰烬复活队列（phoenixAshTick 每tick 复活 spawn 消费 rng）——残留让
+    //    新读档凭空复活旧世界的凤凰（不入档瞬态，generate 有清）。
+    // ④ statWars/statNukes 等 13 项成就/叙事计数器：pack2 WP_SCAL OFF_CNT 灌内核叙事门控同族
+    //    （#50 已清 firesOut 五件，本批补齐余量——残留让内核叙事门以旧世界计数决策）。
+    // ⑤ lastSiegeEventTick：围城事件节流钟；achProgressCache：成就进度缓存（纯展示缓存，
+    //    achievementsTick 每 600 tick 重建，achUnlocked 本体不经此路径）。
+    this.shellMemory.length = 0;
+    this.warHistory.length = 0;
+    this.phoenixAshes.length = 0;
+    this.statWars = 0;
+    this.statAnnihilations = 0;
+    this.statBlackholes = 0;
+    this.statBloomTiles = 0;
+    this.statCivsFallen = 0;
+    this.statFestivals = 0;
+    this.statHasteBeats = 0;
+    this.statHastePeak = 0;
+    this.statMeteorShowers = 0;
+    this.statNavalKills = 0;
+    this.statNukes = 0;
+    this.statPlasmas = 0;
+    this.statTerraform = 0;
+    this.lastSiegeEventTick = 0;
+    this.achProgressCache = {};
 
     // —— v3 涌现层早期恢复（emTechs/emIdeas/evoNodes/dynTraits —— 必须先于文明处理：research 校验/加成缓存/理念表依赖） ——
     const v3s = data as SaveDataV2;
@@ -17565,8 +18183,21 @@ export class GameEngine {
     this.variant = variant;
     this.owner = owner;
     this.building = building;
+    this.farmland = farmland; // 【机制②】垦田覆盖层
+    { // farmN 读档重算（计数器不入档——与覆盖层同步重建）
+      let n = 0;
+      for (let k = 0; k < W * H; k++) if (farmland[k] > 0) n++;
+      this.farmN = n;
+    }
     this.fire = fire;
     this.radiate = radiate;
+    // 【稳定性 v79】读档重算草地计数：旧实现 grassTiles 只在 ecoTick（每 120 tick）全量重算
+    // （字段初始值 1），serialize 有存 grass 但 applySave 不恢复 —— 读档后取上个会话残留
+    // （标题世界 tick<120 → 1 / ≥120 → 全图计数），生育增益（grassTiles/16000）跨会话漂移
+    // → 同存档重载模拟不可复现（bit-equal QA 实锤：同档双跑单位 806 vs 814、rng 流 1152 vs 1132 次、
+    //   生育门 grass 输入 1 vs 5609）。改为从恢复后的 terrain 单一真相重算（O(W×H) 一次 ~1ms，
+    //   读档一次性成本，顺带自愈脏档与旧档缺字段）。
+    { let g = 0; for (let gi = 0; gi < terrain.length; gi++) { const t = terrain[gi]; if (t === T.GRASS || t === T.FOREST) g++; } this.grassTiles = g; }
 
     // 从数组重建派生集合
     this.fireSet.clear();
@@ -17577,6 +18208,8 @@ export class GameEngine {
     // 瞬态 decals 清空（血迹/尸骸/洪水/湿沙不随存档走）
     this.blood.length = 0;
     this.corpses.length = 0;
+    this.footprints.length = 0; // 【稳定性 v80】脚印/鸟群 viz 数组清零（纯视觉无模拟消费，=generate 初值语义）
+    this.flocks.length = 0;
     this.flood.clear();
     this.wet.clear();
     // 恢复河道流向场（可选字段：旧存档无河 → 全 0）
@@ -17590,6 +18223,9 @@ export class GameEngine {
     this.road = ((data as SaveDataV2).road ? dec((data as SaveDataV2).road!, W * H) : new Uint8Array(W * H)) as Uint8Array<ArrayBuffer>;
     this.tradeNext.clear();
     this.marketIdx.clear();
+    this.profT.clear(); // #68 职业调控瞬态：载档清零重新积累（保同页双载位等——调控期相与首载一致）
+    this.jobBias.clear();
+    this.preyAbundant = false;
     this.regrow.clear();
     for (const [i, at] of data.regrow) this.regrow.set(i, at);
     this.radSet.clear();
@@ -17638,14 +18274,34 @@ export class GameEngine {
     }));
     // 科技/政体缓存重建 + 研究中的科技校验（防旧档脏数据；v3：涌现科技同样合法）
     this.techModCache.clear();
+    this.ideaModCache.clear(); // 【稳定性 v80】理念加成缓存清零（残留跨读档 → repro 生育门漂移）；惰性重建
     this.govCache.clear();
     for (const c of this.civs) {
       if (c.research && !TECH_BY_KEY[c.research] && !this.emTechs.get(c.research)) { c.research = null; c.researchP = 0; }
+      // 【机制④】旧档文明补挂中枢核心（人格按种族底色+确定性扰动初始化——旧档王国即刻拥有独立大脑）
+      if (!c.core) c.core = this.makeCore(c);
       this.techModsOf(c.id); // v3：含涌现科技效果的完整重建
     }
     this.buildings = data.buildings.map((b) => ({ ...b }));
     this.bIdx.clear();
     this.buildings.forEach((b, i) => this.bIdx.set(b.i, i));
+    // ——【机制②耕地土地化】旧档一次性迁移：FARM 建筑实体 → 垦田地块覆盖——
+    //    田从此是土地（无实体/无耐久/随领土易主）；移除实体走 removeBuilding 正规渠道（houses 计数同步归位）。
+    //    新档 serialize 后不再产生 FARM 实体，此迁移对旧档幂等。
+    {
+      let migrated = 0;
+      for (let k = this.buildings.length - 1; k >= 0; k--) {
+        const b = this.buildings[k];
+        if (b.kind !== BUILD_KINDS.FARM) continue;
+        if (this.farmland[b.i] === 0) { this.farmland[b.i] = 1; this.farmN++; migrated++; }
+        this.destroyBuilding(b.i, true);
+      }
+      if (migrated > 0) console.info(`[机制②迁移] ${migrated} 座农田建筑已转为土地覆盖`);
+    }
+    // 【稳定性 v80】⑨ civBuildCounts/marketIdx 确定性全量重建（v79 只 clear civBuildCounts——
+    // 5 tick 窗口失真；marketIdx 完全漏清——商队目标/贸易路线取旧世界残留）。放 buildings/bIdx
+    // 恢复完成后：从读档建筑重算，确定性且消除窗口失真。
+    this.rebuildCivBuildCounts();
     this.rel.clear();
     for (const [k, v] of data.rel) this.rel.set(k, v);
     this.met.clear();

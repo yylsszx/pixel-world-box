@@ -99,6 +99,12 @@ export function resetFlightRLWeights() {
   flightRLHead = dequantize(NEURO_FLIGHT_RL);
 }
 
+/** 【稳定性 v80】读档归一：重置后把版本指纹定值化（=1，与离线基线权重语义绑定）——
+ *  消除读档历史（每次 load bump）导致的版本漂移，pack2 NEUW 重灌门跨会话确定性。 */
+export function normalizeNeuroWeightsVersion() {
+  neuroWeightsVersion = 1;
+}
+
 // —— flight 头策略源：Task 37 路径B ——
 //   'bc' = Task 36 行为克隆版（教师的分段线性近似，一致率 99%+）
 //   'rl' = PPO 强化学习版（在教师初始化上超越：分歧处长期优于教师，分歧胜率 57.5%）

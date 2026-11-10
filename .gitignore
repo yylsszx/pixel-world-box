@@ -73,3 +73,6 @@ oracle-server/dsh-runtime/
 
 # dotnet 持久工具链（沙箱重置免重装；M-U28 起 .dotnet 挂项目内）
 /.dotnet/
+
+# dev server 误重定向日志杂物（#71 恢复轮拦截）
+/3000
