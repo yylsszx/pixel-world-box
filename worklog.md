@@ -6277,3 +6277,26 @@ Stage Summary:
 **推送**: 代码（sprites/render/scripts）+ worklog 本条 → push-web.sh（结果见下轮复核）。
 **版本节奏**: 不升位（v0.66 第二笔：纯视觉层，模拟语义/存档格式零变更）。
 **评估**: D5 手感与表现——巨怪特写精度从 8×8 像素块到 2×2 细像素（增益 4×），三段挥击帧在精绘档完整保留（12 态哈希实证）；表现线 LOD 四档（色点/迷你/全精灵/精绘）自此全种族闭环（人形/四足/巨怪三族系全有精细档）。
+
+## 2026-11-10 #63（v3）：beachedAquatic rng 尖峰根治——「先清后判」死 gate 修复 + 采样相位错峰（470→27 draws/tick，降 94%）
+
+**上轮复核**: #62 推送**实为成功**（deffd4b 02:09:51Z + pages 1feb036 双绿，API 认证查实）——开局 git fetch TLS 瞬断 + 本地 origin/main 引用陈旧造成「未推送」假象；sync-github.sh「白名单零差（幂等跳过）」正是新鲜克隆证明远端树已含 #62 内容。教训：deploy-bot 快照线与本地引用失步时以 sync 幂等判定为准，勿凭 fetch 失败下未推送结论。
+
+**本轮主攻（遗留池②：beachedAquatic retarget rng 消耗降频；首选①真机 vsync headless 不可测顺位）**:
+- **真凶升级（#61 直方图归因修正）**: 「470 draws/tick」并非 retarget tick 扎堆，而是**每 tick 恒定 470**——鱼群路径「先清后判」死 gate：`u.beachTx = undefined` 紧跟 `if (retarget || u.beachTx == null)`，后者恒真，**retarget 形同虚设**，鱼群实际每 tick 重采样 8 候选（注释声称的「每 20 tick 一采」从未生效）。t19（非 %20 tick）也有 470 即铁证。
+- **修复一（死 gate）**: 清空移入 if 块内——鱼群恢复「每 20 tick 换一次游走目标、期间平滑走向固定目标」的设计意图（原行为每 tick 抖动换向，噪声级 rng 消耗+8 候选×9 邻水 isWater 每 tick ~14k 次）。
+- **修复二（相位错峰）**: retarget 判定从 `tickCount % 20 === 0`（全体同 tick 齐步采样）改为 `(tickCount + u.id) % 20 === 0`——每单位仍严格 20 tick 一采（统计等价：游走散布/猎游粘性/窒息节拍全不变），采样不再扎堆单 tick。id 为 UNIT_FIELDS 首列入档字段 + rowsToUnits 表头映射恢复 + unitById 按档重建——读档后相位逐位一致，位等不破坏（本轮三重实证）。
+- ** shark 路径零改动**（retarget 判定共用同一表达式）；搁浅路径 findWaterNear 零 rng 天然不受影响。
+
+**QA（全绿）**:
+- **rng 直方图复测**: 包装 e.rng 按调用栈统计——beachedAquaticTick **470 → 27.1 draws/tick（降 94.2%）**，全引擎 rng 49/tick（原占比 91%→现 55% 绝对值砍 443）；20× 高倍速下的每秒 15 次尖刺帧预算抖动源消除。
+- **行为面**: 水中 130 鱼全部持有游走目标平滑游动；spawn 鲨 #3567 立即锁定猎物 #3566（beachTx==null 兜底即时采样+相位采样双语义验证）；beached=0 无搁浅异常。
+- **存档确定性（方法论三课）**: ①saveGame('auto') 走 queueAutoSave **异步分片落盘**（15s 收尾）——save 后立即 load 读到旧档，QA 竞态非引擎缺陷；②saveGame(source) 的 source 是触发来源标签**全部落 auto 键**（by design），手动槽保存走 saveToSlot（SaveDialog/CommandPalette 实际用它）——无存量 bug；③**同页双 load 轨迹分叉 = #54 已知内核二进制非导出全局态累积边界**（载入序哈希跨页复现 d2a45ceb→4347a478→63781114），非本轮引入。正确协议实证：**saveToSlot 往返 id 完美恢复（792 单位 idsMatch=true）+ 双 load 恢复态 simHash 全等（dualLoadRest=true）+ rngA 重播种 derivedMatch=true（v79 by design，边界字段差非回归）**。
+- **性能**: 20× 十秒无崩溃（254 tps @ 800+ 单位 headless swiftshader，渲染并行）；1× 节拍 **15.5 tps（基准 15.15 的 102.3%，零回归）**。
+- **捎带遗留池⑧**: ogre/troll 精绘 zoom24 目视合格（骨棒+大腹+粉耳/双臂+独眼结构清晰，#62 精绘重做实锤）；hydra 红色警示条特征可见但树遮挡整体结构（#62 12 态哈希实证背书，目视细节留待后续巨怪美术轮）。
+- tsc 零错误 + eslint 零告警（engine.ts 单文件 8 行改动）+ console 零 error。
+
+**遗留（下轮优先池）**: ① 20× 收口：真机 vsync 实测 + pack 内核提速 ~2ms/tick（真机路径，headless 永不可测真机 vsync——考虑改道：pack 内核提速可拆「rust 工具链重建 wbcore（#54 遗留：rng_next OFF_RNGS 源码已就绪）」在沙箱完成）；② 战争收束叙事调优；③ 滑杆行可见性；④ raise GRASS 顶格；⑤ 桶消费点语义面复查；⑥ hydra 精绘目视细看（树遮挡待空地特写）；⑦ 远程命中方向后仰（flip 背向背后箭矢反向——低优先）。
+**推送**: engine.ts（373a833，sync-github.sh 三连重试第三次通过 TLS 瞬断）→ **SYNC_OK eb59155**；worklog 本条随下轮首推或本轮补推。
+**版本节奏**: 不升位（v0.66 第三笔：模拟行为 bug 修复+性能优化，存档格式零变更）。
+**评估**: D3 性能与规模——beachedAquaticTick 每tick 恒定 470 rng draws+~14k 邻水检查直降 94%（20× 高倍速帧预算尖刺源消除，400 鱼世界的 eco 热点削峰）；D6 稳定健壮——确定性三重实证（id 相位入档根基/双 load 恢复态全等/rngA 重播种边界设计内）+鱼群游走回归 20tick 设计意图（每 tick 抖动换向的隐性语义漂移一并纠正）。
