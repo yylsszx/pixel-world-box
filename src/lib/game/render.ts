@@ -1373,6 +1373,31 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
     }
   }
 
+  // 【机制②耕地土地化】垦田层：土地覆盖（地表之上、建筑之下——田是地不是房）
+  if (engine.farmN > 0) {
+    const fm = engine.farmland;
+    for (let ty = y0; ty <= y1; ty++) {
+      const row = ty * 256;
+      const fy = ty * 2;
+      for (let tx = x0; tx <= x1; tx++) {
+        const i = row + tx;
+        if (fm[i] === 0) continue;
+        const h = ((i * 40503) >>> 0) % 7;
+        // 翻耕土底（三档色阶抖动——成片田地不是死板一块）
+        g.fillStyle = h < 3 ? '#9a8a4a' : h < 5 ? '#a8964e' : '#8f7f42';
+        g.fillRect(tx * 2, fy, 2, 2);
+        // 堡沟（每格下缘深土——水平条纹的翻耕纹）
+        g.fillStyle = 'rgba(90,74,34,0.55)';
+        g.fillRect(tx * 2, fy + 1, 2, 1);
+        // 禾苗点缀（抽样两成格：青/金苗错行）
+        if (h === 0 || h === 4) {
+          g.fillStyle = ty % 2 === 0 ? '#c9b45a' : '#7d9a3e';
+          g.fillRect(tx * 2 + ((i >> 2) & 1), fy, 1, 1);
+        }
+      }
+    }
+  }
+
   // buildings（超细粒度：4px/格 ×4 坐标）
   const nightNow = engine.dayPhase() > 0.545 && engine.dayPhase() < 0.865; // 与睡眠系统同一夜窗（归家灯火/卧床联动）
   for (const b of engine.buildings) {

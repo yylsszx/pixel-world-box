@@ -1,5 +1,5 @@
 // ============ WorldBox Replica — Simulation Engine ============
-import type { Army, ArmyState, Building, CasusKind, Civ, Cyclone, Directive, DirectiveKind, Effect, EmergentWeapon, FxPrefs, Gene, GroundItem, ItemDef, ItemKind, BloodDecal, CorpseDecal, OverlayMode, RaceDef, RaceId, SaveData, SaveDataV1, SaveDataV2, SoundKind, SpeciesEco, StatsSnapshot, ToastMsg, TriggerCond, TriggerDef, TriggerRow, Unit, WarInfo, WeaponDefense, WeaponDoctrine, WorldEvent, WorldEventKind, WorldLaws, WorldWarState, Alliance, Family } from './types';
+import type { Army, ArmyState, Building, CasusKind, Civ, CivCore, CivPersona, Cyclone, Directive, DirectiveKind, Effect, EmergentWeapon, FxPrefs, Gene, GroundItem, ItemDef, ItemKind, BloodDecal, CorpseDecal, OverlayMode, RaceDef, RaceId, SaveData, SaveDataV1, SaveDataV2, SoundKind, SpeciesEco, StatsSnapshot, ToastMsg, TriggerCond, TriggerDef, TriggerRow, Unit, WarInfo, WeaponDefense, WeaponDoctrine, WorldEvent, WorldEventKind, WorldLaws, WorldWarState, Alliance, Family } from './types';
 import { T, R, RACES, TRAITS, CIV_RACES, DEFAULT_LAWS, ITEM_DEFS, describeCond, JOBS, JOB_KEY, BUILDING_DEFS, BUILD_KINDS, CAPTURABLE, SLOT_FIELD, SLOT_ORDER, RARITY_META, BEST_BY_SLOT, CASUS_META, RACE_REL_BASE, ALLIANCE_COLORS } from './types';
 import { EVO_KIND_META, applyEmTechMods, describeVis, inventIdea, inventTech, inventTrait, invalidateVisCache, mutateVis, tupleToVis, visFromGene, visToTuple } from './emergence';
 import type { EmModKey, EmTech, EvoKind, EvoNode, IdeaDef, VisGenome } from './emergence';
@@ -160,6 +160,10 @@ export class GameEngine {
   variant: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
   owner: Int16Array<ArrayBuffer> = new Int16Array(W * H).fill(-1);
   building: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
+  /** 【机制②耕地土地化】垦田覆盖层（0=荒 1=垦）：田是类土地而非建筑——无实体无耐久，随领土易主、可被战火琚毁 */
+  farmland: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
+  /** 垦田总数（渲染层快速门控；不入档——读档后重算） */
+  farmN = 0;
   fire: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
   radiate: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
 
@@ -823,6 +827,8 @@ export class GameEngine {
     this.overlayDirty = true;
     this.owner = new Int16Array(W * H).fill(-1);
     this.building = new Uint8Array(W * H);
+    this.farmland = new Uint8Array(W * H); // 【机制②】新世界无垦田
+    this.farmN = 0;
     this.fire = new Uint8Array(W * H);
     this.radiate = new Uint8Array(W * H);
     this.fireSet.clear();
@@ -1697,6 +1703,7 @@ export class GameEngine {
     };
     this.civs.push(civ);
     this.civs[civ.id] = civ; // ids are dense anyway
+    civ.core = this.makeCore(civ); // 【机制④】建国即挂中枢核心（人格六维各不相同）
 
     // find capital spot（半径扩到 5：建国点贴海/贴山也能找到可建地块）
     let cap = -1;
@@ -1739,7 +1746,7 @@ export class GameEngine {
             if (xx < 1 || yy < 1 || xx >= W - 1 || yy >= H - 1) continue;
             const fi = idx(xx, yy);
             if (this.terrain[fi] === T.GRASS && this.building[fi] === 0 && this.owner[fi] === civ.id) {
-              this.buildBuilding(fi, BUILD_KINDS.FARM, civ.id);
+              this.openFarmlandAt(fi, civ.id);
               break outer2;
             }
           }
@@ -1901,6 +1908,8 @@ export class GameEngine {
 
   // ---------------- buildings ----------------
   buildBuilding(i: number, kind: number, civId: number) {
+    // 【机制②耕地土地化】农田不再产生建筑实体：放田＝开垦地块（玩家/AI/立国/QA 共用本入口，语义无缝迁移）
+    if (kind === BUILD_KINDS.FARM) { this.openFarmlandAt(i, civId); return; }
     if (this.building[i] > 0) return;
     const b: Building = { i, x: i % W, y: (i / W) | 0, kind, civ: civId };
     this.buildings.push(b);
@@ -2112,7 +2121,7 @@ export class GameEngine {
     }
   }
 
-  destroyBuilding(i: number) {
+  destroyBuilding(i: number, silent = false) {
     const bi = this.bIdx.get(i);
     if (bi === undefined) return;
     const b = this.buildings[bi];
@@ -2131,13 +2140,16 @@ export class GameEngine {
     this.building[i] = 0;
     this.bHp.delete(i);
     this.damagedSet.delete(i);
-    this.fx('smoke', b.x, b.y, 36, { r: 1.5 });
+    if (!silent) this.fx('smoke', b.x, b.y, 36, { r: 1.5 });
   }
 
   /** 建筑选址：领土内随机采样，按类别约束（港口/渔场需邻水/农田允许密排） */
   tryBuildBuilding(civ: Civ, kind: number): boolean {
+    // 【机制②】农田改道开垦（不再走建筑选址）；【机制③】海上要塞独立水域选址（数量克制）
+    if (kind === BUILD_KINDS.FARM) return this.openFarmland(civ);
+    if (kind === BUILD_KINDS.SEA_FORT) return this.buildSeaFort(civ);
     const needWater = kind === BUILD_KINDS.PORT || kind === BUILD_KINDS.FISHERY;
-    const spacing = kind === BUILD_KINDS.FARM || kind === BUILD_KINDS.FISHERY ? 2 : 3;
+    const spacing = kind === BUILD_KINDS.FISHERY ? 2 : 3;
     for (let attempt = 0; attempt < 24; attempt++) {
       if (civ.tiles.length === 0) return false;
       const i = civ.tiles[Math.floor(this.rng() * civ.tiles.length)];
@@ -2170,6 +2182,94 @@ export class GameEngine {
       if (kind === BUILD_KINDS.CASTLE || kind === BUILD_KINDS.TEMPLE || kind === BUILD_KINDS.LIBRARY || kind === BUILD_KINDS.PORT || kind === BUILD_KINDS.FISHERY) {
         this.addEvent('build', `「${civ.name}」建成${BUILDING_DEFS[kind].name}，国力日盛`, { colorHex: civ.colorHex, x, y });
       }
+      return true;
+    }
+    return false;
+  }
+
+  /** 【机制②耕地土地化】开垦一块田（地块级：写 farmland 覆盖层，不产建筑实体）
+   *  玩家工具 / AI / 立国 / QA 全部经 buildBuilding(FARM) 或本入口——放田语义无缝迁移 */
+  openFarmlandAt(i: number, civId: number): boolean {
+    if (i < 0 || i >= W * H) return false;
+    if (this.farmland[i] > 0 || this.building[i] > 0) return false;
+    const t = this.terrain[i];
+    if (t !== T.GRASS && t !== T.SAND) return false; // 垦田择沃土：草地为正途，滩涂可改良（山林不可垦）
+    this.farmland[i] = 1;
+    this.farmN++;
+    if (this.civs[civId]?.alive) this.owner[i] = civId; // 垦田即入版图
+    return true;
+  }
+
+  /** AI 垦田选址：领土采样 24 次择草地空地（文明恳田入口——tryBuildBuilding(FARM) 改道于此） */
+  openFarmland(civ: Civ): boolean {
+    for (let attempt = 0; attempt < 24; attempt++) {
+      if (civ.tiles.length === 0) return false;
+      const i = civ.tiles[Math.floor(this.rng() * civ.tiles.length)];
+      if (this.owner[i] !== civ.id) continue;
+      if (this.terrain[i] !== T.GRASS || this.building[i] > 0 || this.farmland[i] > 0) continue;
+      if (this.openFarmlandAt(i, civ.id)) return true;
+    }
+    return false;
+  }
+
+  /** 本国垦田块数（civ.tiles 全扫纯读零 rng——foodTick / 建造候选 / 中枢核心共用） */
+  farmTileCountOf(civ: Civ): number {
+    let n = 0;
+    for (let i = 0; i < civ.tiles.length; i++) if (this.farmland[civ.tiles[i]] > 0) n++;
+    return n;
+  }
+
+  /** 就近寻一块本国垦田（农民巡田/中枢核心部署用；24×24 窗口，找不到 -1） */
+  nearestFarmlandTile(u: Unit): number {
+    const cx = u.x | 0, cy = u.y | 0;
+    let best = -1, bestD = 1e9;
+    for (let dy = -12; dy <= 12; dy++) {
+      const yy = cy + dy;
+      if (yy < 0 || yy >= H) continue;
+      for (let dx = -12; dx <= 12; dx++) {
+        const xx = cx + dx;
+        if (xx < 0 || xx >= W) continue;
+        const ti = yy * W + xx;
+        if (this.farmland[ti] === 0 || this.owner[ti] !== u.civ) continue;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = ti; }
+      }
+    }
+    return best;
+  }
+
+  /** 【机制③海上设施】海上要塞选址：钉入邻疆海面（距己领土≤3 格的水格）——
+   *  每国至多 2 座、彼此间距≥8（「不能太多」的数量克制）；须先有港口（先港后塞） */
+  buildSeaFort(civ: Civ): boolean {
+    const cnt = this.civBuildCounts.get(civ.id);
+    if ((cnt?.[BUILD_KINDS.SEA_FORT] ?? 0) >= 2) return false; // 数量上限：每国至多 2 座
+    for (let attempt = 0; attempt < 24; attempt++) {
+      if (civ.tiles.length === 0) return false;
+      const i = civ.tiles[Math.floor(this.rng() * civ.tiles.length)];
+      const x = i % W, y = (i / W) | 0;
+      const xx = x + Math.floor(this.rng() * 7) - 3, yy = y + Math.floor(this.rng() * 7) - 3;
+      if (xx < 1 || yy < 1 || xx >= W - 1 || yy >= H - 1) continue;
+      const j = yy * W + xx;
+      if (!isWater(this.terrain[j]) || this.building[j] > 0) continue;
+      // 须为「邻疆海面」：距要塞 3 格内有本国领土（孤悬远海不可筑）
+      let nearOwn = false;
+      for (let cy = -3; cy <= 3 && !nearOwn; cy++) {
+        for (let cx = -3; cx <= 3; cx++) {
+          const ox = xx + cx, oy = yy + cy;
+          if (ox < 0 || oy < 0 || ox >= W || oy >= H) continue;
+          if (this.owner[oy * W + ox] === civ.id) { nearOwn = true; break; }
+        }
+      }
+      if (!nearOwn) continue;
+      let ok = true;
+      for (const b of this.buildings) {
+        if (b.kind !== BUILD_KINDS.SEA_FORT || b.civ !== civ.id) continue;
+        if (Math.abs(b.x - xx) < 8 && Math.abs(b.y - yy) < 8) { ok = false; break; }
+      }
+      if (!ok) continue;
+      this.buildBuilding(j, BUILD_KINDS.SEA_FORT, civ.id);
+      this.fx('smoke', xx, yy, 26, { r: 1 });
+      this.addEvent('build', `「${civ.name}」在海上筑起要塞，波涛之上有了立足的钉子`, { colorHex: civ.colorHex, x: xx, y: yy });
       return true;
     }
     return false;
@@ -2213,6 +2313,127 @@ export class GameEngine {
     }
   }
 
+  // ---------------- 文明中枢核心（机制④：每文明完全分开的超级决策智能体） ----------------
+  /** 铸造中枢核心：人格六维按种族底色 + 确定性扰动初始化（零 rng 消耗——建国与旧档补挂同路径，位等安全）。
+   *  各文明人格各不相同；此后由国情事件动态漂移（civCoreTick）——本地判断逻辑是活的。 */
+  makeCore(c: Civ): CivCore {
+    const r = RACES[c.race];
+    const jit = (salt: number) => (hash2(c.id * 31 + 7, this.seed + salt, 0x51ab) - 0.5) * 0.3; // ±0.15 各文明不同
+    const cl = (v: number) => Math.max(0.05, Math.min(0.95, v));
+    return {
+      mode: 'local',
+      persona: {
+        war: cl((r?.aggr ?? 0.4) + jit(1)),
+        build: cl((r?.industry ?? 0.5) + jit(2)),
+        farm: cl(0.5 + ((r?.industry ?? 0.5) - 0.5) * 0.6 + jit(3)),
+        trade: cl((r?.diplo ?? 0.5) * 0.6 + (r?.greed ?? 0.4) * 0.4 + jit(4)),
+        sea: cl(0.45 + (r?.aggr ?? 0.4) * 0.15 + jit(5)),
+        faith: cl((r?.piety ?? 0.4) + jit(6)),
+      },
+      gen: 0,
+      notes: [],
+    };
+  }
+
+  /** 中枢核心周期运转（每经济期一次，随 foodTick 同频）：本地人格随国情漂移；API 模式异步外接。零 rng——位等安全 */
+  civCoreTick(c: Civ) {
+    const core = c.core;
+    if (!core) return;
+    const per = core.persona;
+    const push = (note: string) => { core.notes.unshift(note); if (core.notes.length > 5) core.notes.pop(); };
+    // —— API 模式：每期向所接大模型递交国情（fire-and-forget 不阻塞 tick；pending 期交给 API，失败回退本地）——
+    if (core.mode === 'api') {
+      const cfgStr = typeof localStorage !== 'undefined' ? localStorage.getItem(`wb_civ_api_${c.id}`) : null;
+      if (cfgStr) {
+        if (this.dispatchCivBrain(c, cfgStr)) return; // 本期已外接——人格以 API 回执为准
+      } else {
+        this.civBrainFail(c, '未配置 API（面板「中枢核心」段可配置）');
+      }
+    }
+    // —— 本地智能判断：国情反馈驱动人格漂移（动态变化，各文明不同——同一饥荒，好战国思考战争而农耕国思考恳田）——
+    const drift = (dim: keyof CivPersona, dv: number) => { per[dim] = Math.max(0.05, Math.min(0.95, per[dim] + dv)); };
+    const food = c.food ?? 60;
+    const atWar = this.civAtWar(c.id);
+    const pop = Math.max(1, c.pop);
+    if (food < 30) {
+      drift('farm', 0.05);
+      if (per.war > 0.6 && core.gen % 4 === 0) push(`饥荒逼近——中枢权衡后选择「以战就食」而非恳田`);
+      else if (core.gen % 4 === 0) push(`粮仓见底——中枢把「恳田」写进国策首位`);
+    } else if (food > 120 && pop > 20) {
+      drift('build', 0.02);
+      if (core.gen % 6 === 0) push(`仓廪充实——中枢转向大兴土木`);
+    }
+    if (atWar) {
+      drift('war', 0.04);
+      if (per.war > 0.75 && core.gen % 5 === 0) push(`战火正酣——中枢的战争人格愈发炽烈`);
+    } else {
+      drift('war', -0.03);
+    }
+    const gold = c.gold ?? 0;
+    if (gold > 80) { drift('trade', 0.03); drift('sea', 0.01); }
+    else if (gold < 10 && pop > 8) { drift('trade', 0.02); }
+    if ((c.stability ?? 50) < 35) { drift('faith', 0.04); if (core.gen % 5 === 0) push(`人心浮动——中枢寻求神明的锚点`); }
+    if ((c.culture ?? 0) > 60) drift('faith', 0.01);
+    // 沿海国（有渔场/港——零 rng 海岸代理）向海维自然生长
+    const counts = this.civBuildCounts.get(c.id);
+    if ((counts?.[BUILD_KINDS.FISHERY] ?? 0) > 0 || (counts?.[BUILD_KINDS.PORT] ?? 0) > 0) drift('sea', 0.015);
+    const lastBad = Math.max(this.breachMem.get(c.id) ?? -1e9, this.predMem.get(c.id) ?? -1e9);
+    if (this.tickCount - lastBad < 600) drift('war', 0.02);
+    core.gen++;
+  }
+
+  /** 【机制④】中枢核心模式切换（CivPanel「接入外脑 API」保存时调用；配置存 localStorage wb_civ_api_<id> 由面板直写） */
+  setCivCoreMode(id: number, mode: 'local' | 'api') {
+    const c = this.civs[id];
+    if (!c || !c.core) return;
+    c.core.mode = mode;
+    c.core.apiFails = 0;
+    if (mode === 'local') c.core.apiBusy = 0;
+  }
+
+  /** API 模式：递交文明国情给所接大模型（fire-and-forget——回执白名单校验后应用于下期） */
+  dispatchCivBrain(c: Civ, cfgStr: string): boolean {
+    const core = c.core!;
+    if ((core.apiBusy ?? 0) > 0) return true; // 上期回执未到：本期静候（不重复派发）
+    let cfg: unknown;
+    try { cfg = JSON.parse(cfgStr); } catch { this.civBrainFail(c, 'API 配置 JSON 非法'); return false; }
+    const body = {
+      provider: cfg,
+      civ: { name: c.name, race: RACES[c.race]?.name ?? '?', pop: c.pop, gold: c.gold, food: c.food, knowledge: c.knowledge, stability: c.stability, militarism: c.militarism, atWar: this.civAtWar(c.id), farms: this.farmTileCountOf(c), gov: c.gov },
+      persona: core.persona,
+    };
+    core.apiBusy = (core.apiBusy ?? 0) + 1;
+    fetch('/api/civ-brain', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        core.apiBusy = Math.max(0, (core.apiBusy ?? 1) - 1);
+        if (!j || typeof j !== 'object') { this.civBrainFail(c, '模型响应非 JSON'); return; }
+        const patch = (j as { personaPatch?: Record<string, unknown> }).personaPatch ?? {};
+        const dims: (keyof CivPersona)[] = ['war', 'build', 'farm', 'trade', 'sea', 'faith'];
+        for (const d of dims) {
+          const v = patch[d];
+          if (typeof v === 'number' && Number.isFinite(v)) core.persona[d] = Math.max(0.05, Math.min(0.95, v));
+        }
+        core.apiFails = 0;
+        const raw = typeof (j as { note?: unknown }).note === 'string' ? String((j as { note: string }).note) : '';
+        core.lastApiNote = (raw || `「${c.name}」外脑决策更新`).slice(0, 80);
+        core.notes.unshift(`[外脑] ${core.lastApiNote}`.slice(0, 96));
+        if (core.notes.length > 5) core.notes.pop();
+        core.gen++;
+      })
+      .catch(() => { core.apiBusy = Math.max(0, (core.apiBusy ?? 1) - 1); this.civBrainFail(c, '网络/模型不可达'); });
+    return true;
+  }
+
+  /** API 失败记账：3 连败自动回落本地模式（中枢永不当机） */
+  civBrainFail(c: Civ, why: string) {
+    const core = c.core;
+    if (!core) return;
+    core.apiFails = (core.apiFails ?? 0) + 1;
+    core.lastApiNote = `${why}——本地判断接管`;
+    if (core.apiFails >= 3) { core.mode = 'local'; core.apiFails = 0; core.lastApiNote = `${why}——连续失败回落本地模式`; }
+  }
+
   // ---------------- diplomacy ----------------
   diplomacyMeet(a: number, b: number) {
     const key = pairKey(a, b);
@@ -2226,7 +2447,10 @@ export class GameEngine {
     const rb = RACES[cb.race];
     // —— 种族系统 v2：种族外交底色（兽人难交朋友，人类八面玲珑）——
     const raceDiplo = ((ra?.diplo ?? 0.5) + (rb?.diplo ?? 0.5)) / 2; // 0-1
-    const warChance = Math.max(0.08, Math.min(0.8, 0.2 + ((ca.militarism ?? 30) + (cb.militarism ?? 30)) / 400 + ((ca.gov === 4 || cb.gov === 4) ? 0.1 : 0) - ((ca.gov === 3 || cb.gov === 3) ? 0.12 : 0) - (raceDiplo - 0.5) * 0.3));
+    // 【机制④】中枢核心人格注入：好战国遇好战国，火药味自然浓（双边的战争人格都算数）
+    const perA = ca.core?.persona.war ?? 0.5;
+    const perB = cb.core?.persona.war ?? 0.5;
+    const warChance = Math.max(0.04, Math.min(0.92, (0.2 + ((ca.militarism ?? 30) + (cb.militarism ?? 30)) / 400 + ((ca.gov === 4 || cb.gov === 4) ? 0.1 : 0) - ((ca.gov === 3 || cb.gov === 3) ? 0.12 : 0) - (raceDiplo - 0.5) * 0.3) * (0.6 + (perA + perB) * 0.4)));
     if (this.laws.wars && this.rng() < warChance) {
       // 战争必须有名有实：按社会气质/复仇记忆/实力对比挑选开战理由
       const pick = this.pickCasus(ca, cb);
@@ -4666,11 +4890,12 @@ export class GameEngine {
             }
           }
         } else if (job === 1 && this.rng() < 0.06) {
-          // 农民：在王国农田周边劳作
-          const f = this.nearestBuildingOf(u, BUILD_KINDS.FARM);
-          if (f) {
-            u.tx = Math.max(1, Math.min(W - 2, f.x + this.rng() * 5 - 2.5));
-            u.ty = Math.max(1, Math.min(H - 2, f.y + this.rng() * 5 - 2.5));
+          // 农民：在自家田块间劳作（【机制②耕地土地化】：田是地块覆盖——寻的是田不是建筑）
+          const ft = this.nearestFarmlandTile(u);
+          if (ft >= 0) {
+            const fx = ft % W, fy = (ft / W) | 0;
+            u.tx = Math.max(1, Math.min(W - 2, fx + this.rng() * 5 - 2.5));
+            u.ty = Math.max(1, Math.min(H - 2, fy + this.rng() * 5 - 2.5));
           }
         } else if (job === 5) {
           // 商人：往来集市/王都贸易，抵达时为国库入账
@@ -5300,10 +5525,11 @@ export class GameEngine {
       }
     }
     for (const b of this.buildings) {
-      if (b.kind !== BUILD_KINDS.TOWER && b.kind !== BUILD_KINDS.CASTLE) continue;
+      if (b.kind !== BUILD_KINDS.TOWER && b.kind !== BUILD_KINDS.CASTLE && b.kind !== BUILD_KINDS.SEA_FORT) continue;
       if (!this.civs[b.civ]?.alive) continue;
-      const range = b.kind === BUILD_KINDS.CASTLE ? 5.5 : 4.5;
-      const dmg = b.kind === BUILD_KINDS.CASTLE ? 12 : 7;
+      // 【机制③】海上要塞：射程 6.5 / 炮伤 11——敌舰（乘船单位）与登陆之敌通吃
+      const range = b.kind === BUILD_KINDS.CASTLE ? 5.5 : b.kind === BUILD_KINDS.SEA_FORT ? 6.5 : 4.5;
+      const dmg = b.kind === BUILD_KINDS.CASTLE ? 12 : b.kind === BUILD_KINDS.SEA_FORT ? 11 : 7;
       // 空间分桶检索最近敌人
       const bx0 = Math.max(0, Math.floor((b.x - range) / 4));
       const bx1 = Math.min(this.bw - 1, Math.floor((b.x + range) / 4));
@@ -5694,6 +5920,8 @@ export class GameEngine {
       c.knowledge = (c.knowledge ?? 0) + (knowGain - spent);
       // —— 粮食经济（资源不凭空产生）：农田要有农民耕作、渔场要有渔民出海，人口张嘴吃饭 ——
       this.foodTick(c, counts);
+      // ——【机制④】中枢核心周期运转（每经济期：人格随国情漂移 / API 异步递交）——
+      this.civCoreTick(c);
     }
   }
 
@@ -5709,7 +5937,8 @@ export class GameEngine {
       if (!this.atWar(a.civ, c.id)) continue;
       threatX.push(a.x); threatY.push(a.y);
     }
-    const farms = counts[BUILD_KINDS.FARM] ?? 0;
+    // 【机制②耕地土地化】田块计数从建筑表改道地块覆盖层清点（farmTileCountOf 纯扫描零 rng——位等安全）
+    const farms = this.farmTileCountOf(c);
     const fisheries = counts[BUILD_KINDS.FISHERY] ?? 0;
     // 旧档引导：首次结算时按存量建筑补一笔开仓粮（不追溯惩罚旧王国）
     if (c.food == null) c.food = 60 + farms * 12 + fisheries * 10;
@@ -5725,24 +5954,50 @@ export class GameEngine {
     }
     let workedFarms = 0;
     let workedFisheries = 0;
-    if (farmers.length > 0 || fishers.length > 0) {
+    // ——【机制②耕地土地化】在田清点：以农为锄，每人认领周边 6 格内一块本国田块——
+    //    田是地不是房：农民找的是自家田块而非建筑实体；一农至多耕一田（claimed 防多农重记）——
+    if (farmers.length > 0) {
+      const claimed = new Set<number>();
+      for (const f of farmers) {
+        if (f.sleep) continue; // 昼夜节律：熟睡的农人不在田——夜晚粮产自然停摆
+        const fx = f.x | 0, fy = f.y | 0;
+        for (let dy = -6; dy <= 6; dy++) {
+          let hit = false;
+          for (let dx = -6; dx <= 6; dx++) {
+            const xx = fx + dx, yy = fy + dy;
+            if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+            const ti = yy * W + xx;
+            if (this.farmland[ti] === 0 || this.owner[ti] !== c.id || claimed.has(ti)) continue;
+            // 兵临城下：敌军团 9 格内的田绝收（围城粮道——军团压到哪片田，哪片田就荒）
+            if (threatX.length > 0) {
+              let besieged = false;
+              for (let k = 0; k < threatX.length; k++) {
+                if (Math.abs(threatX[k] - xx) <= 9 && Math.abs(threatY[k] - yy) <= 9) { besieged = true; break; }
+              }
+              if (besieged) continue;
+            }
+            claimed.add(ti); workedFarms++; hit = true; break;
+          }
+          if (hit) break;
+        }
+      }
+    }
+    // —— 渔场清点（仍是建筑：出海渔民 6 格内在港即视作出海）——
+    if (fishers.length > 0) {
       for (const b of this.buildings) {
         if (b.civ !== c.id) continue;
-        if (b.kind !== BUILD_KINDS.FARM && b.kind !== BUILD_KINDS.FISHERY) continue;
-        // 职业分工（#68）：田归职农、港归职渔——各安其业互不越权（无渔民的渔场空转，等宏观调控编户）
-        const pool = b.kind === BUILD_KINDS.FARM ? farmers : fishers;
+        if (b.kind !== BUILD_KINDS.FISHERY) continue;
         let staffed = false;
-        for (const f of pool) {
-          if (f.sleep) continue; // 昼夜节律：熟睡的农渔不在岗 —— 夜晚粮产自然停摆（经济随昼夜呼吸）
+        for (const f of fishers) {
+          if (f.sleep) continue;
           if (Math.abs(f.x - b.x) <= 6 && Math.abs(f.y - b.y) <= 6) { staffed = true; break; }
         }
-        // 兵临城下：敌军团 9 格内的田港绝收（围城粮道——军团压到哪片田，哪片田就荒）
         if (staffed && threatX.length > 0) {
           for (let k = 0; k < threatX.length; k++) {
             if (Math.abs(threatX[k] - b.x) <= 9 && Math.abs(threatY[k] - b.y) <= 9) { staffed = false; break; }
           }
         }
-        if (staffed) { if (b.kind === BUILD_KINDS.FARM) workedFarms++; else workedFisheries++; }
+        if (staffed) workedFisheries++;
       }
     }
     // —— 采集基线（文明黎明期）：无田无渔的小部落靠采集渔猎糊口（人口 ≤ 8 的温饱线）——
@@ -7254,7 +7509,7 @@ export class GameEngine {
     cands.push({ kind: BUILD_KINDS.HOUSE, w: buildDir ? 30 : 10 });
     // 农田：供养扩张（v0.54 粮食经济：一田养四口——按人口比例恳田；粮荒时权重飙到最高）
     const foodStock = civ.food ?? 60;
-    const nFed = c(BUILD_KINDS.FARM) + c(BUILD_KINDS.FISHERY);
+    const nFed = this.farmTileCountOf(civ) + c(BUILD_KINDS.FISHERY);
     if (nFed < Math.ceil(pop * 0.27)) cands.push({ kind: BUILD_KINDS.FARM, w: foodStock < 30 ? 34 : foodStock < 90 ? 14 : 7 });
     // 渔场：向海要粮（仅沿海国候选——预检领土采样，避免内陆国浪费建筑档位）
     if (know >= (BUILDING_DEFS[BUILD_KINDS.FISHERY].needKnowledge ?? 6) && c(BUILD_KINDS.FISHERY) < 2 + houses / 7 && this.civHasCoast(civ)) {
@@ -7274,6 +7529,24 @@ export class GameEngine {
     if (know >= (BUILDING_DEFS[BUILD_KINDS.TEMPLE].needKnowledge ?? 0) && c(BUILD_KINDS.TEMPLE) < 1 + houses / 15) cands.push({ kind: BUILD_KINDS.TEMPLE, w: templeDir ? 18 : 3 });
     // 城堡：终极防御
     if (know >= (BUILDING_DEFS[BUILD_KINDS.CASTLE].needKnowledge ?? 0) && c(BUILD_KINDS.CASTLE) < 1 + houses / 25) cands.push({ kind: BUILD_KINDS.CASTLE, w: 6 });
+    // 【机制③】海上要塞：沿海国的制海权抓手（知识≥12 且已有港口；每国至多 2 座——「不能太多」）
+    if (know >= (BUILDING_DEFS[BUILD_KINDS.SEA_FORT].needKnowledge ?? 0) && c(BUILD_KINDS.PORT) > 0 && c(BUILD_KINDS.SEA_FORT) < 2 && this.civHasCoast(civ) && atWar) {
+      cands.push({ kind: BUILD_KINDS.SEA_FORT, w: 7 });
+    }
+    // ——【机制④】中枢核心人格加权：各文明截然不同的战略禀性直接缩放置建候选（零 rng——纯乘法）——
+    const per = civ.core?.persona;
+    if (per) {
+      for (const cd of cands) {
+        let m = 1;
+        if (cd.kind === BUILD_KINDS.BARRACKS || cd.kind === BUILD_KINDS.TOWER || cd.kind === BUILD_KINDS.CASTLE || cd.kind === BUILD_KINDS.SEA_FORT) m = 0.4 + per.war;
+        else if (cd.kind === BUILD_KINDS.FARM) m = 0.4 + per.farm;
+        else if (cd.kind === BUILD_KINDS.FISHERY || cd.kind === BUILD_KINDS.PORT) m = 0.4 + per.sea;
+        else if (cd.kind === BUILD_KINDS.MARKET) m = 0.4 + per.trade;
+        else if (cd.kind === BUILD_KINDS.TEMPLE) m = 0.4 + per.faith;
+        else if (cd.kind === BUILD_KINDS.HOUSE || cd.kind === BUILD_KINDS.LIBRARY) m = 0.4 + per.build;
+        cd.w = Math.max(1, Math.round(cd.w * m));
+      }
+    }
     // 过滤财富不足的候选
     const afford = cands.filter((x) => gold >= (BUILDING_DEFS[x.kind].cost ?? 0));
     const pool = afford.length > 0 ? afford : [{ kind: BUILD_KINDS.HOUSE, w: 1 }];
@@ -7360,7 +7633,7 @@ export class GameEngine {
       if (this.tickCount % 120 === 0 && civ.pop > 0) {
         const cap = this.popCapOf(civ);
         const cnt = this.civBuildCounts.get(civ.id);
-        const nFarms = cnt ? (cnt[BUILD_KINDS.FARM] ?? 0) + (cnt[BUILD_KINDS.FISHERY] ?? 0) : 0;
+        const nFarms = this.farmTileCountOf(civ) + (cnt ? (cnt[BUILD_KINDS.FISHERY] ?? 0) : 0);
         const foodPressure = (civ.food ?? 60) < 150 && nFarms < Math.ceil(civ.pop * 0.27);
         if (civ.pop > cap - 2 || foodPressure) {
           const kind = this.pickBuildingKind(civ);
@@ -8423,7 +8696,7 @@ export class GameEngine {
     }
     if (fort) {
       // 岸炮射击舰队
-      const dmg = fort.kind === BUILD_KINDS.CASTLE ? 15 : fort.kind === BUILD_KINDS.TOWER ? 9 : 6;
+      const dmg = fort.kind === BUILD_KINDS.CASTLE ? 15 : fort.kind === BUILD_KINDS.SEA_FORT ? 14 : fort.kind === BUILD_KINDS.TOWER ? 9 : 6;
       if (a.members.length > 0 && this.rng() < 0.5) {
         const u = this.unitById.get(a.members[(this.rng() * a.members.length) | 0]);
         if (u && !u.dead) {
@@ -11152,7 +11425,7 @@ export class GameEngine {
       if (b.civ !== foe.id) continue;
       let w = 0;
       let label = BUILDING_DEFS[b.kind]?.name ?? '建筑';
-      if (b.kind === BUILD_KINDS.TOWER || b.kind === BUILD_KINDS.CASTLE) w = profile === 'arty' ? 5 : 3; // 工事压制
+      if (b.kind === BUILD_KINDS.TOWER || b.kind === BUILD_KINDS.CASTLE || b.kind === BUILD_KINDS.SEA_FORT) w = profile === 'arty' ? 5 : 3; // 工事压制（【机制③】海上要塞同列）
       else if (b.kind === BUILD_KINDS.BARRACKS) w = profile === 'air' ? 5 : 3.5; // 兵营（斩断兵源）
       else if (b.kind === BUILD_KINDS.MARKET || b.kind === BUILD_KINDS.LIBRARY || b.kind === BUILD_KINDS.FISHERY || b.kind === BUILD_KINDS.FARM) w = profile === 'air' ? 4 : 2.5; // 经济命脉
       else if (b.kind === BUILD_KINDS.PORT) w = 2;
@@ -11743,7 +12016,8 @@ export class GameEngine {
             const t = this.terrain[j];
             if (t === T.GRASS && this.rng() < 0.6) this.setTerrain(j, T.BURNT);
             else if (t === T.FOREST && this.rng() < 0.25) this.setTerrain(j, T.GRASS);
-            if (this.building[j] === BUILD_KINDS.FARM) this.attackBuilding(j, 4, -1);
+            // 【机制②】琚田：战火踏过的田块荒芜（田是地——烧的是植被覆盖层）
+            if (this.farmland[j] > 0) { this.farmland[j] = 0; this.farmN--; this.fx('smoke', j % W, (j / W) | 0, 20, { r: 1 }); }
           }
         }
       } else if (e.kind === 'drought') {
@@ -12152,7 +12426,8 @@ export class GameEngine {
           const rr = this.rng() * e.r;
           const j = idx(Math.floor(e.x + Math.cos(ang) * rr), Math.floor(e.y + Math.sin(ang) * rr));
           if (j >= 0 && j < W * H) {
-            if (this.building[j] === BUILD_KINDS.FARM) this.attackBuilding(j, 4, -1);
+            // 【机制②】琚田：灾厄过境田块荒芜
+            if (this.farmland[j] > 0) { this.farmland[j] = 0; this.farmN--; this.fx('smoke', j % W, (j / W) | 0, 20, { r: 1 }); }
             else if (this.terrain[j] === T.GRASS && this.rng() < 0.12) this.setTerrain(j, T.BURNT); // 寸草不生
           }
         }
@@ -16912,6 +17187,14 @@ export class GameEngine {
       armamentName: ['木石时代', '青铜时代', '铁器时代', '钢铁时代', '火器时代', '现代军备', '未来军备'][this.armamentOf(c)],
       houseTier: this.houseTierOf(c),
       houseTierName: ['茅屋村', '石砌村', '堡垒宅', '哥特庄园'][this.houseTierOf(c)],
+      // —— 【机制④】中枢核心快照（CivPanel 展示：模式/人格/决策纪要）——
+      core: c.core ? {
+        mode: c.core.mode,
+        persona: { ...c.core.persona },
+        gen: c.core.gen,
+        notes: [...c.core.notes],
+        lastApiNote: c.core.lastApiNote ?? '',
+      } : null,
     };
   }
 
@@ -17597,6 +17880,7 @@ export class GameEngine {
       variant: '', // v2 不存 variant：读档按 seed 确定性重算（worldgen hash2 纯函数）
       owner: rleEncode(ownerBytes),
       building: rleEncode(this.building),
+      farmland: rleEncode(this.farmland), // 【机制②耕地土地化】垦田覆盖层随档
       fire: rleEncode(this.fire),
       radiate: rleEncode(this.radiate),
       regrow: [...this.regrow.entries()],
@@ -17715,6 +17999,8 @@ export class GameEngine {
     const isV2 = data.v === 2;
     const dec = (s: string, expect: number) => (isV2 ? rleDecode(s, expect) : b64ToBytes(s, expect));
     const terrain = dec(data.terrain, W * H);
+    // 【机制②耕地土地化】垦田覆盖层随档（旧档缺省 = 全荒，稍后旧 FARM 建筑实体一次性迁移）
+    const farmland = isV2 && (data as SaveDataV2).farmland ? dec((data as SaveDataV2).farmland!, W * H) : new Uint8Array(W * H);
     // v2 不存 variant（纯随机色彩抖动）：按 seed 确定性重算，与生成时一致（hash2 纯函数）
     const variant = isV2 ? new Uint8Array(W * H) : dec(data.variant, W * H);
     if (isV2) {
@@ -17896,6 +18182,12 @@ export class GameEngine {
     this.variant = variant;
     this.owner = owner;
     this.building = building;
+    this.farmland = farmland; // 【机制②】垦田覆盖层
+    { // farmN 读档重算（计数器不入档——与覆盖层同步重建）
+      let n = 0;
+      for (let k = 0; k < W * H; k++) if (farmland[k] > 0) n++;
+      this.farmN = n;
+    }
     this.fire = fire;
     this.radiate = radiate;
     // 【稳定性 v79】读档重算草地计数：旧实现 grassTiles 只在 ecoTick（每 120 tick）全量重算
@@ -17985,11 +18277,26 @@ export class GameEngine {
     this.govCache.clear();
     for (const c of this.civs) {
       if (c.research && !TECH_BY_KEY[c.research] && !this.emTechs.get(c.research)) { c.research = null; c.researchP = 0; }
+      // 【机制④】旧档文明补挂中枢核心（人格按种族底色+确定性扰动初始化——旧档王国即刻拥有独立大脑）
+      if (!c.core) c.core = this.makeCore(c);
       this.techModsOf(c.id); // v3：含涌现科技效果的完整重建
     }
     this.buildings = data.buildings.map((b) => ({ ...b }));
     this.bIdx.clear();
     this.buildings.forEach((b, i) => this.bIdx.set(b.i, i));
+    // ——【机制②耕地土地化】旧档一次性迁移：FARM 建筑实体 → 垦田地块覆盖——
+    //    田从此是土地（无实体/无耐久/随领土易主）；移除实体走 removeBuilding 正规渠道（houses 计数同步归位）。
+    //    新档 serialize 后不再产生 FARM 实体，此迁移对旧档幂等。
+    {
+      let migrated = 0;
+      for (let k = this.buildings.length - 1; k >= 0; k--) {
+        const b = this.buildings[k];
+        if (b.kind !== BUILD_KINDS.FARM) continue;
+        if (this.farmland[b.i] === 0) { this.farmland[b.i] = 1; this.farmN++; migrated++; }
+        this.destroyBuilding(b.i, true);
+      }
+      if (migrated > 0) console.info(`[机制②迁移] ${migrated} 座农田建筑已转为土地覆盖`);
+    }
     // 【稳定性 v80】⑨ civBuildCounts/marketIdx 确定性全量重建（v79 只 clear civBuildCounts——
     // 5 tick 窗口失真；marketIdx 完全漏清——商队目标/贸易路线取旧世界残留）。放 buildings/bIdx
     // 恢复完成后：从读档建筑重算，确定性且消除窗口失真。

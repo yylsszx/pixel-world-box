@@ -332,7 +332,7 @@ export const BUILDING_DEFS: BuildingDef[] = [
   { key: 'house', name: '住宅', hp: 70, popCap: 4, cost: 0, desc: '容量 +4 人的居所' },
   { key: 'capital', name: '王都', hp: 240, popCap: 6, cost: 0, desc: '王国的心脏，陷落即亡国之危' },
   { key: 'tower', name: '箭塔', hp: 120, cost: 8, desc: '自动射击射程 4.5 格内的敌人' },
-  { key: 'farm', name: '农田', hp: 40, popCap: 2, cost: 5, desc: '容量 +2 人，农民的劳作之处' },
+  { key: 'farm', name: '农田', hp: 0, cost: 5, desc: '开垦田地：类土地覆盖而非建筑——农民在其上耕作产粮，随领土易主、可被战火践毁' },
   { key: 'barracks', name: '兵营', hp: 150, cost: 12, desc: '战时把附近平民训练为战士' },
   { key: 'castle', name: '城堡', hp: 340, cost: 34, needKnowledge: 18, desc: '射程 5.5 的强力箭矢防御' },
   { key: 'port', name: '港口', hp: 90, cost: 16, needKnowledge: 8, desc: '加速殖民船的派出' },
@@ -341,12 +341,13 @@ export const BUILDING_DEFS: BuildingDef[] = [
   { key: 'temple', name: '神殿', hp: 140, cost: 22, needKnowledge: 10, desc: '治疗光环庇佑周边单位' },
   { key: 'wall', name: '城墙', hp: 200, cost: 2, desc: '环都城防：敌方陆行单位不可逾越，守军借墙而战' },
   { key: 'fishery', name: '渔场', hp: 70, popCap: 2, cost: 14, needKnowledge: 6, desc: '邻海而建：渔民出海捕捞产出粮食——海洋资源的唯一入口' },
+  { key: 'seaFort', name: '海上要塞', hp: 180, cost: 28, needKnowledge: 12, desc: '钉入邻疆海面的堡垒：自动炮击射程内敌舰与来犯之敌（每国至多 2 座）' },
 ];
 export const BUILD_KINDS = {
-  HOUSE: 1, CAPITAL: 2, TOWER: 3, FARM: 4, BARRACKS: 5, CASTLE: 6, PORT: 7, LIBRARY: 8, MARKET: 9, TEMPLE: 10, WALL: 11, FISHERY: 12,
+  HOUSE: 1, CAPITAL: 2, TOWER: 3, FARM: 4, BARRACKS: 5, CASTLE: 6, PORT: 7, LIBRARY: 8, MARKET: 9, TEMPLE: 10, WALL: 11, FISHERY: 12, SEA_FORT: 13,
 } as const;
 /** 可被占领（易帜而非摧毁）的建筑 */
-export const CAPTURABLE = new Set<number>([BUILD_KINDS.HOUSE, BUILD_KINDS.FARM, BUILD_KINDS.MARKET, BUILD_KINDS.BARRACKS, BUILD_KINDS.PORT, BUILD_KINDS.FISHERY]);
+export const CAPTURABLE = new Set<number>([BUILD_KINDS.HOUSE, BUILD_KINDS.MARKET, BUILD_KINDS.BARRACKS, BUILD_KINDS.PORT, BUILD_KINDS.FISHERY]);
 
 export interface Unit {
   id: number;
@@ -616,6 +617,37 @@ export interface Civ {
   // ---------------- 涌现社会理念（Infinite Ideas） ----------------
   /** 已采纳的涌现理念 key 列表（上限 3；效果由 engine.ideaModsOf 汇总） */
   ideas?: string[];
+
+  // ---------------- 文明中枢核心（机制④：每文明独立的超级决策智能体） ----------------
+  /** 本地智能判断的人格六维——动态演化且各文明不同；API 模式下作为发给大模型的禀性基线 */
+  core?: CivCore;
+}
+
+/** 文明中枢核心的人格六维（0.05-0.95）：好战/筑城/重农/通商/向海/虔信 */
+export interface CivPersona {
+  war: number;
+  build: number;
+  farm: number;
+  trade: number;
+  sea: number;
+  faith: number;
+}
+
+/** 文明中枢核心：每文明完全分开的决策大脑 */
+export interface CivCore {
+  /** 决策模式：local 本地智能判断（默认，动态人格驱动）/ api 外接大模型（各文明可接不同 API） */
+  mode: 'local' | 'api';
+  /** 人格六维权重（建国时按种族底色+随机扰动各不相同；随国情事件动态漂移） */
+  persona: CivPersona;
+  /** 人格演化代数（每次漂移 +1） */
+  gen: number;
+  /** 最近决策纪要（滚动上限 5 条，新决策顶替最旧） */
+  notes: string[];
+  /** API 模式运行态（不入档：pending 请求数 / 连败计数，3 连败自动回落 local） */
+  apiBusy?: number;
+  apiFails?: number;
+  /** 最近一次 API 决策纪要（面板展示；本地模式不用） */
+  lastApiNote?: string;
 }
 
 export type BuildKind = number; // 0 none, 1 house, 2 capital, 3 tower, 4 farm, 5 barracks, 6 castle, 7 port, 8 library, 9 market, 10 temple, 11 wall
@@ -1855,6 +1887,8 @@ export interface SaveDataV2 {
   /** RLE 压缩的数组：值-次数对交替，Uint16Array 的 base64 */
   terrain: string;
   variant: string;
+  /** 【机制②耕地土地化】田地覆盖层 RLE（0=荒 1=垦）：旧档缺省 = 全荒（随后旧 FARM 建筑实体一次性迁移为田块） */
+  farmland?: string;
   /** Int16Array owner 按字节视图 RLE */
   owner: string;
   building: string;

@@ -1358,6 +1358,51 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       ctx.fillRect(px + 1, py - 4 + flap, 1, 2);
       return;
     }
+    case 13: {
+      // seaFort：【机制③】海上要塞（钉入海面的石台堡垒——桩基破浪 + 垛口炮位 + 瞭望旗）
+      // 浪圈（基座白沫：相位交替的环带——海浪拍桩的呼吸感）
+      const wake = (fc >> 4) & 1;
+      ctx.fillStyle = wake ? 'rgba(235,246,255,0.85)' : 'rgba(210,228,242,0.6)';
+      ctx.fillRect(px - 3, py + 12, 6, 1);
+      ctx.fillRect(px + 9, py + 12, 6, 1);
+      // 石桩（深入海面的墩基）
+      ctx.fillStyle = '#5a5a62';
+      ctx.fillRect(px, py + 9, 3, 6);
+      ctx.fillRect(px + 9, py + 9, 3, 6);
+      ctx.fillStyle = '#3e3e46';
+      ctx.fillRect(px, py + 13, 3, 2);
+      ctx.fillRect(px + 9, py + 13, 3, 2);
+      // 要塞主体（礁石浇筑的圆台壁垒）
+      ctx.fillStyle = '#75757e';
+      ctx.fillRect(px - 1, py + 3, 14, 7);
+      ctx.fillStyle = '#63636c';
+      ctx.fillRect(px - 1, py + 8, 14, 2);
+      // 炮眼（正面三孔——黑洞洞的炮口）
+      ctx.fillStyle = '#14100c';
+      ctx.fillRect(px + 2, py + 5, 2, 2);
+      ctx.fillRect(px + 6, py + 5, 2, 2);
+      ctx.fillRect(px + 10, py + 5, 2, 2);
+      // 垛口雉堞（顶部齿纹）
+      ctx.fillStyle = '#8a8a93';
+      ctx.fillRect(px - 1, py + 1, 14, 2);
+      ctx.fillStyle = '#9c9ca5';
+      ctx.fillRect(px - 1, py + 1, 2, 2);
+      ctx.fillRect(px + 4, py + 1, 2, 2);
+      ctx.fillRect(px + 9, py + 1, 2, 2);
+      // 瞭望塔 + 国旗（旗尾拍浪而动——海风更急）
+      ctx.fillStyle = '#4a4a52';
+      ctx.fillRect(px + 5, py - 6, 2, 8);
+      ctx.fillStyle = rgb(color);
+      ctx.fillRect(px + 7, py - 6, 3, 2);
+      ctx.fillRect(px + 10, py - 6 + flap, 1, 2);
+      // 塔顶信标（燃点——风摆里常亮的火苗）
+      const flare = ((fc + b.i * 3) >> 3) & 1;
+      ctx.fillStyle = flare ? '#ffb24a' : '#e8862a';
+      ctx.fillRect(px + 5, py - 8 + flare, 2, 2);
+      ctx.fillStyle = 'rgba(255,220,140,0.75)';
+      ctx.fillRect(px + 5, py - 9 + flare, 1, 1);
+      return;
+    }
   }
   // ---- house(1) / capital(2)：科技阶位外观（0 茅屋 / 1 石屋 / 2 堡垒宅 / 3 哥特庄园） ----
   const big = b.kind === 2;

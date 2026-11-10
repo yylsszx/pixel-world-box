@@ -65,6 +65,7 @@
     'triggers', 'directives', 'warShame', 'occCiv', 'occStr', 'occSet', 'wars',
     'terrain', 'variant', 'owner', 'buildingTiles', 'fire', 'radiate', 'road',
     'riverTiles', 'worldEvents',
+    'farmland', // 【机制②】垦田覆盖层入模拟白名单（耕地土地化后的核心模拟态）
   ];
   window.__PWB = {
     v: 3,
