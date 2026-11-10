@@ -1560,7 +1560,12 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
     // 方向优先级：hitKx（方向性伤害源写入：近战背向攻击者/远程弹道飞行向/爆心向外冲）> flip 背向
     // （环境伤害「在火里挣扎」与 hitKx 缺失/正上下来源的 fallback）；船/商队排除。
     if (u.hurt > 14 && !u.boat && (u.caravan ?? 0) === 0) {
-      const hk = ((u.hurt - 14) / 6) * 2.2; // 1→0 线性衰减 × 峰值 2.2px（×2 画布空间）
+      // 【表现 v0.66 #66·池⑦】zoom 联动增幅：2.2 峰值折算屏显仅 0.55×zoom CSS px——
+      // 低倍率（2.5–5.6 中档/迷你档，百人战场的主视野）亚像素踉跄不可读；
+      // 按 8/zoom 反比放大峰值并 clamp ×1.0–1.45：zoom≥8 精绘档原手感不动，
+      // zoom≤5.5 峰值升至 ~3.19（屏显 ~1.6×zoom，约为迷你档身高的 40%——肉眼可辨的踉跄）
+      const hkPeak = 2.2 * Math.min(1.45, Math.max(1, 8 / zoom));
+      const hk = ((u.hurt - 14) / 6) * hkPeak; // 1→0 线性衰减（×2 画布空间）
       const kx = (u.hitKx ?? 0) !== 0 ? (u.hitKx as number) : (u.flip ? 1 : -1);
       u.dpx = (u.dpx ?? (u.rx ?? u.x) * 2) + hk * kx;
       u.dpy = (u.dpy ?? (u.ry ?? u.y) * 2);

@@ -4315,7 +4315,14 @@ export function drawOgreFine(ctx: CanvasRenderingContext2D, u: Unit, t = 0) {
   }
 }
 
-/** 九头蛇精绘：宽扁巨躯 + 多颈多头 S 摆 + 啮咬前探/毒液（世代 3/2/1 头） */
+/** 九头蛇精绘 v2（#66 池⑥重做，VLM 实拍核验驱动）：三头分离可读 + 躯干收束 + 竖瞳聚焦。
+ *  #62 版结构病灶（zoom 24 实拍）：3 头各 6 宽、中心距 6 → 头头零隙相接糊成一团；
+ *  竖瞳无暗窝散如装饰点；躯干四角方正如砖；吐信/毒滴位置跳变悬空。
+ *  本版：头 3 宽 × 中心距 5/6（任意摆相位下头间恒 ≥1 隙）；中颈拔高 2（金字塔错落）；
+ *  暗窝 2×2 + 猩红 1×2 竖瞳；躯干顶/底缘内收圆角 + 尾端暗肩坡；鳞阵双排横贯；
+ *  吐信贴口缘、毒滴锚定口侧单柱。语义钩子全保留：gen 3/2/1 头 / S 摆相位 /
+ *  啮咬前探下压 + 獠牙白光 + 毒液飞溅 / 眨眼 / 低血 droop + 警示条 + 毒雾 /
+ *  泥浆涟漪 / 移动步态起伏 / 受击红闪 */
 export function drawHydraFine(ctx: CanvasRenderingContext2D, u: Unit, t = 0) {
   const fx = Math.round(u.rx ?? u.x);
   const fy = Math.round(u.ry ?? u.y) + 1;
@@ -4340,76 +4347,82 @@ export function drawHydraFine(ctx: CanvasRenderingContext2D, u: Unit, t = 0) {
   if (ripple === 0) ctx.fillRect(fx - 8, fy2, 18, 2);
   else if (ripple === 1) { ctx.fillRect(fx - 10, fy2, 6, 2); ctx.fillRect(fx + 6, fy2, 6, 2); }
   else { ctx.fillRect(fx - 12, fy2, 4, 2); ctx.fillRect(fx + 10, fy2, 4, 2); }
-  // 毒液滴落（确定性：每 40 帧滴一滴，滴高 3 段自涟漪行上浮）
+  // 毒液滴落（确定性 40 帧周期；#66 锚定口侧单柱且抬离地面——读作「嘴边滴毒」不再与涟漪同格互吞）
   if (t % 40 < 3) {
     ctx.fillStyle = '#9fd42e';
-    ctx.fillRect(fx - 4 + ((t >> 2) % 5) * 2, fy2 - (t % 40) * 2, 2, 2);
+    ctx.fillRect(fx + (f > 0 ? 5 : -7), fy2 - 4 - (t % 40) * 2, 2, 2);
   }
-  // 宽扁巨躯（18 宽 × topOff 高：顶背线/腹线/交错鳞纹/受光鳞斑）
+  // —— 宽扁巨躯（18 宽 × topOff 高；三段轮廓收束消「砖感」：顶缘 16 内收、主体 18、底缘 14 内收）——
   ctx.fillStyle = body;
-  ctx.fillRect(fx - 8, fy2 - topOff, 18, topOff);
+  ctx.fillRect(fx - 7, fy2 - topOff, 16, 2); // 顶缘（内收 1，颈根群承托）
+  ctx.fillRect(fx - 8, fy2 - topOff + 2, 18, topOff - 4); // 躯干主体
+  ctx.fillRect(fx - 6, fy2 - 2, 14, 2); // 底缘（内收 2 圆角）
+  ctx.fillStyle = dark;
+  ctx.fillRect(fx - 7, fy2 - topOff, 16, 1); // 背线（顶缘首行）
   ctx.fillStyle = belly;
-  ctx.fillRect(fx - 8, fy2 - 2, 18, 2); // 腹线
+  ctx.fillRect(fx - 6, fy2 - 3, 14, 1); // 腹线（底缘上一行，圆底内）
+  // 交错鳞阵双排（#66 对比度：深色排 × 亮色排交替——黑/亮菱形节奏在墨绿躯干上才立得住）
   ctx.fillStyle = dark;
-  ctx.fillRect(fx - 8, fy2 - topOff, 18, 2); // 背线
-  ctx.fillStyle = scale;
-  for (let k = 0; k < 4; k++) {
-    if ((k + gen) % 2 === 0) ctx.fillRect(fx - 6 + k * 4, fy2 - topOff + 2, 2, 2); // 交错鳞点
-  }
+  for (let k = 0; k < 4; k++) ctx.fillRect(fx - 6 + k * 4, fy2 - topOff + 3, 2, 2);
   ctx.fillStyle = scaleLt;
-  ctx.fillRect(fx + 6, fy2 - topOff + 4, 2, 2); // 受光鳞斑
-  // 背疣（顶缘疣突，移动时随步交替起伏）
+  for (let k = 0; k < 3; k++) ctx.fillRect(fx - 4 + k * 4, fy2 - topOff + 6, 2, 2);
+  // 尾端暗肩坡（朝向反侧 2×3 暗收坡——巨躯有了方向感；在鳞阵之后绘制盖住尾侧鳞点）
   ctx.fillStyle = dark;
-  for (let k = 0; k < 4; k++) {
-    const wx = fx - 6 + k * 4;
-    if ((isMoving ? (k + step) % 2 === 0 : k % 2 === 0)) ctx.fillRect(wx, fy2 - topOff - 2, 2, 2);
-  }
-  // 多颈多头：#59 啮咬逻辑全保留（朝向侧颈强制前探下压 + 獠牙白光 + 毒液飞溅）
+  ctx.fillRect(f > 0 ? fx - 8 : fx + 6, fy2 - topOff + 2, 2, 3);
+  // —— 多颈多头（#59 啮咬语义全保留；#66 分离重构：头 3 宽 × 中心距 5/6，恒 ≥1 隙）——
   const atkH = u.atk ?? 0;
   const droop = low ? 2 : 0;
-  const necks: Array<{ nx: number; swayBase: number }> = heads >= 3
-    ? [{ nx: -3, swayBase: 0 }, { nx: 0, swayBase: 2 }, { nx: 3, swayBase: 4 }]
+  const necks: Array<{ nx: number; swayBase: number; tall: number }> = heads >= 3
+    ? [{ nx: -5, swayBase: 0, tall: 0 }, { nx: 0, swayBase: 2, tall: 2 }, { nx: 5, swayBase: 4, tall: 0 }]
     : heads === 2
-      ? [{ nx: -2, swayBase: 1 }, { nx: 2, swayBase: 3 }]
-      : [{ nx: 0, swayBase: 2 }];
-  for (const { nx, swayBase } of necks) {
+      ? [{ nx: -4, swayBase: 1, tall: 0 }, { nx: 4, swayBase: 3, tall: 0 }]
+      : [{ nx: 0, swayBase: 2, tall: 0 }];
+  for (const { nx, swayBase, tall } of necks) {
     const sway = ((t >> 2) + swayBase) & 3;
     const biting = atkH > 0 && (necks.length === 1 || nx * f > 0);
     const lift = biting ? 3 : sway === 0 ? 0 : sway === 1 ? 1 : sway === 2 ? 2 : 1;
-    const cx = fx + nx * 2;
+    const cx = fx + nx;
+    // 小步 S 形蠕动（#66 不变量证明驱动：摆动错位统一半步 f*1——静止头隙 2，半步闭合 1 后仍恒 ≥1；
+    // 啮咬颈才额外前探 f*2 成扑咬姿态，p66-gap-proof 枚举 64 组合零重叠）
+    const lean2 = lift > 0 ? f : 0;
     ctx.fillStyle = dark;
-    ctx.fillRect(cx - 2, fy2 - topOff - 2, 4, 2); // 颈根
+    ctx.fillRect(cx - 2, fy2 - topOff - 2, 4, 2); // 颈根（4 宽，三根正好铺满顶缘成冠）
     ctx.fillStyle = body;
-    // 两段颈（各 4×2）：下段固定 + 上段随相位横偏（S 形蠕动）；啮咬颈强制前探
-    ctx.fillRect(cx - 2 + (lift > 1 ? f * 2 : 0), fy2 - topOff - 4, 4, 2);
-    ctx.fillRect(cx - 2 + (lift > 1 ? f * 4 : lift > 0 ? f * 2 : 0), fy2 - topOff - 6 + droop, 4, 2);
-    // 蛇头（6×4）：头顶亮鳞 + 猩红竖瞳 + 周期眨灭；啮咬时额外前探下压低咬
-    const hx = cx + (lift > 1 ? f * 4 : lift > 0 ? f * 2 : 0) + (biting ? f * 2 : 0);
-    const hy = fy2 - topOff - 8 + droop + (biting ? 2 : 0);
+    // 两段颈（各 4×2）：下段立正 + 上段半步（S 形蠕动）；中颈拔高 2；啮咬颈头位额外前探
+    ctx.fillRect(cx - 2, fy2 - topOff - 4, 4, 2);
+    ctx.fillRect(cx - 2 + lean2, fy2 - topOff - 6 - tall + droop, 4, 2);
+    // 蛇头（3×4 贴颈顶脸侧错 1：头间恒 ≥1 隙）；啮咬时额外前探 2 下压 2 低咬
+    const hx = cx - 1 + lean2 + (biting ? f * 2 : 0) + (f > 0 ? 1 : 0);
+    const hy = fy2 - topOff - 8 - tall + droop + (biting ? 2 : 0);
     ctx.fillStyle = body;
-    ctx.fillRect(hx - 2, hy, 6, 4);
-    ctx.fillStyle = scale;
-    ctx.fillRect(hx - 2, hy, 2, 2); // 头顶亮鳞
+    ctx.fillRect(hx, hy, 3, 4);
+    ctx.fillStyle = scaleLt;
+    ctx.fillRect(hx + (f > 0 ? 0 : 1), hy, 2, 1); // 头顶亮鳞眉（后侧，亮色——头颅轮廓与颈部区分）
+    // 竖瞳聚焦（#66）：暗窝近黑（与墨绿体色拉开两档）+ 猩红 1×2 竖瞳——红点有了黑底衬托不再是散装饰
     const blink = !biting && t % 23 < 2;
+    ctx.fillStyle = '#131f0c';
+    ctx.fillRect(hx + (f > 0 ? 1 : 0), hy + 1, 2, 2); // 暗窝（近黑）
     if (!blink) {
       ctx.fillStyle = low ? '#8c2317' : '#ff4030';
-      ctx.fillRect(hx + (f > 0 ? 2 : 0), hy, 2, 2); // 猩红竖瞳
+      ctx.fillRect(hx + (f > 0 ? 1 : 0), hy + 1, 2, 1); // 猩红瞳 2×1（暗窝上沿——红面积加倍，远距仍可辨）
+      ctx.fillStyle = low ? '#5a120c' : '#b82418';
+      ctx.fillRect(hx + (f > 0 ? 2 : 0), hy + 2, 1, 1); // 瞳下暗影点（竖瞳纵深）
     }
-    // 分叉吐信（低血不吐信）；啮咬颈改喷獠牙白光 + 毒液飞溅
+    // 吐信贴口（脸缘 2×1 粉信）；啮咬颈改喷獠牙白光 + 毒液飞溅（贴口向下）
     if (biting) {
       ctx.fillStyle = '#ffffff';
-      ctx.fillRect(hx + (f > 0 ? 6 : -8), hy + 4, 2, 2);
+      ctx.fillRect(hx + (f > 0 ? 3 : -2), hy + 2, 2, 2);
       ctx.fillStyle = '#9fd42e';
-      ctx.fillRect(hx + (f > 0 ? 6 : -8), hy + 6, 2, 2);
+      ctx.fillRect(hx + (f > 0 ? 3 : -2), hy + 4, 2, 2);
     } else if (!low && t % 16 < 5) {
       ctx.fillStyle = '#d556c0';
-      ctx.fillRect(hx + (f > 0 ? 4 : -6), hy + 2, 2, 2);
+      ctx.fillRect(hx + (f > 0 ? 3 : -2), hy + 2, 2, 1);
     }
   }
-  // 低血量警示 + 灰暗毒雾（将死的巨蟒）
+  // 低血量警示 + 灰暗毒雾（将死的巨蟒；警示条上移避开拔高中颈）
   if (low) {
     ctx.fillStyle = '#cf3f2e';
-    ctx.fillRect(fx - 6, fy2 - topOff - 12, 14, 2);
+    ctx.fillRect(fx - 6, fy2 - topOff - 14, 14, 2);
     ctx.fillStyle = 'rgba(120,140,80,0.25)';
     ctx.fillRect(fx - 10, fy2 - 2, 22, 2);
   }
