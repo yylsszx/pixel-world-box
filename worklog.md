@@ -6424,3 +6424,32 @@ Stage Summary:
 **推送**: 五文件改动 + worklog 本条 → push-web.sh（结果见下轮复核）。
 **版本节奏**: **升位 v0.68-preview**（#67 建议 + 四大机制开篇大功能；GAME_VERSION+CHANGELOG 已改，#67 战场风暴防护并入条目）。
 **评估**: D2 文明模拟深度——文明从「加权随机职业+单向劝农」升级为「专职工种各安其业不越权（渔场绝产于农民环伺、猎物无恙于全民环猎的 A/B 实证）+文明按田港工商战备猎期自动宏观调控编制+出生偏置随国情流动」，接续 WorldBox 职业系统并超越其自动化维度（WorldBox 无文明级编制调控）；D1 生态真实感顺带收紧（猎获归仓成为猎手专职而非全民副业——猎获强度与猎手编制联动）；机制①为机制②③④（耕地/海建/中枢核心）铺设了职业依附地基。
+
+## 2026-11-10 #69（用户插入指令·完成轮）：机制②③④齐落——耕地土地化 + 海上要塞 + 文明中枢核心（双模式）+ v0.69 升位
+
+**上轮复核**: #68 代码 30fe5d6 已在远端；CI 无未修失败。dev server 老进程 watcher 失效（编辑后零编译日志、页面跑旧 bundle——engine 缺 farmland 实证），杀旧进程重启后 curl 触发真实编译 11.3s 恢复。
+
+**本轮主攻（用户指令「按顺序完成剩下三个」：机制②耕地类土地化→③海上设施→④文明中枢核心，一轮齐落）**:
+1. **机制② 耕地土地化（改造面最重）**: 农田从建筑实体改为类土地覆盖层 `farmland: Uint8Array`（0=荒 1=垦，farmN 计数器渲染门控）。建造改道：buildBuilding(FARM) 特例→openFarmlandAt（玩家/AI/立国/QA 同入口语义无缝迁移），文明恳田=领土采样择草地开垦；产出清点从建筑表改为田块清点（foodTick 以农为锚每人认领 6 格内一块本国田，claimed 防重记，围城 9 格绝收保留）；农民巡田改 nearestFarmlandTile（24×24 窗口）；战火/灾厄踏田（farmland 置 0 + farmN-- + 烟）；渲染层田块贴图（三档土色阶 + 垄沟横纹 + 青金禾苗错行点缀，画在地表之上建筑之下）；存档 v2 新增 farmland RLE 字段 + **旧档一次性迁移**（FARM 建筑实体→田块覆盖 + destroyBuilding(silent) 正规渠道 houses 计数归位，幂等）；CAPTURABLE 移除 FARM（田随领土易主，不再是可占建筑）；FARM popCap 移除（土地不供住房容量）。
+2. **机制③ 海上设施·海上要塞**: BUILD_KINDS 尾追 SEA_FORT=13（防御工事领域首发，其余领域入遗留池轮换）。选址独立线：邻疆海面（距己领土≤3 格水格，孤悬远海不可筑）、彼此间距≥8、**每国至多 2 座**（buildSeaFort 上限闸 + 候选双门控，「不能太多」）；须先有港口。行为：并入塔/城堡射击循环（射程 6.5 / 炮伤 11，目标含乘船敌舰）；军团岸炮伤害表 14；敌 AI 工事压制同列。精灵精绘：石桩破浪基座 + 浪圈白沫呼吸 + 圆台壁垒三炮眼 + 雉堞齿纹 + 瞭望旗拍浪 + 塔顶信标火苗。建造事件播报。
+3. **机制④ 文明中枢核心（每文明完全分开的超级决策智能体）**: Civ.core = { mode: local|api, persona 六维, gen, notes }。**本地模式**: makeCore 建国铸造人格（种族底色 aggr/industry/diplo/piety + hash2 确定性扰动 ±0.15——零 rng 位等安全，各文明互不相同）；civCoreTick 每经济期随国情漂移（饥荒→重农、交战→好战、和平→冷却、富裕→通商向海、动荡→虔信、破城记忆→记仇好战），同一饥荒好战国与农耕国播报两种国策（「以战就食」vs「恳田写进国策」）；人格直接缩放置建候选权重（战争系/恳田/向海/通商/虔信/筑城六组乘子）与外交宣战概率（双边战争人格算数）。**API 模式**: 新路由 /api/civ-brain（不碰 oracle/*）——国情+人格递交所接大模型，回执 personaPatch 六维白名单校验 + note 决策纪要；引擎 fire-and-forget（apiBusy 防重入，pending 期静候）失败本地接管、**3 连败自动回落 local（中枢永不当机）**；各文明可接不同 API（openai 兼容/anthropic/builtin，配置存 localStorage `wb_civ_api_<id>`——密钥绝不入档入库）；CivPanel 社会页新增「中枢核心」段：模式徽标 + 人格六维条形 + 决策纪要 + API 配置表单（保存即切模式）。
+4. **升位 v0.69-preview**（机制①→④四件套齐成批次收口）。
+
+**QA（九面全绿，agent-browser 实测）**:
+- **核心初始化**: 两国立国 core 全挂、人格六维互不相同（Dawnvale war .42/faith .37 vs Emberfell .26/.53）——「各文明不同」实证。
+- **垦田链路**: openFarmland 6/6 成功（farmTileCountOf 2→8、farmN 3→9 同步）、农民 nearestFarmlandTile 命中自家田（10537）、**建筑表 kind 4 实体归零**（田不再是房）。
+- **中枢漂移**: 和平期 war −0.03/期 gen 1→21 持续运转（0.42→0.05 冷却到底），20× 十秒两国 6→44/57 人繁荣、farmN 24 块田养两国民、无崩溃。
+- **海上要塞**: 选址建成水格 [36,44]、僵尸置于射程内 6 血实测掉血（射击链路通）、civBuildCounts rebuild 后上限闸复验（counts13=3≥2 → buildSeaFort false）；QA 手工注入+立即调用的 counts 窗口失真为注入时序问题非机制缺陷（正常流 tick 内 rebuild 先于建造）。
+- **API 双模式端到端**: /api/civ-brain builtin 200 + personaPatch 白名单过滤 + 内建外脑真做 JSON 决策（「粮仓将罄，举国恳田，暂休刀兵」）；引擎侧 localStorage 配置→setCivCoreMode('api')→下一经济期回执应用（apiBusy 归零、farm 漂至 0.700、notes[0]='[外脑] 仓廪虽丰，民食为重，深耕以固本'）——**外脑真的在指挥引擎**。
+- **旧档迁移**: 构造旧档（删 farmland 字段+注入 FARM 建筑实体）→ 读档 farmTile=1/实体 0/counts[4]=0/farmN=1 同步、console.info 迁移播报，幂等。
+- **位等**: saveToSlot slot2 → 双 run 300 手动 ticks（farmland 已入 SIM_FIELDS 白名单）h0 8da02fc7 全等 + h1 0b8dc8c4 全等——**bitEqual true**。
+- **渲染实证**: 主画布像素采样田块土黄绿系 598 点（~24 田块在画）+ 要塞石灰色系 945 点。
+- **性能归因（诚实入账）**: dev simMs EMA 9.5ms 表面超标——归因实验：移除 135 QA 高密度国民后 441 野生 1.94ms/tick，国民行为成本 ≈0.022ms/人（引擎既有国民行为分支，非本轮新增——本轮新增扫描合计 ~0.0001ms/农可忽略）；QA 世界特例（spawn 高密度国民团聚在首都圈）而非代码回归；#67 基线世界为 642 单位低国民占比。1× tps 13.1 与 #68 的 14.0 同带（dev 模式 fps 瓶颈，生产为准绳）。
+- tsc 零错误 + eslint 零告警（engine/types/render/sprites/CivPanel/version/route 六文件）+ console 零 error + agent-browser errors 空。
+
+**会话事故沉淀**: dev server watcher 失效（编辑后零编译、页面旧 bundle）的判别法——eval 探针 `'farmland' in engine` 为 false 即旧代码；处置=杀进程重启+curl 触发编译+带 nocache 参数 reload。MultiEdit 非原子（顺序应用，遇错停止但已应用项保留）——重提交前必须 Read 实况核对，防「以为回滚实际半应用」。
+
+**遗留（下轮优先池·机制体系二笔候选）**: ① **任务书 v3→v4 自修订**（用户四大机制已全部落地，下次 cron 携 v3 全文时先建后删；机制体系写入重点池替换「最先重点」）② 中枢核心二笔（API 决策直接驱动军团/外交行动指令而不止人格缩放、决策纪要世界事件播报、人格事件回写更细粒度）③ 耕地二笔（田块肥沃度分层（新垦/熟田两档产出）、农田类土地与 A 线文明改造地形系统的衔接、田块占领易主播报）④ 海上设施领域扩展（灯塔=视野、海上平台=经济、浮坞=舰队维修——各领域限量克制）⑤ #67 遗留继承（meta 行级化/BIDX 门控/FXMIN/陈旧 WB 扫描质量/20× 收口/troll·ogre VLM 特写/滑杆可见性/raise 顶格）。
+**推送**: engine.ts + types.ts + render.ts + sprites.ts + CivPanel.tsx + version.ts + api/civ-brain/route.ts + scripts/pwb-fp.js（farmland 入位等白名单）→ push-web.sh 超时后 sync-github.sh **SYNC_OK 529fbe3**；本条 worklog 随补推入库。
+**版本节奏**: **升位 v0.69-preview**（机制四件套齐成批次收口；GAME_VERSION + CHANGELOG 四条玩家视角要点）。
+**评估**: D2 文明模拟深度——文明从「加权随机行为体」升维为「每国独立的决策智能体」（人格六维各不相同实证 + 国情驱动动态漂移 + 直接缩放置建与宣战），机制②③把经济根基（田是地不是房）与军事边疆（海上钉子）补进同一次升位；D1 生态真实感顺带补课（成片田垄土地覆盖 + 战火踏田荒芜 + 湿地垦田规则）；四大机制（①职业分工②耕地土地化③海上设施④中枢核心）全部落地成体系——WorldBox 没有文明级人格决策与编制调控，D2 对标反超点持续扩大。
