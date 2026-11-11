@@ -1,0 +1,94 @@
+name: Deploy Cloudflare Worker
+
+# PWB 神谕中继 · Cloudflare Workers 自动部署链：
+#   前提（一次性，全部可在手机浏览器完成）：
+#     ① 注册 Cloudflare 账户（免费版即可，无需信用卡）
+#     ② 创建 API Token（模板「Edit Cloudflare Workers」）→ 存入仓库密钥 CLOUDFLARE_API_TOKEN
+#     ③（可选）Account ID → 存入仓库密钥 CLOUDFLARE_ACCOUNT_ID
+#     ④（可选·服务端默认厂商）ORACLE_OPENAI_API_KEY / ORACLE_OPENAI_BASE_URL / ORACLE_OPENAI_MODEL
+#   push cloudflare/** 或手动触发（Actions 页 → 本工作流 → Run）即可部署。
+# 密钥安全：全部经 GitHub 加密 secrets / wrangler secret 注入，绝不写入仓库或日志。
+on:
+  push:
+    branches: [main]
+    paths: ['cloudflare/**', '.github/workflows/deploy-worker.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: worker-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: 检查部署凭证
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CF_TOKEN" ]; then
+            echo "::error::缺少仓库密钥 CLOUDFLARE_API_TOKEN——请到仓库 Settings → Secrets and variables → Actions 添加（Cloudflare 令牌模板：Edit Cloudflare Workers）。添加后重新运行本工作流即可。"
+            exit 1
+          fi
+
+      - name: Deploy（wrangler deploy）
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          cd cloudflare
+          bunx wrangler@latest deploy 2>&1 | tee deploy.log || {
+            if grep -qi 'subdomain' deploy.log; then
+              echo "::error::账户尚未注册 workers.dev 子域名——请在手机浏览器打开 dash.cloudflare.com → Workers & Pages，按提示设置一次子域名（如你的用户名），然后重新运行本工作流。"
+            else
+              cat deploy.log >&2
+            fi
+            exit 1
+          }
+          URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -1 || true)
+          if [ -z "$URL" ]; then echo "::warning::未能从部署日志解析 workers.dev 地址，请到 Cloudflare 仪表盘查看"; exit 0; fi
+          echo "WORKER_URL=$URL" >> "$GITHUB_ENV"
+          echo "::notice::Worker 已部署：$URL —— 将此地址填入游戏「厂商接入 → 中继后端」即可。"
+
+      # —— 服务端默认厂商密钥注入（可选）：GitHub 密钥 → wrangler secret。
+      #    配好后前端 apiKey/baseUrl/model 皆可留空，密钥永不出现在前端。
+      - name: 注入服务端默认厂商密钥（可选）
+        if: ${{ env.WORKER_URL != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          VAL_API_KEY: ${{ secrets.ORACLE_OPENAI_API_KEY }}
+          VAL_BASE_URL: ${{ secrets.ORACLE_OPENAI_BASE_URL }}
+          VAL_MODEL: ${{ secrets.ORACLE_OPENAI_MODEL }}
+        run: |
+          cd cloudflare
+          put() { # name value
+            if [ -n "$2" ]; then
+              printf '%s' "$2" | bunx wrangler secret put "$1" && echo "::notice::已注入 $1" || echo "::warning::$1 注入失败（不影响 Worker 部署）"
+            fi
+          }
+          put DEFAULT_OPENAI_API_KEY "$VAL_API_KEY"
+          put DEFAULT_OPENAI_BASE_URL "$VAL_BASE_URL"
+          put DEFAULT_OPENAI_MODEL "$VAL_MODEL"
+
+      - name: 探活 /healthz
+        if: ${{ env.WORKER_URL != '' }}
+        run: |
+          URL="${WORKER_URL}/healthz"
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /tmp/hz.json -m 10 -w "%{http_code}" "$URL" || echo 000)
+            if [ "$code" = "200" ] && grep -q '"ok":true' /tmp/hz.json; then
+              echo "Worker live: $URL"; cat /tmp/hz.json; exit 0
+            fi
+            echo "[$i/10] HTTP $code — Workers 传播中，15s 后重试…"
+            sleep 15
+          done
+          echo "::warning::Worker 部署完成但 2.5 分钟内未探活成功——请检查部署日志或稍后访问 $URL/healthz"

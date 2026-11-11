@@ -1,0 +1,14 @@
+// ============ PWB 神谕中继 Worker · wrangler 配置 ============
+// 部署方式（二选一，均无需本地终端）：
+//   A. GitHub Actions 自动部署（推荐）：仓库密钥 CLOUDFLARE_API_TOKEN（Edit Cloudflare Workers 模板令牌）
+//      → push 触发 .github/workflows/deploy-worker.yml。
+//   B. Cloudflare 仪表盘在线编辑器：dash.cloudflare.com → Workers & Pages → 本 Worker → Quick edit 粘贴 worker.js。
+// account_id 可不填：令牌为单账户作用域时 wrangler 自动发现；也可在此显式填入
+//   （dash 右侧栏 Account ID——非敏感信息）。
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pwb-oracle-relay",
+  "main": "worker.js",
+  "compatibility_date": "2025-06-01",
+  // 观察者可看部署日志尾部探活；无需额外观察器配置
+}

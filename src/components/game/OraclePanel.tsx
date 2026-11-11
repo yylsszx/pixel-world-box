@@ -16,6 +16,7 @@ import { runOracleAgentTurn, type AgentTurnResult } from '@/lib/oracle/agent';
 import { runConnectivityTest, validateProviderConfig, runDshSessionTurn, type DshSnapshot } from '@/lib/oracle/direct-client';
 import { executeOracleTool } from '@/lib/oracle/bridge';
 import { loadDshOn, storeDshOn, loadOrCreateSessionId, rotateSessionId } from '@/lib/oracle/session';
+import { loadStoredProvider, DEFAULT_PROVIDER, PROVIDER_STORE_KEY as STORE_KEY } from '@/lib/oracle/provider-store';
 import { renderToolCatalog, AGENT_TOOLS } from '@/lib/oracle/tools';
 import { buildSystemPrompt } from '@/lib/oracle/prompt';
 import { Button } from '@/components/ui/button';
@@ -96,22 +97,12 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   { key: 'local-qwen05b', label: '本地 Qwen-0.5B', config: { kind: 'local', label: '本地 Qwen-0.5B', model: 'XENova/qwen2.5-0.5b-instruct', temperature: 0.7 } },
 ];
 
-const PROVIDER_STORE_KEY = 'oracle-provider-v1';
-const DEFAULT_PROVIDER: OracleProviderConfig = { kind: 'builtin', label: '内置 Z.ai' };
+// 共享存取模块（议会 council / 中枢 / 面板同一份配置，单一事实源）
+const PROVIDER_STORE_KEY = STORE_KEY;
 
 /** 从 localStorage 恢复 provider 配置（防御式：坏 JSON / 非法 kind 一律回默认） */
 function loadProvider(): OracleProviderConfig {
-  try {
-    const raw = localStorage.getItem(PROVIDER_STORE_KEY);
-    if (!raw) return DEFAULT_PROVIDER;
-    const p = JSON.parse(raw) as OracleProviderConfig;
-    if (p && (p.kind === 'builtin' || p.kind === 'openai' || p.kind === 'anthropic' || p.kind === 'local')) {
-      return { kind: p.kind as ProviderKind, label: p.label, baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.model, temperature: p.temperature, forceCpu: p.forceCpu, relayUrl: p.relayUrl };
-    }
-  } catch {
-    /* 坏存档回默认 */
-  }
-  return DEFAULT_PROVIDER;
+  return loadStoredProvider();
 }
 
 /** 当前配置命中的预设 key（用于预设网格高亮）：anthropic 非官方端点算自定义（协议可手选） */

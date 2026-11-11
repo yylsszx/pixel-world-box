@@ -635,7 +635,9 @@ export function validateProviderConfig(p: OracleProviderConfig): string | null {
     return p.model?.trim() ? null : '本地模型需要模型标识符（如 XENova/qwen2.5-0.5b-instruct）';
   }
   const label = p.label || p.kind;
-  if (!p.baseUrl?.trim()) return `[${label}] 缺少 Base URL——请补全下方「厂商接入」端点配置`;
+  // 中继后端已配置：baseUrl/model 可留空——由中继侧校验/补全（Workers 版可注入服务端默认厂商三元组，密钥不出现在前端）
+  if (p.relayUrl?.trim()) return null;
+  if (!p.baseUrl?.trim()) return `[${label}] 缺少 Base URL——请补全下方「厂商接入」端点配置，或填写「中继后端」地址（服务端可代配厂商）`;
   const b = p.baseUrl.trim();
   if (!/^https?:\/\//i.test(b) && !b.includes('XTransformPort=')) {
     return `[${label}] Base URL 需以 http(s):// 开头`;

@@ -265,8 +265,10 @@ function SocietyTab({ civ }: { civ: CivInfo }) {
   // 【机制④】中枢 API 配置表单（保存在本机 localStorage——每文明可接不同 API；密钥绝不入库）
   const [apiCfg, setApiCfg] = useState({ kind: 'openai' as 'openai' | 'anthropic', baseUrl: '', model: '', apiKey: '', relayUrl: '' });
   const saveApiCfg = () => {
-    if (!apiCfg.baseUrl.trim() || !apiCfg.model.trim()) return;
-    localStorage.setItem(`wb_civ_api_${civ.id}`, JSON.stringify({ kind: apiCfg.kind, baseUrl: apiCfg.baseUrl.trim(), model: apiCfg.model.trim(), apiKey: apiCfg.apiKey.trim(), relayUrl: apiCfg.relayUrl.trim(), label: apiCfg.model.trim() }));
+    // 中继后端已填：baseUrl/model 可留空（中继侧可注入服务端默认厂商——Workers 版特性）；直连则必填
+    const relay = apiCfg.relayUrl.trim();
+    if (!relay && (!apiCfg.baseUrl.trim() || !apiCfg.model.trim())) return;
+    localStorage.setItem(`wb_civ_api_${civ.id}`, JSON.stringify({ kind: apiCfg.kind, baseUrl: apiCfg.baseUrl.trim(), model: apiCfg.model.trim(), apiKey: apiCfg.apiKey.trim(), relayUrl: relay, label: apiCfg.model.trim() || '中继默认厂商' }));
     getEng()?.setCivCoreMode?.(civ.id, 'api');
   };
   const backToLocal = () => {

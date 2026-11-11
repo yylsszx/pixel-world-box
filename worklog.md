@@ -6545,3 +6545,23 @@ Stage Summary:
 **推送**: direct-client.ts + OraclePanel.tsx + oracle-server/package.json + worklog 本条 → push-web.sh。
 **版本节奏**: 不升位（#73 v0.71 后第一笔：接入可用性修复攒清单；协议行与报错可读性为玩家强感知项，建议下次升位合并收录）。
 **#74 线上补记（14:10，v0.71+本轮已上线）**: ①线上实测协议行渲染 ✓ + 预设高亮 ✓（NaiveAI/自定义配置正确亮「自定义」）+ 报错全文换行可读 ✓（dashscope CORS 错完整显示）；②deepseek+anthropic+假钥线上 → `[自定义（Anthropic）] HTTP 401`（直连穿透成功，CORS 友好厂商任意协议可达——真钥+错误协议时 404 回退方介入）；③dashscope 向量证伪：`/compatible-mode/v1/messages` 确 404（鉴权前）但其 CORS allow-headers 不含 anthropic 专用头 → 预检即挂，404 回退无法经真实 CORS 受限厂商触发；④**404 换协议回退逻辑以双 mock 端到端实证**（bun 直跑 routeCallModel）：anthropic→404→OpenAI 兼容路径接通（via「经OpenAI 兼容协议自动重试接通」）✓ + 反向 openai→404→Anthropic 路径接通 ✓——双方向全绿。QA 沉淀：真实厂商多为鉴权优先中间件（401 先于 404），错误协议+假钥看不到 404；回退分支的确定性验证须 mock（CORS 头白名单是预检层，与路由层 404 独立）。
+
+## 2026-11-11 #75（用户插入指令·Cloudflare Workers 专业后端落地）：Workers 单文件中继 + 服务端密钥注入 + 免终端部署链 + 议会三通道接线（版本不升位）
+
+**用户指令（本轮最高优先）**: 「用 Cloudflare Workers 搭建专业后端，版本号不变」+「搭好 Cloudflare 需要我做什么，能否只负责注册之类的，我是移动端不能用电脑」——移动端约束成为部署链设计的第一输入：用户侧操作压到「纯手机浏览器 3 步」（注册 CF → 建 Edit Cloudflare Workers 令牌 → 存 GitHub 仓库密钥），其余全由代理侧/CI 完成。
+
+**根因与架构定位**: 线上 GitHub Pages 纯静态导出（#72 已证 405），神谕/中枢/议会的后端通路必须外置——#73 三通道化已打通前端路由，#74 沙箱 oracle-server 8787 已证中继形态可行，但沙箱回收即失、无公网 HTTPS 域名。Cloudflare Workers = 公网永久免费中继（10 万请求/天免费额度）：与 oracle-server v1.2 线协议逐字段一致（{"r"|"t"|"err"} + [DONE] / civ-brain 非流式回执），前端「中继后端」填 workers.dev 地址即通，零前端改动。
+
+**改动（四层，Worker 零 npm 依赖单文件）**:
+- **cloudflare/worker.js（新建·~430 行）**: 三端点与 oracle-server 逐字段对齐——GET /healthz（部署链探活，default_provider 如实上报不泄漏密钥）/ POST /api/oracle/agent（统一 SSE 中继，openai 兼容 + anthropic 双协议泵）/ POST /api/civ-brain（非流式收全量→六维白名单提取→{personaPatch,note}）；CORS 全放行同款；1MB/64 条/24000 字符防滥用同限。**服务端默认厂商注入（专业后端核心）**: env 配 DEFAULT_OPENAI_API_KEY/_BASE_URL/_MODEL 三元组（wrangler secret）后，请求侧 apiKey/baseUrl/model 任一留空即服务端补全——密钥永不出现在前端；builtin 映射到默认厂商（议会「内置 Z.ai」通道在线上静态托管由此接活）；dsh 面 400 明示不支持（Sealos 版专属）。
+- **.github/workflows/deploy-worker.yml（新建）**: 免终端部署链——push cloudflare/** 或手动触发；缺 CLOUDFLARE_API_TOKEN 时 ::error:: 中文指引（含去哪加密钥）；部署失败含 subdomain 时给「手机浏览器 dash 注册子域名」指引；部署后可选注入 ORACLE_OPENAI_API_KEY/_BASE_URL/_MODEL（GitHub 加密密钥 → wrangler secret put）；末尾 /healthz 探活 10×15s。
+- **src/lib/oracle/provider-store.ts（新建）**: PROVIDER_STORE_KEY/DEFAULT_PROVIDER/loadStoredProvider 抽出共享——议会与神谕面板同一份配置（localStorage 'oracle-provider-v1'），单一事实源；OraclePanel 改引用（行为零变化）。
+- **council.ts（议会接线·结构性修复）**: llmOnce 从硬编码同源 fetch('/api/oracle/agent')+kind:'builtin'（静态托管必 404/405→「议会离线」）改为 routeCallModel(loadStoredProvider(), …, {signal})——议会与神谕共用三通道路由（中继→本站→直连），45s 超时/中止语义经 cb.signal 保留；「议会离线」从此只在真离线时出现。
+- **direct-client.ts + CivPanel.tsx（放行服务端代配）**: validateProviderConfig/saveApiCfg 在 relayUrl 已填时放行空 baseUrl/model（中继侧校验/注入；错误文案同步指引「或填写中继后端地址」）——用户没有自己的厂商密钥时，填一个中继地址即可用。
+
+**QA（worker-smoke.mjs 16/16 全绿 + tsc/eslint 零错零警）**: healthz 200 如实上报 ✓ / CORS 预检 204 ✓ / GET 双端点 405 ✓ / SSE r/t/[DONE] 全转发 ✓ / **服务端密钥注入实证**（openai 留空 → 上游实收 Bearer sk-server-side，响应体零泄漏）✓ / builtin→默认厂商映射 ✓ + 无默认时 400 明示 ✓ / civ-brain 白名单回执（war=0.55 farm=0.7 精确提取）✓ / 坏 JSON·local·dsh·messages[0] 校验面 ✓。**QA 沉淀（本轮插曲）**: 冒烟 mock 脑分支 JS 单引号串内 \" 转义少一层 → 写出非法 JSON 行被泵静默吞掉（catch 心跳行）——「流式响应为空」先疑时序后定位转义，Worker 无罪；教训：mock 的 SSE 行要打印写出后字节而非源码目测。
+**部署链状态**: 代码+CI 全就绪；等用户完成手机三步（注册 CF/建令牌/存密钥）后首次 deploy 即活，届时把 workers.dev 地址填入「中继后端」并线上三层复验（Oracle 测试连通/中枢 api 模式/议会召开）。
+**推送**: cloudflare/ 三文件 + deploy-worker.yml + worker-smoke.mjs + provider-store.ts + council/direct-client/CivPanel/OraclePanel 四改 + worklog 本条 → push-web.sh。
+**版本节奏**: **不升位**（v0.71-preview 保持——用户明令「版本号不变」；Workers 中继为基建轮，升位留给下次功能轮合并收录）。
+**遗留（下轮优先池）**: ①用户侧三步完成后：首次 deploy + 线上三层复验（Oracle 测试连通真钥/中枢 api 模式全链/议会召开）+ 把 workers.dev 地址交用户；②深度评估 #73/#75 触发连续顺延（距 #56 已 18+ 轮，紧急度高于遗留继承）；③workers.dev 单域名被抢注时改自定义路由的预案（wrangler routes 配 custom domain）；④anthropic 服务端默认注入组（现仅 openai 兼容组——anthropic 密钥体系不同，透传设计待需求实证）。
+**评估：D6 职业级基建差距显著缩小——后端从「沙箱临时中继」升级为「公网永久免费中继 + 密钥不出前端 + 免终端部署链」，同时 D3 智能感差距缩小（议会/中枢在线上静态托管首次真正可用）。**
