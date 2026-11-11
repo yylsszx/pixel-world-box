@@ -6527,3 +6527,20 @@ Stage Summary:
 **版本节奏**: **升位 v0.71-preview**（外脑接入修复 + 三通道 + 中继端点批次；CHANGELOG 三条玩家视角要点）。
 **评估**: D2 文明模拟深度——「每文明可接不同大模型」从「需要自托管 Next 才能用」变为「官网开箱即用」（OpenAI/Anthropic 官方端点浏览器直连零后端可用 + oracle-server 中继全厂商可用），外脑智能体的可用性鸿沟填平；D6 稳定健壮同收（错误原因全部上浮面板可见，3 连败回落本地兜底保持——中枢永不当机铁律不破）。
 **线上实测补记（v0.71 部署后）**: 标题屏 v0.71 徽章 ✓；进世界立国 Sunhold core 挂载 ✓；线上同源 POST /api/civ-brain 真实 405 → 自动降级浏览器直连分支真实触发 ✓；HTTP mock 端点被 HTTPS 页面 mixed-content 安全策略拦截 → 错误文案精确上浮面板（「[live-e2e] 直连网络失败（Failed to fetch）——端点须支持 CORS，否则请填「中继后端」——本地判断接管」）——错误上浮设计在真实拦截场景验证成立；直连 HTTPS 端点（OpenAI/Anthropic 官方）无 mixed-content 问题，代码路径已在本地 3000 全绿（R3/R4）。QA 沉淀：HTTPS 线上页面无法 fetch 本地 HTTP mock（安全策略）——线上直连验证须用 HTTPS 测试端点或信任本地 3000 的同路径验证。
+
+## 2026-11-11 #74（13:45 触发轮·用户插入指令【并行会话】）：神谕「任何厂商可用」三件套——自定义协议手选 + 404 自动换协议重试 + 测试报错移动端全量可读 + 沙箱 oracle-server 8787 中继上线
+
+**用户指令（本轮最高优先）**: 「修复一下，保证任何厂商模型都可用，非预设用自定义，保证任何接入都可用」——背景：用户手机（线上 v0.71）以 Anthropic 预设改填 NaiveAI（api.naive.ai / naive-n0.5-lite）点测试连通，报「[Anthropic] 浏览器直连 api.naive.ai 失败（CORS 拦截）」且红条在手机上被截断。**根因取证（并行会话完成）**: api.naive.ai 为 LiteLLM 网关（阿里云东京），服务活着（假钥 401「LiteLLM Virtual Key expected」）但 CORS 预检对任意 Origin 一律 400 无放行头——浏览器直连被拦与密钥/配置无关；对照实验 DeepSeek 端点同界面报 HTTP 401（穿出成功）实证游戏逻辑无罪。公共中继实测全军覆没（corsproxy.io 要注册密钥 401 / cors.lol 持续 429 / allorigins 522 / cors.sh 死 / corsfix 域名未注册 / cors.eu.org 死）——「任何厂商」的物理通路只能是：CORS 友好端点直连 或 经中继服务端转发。
+
+**改动（三文件 + 一迷你服务，旧档零兼容风险）**:
+- **direct-client.ts**: ①`ModelCallResult`/`ConnectTestResult` 增可选 `via`（非默认路径接通说明上浮面板）；②路由 ③ 直连层增**自定义端点 404/405 自动换协议重试**（`isRoutableMiss` 匹配 HTTP 40[45] + `isCustomVendorHost` 排除官方 api.openai.com/api.anthropic.com——OpenAI 兼容 ↔ Anthropic 各重试一次；成功标 via「经 X 协议自动重试接通」，双败合并报「双协议均未命中——A 路径 x；B 路径 y」）；
+- **OraclePanel.tsx**: ③云端厂商增**「协议」双按钮行**（OpenAI 兼容 / Anthropic，title 提示各自 POST 路径；点击换 kind + label 置「自定义（X）」——非预设厂商协议可手选）；④`matchPresetKey` anthropic 分支修正：非官方 baseUrl 不再误亮 Anthropic 预设（算自定义）；⑤**测试失败红条去截断**：`max-w-[110px] truncate` → `w-full break-words whitespace-pre-wrap max-h-24 overflow-y-auto`（容器 flex-wrap）——移动端根因全文可读；⑥连通成功显示 via 说明。
+- **oracle-server/package.json**: 增 `dev` 脚本（`PORT=8787 bun --hot server.mjs`）——**本沙箱迷你服务化**：已常驻 8787（healthz ok:true builtin:true），经网关 `?XTransformPort=8787` 实测全链路通（POST anthropic+api.naive.ai+假钥 → 网关 → 8787 → NaiveAI → 401 真实鉴权错回传）。线上静态站玩家在「中继后端」填 `<预览面板域名>/api/oracle/agent?XTransformPort=8787` 即全厂商可用；预览面板同源玩家零配置（本站后端路径自动生效）。
+- **types.ts**: 无改动（kind 本就双协议；via 走 direct-client 本地接口）。
+
+**QA（本地 3000 实机 + 网关链路，全绿）**: tsc 零错误 + eslint 零告警。①协议行渲染 ✓（OpenAI 兼容/Anthropic 双按钮，anthropic 高亮）；②预设高亮修正 ✓（NaiveAI 配置：Anthropic 预设 pressed:false、自定义 pressed:true）；③本地后端转发实证 ✓：自定义（Anthropic）+ api.naive.ai + 假钥 → 测试连通 → `[本站后端] [自定义（Anthropic）] HTTP 401：Invalid or revoked API key`——服务端转发穿 CORS 限制直达 NaiveAI（真钥即通）；④报错全文换行可读 ✓；⑤网关 XTransformPort=8787 中继链路 ✓；⑥dev.log 502 即后端错误上浮设计路径（route 502 JSON → 前端 err 提取），无意外错误。
+- **QA 方法论**: 本地 dev 恒有后端（probe 405=up）→ 直连+换协议重试分支只能线上静态托管实测（部署后补：deepseek baseUrl + anthropic kind 假钥应报「双协议均未命中」404→401 链）；HTTPS 页面 fetch HTTP 端点被 mixed-content 拦（#73 已证）——中继 URL 须 HTTPS 域名（预览面板域名）。
+
+**遗留（下轮优先池）**: 线上部署后补测：①404 换协议重试分支真机实证（deepseek+anthropic 假钥）；②中继后端填预览域名 HTTPS 全链路（含 mixed-content 判定）；③沙箱回收后 oracle-server 迷你服务需重启（`cd oracle-server && bun run dev`）——可考虑写进打磨轮自愈清单；「继续旅程」不显示自动档候选（历史遗留）；其余见 #73 遗留池。
+**推送**: direct-client.ts + OraclePanel.tsx + oracle-server/package.json + worklog 本条 → push-web.sh。
+**版本节奏**: 不升位（#73 v0.71 后第一笔：接入可用性修复攒清单；协议行与报错可读性为玩家强感知项，建议下次升位合并收录）。

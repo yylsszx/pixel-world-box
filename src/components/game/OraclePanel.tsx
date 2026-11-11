@@ -114,10 +114,10 @@ function loadProvider(): OracleProviderConfig {
   return DEFAULT_PROVIDER;
 }
 
-/** 当前配置命中的预设 key（用于预设网格高亮） */
+/** 当前配置命中的预设 key（用于预设网格高亮）：anthropic 非官方端点算自定义（协议可手选） */
 function matchPresetKey(p: OracleProviderConfig): string {
   if (p.kind === 'builtin') return 'builtin';
-  if (p.kind === 'anthropic') return 'anthropic';
+  if (p.kind === 'anthropic') return (p.baseUrl ?? '').includes('api.anthropic.com') ? 'anthropic' : 'custom';
   if (p.kind === 'local') {
     for (const pre of PROVIDER_PRESETS) {
       if (pre.key !== 'custom' && pre.config.kind === 'local' && pre.config.model === p.model) return pre.key;
@@ -483,16 +483,16 @@ function Empty({ onPick }: { onPick: (m: 'narrate' | 'analyze' | 'prophesy' | 'c
 // ---------------- 厂商配置 Popover ----------------
 
 function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig; onApply: (p: OracleProviderConfig) => void }) {
-  const [test, setTest] = useState<{ state: 'idle' | 'testing' | 'ok' | 'fail'; msg?: string }>({ state: 'idle' });
+  const [test, setTest] = useState<{ state: 'idle' | 'testing' | 'ok' | 'fail'; msg?: string; via?: string }>({ state: 'idle' });
   const activeKey = matchPresetKey(provider);
   const isBuiltin = provider.kind === 'builtin';
   const isLocal = provider.kind === 'local';
 
-  /** 测试连通：走 routeCallModel 全路由（中继→本站后端→浏览器直连），与真实对话完全同路径 */
+  /** 测试连通：走 routeCallModel 全路由（中继→本站后端→浏览器直连+协议自动重试），与真实对话完全同路径 */
   const runTest = useCallback(async () => {
     setTest({ state: 'testing' });
     const r = await runConnectivityTest(provider);
-    setTest(r.ok ? { state: 'ok' } : { state: 'fail', msg: r.msg ?? '无响应' });
+    setTest(r.ok ? { state: 'ok', via: r.via } : { state: 'fail', msg: r.msg ?? '无响应' });
   }, [provider]);
 
   const inputCls =
@@ -535,6 +535,47 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
           );
         })}
       </div>
+
+      {/* 接口协议选择（云端厂商）：自定义网关可任选 OpenAI 兼容 / Anthropic——选错时 404 自动换协议重试 */}
+      {(provider.kind === 'openai' || provider.kind === 'anthropic') && (
+        <div className="flex items-center gap-1.5">
+          <span className={`${labelCls} shrink-0`}>协议</span>
+          <div className="flex min-w-0 flex-1 gap-1">
+            {(
+              [
+                ['openai', 'OpenAI 兼容'],
+                ['anthropic', 'Anthropic'],
+              ] as const
+            ).map(([k, name]) => {
+              const active = provider.kind === k;
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  aria-pressed={active}
+                  title={k === 'openai' ? 'POST {baseUrl}/chat/completions（绝大多数厂商与中转站）' : 'POST {baseUrl}/v1/messages（Anthropic 原生风格）'}
+                  onClick={() => {
+                    if (active) return;
+                    setTest({ state: 'idle' });
+                    onApply({
+                      ...provider,
+                      kind: k,
+                      label: k === 'openai' ? '自定义（OpenAI 兼容）' : '自定义（Anthropic）',
+                    });
+                  }}
+                  className={`min-w-0 flex-1 truncate rounded-sm border-2 px-1 py-1 text-[9px] font-bold transition-colors ${
+                    active
+                      ? 'border-amber-400/60 bg-amber-400/10 text-amber-200'
+                      : 'border-zinc-700 bg-zinc-800/60 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
+                  }`}
+                >
+                  {name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 端点配置（内置 Z.ai 免密钥，仅温度） */}
       {isBuiltin || isLocal ? (
@@ -652,9 +693,9 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
         </div>
       )}
 
-      {/* 测试连通（仅云端厂商） */}
+      {/* 测试连通（仅云端厂商）——失败文案全量换行展示（移动端不再截断，根因可读） */}
       {!isLocal && (
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <Button
             variant="ghost"
             size="sm"
@@ -667,13 +708,16 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
             <span className="truncate">{test.state === 'testing' ? '测试中…' : '测试连通'}</span>
           </Button>
         {test.state === 'ok' && (
-          <span className="shrink-0 rounded-sm border border-emerald-400/50 bg-emerald-400/10 px-1 py-0.5 text-[9px] font-bold text-emerald-300">
-            ✓ 连通
+          <span
+            className="shrink-0 rounded-sm border border-emerald-400/50 bg-emerald-400/10 px-1 py-0.5 text-[9px] font-bold text-emerald-300"
+            title={test.via}
+          >
+            ✓ 连通{test.via ? `（${test.via}）` : ''}
           </span>
         )}
         {test.state === 'fail' && (
           <span
-            className="min-w-0 max-w-[110px] shrink-0 truncate rounded-sm border border-red-400/50 bg-red-400/10 px-1 py-0.5 text-[9px] font-bold text-red-300"
+            className="min-w-0 w-full max-h-24 shrink-0 overflow-y-auto rounded-sm border border-red-400/50 bg-red-400/10 px-1.5 py-1 text-[9px] font-bold leading-relaxed break-words whitespace-pre-wrap text-red-300"
             title={test.msg}
           >
             ✗ {test.msg ?? '失败'}
@@ -683,7 +727,7 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
       )}
 
       <p className="text-[8px] leading-relaxed text-zinc-600">
-        apiKey 仅存本浏览器 localStorage；云端请求按「中继后端 → 本站后端 → 浏览器直连」路由转发至厂商——不出现在日志与世界存档中。
+        apiKey 仅存本浏览器 localStorage；云端请求按「中继后端 → 本站后端 → 浏览器直连（自定义端点 404 自动换协议重试）」路由转发至厂商——不出现在日志与世界存档中。
       </p>
     </div>
   );

@@ -13,11 +13,12 @@
 //   本站后端（Next 静态白名单路由）与 corsDirect 不识别该面，永不发送；无 dsh 时 body 逐字节不变。
 import type { AgentChatMessage, OracleProviderConfig } from './types';
 
-/** 统一模型调用结果（与 agent.ts callModel 返回同构） */
+/** 统一模型调用结果（与 agent.ts callModel 返回同构）；via：非默认路径成功时的说明（如自动换协议） */
 export interface ModelCallResult {
   content: string;
   reasoning: string;
   err: string;
+  via?: string;
 }
 
 export interface RouteCallbacks {
@@ -483,6 +484,17 @@ async function streamDirectAnthropic(
 
 // ============ 路由决策入口 ============
 
+/** 路由级失败特征（端点活着但路径不存在）——自定义网关协议选错时的典型信号 */
+function isRoutableMiss(err: string): boolean {
+  return /HTTP 40[45]/.test(err);
+}
+
+/** 官方端点协议固定不换（api.openai.com / api.anthropic.com）；换协议重试仅对自定义端点有意义 */
+function isCustomVendorHost(p: OracleProviderConfig): boolean {
+  const b = (p.baseUrl ?? '').toLowerCase();
+  return !b.includes('api.openai.com') && !b.includes('api.anthropic.com');
+}
+
 /** builtin（内置 Z.ai）专用：后端不在时的准确文案（唯一允许「离线」字样的场景） */
 const BUILTIN_OFFLINE_MSG =
   '神谕离线：此部署为纯静态托管，内置 Z.ai 需要服务端。替代路径：厂商接入中改用自定义厂商（浏览器直连）、' +
@@ -523,12 +535,34 @@ export async function routeCallModel(
     return callViaBackend('/api/oracle/agent', provider, messages, deep, cb, '本站后端');
   }
 
-  // ③ 静态托管 / 后端不可达
+  // ③ 静态托管 / 后端不可达 → 浏览器直连厂商；自定义端点 404/405 自动换协议重试（OpenAI 兼容 ↔ Anthropic）
   if (provider.kind === 'builtin') {
     return { content: '', reasoning: '', err: BUILTIN_OFFLINE_MSG };
   }
-  if (provider.kind === 'openai') return streamDirectOpenAI(provider, messages, deep, cb);
-  if (provider.kind === 'anthropic') return streamDirectAnthropic(provider, messages, deep, cb);
+  if (provider.kind === 'openai' || provider.kind === 'anthropic') {
+    const kindName = (k: string) => (k === 'openai' ? 'OpenAI 兼容' : 'Anthropic');
+    const direct =
+      provider.kind === 'openai'
+        ? await streamDirectOpenAI(provider, messages, deep, cb)
+        : await streamDirectAnthropic(provider, messages, deep, cb);
+    // 自定义网关常只开一种协议（或路径不同）：404/405 = 路径不存在 → 换另一协议自动重试一次
+    if (direct.err && isRoutableMiss(direct.err) && isCustomVendorHost(provider)) {
+      const altKind: 'openai' | 'anthropic' = provider.kind === 'openai' ? 'anthropic' : 'openai';
+      const altProvider: OracleProviderConfig = { ...provider, kind: altKind };
+      const retry =
+        altKind === 'openai'
+          ? await streamDirectOpenAI(altProvider, messages, deep, cb)
+          : await streamDirectAnthropic(altProvider, messages, deep, cb);
+      if (!retry.err) {
+        return { ...retry, via: `经${kindName(altKind)}协议自动重试接通` };
+      }
+      return {
+        ...retry,
+        err: `双协议均未命中——${kindName(provider.kind)}路径 ${direct.err}；${kindName(altKind)}路径 ${retry.err}`,
+      };
+    }
+    return direct;
+  }
   return { content: '', reasoning: '', err: `未知的 provider.kind：${String(provider.kind)}` };
 }
 
@@ -537,6 +571,8 @@ export async function routeCallModel(
 export interface ConnectTestResult {
   ok: boolean;
   msg?: string;
+  /** 非默认路径接通说明（如自动换协议成功） */
+  via?: string;
 }
 
 /** 最小会话连通测试：走 routeCallModel 全路由（与真实对话完全同路径），读首个增量判定。 */
@@ -556,7 +592,7 @@ export async function runConnectivityTest(provider: OracleProviderConfig): Promi
       },
     },
   );
-  if (ok) return { ok: true };
+  if (ok) return { ok: true, via: result.via };
   if (result.err) return { ok: false, msg: result.err };
   // 无增量也无错误 → 上游已判定（err 应非空；双保险）
   return { ok: false, msg: result.err || '无响应' };
