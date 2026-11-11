@@ -1,6 +1,7 @@
 // QA（确定性）：全绘档人形四相步态 —— mock ctx 重放 drawPerson 生产代码
 // 断言：①行进 16 帧周期恰 4 个不同姿态 ②周期 16（t 与 t+16 帧完全一致）③站立稳定 ④三族系（人/僵尸/哥布林）全走四相
-import { drawPerson } from '../src/lib/game/sprites.ts';
+// 注意：导入路径禁带 .ts 后缀——next build 全量类型检查会因 allowImportingTsExtensions 未开而失败（#77 CI 教训）
+import { drawPerson } from '../src/lib/game/sprites';
 import { R } from '../src/lib/game/types';
 import type { Unit } from '../src/lib/game/types';
 

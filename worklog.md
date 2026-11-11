@@ -6609,6 +6609,7 @@ Stage Summary:
 
 **QA（确定性 mock ctx 重放 13/13 全绿 + 实机抽检）**: scripts/qa-gait-sim.ts 直调生产 drawPerson 逐 rect 记录——①人/僵尸/哥布林三族系行进 16 帧窗口恰 **4 态唯一** ✓ ②周期 16（t≡t+16 逐 rect 全等）✓ ③站立稳定（同呼吸相全等）✓ ④站立≠行进 ✓ ⑤步幅错位实证（px-2 后蹬/px+1 前跨在集合）✓；实机 agent-browser（3000 进世界→跳过教程→冻结拨帧）：行进/站立画布哈希分离 ✓、截图目检精灵无破损 ✓；tsc 零错误 + eslint 零告警 ✓。
 **QA 方法论沉淀**: 线上画布区域哈希会被昼夜/云层等环境动画污染（周期等式必失效）——渲染层动画的确定性断言用「mock ctx 重放生产绘制函数逐 rect 记录」替代实机采样，qa-gait-sim.ts 沉淀为表现线可复用 QA 工具。
+**轮内 CI 事故与自愈（D6）**: 首推 34c6846 Pages 部署 failure——qa-gait-sim.ts 导入带 `.ts` 后缀，dev/本地 tsc（仅查 src/**）不报，`next build` 全量类型检查因 allowImportingTsExtensions 未开而炸（scripts/ 已有 .ts 文件均无后缀导入故历史未踩）。修复：去后缀（bun 运行时自动解析）+ 脚本头注释教训 + 本地 `bash .zscripts/export-static.sh /pixel-world-box` 预验证通过后修复推送。**沉淀：新增 scripts/*.ts 文件导入一律禁带 .ts 后缀，推送前跑 export-static 预验证。**
 **推送**: sprites.ts + scripts/qa-gait.js + scripts/qa-gait-sim.ts + worklog 本条 → push-web.sh。
 **版本节奏**: 不升位（D5 本体首笔，攒升位清单）。
 **评估：D5 手感与表现——最常用人形八种族（全绘档）行走从 2 相升 4 相步态（步幅错位+双峰起伏+钟摆摆臂），「多帧动画本体」缺口首刀落地、与精绘档节奏标准拉齐；#76 最大差距①持续推进。**
