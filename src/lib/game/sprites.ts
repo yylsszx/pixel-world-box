@@ -395,9 +395,10 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
   const goblin = race === R.GOBLIN;
   const zombie = race === R.ZOMBIE;
   const isMoving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
-  // 步态相位：移动中每 4 帧交替（WorldBox 小人韵律）；静止时呼吸相位（慢一档）
-  const step = isMoving ? ((t >> 2) & 1) : 0;
-  const bob = isMoving && step === 1 ? 1 : 0;
+  // 步态相位：四相步态（全绘档对齐精绘档 drawPersonFine 同拍标准——支撑/前跨/收腿/过渡）
+  // 节奏：ph0 右脚支撑 → ph1 右脚前跨（步幅错位）→ ph2 左脚支撑过渡 → ph3 左脚后蹬；bob 双峰起伏
+  const ph = isMoving ? ((t >> 2) & 3) : -1;
+  const bob = isMoving && (ph === 1 || ph === 3) ? 1 : 0;
   const breath = !isMoving && ((t >> 4) & 1) === 1 ? 1 : 0;
   const y = py - bob - breath;
 
@@ -517,23 +518,41 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
     }
     // 盾牌副手层（巨盾）
     paintShield(ctx, u, px, gy, f, t, true);
-    // 双腿跨步
+    // 双腿跨步（四相步态：支撑/前跨/收腿/过渡——步幅错位拉开轮廓，站立立正）
     ctx.fillStyle = rgb(pants);
-    if (step === 1) {
+    if (isMoving && ph === 1) {
+      ctx.fillRect(px - 1, gy + 1, 1, 2);
+      ctx.fillRect(px + 2, gy + 1, 1, 1);
+    } else if (isMoving && ph === 2) {
       ctx.fillRect(px - 1, gy + 1, 1, 2);
       ctx.fillRect(px + 1, gy + 1, 1, 1);
-    } else {
+    } else if (isMoving && ph === 3) {
+      ctx.fillRect(px - 2, gy + 1, 1, 1);
+      ctx.fillRect(px + 1, gy + 1, 1, 2);
+    } else if (isMoving) {
       ctx.fillRect(px - 1, gy + 1, 1, 1);
       ctx.fillRect(px + 1, gy + 1, 1, 2);
+    } else {
+      ctx.fillRect(px - 1, gy + 1, 1, 2);
+      ctx.fillRect(px + 1, gy + 1, 1, 2);
     }
-    // 装备靴（巨躯）：覆盖脚位随步态
+    // 装备靴（巨躯）：覆盖脚位随四相步态（脚点跟随腿位）
     if (u.bts) {
       ctx.fillStyle = BOOTS_LOOK[u.bts] ?? '#3a2c1c';
-      if (step === 1) {
+      if (isMoving && ph === 1) {
+        ctx.fillRect(px - 1, gy + 2, 1, 1);
+        ctx.fillRect(px + 2, gy + 1, 1, 1);
+      } else if (isMoving && ph === 2) {
         ctx.fillRect(px - 1, gy + 2, 1, 1);
         ctx.fillRect(px + 1, gy + 1, 1, 1);
-      } else {
+      } else if (isMoving && ph === 3) {
+        ctx.fillRect(px - 2, gy + 1, 1, 1);
+        ctx.fillRect(px + 1, gy + 2, 1, 1);
+      } else if (isMoving) {
         ctx.fillRect(px - 1, gy + 1, 1, 1);
+        ctx.fillRect(px + 1, gy + 2, 1, 1);
+      } else {
+        ctx.fillRect(px - 1, gy + 2, 1, 1);
         ctx.fillRect(px + 1, gy + 2, 1, 1);
       }
     }
@@ -582,13 +601,19 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
     ctx.fillRect(px - 1, y + 3, 3, 1);
     // 披风背饰层（身后最先画：披在背上，被躯干/手臂覆盖正面轮廓）
     paintCape(ctx, u, px, hY, f, isMoving, t);
-    // 双腿：交替跨步（一条全长一条收起）
+    // 双腿：四相跨步（支撑/前跨/收腿/过渡——前跨腿错位 1px 拉开步幅）
     ctx.fillStyle = rgb(pants);
     const legH = goblin ? 1 : 2;
     if (isMoving) {
-      if (step === 1) {
+      if (ph === 1) {
+        ctx.fillRect(px - 1, y + 1 + (goblin ? 1 : 0), 1, legH);
+        ctx.fillRect(px + 1, y + 2 + (goblin ? 1 : 0), 1, 1);
+      } else if (ph === 2) {
         ctx.fillRect(px - 1, y + 1 + (goblin ? 1 : 0), 1, legH);
         ctx.fillRect(px, y + 2 + (goblin ? 1 : 0), 1, 1);
+      } else if (ph === 3) {
+        ctx.fillRect(px - 2, y + 2 + (goblin ? 1 : 0), 1, 1);
+        ctx.fillRect(px, y + 1 + (goblin ? 1 : 0), 1, legH);
       } else {
         ctx.fillRect(px - 1, y + 2 + (goblin ? 1 : 0), 1, 1);
         ctx.fillRect(px, y + 1 + (goblin ? 1 : 0), 1, legH);
@@ -597,13 +622,19 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
       ctx.fillRect(px - 1, y + 1 + (goblin ? 1 : 0), 1, legH);
       ctx.fillRect(px, y + 1 + (goblin ? 1 : 0), 1, legH);
     }
-    // 装备靴：覆盖脚位（步态随腿——长腿脚/短腿脚）
+    // 装备靴：覆盖脚位（四相步态脚点跟随腿位——长腿脚/短腿脚/跨步脚）
     if (u.bts) {
       ctx.fillStyle = BOOTS_LOOK[u.bts] ?? '#3a2c1c';
       if (isMoving) {
-        if (step === 1) {
+        if (ph === 1) {
+          ctx.fillRect(px - 1, y + legH + (goblin ? 1 : 0), 1, 1);
+          ctx.fillRect(px + 1, y + 2 + (goblin ? 1 : 0), 1, 1);
+        } else if (ph === 2) {
           ctx.fillRect(px - 1, y + legH + (goblin ? 1 : 0), 1, 1);
           ctx.fillRect(px, y + 2 + (goblin ? 1 : 0), 1, 1);
+        } else if (ph === 3) {
+          ctx.fillRect(px - 2, y + 2 + (goblin ? 1 : 0), 1, 1);
+          ctx.fillRect(px, y + legH + (goblin ? 1 : 0), 1, 1);
         } else {
           ctx.fillRect(px - 1, y + 2 + (goblin ? 1 : 0), 1, 1);
           ctx.fillRect(px, y + legH + (goblin ? 1 : 0), 1, 1);
@@ -631,12 +662,15 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
       ctx.fillRect(px + 2 * f, hY - 3, 1, 2);
       ctx.fillRect(px - 2 * f + (f > 0 ? 1 : 0), hY - 1, 1, 2);
     } else if (isMoving) {
-      if (step === 1) {
+      if (ph === 1) {
         ctx.fillRect(px - 2, hY - 1, 1, 1);
         ctx.fillRect(px + 1, hY, 1, 2);
-      } else {
+      } else if (ph === 3) {
         ctx.fillRect(px - 2, hY, 1, 2);
         ctx.fillRect(px + 1, hY - 1, 1, 1);
+      } else {
+        ctx.fillRect(px - 2, hY - 1, 1, 2);
+        ctx.fillRect(px + 1, hY - 1, 1, 2);
       }
     } else {
       ctx.fillRect(px - 2, hY - 1, 1, 2);
@@ -807,7 +841,7 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
       } else if (zombie) {
         paintRing(ctx, u, px + (f > 0 ? 2 : -2), hY - 2, t);
       } else {
-        const hy = isMoving ? (step === 1 ? hY + 1 : hY - 1) : hY;
+        const hy = isMoving ? (ph === 1 ? hY + 1 : ph === 3 ? hY - 1 : hY) : hY;
         paintRing(ctx, u, px + 1, hy, t);
       }
     }
