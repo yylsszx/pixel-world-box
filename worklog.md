@@ -6526,3 +6526,4 @@ Stage Summary:
 **推送**: engine.ts + CivPanel.tsx + version.ts + oracle-server/server.mjs + oracle-server/README.md + scripts/qa-mock-brain.mjs + worklog 本条 → push-web.sh。
 **版本节奏**: **升位 v0.71-preview**（外脑接入修复 + 三通道 + 中继端点批次；CHANGELOG 三条玩家视角要点）。
 **评估**: D2 文明模拟深度——「每文明可接不同大模型」从「需要自托管 Next 才能用」变为「官网开箱即用」（OpenAI/Anthropic 官方端点浏览器直连零后端可用 + oracle-server 中继全厂商可用），外脑智能体的可用性鸿沟填平；D6 稳定健壮同收（错误原因全部上浮面板可见，3 连败回落本地兜底保持——中枢永不当机铁律不破）。
+**线上实测补记（v0.71 部署后）**: 标题屏 v0.71 徽章 ✓；进世界立国 Sunhold core 挂载 ✓；线上同源 POST /api/civ-brain 真实 405 → 自动降级浏览器直连分支真实触发 ✓；HTTP mock 端点被 HTTPS 页面 mixed-content 安全策略拦截 → 错误文案精确上浮面板（「[live-e2e] 直连网络失败（Failed to fetch）——端点须支持 CORS，否则请填「中继后端」——本地判断接管」）——错误上浮设计在真实拦截场景验证成立；直连 HTTPS 端点（OpenAI/Anthropic 官方）无 mixed-content 问题，代码路径已在本地 3000 全绿（R3/R4）。QA 沉淀：HTTPS 线上页面无法 fetch 本地 HTTP mock（安全策略）——线上直连验证须用 HTTPS 测试端点或信任本地 3000 的同路径验证。
