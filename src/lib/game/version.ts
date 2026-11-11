@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.70-preview';
+export const GAME_VERSION = 'v0.71-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.71-preview',
+    date: '2026-11-11',
+    items: [
+      '文明外脑 API 接入修复：之前在官网（静态托管）为文明接入 API 会一直报错——因为浏览器只会找本站后端而官网没有；现在递交路由升级为三通道：中继后端（新字段，填你的 oracle-server 地址）→ 本站后端 → 浏览器直连（OpenAI/Anthropic 官方端点免后端直接可用）',
+      '失败原因可见：不再笼统「网络/模型不可达」——HTTP 状态码、厂商报错原文、该填中继还是直连的指引直接显示在面板「外脑：」行',
+      'oracle-server 中继后端新增 /api/civ-brain 端点：文明中枢决策可经它转发到任意 openai 兼容/anthropic 厂商（与神谕中继同一服务，CORS 已放行）',
+    ],
+  },
   {
     ver: 'v0.70-preview',
     date: '2026-11-10',

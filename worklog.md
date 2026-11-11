@@ -6505,3 +6505,24 @@ Stage Summary:
 **任务书**: v3→v4 自修订已执行（先建后删 cron）：轮前协议新增「开工先 fetch origin、本地落后先合流再动工」；四件套齐落移入历史闭环注记；版本注记 v0.65→v0.70-preview 实况修正；深度评估改 #73 触发。不可变项原样保留。
 **推送**: worklog 本条（纯记账轮，零代码改动）→ push-web.sh。
 **评估**: D6 稳定健壮——「功能消失」事故全链路闭环（回退→恢复→部署→线上复验），用户疑虑以三层证据链（推送/部署/运行）实证消解；D2 文明模拟深度——四件套（含文明中枢核心）在线上 v0.70 复验全部在场，「每国独立决策智能体」的差异化优势经实战部署确认站得住。
+
+## 2026-11-11 #73（用户插入指令）：外脑 API「一直报错」根因修复——递交路由三通道化（中继后端→本站→浏览器直连）+ oracle-server 接上 /api/civ-brain + 错误原因上浮 + 升位 v0.71
+
+**用户指令（最高优先）**: 「为何接入api一直保错，另外接上后端」——文明中枢核心外脑 API 接入持续报错 + 要求接上后端。
+
+**根因（一层定位即中）**: 引擎 dispatchCivBrain 原实现只 POST 同源相对路径 `/api/civ-brain`——线上 GitHub Pages 纯静态托管没有该路由（POST → 405），任何厂商配置每期递交必失败，3 连败自动回落本地（用户看到「一直报错」）。且旧 fetch 用绝对根路径 `/api/civ-brain`，在子路径部署（/pixel-world-box/）下还会打到 github.io 根而非应用子路径。神谕聊天线早有三通道路由（direct-client v6：中继→本站→浏览器直连），civ-brain 是 #69 后加的没接进该体系。
+
+**改动（三文件 + mock 工具，升位 v0.71-preview）**:
+1. **engine.ts dispatchCivBrain 三通道化**: ① 显式中继后端（cfg.relayUrl → 归一化拼 /api/civ-brain 绝对 URL，XTransformPort 内网形式原样直通）；② 同源后端改相对路径 `api/civ-brain`（dev 与 Pages 子路径均解析到正确位置），404/405（静态托管特征）自动降级 ③；③ 浏览器直连厂商——openai 兼容 /chat/completions（Bearer 可选，ollama 等本地端点免鉴权）+ anthropic /v1/messages（x-api-key + anthropic-version + anthropic-dangerous-direct-browser-access 官方放行头三头齐带、system 顶层抽出、max_tokens 512）。新增 civBrainMessages（提示词与 route.ts/oracle-server 三端同一份）+ extractBrainJson（括号配平容忍围栏）。**错误具体化上浮**：HTTP 状态码 + 响应体 error 原文 + 修复指引（「请填中继后端」/「端点须支持 CORS」）直写 core.lastApiNote 显示在面板「外脑：」行——终结笼统「网络/模型不可达」。
+2. **oracle-server/server.mjs 新增 POST /api/civ-brain**: 非流式决策中继——收 {provider, civ, persona} → 复用既有 streamOpenAI/streamAnthropic/streamBuiltin（send 收集器收全量文本）→ extractCivJson → 六维白名单过滤 → {personaPatch, note}；GET 405；CORS 已全放行；「接上后端」的字面兑现——部署 oracle-server（Sealos 容器）后线上静态站的外脑递交经它转发到任意厂商。README 端点表同步。
+3. **CivPanel 表单增强**: 新增「中继后端」输入框（relayUrl，与神谕面板同概念）；apiKey 改为两种 kind 均显示（openai 标注「可选，官方端点需填」）；说明文案改三通道路由描述。
+4. QA 工具 scripts/qa-mock-brain.mjs（openai/anthropic 双形态 mock 厂商：SSE 供中继转发 + 非流式供浏览器直连，CORS 放行，请求头/体全量记录）。
+
+**QA（六回合全绿，agent-browser 实测）**: R0 oracle-server 新端点规格：openai SSE 转发回执 {personaPatch:{war:0.21,farm:0.88},note:MOCK} ✓ anthropic 转发 ✓ 非法 kind 400 ✓ GET 405 ✓；R1 通道②同源后端：dispatch → 本站路由 → mock 8901 → persona war .33→.21 farm .64→.88 + notes[0][外脑] ✓；R2 通道①中继：relayUrl=127.0.0.1:8787 → oracle-server → anthropic mock 8902（x-api-key + anthropic-version 头透传，请求记录实证提示词三端一致）→ 回执应用 ✓；R3 通道③降级（覆写 fetch 模拟线上 405）：自动降级直连 mock（Bearer 头 + stream:false 非流式）→ 回执应用——**线上静态托管场景实测走通** ✓；R4 anthropic 直连三头齐带（x-api-key/anthropic-version/dangerous-direct-browser-access:true，请求记录实证）✓；R5 错误上浮：坏端口 → 面板显示「[dead-model] HTTP 502：[dead-model] 请求失败：fetch failed——本地判断接管」✓；R6 UI 端到端：真实表单填 baseUrl/model/relayUrl → 保存 → localStorage cfg 带 relayUrl → 模式切 api → dispatch 经中继走通 → 「API 外脑」徽标 + 外脑状态行显示 ✓。console 零 error；tsc 零错误；eslint 零告警；node --check 双 mjs 通过。位等不受影响（改动全部在 fetch 异步分支与 UI 层，tick 内本地漂移路径零改动、零新增 rng——civCoreTick 本地分支未动）。
+
+**本轮事故注记（D6）**: 开工即发现沙箱快照回退到 2c556d0（第 45 轮时代，#70 同形态——本地 worklog/四件套全部消失），v4 轮前协议 fetch 六连重试拿到 0f2955d 后 reset --hard 恢复（本地仅权限位脏改，零丢失）——**轮前 fetch 协议首次实战生效**。另：bunx 会污染 node_modules（触发依赖重装 + sharp gyp 失败），恢复用 bun install --ignore-scripts；项目内验证一律 ./node_modules/.bin/tsc|eslint。
+
+**遗留（下轮优先池）**: ① #73 深度评估触发（距 #56 已 17 轮 ≥12，四件套+外脑三通道落地后 D1-D6 重打分校准）② #69 遗留继承（中枢二笔：API 决策直接驱动军团/外交行动指令；耕地肥沃度分层；海上领域扩展）③ #67 遗留继承（meta 行级化/BIDX 门控/20× 收口/滑杆可见性）④ oracle-server 的 Dockerfile/部署链是否要带 civ-brain 端点版本号提示（v1.2→v1.3 候选）。
+**推送**: engine.ts + CivPanel.tsx + version.ts + oracle-server/server.mjs + oracle-server/README.md + scripts/qa-mock-brain.mjs + worklog 本条 → push-web.sh。
+**版本节奏**: **升位 v0.71-preview**（外脑接入修复 + 三通道 + 中继端点批次；CHANGELOG 三条玩家视角要点）。
+**评估**: D2 文明模拟深度——「每文明可接不同大模型」从「需要自托管 Next 才能用」变为「官网开箱即用」（OpenAI/Anthropic 官方端点浏览器直连零后端可用 + oracle-server 中继全厂商可用），外脑智能体的可用性鸿沟填平；D6 稳定健壮同收（错误原因全部上浮面板可见，3 连败回落本地兜底保持——中枢永不当机铁律不破）。

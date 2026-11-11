@@ -2391,37 +2391,151 @@ export class GameEngine {
     if (mode === 'local') c.core.apiBusy = 0;
   }
 
-  /** API 模式：递交文明国情给所接大模型（fire-and-forget——回执白名单校验后应用于下期） */
+  /** 中枢决策提示词（与 /api/civ-brain 路由、oracle-server 三端同一份心智） */
+  private civBrainMessages(civBrief: Record<string, unknown>, persona: CivPersona): { role: string; content: string }[] {
+    const sys = [
+      '你是像素沙盒世界中一个文明的「中枢核心」——这个文明唯一的超级决策智能体。',
+      '你以王国的整体存续与繁荣为唯一目标，基于国情与禀性做出本年度国策决断。',
+      '你只输出一个 JSON 对象，禁止任何其它文本、markdown 代码块或解释。格式：',
+      '{"personaPatch":{"war":0.55,"farm":0.7},"note":"一句话决策纪要"}',
+      '规则：',
+      '1. personaPatch 每维都是 0-1 数字（war 好战 / build 筑城 / farm 重农 / trade 通商 / sea 向海 / faith 虔信），只需给出想调整的维度，每维相对当前值变动幅度 ≤0.2。',
+      '2. note：不超过 40 字的中文决策纪要（以该王国的口吻，如「粮仓将罄，举国恳田，暂休刀兵」）。',
+      `3. 当前人格六维：${JSON.stringify(persona)}`,
+      `4. 本年度国情速报：${JSON.stringify(civBrief)}`,
+    ].join('\n');
+    return [
+      { role: 'assistant', content: sys },
+      { role: 'user', content: '请做出本年度的中枢决策（只输出 JSON）。' },
+    ];
+  }
+
+  /** 从模型输出提取首个 JSON 对象（容忍代码块围栏与前后杂文；括号配平） */
+  private extractBrainJson(text: string): Record<string, unknown> | null {
+    const s = text.indexOf('{');
+    if (s < 0) return null;
+    let depth = 0;
+    for (let i = s; i < text.length; i++) {
+      if (text[i] === '{') depth++;
+      else if (text[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          try { return JSON.parse(text.slice(s, i + 1)) as Record<string, unknown>; } catch { return null; }
+        }
+      }
+    }
+    return null;
+  }
+
+  /** API 模式：递交文明国情给所接大模型（fire-and-forget——回执白名单校验后应用于下期）。
+   *  三通道路由（与神谕线 direct-client v6 同思想，适配静态托管）：
+   *  ① 显式中继后端（cfg.relayUrl → oracle-server /api/civ-brain，CORS 已放行）；
+   *  ② 同源后端（next dev / 自托管）；线上纯静态托管 404/405 时降级 ③；
+   *  ③ 浏览器直连厂商端点（openai 兼容 / anthropic 官方支持 CORS 直连——失败原因上浮面板）。 */
   dispatchCivBrain(c: Civ, cfgStr: string): boolean {
     const core = c.core!;
     if ((core.apiBusy ?? 0) > 0) return true; // 上期回执未到：本期静候（不重复派发）
-    let cfg: unknown;
-    try { cfg = JSON.parse(cfgStr); } catch { this.civBrainFail(c, 'API 配置 JSON 非法'); return false; }
-    const body = {
-      provider: cfg,
-      civ: { name: c.name, race: RACES[c.race]?.name ?? '?', pop: c.pop, gold: c.gold, food: c.food, knowledge: c.knowledge, stability: c.stability, militarism: c.militarism, atWar: this.civAtWar(c.id), farms: this.farmTileCountOf(c), gov: c.gov },
-      persona: core.persona,
-    };
+    let cfg: { kind?: unknown; baseUrl?: unknown; model?: unknown; apiKey?: unknown; relayUrl?: unknown };
+    try { cfg = JSON.parse(cfgStr) as typeof cfg; } catch { this.civBrainFail(c, 'API 配置 JSON 非法'); return false; }
+    const kind = String(cfg?.kind ?? '');
+    const label = String(cfg?.model ?? '外脑');
+    const civBrief: Record<string, unknown> = { name: c.name, race: RACES[c.race]?.name ?? '?', pop: c.pop, gold: c.gold, food: c.food, knowledge: c.knowledge, stability: c.stability, militarism: c.militarism, atWar: this.civAtWar(c.id), farms: this.farmTileCountOf(c), gov: c.gov };
+    const body = { provider: cfg, civ: civBrief, persona: core.persona };
     core.apiBusy = (core.apiBusy ?? 0) + 1;
-    fetch('/api/civ-brain', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        core.apiBusy = Math.max(0, (core.apiBusy ?? 1) - 1);
-        if (!j || typeof j !== 'object') { this.civBrainFail(c, '模型响应非 JSON'); return; }
-        const patch = (j as { personaPatch?: Record<string, unknown> }).personaPatch ?? {};
-        const dims: (keyof CivPersona)[] = ['war', 'build', 'farm', 'trade', 'sea', 'faith'];
-        for (const d of dims) {
-          const v = patch[d];
-          if (typeof v === 'number' && Number.isFinite(v)) core.persona[d] = Math.max(0.05, Math.min(0.95, v));
+    const done = () => { core.apiBusy = Math.max(0, (core.apiBusy ?? 1) - 1); };
+    const fail = (why: string) => { done(); this.civBrainFail(c, why); };
+    const applyReceipt = (j: unknown) => {
+      done();
+      if (!j || typeof j !== 'object') { this.civBrainFail(c, `[${label}] 回执非 JSON`); return; }
+      const patch = (j as { personaPatch?: Record<string, unknown> }).personaPatch ?? {};
+      const dims: (keyof CivPersona)[] = ['war', 'build', 'farm', 'trade', 'sea', 'faith'];
+      for (const d of dims) {
+        const v = patch[d];
+        if (typeof v === 'number' && Number.isFinite(v)) core.persona[d] = Math.max(0.05, Math.min(0.95, v));
+      }
+      core.apiFails = 0;
+      const raw = typeof (j as { note?: unknown }).note === 'string' ? String((j as { note: string }).note) : '';
+      core.lastApiNote = (raw || `「${c.name}」外脑决策更新`).slice(0, 80);
+      core.notes.unshift(`[外脑] ${core.lastApiNote}`.slice(0, 96));
+      if (core.notes.length > 5) core.notes.pop();
+      core.gen++;
+    };
+    const errSuffix = async (r: Response): Promise<string> => {
+      try {
+        const j = await r.json() as { error?: unknown };
+        return typeof j?.error === 'string' ? `：${j.error.slice(0, 60)}` : '';
+      } catch { return ''; }
+    };
+    // —— 通道 ③：浏览器直连厂商（openai 兼容 /chat/completions；anthropic /v1/messages + 官方放行直连头） ——
+    const directCall = async (): Promise<void> => {
+      if (kind !== 'openai' && kind !== 'anthropic') {
+        fail(`[${label}] 本站纯静态托管无后端，builtin 需服务端——请在面板填「中继后端」地址`);
+        return;
+      }
+      const baseUrl = typeof cfg?.baseUrl === 'string' ? cfg.baseUrl : '';
+      if (!baseUrl.trim()) { fail(`[${label}] 缺少 baseUrl`); return; }
+      const messages = this.civBrainMessages(civBrief, core.persona);
+      const base = baseUrl.trim().replace(/\/+$/, '');
+      try {
+        let text: string | null = null;
+        if (kind === 'openai') {
+          const url = base.endsWith('/chat/completions') ? base : `${base}/chat/completions`;
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+          const key = typeof cfg?.apiKey === 'string' ? cfg.apiKey.trim() : '';
+          if (key) headers.Authorization = `Bearer ${key}`; // 本地兼容端点（ollama 等）可无鉴权
+          const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ model: cfg?.model, messages, stream: false }) });
+          if (!r.ok) { fail(`[${label}] 直连 HTTP ${r.status}${await errSuffix(r)}`); return; }
+          const j = await r.json().catch(() => null) as { choices?: { message?: { content?: unknown } }[] } | null;
+          const t = j?.choices?.[0]?.message?.content;
+          if (typeof t !== 'string') { fail(`[${label}] 直连回执缺少 choices[0].message.content`); return; }
+          text = t;
+        } else {
+          const url = base.endsWith('/v1/messages') ? base : base.endsWith('/v1') ? `${base}/messages` : `${base}/v1/messages`;
+          const r = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': typeof cfg?.apiKey === 'string' ? cfg.apiKey : '',
+              'anthropic-version': '2023-06-01',
+              'anthropic-dangerous-direct-browser-access': 'true', // anthropic 官方放行的浏览器直连头
+            },
+            body: JSON.stringify({ model: cfg?.model, max_tokens: 512, system: messages[0]!.content, messages: messages.slice(1) }),
+          });
+          if (!r.ok) { fail(`[${label}] 直连 HTTP ${r.status}${await errSuffix(r)}`); return; }
+          const j = await r.json().catch(() => null) as { content?: { text?: unknown }[] } | null;
+          const t = j?.content?.[0]?.text;
+          if (typeof t !== 'string') { fail(`[${label}] 直连回执缺少 content[0].text`); return; }
+          text = t;
         }
-        core.apiFails = 0;
-        const raw = typeof (j as { note?: unknown }).note === 'string' ? String((j as { note: string }).note) : '';
-        core.lastApiNote = (raw || `「${c.name}」外脑决策更新`).slice(0, 80);
-        core.notes.unshift(`[外脑] ${core.lastApiNote}`.slice(0, 96));
-        if (core.notes.length > 5) core.notes.pop();
-        core.gen++;
+        const obj = this.extractBrainJson(text);
+        if (!obj) { fail(`[${label}] 外脑未输出可解析的 JSON 决策`); return; }
+        applyReceipt({ personaPatch: obj.personaPatch, note: obj.note });
+      } catch (e) {
+        fail(`[${label}] 直连网络失败（${e instanceof Error ? e.message : '不可达'}）——端点须支持 CORS，否则请填「中继后端」`);
+      }
+    };
+    // —— 通道 ①②：显式中继后端（绝对 URL）/ 同源后端（相对路径——Pages 子路径部署下也打到正确位置） ——
+    const relay = typeof cfg?.relayUrl === 'string' ? cfg.relayUrl.trim() : '';
+    let endpoint = 'api/civ-brain';
+    if (relay) {
+      const base = relay.replace(/\/+$/, '');
+      endpoint = base.includes('XTransformPort=') ? relay : base.endsWith('/api/civ-brain') ? base : `${base}/api/civ-brain`;
+    }
+    fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(async (r) => {
+        if (!r.ok) {
+          const suffix = await errSuffix(r);
+          if (!relay && (r.status === 404 || r.status === 405)) return directCall(); // 静态托管特征 → 降级浏览器直连
+          fail(`[${label}] HTTP ${r.status}${suffix}`);
+          return;
+        }
+        applyReceipt(await r.json().catch(() => null));
       })
-      .catch(() => { core.apiBusy = Math.max(0, (core.apiBusy ?? 1) - 1); this.civBrainFail(c, '网络/模型不可达'); });
+      .catch((e: unknown) => {
+        if (relay) fail(`[${label}] 中继不可达（${e instanceof Error ? e.message : '网络错误'}）——检查中继地址与服务存活`);
+        else if (kind === 'openai' || kind === 'anthropic') return directCall();
+        else fail(`[${label}] 网络不可达`);
+      });
     return true;
   }
 

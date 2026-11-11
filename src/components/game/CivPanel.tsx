@@ -263,10 +263,10 @@ function TechTab({ civ }: { civ: CivInfo }) {
 /** 社会页：政治 / 经济 / 文化 / 军事 四体系 */
 function SocietyTab({ civ }: { civ: CivInfo }) {
   // 【机制④】中枢 API 配置表单（保存在本机 localStorage——每文明可接不同 API；密钥绝不入库）
-  const [apiCfg, setApiCfg] = useState({ kind: 'openai' as 'openai' | 'anthropic', baseUrl: '', model: '', apiKey: '' });
+  const [apiCfg, setApiCfg] = useState({ kind: 'openai' as 'openai' | 'anthropic', baseUrl: '', model: '', apiKey: '', relayUrl: '' });
   const saveApiCfg = () => {
     if (!apiCfg.baseUrl.trim() || !apiCfg.model.trim()) return;
-    localStorage.setItem(`wb_civ_api_${civ.id}`, JSON.stringify({ kind: apiCfg.kind, baseUrl: apiCfg.baseUrl.trim(), model: apiCfg.model.trim(), apiKey: apiCfg.apiKey.trim(), label: apiCfg.model.trim() }));
+    localStorage.setItem(`wb_civ_api_${civ.id}`, JSON.stringify({ kind: apiCfg.kind, baseUrl: apiCfg.baseUrl.trim(), model: apiCfg.model.trim(), apiKey: apiCfg.apiKey.trim(), relayUrl: apiCfg.relayUrl.trim(), label: apiCfg.model.trim() }));
     getEng()?.setCivCoreMode?.(civ.id, 'api');
   };
   const backToLocal = () => {
@@ -453,15 +453,21 @@ function SocietyTab({ civ }: { civ: CivInfo }) {
                     placeholder="模型名（model）"
                     className="min-w-0 flex-1 rounded-sm border border-zinc-700 bg-zinc-800 px-1 py-0.5 text-[8px] text-zinc-200 placeholder:text-zinc-600"
                   />
-                  {apiCfg.kind === 'anthropic' && (
-                    <input
-                      value={apiCfg.apiKey}
-                      onChange={(e) => setApiCfg({ ...apiCfg, apiKey: e.target.value })}
-                      placeholder="apiKey（仅本机存储）"
-                      type="password"
-                      className="min-w-0 flex-1 rounded-sm border border-zinc-700 bg-zinc-800 px-1 py-0.5 text-[8px] text-zinc-200 placeholder:text-zinc-600"
-                    />
-                  )}
+                  <input
+                    value={apiCfg.apiKey}
+                    onChange={(e) => setApiCfg({ ...apiCfg, apiKey: e.target.value })}
+                    placeholder={apiCfg.kind === 'anthropic' ? 'apiKey（仅本机存储）' : 'apiKey（可选，官方端点需填）'}
+                    type="password"
+                    className="min-w-0 flex-1 rounded-sm border border-zinc-700 bg-zinc-800 px-1 py-0.5 text-[8px] text-zinc-200 placeholder:text-zinc-600"
+                  />
+                </div>
+                <div className="flex gap-1">
+                  <input
+                    value={apiCfg.relayUrl}
+                    onChange={(e) => setApiCfg({ ...apiCfg, relayUrl: e.target.value })}
+                    placeholder="中继后端（可选，如 https://xxx.sealos.io——线上静态托管时经它转发）"
+                    className="min-w-0 flex-1 rounded-sm border border-zinc-700 bg-zinc-800 px-1 py-0.5 text-[8px] text-zinc-200 placeholder:text-zinc-600"
+                  />
                 </div>
                 <div className="flex gap-1">
                   <Button
@@ -483,7 +489,7 @@ function SocietyTab({ civ }: { civ: CivInfo }) {
                   )}
                 </div>
                 <p className="text-[7px] leading-relaxed text-zinc-600">
-                  每经济期递交国情一次，回执校验后生效；不可达/超时/非法回执自动本地接管，3 连败切回本地——中枢永不当机。密钥只存本机浏览器。
+                  递交路由：中继后端（若填）→ 本站后端 → 浏览器直连（需端点支持 CORS，如 OpenAI/Anthropic 官方端点；线上静态站自动降级直连）。每经济期递交一次，回执校验后生效；失败原因显示在上方「外脑：」行，3 连败切回本地——中枢永不当机。密钥只存本机浏览器。
                 </p>
               </div>
             </details>
