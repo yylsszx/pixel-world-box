@@ -6682,3 +6682,25 @@ Stage Summary:
 **推送**: worker.js/wrangler.jsonc/deploy-worker.yml/cloudSync.ts/SaveDialog.tsx/direct-client.ts/version.ts + worklog → push-web.sh（双 workflow 触发：Pages + Worker v2.0 部署）。
 **遗留池头部（v5 口径）**: ① **中枢二笔引擎接线**（决策端点消费：stance/build_focus/war/peace/alliance/migration 驱动真实外交建设迁徙）；② 编年史 UI 接线（Chronicle 面板 AI 叙事按钮）；③ Worker deploy CI 实弹复验（KV ensure + AI binding 首次部署）；④ D5 多帧本体第二刀（非人形+攻击/死亡多帧）；⑤ D3 收口不变。
 **评估：D2+D6 双维——文明模拟深度补「云端决策智能」服务端半件（结构化决策白名单协议上线），稳定健壮补「云存档持久层」（移动端丢档风险根除）；差异化优势「三智能体体系+云后端」扩为 WorldBox 完全没有的「开箱即云 AI」形态。**
+
+## 2026-11-12 #81（用户插入轮·手动触发）：中枢二笔引擎接线——云端 decide 决策消费驱动外交/建设/迁徙，后端全家桶 v2.0 第二刀
+
+**选题**: 用户手动指令「直接开始做下一轮（用提示词）」——v5 任务书遗留池头部①（#80 服务端半件已备，本轮引擎侧半件补全）。
+
+**开工核验（本轮新事实）**: ①上轮 CI 双绿实证：Worker deploy run 6 十步骤全绿（Ensure KV 自动建 namespace + wrangler deploy + 探活）+ Pages run 298 绿；②外网 healthz 加 cachebust 查询参数后确认 **v2.0.0 全量在线**（ai:true, kv:true, 十端点）——首次探测返回 v1.0.0 系 WebFetch 通道缓存（QA 方法论新知：workers.dev 探活须带 cachebust 参数防缓存误判）；③遗留池③「Worker deploy CI 实弹复验」就此收官；④cron Job 唯一在位 2943792（v5），2939271 已删（get 残留记录非调度，无僵尸）。
+
+**引擎侧接线（consume/dispatch 双向，~185 行）**:
+- **消费 consumeCoreDecisions**（civCoreTick 开头，local/api 通吃）: one-shot 动作即取即焚——war_target→declareWar('conquest')（laws.wars 闸内）、peace_offer→makePeace(停战 5 期)、alliance_target→formAlliance（双方无盟闸）；持续型各消费点直读；**>8 期过期作废**（过时国策不永久化）；decisions undefined 时零影响——local 文明路径位等安全；
+- **递交 dispatchCoreDecide**（API 模式 gen%4===1 低频，90s 死信自愈时间戳门）: 通道=文明自配 relayUrl > resolveCloudBackend 官方云端中继（动态 import 防 server 侧 localStorage 污染）；provider=文明自配 openai/anthropic 透传，否则 builtin（Workers AI 零配置免费）；decide 端点仅 Worker 有，oracle-server 404 静默跳过不计 apiFails（增强非必需，civ-brain 主链路独立计败）；
+- **回执落地 applyCoreDecisions**: 引擎侧第二道白名单闸（stance 三值/build_focus 七值/三 target 须在 actions 清单/migration 0-7——Worker 已校验后的防御纵深）+ notes「[国策]」前缀滚动；
+- **三简报构造**: decideCivBrief（国情+人格+在任国策——决策连续性）/decideWorldBrief（列国取强 8 国+盟局）/decideActions（enemies 敌对未战/atWar 交战/canAlly 睦邻自由身三清单，未接触不列）；
+- **持续型三消费点**: diplomacyMeet stance 乘数（expand 1.45×/turtle 0.45×，双边均值）；pickBuildingKind build_focus ×3.2（wall→城堡防御意象）+ stance 军事建筑缩放（turtle 塔堡 1.8×）；tryBuildBuilding/openFarmland migration 方向锥（MIGRATION_DIR 八向单位向量，2/3 采样受锥 1/3 自由——锥不饿死建设，continue 不增耗 rng 位等安全）。
+
+**QA（全链实弹）**: tsc 全量零错误 ✓ + eslint 双文件零告警 ✓ + export-static 预验证 4.3M/49 文件 ✓ + agent-browser 实弹四链：①**宣战消费**——注入 war_target=1 → atWar(0,1)=true + 战争表 {reason:'conquest'} + war/casus 双事件（「中枢核心经帷幄运筹，决意兴征讨之师」）+ 即取即焚 ✓ + 战果实证（c0 领土 66→1062 格）；②**结盟消费**——注入 alliance_target → formAlliance 成功 + 「中枢遣使修好——歃血为盟」事件 ✓；③**decide 发起全链**——agent-browser network route 同源 mock（跨域 mock 缺 CORS 头被浏览器拦是首测教训）→ POST /api/agent/decide 实发 ✓ → mock 回执 {stance:'expand',build_focus:'farm',migration:4} 完整落地（gen:37 相位正确）+ decideBusy 自愈归零 ✓；④持续型保留 + 世界 6000+ tick 不崩 ✓。第一次注入 war_target 未生效疑云=快速征服战争（45 格 goal 达成停战）+ 事件流 80 条滚动挤出，与第二次即时验证结论自洽。
+
+**工具链新知（QA 方法论沉淀）**: ①bash/编辑工具输出管道把 `[m` 当 ANSI 转义序列吞掉（MIGRATION_DIR[mig 显示成 MIGRATION_DIRig）——python repr/count 读真实字节才可信；②MultiEdit 部分失败非原子回滚（首个失败前已应用的 edit 保留）——重试时先 python count 校验重复再精准去重。
+
+**版本节奏**: 不升位（v0.72-preview 批次内第二刀；升位候选攒批：编年史 UI 接线/D5 第二刀合并升 v0.73）。
+**遗留池头部更新**: ①编年史 UI 接线（/api/chronicle → Chronicle 面板 AI 叙事按钮——v2.0 端点唯一未接线者）；②用户真机实测中继全链路（decide/civ-brain/云存档三件，大陆可达性观察）；③ D5 多帧本体第二刀（非人形+攻击/死亡多帧）；④ D3 收口不变。
+**推送**: engine.ts + types.ts + worklog 本条 → push-web.sh。
+**评估：D2 文明深度——文明中枢从「人格漂移的观察者」升维为「真实驱动外交/建设/迁徙的决策者」（#69 遗留「API 决策驱动军团/外交」全链闭环），云端 AI 决策首次贯通到引擎行为层，WorldBox 完全没有的「开箱即云 AI 国策」差异化优势成型。**

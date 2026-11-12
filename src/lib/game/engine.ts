@@ -1,5 +1,5 @@
 // ============ WorldBox Replica — Simulation Engine ============
-import type { Army, ArmyState, Building, CasusKind, Civ, CivCore, CivPersona, Cyclone, Directive, DirectiveKind, Effect, EmergentWeapon, FxPrefs, Gene, GroundItem, ItemDef, ItemKind, BloodDecal, CorpseDecal, OverlayMode, RaceDef, RaceId, SaveData, SaveDataV1, SaveDataV2, SoundKind, SpeciesEco, StatsSnapshot, ToastMsg, TriggerCond, TriggerDef, TriggerRow, Unit, WarInfo, WeaponDefense, WeaponDoctrine, WorldEvent, WorldEventKind, WorldLaws, WorldWarState, Alliance, Family } from './types';
+import type { Army, ArmyState, Building, CasusKind, Civ, CivCore, CivCoreDecisions, CivPersona, Cyclone, Directive, DirectiveKind, Effect, EmergentWeapon, FxPrefs, Gene, GroundItem, ItemDef, ItemKind, BloodDecal, CorpseDecal, OverlayMode, RaceDef, RaceId, SaveData, SaveDataV1, SaveDataV2, SoundKind, SpeciesEco, StatsSnapshot, ToastMsg, TriggerCond, TriggerDef, TriggerRow, Unit, WarInfo, WeaponDefense, WeaponDoctrine, WorldEvent, WorldEventKind, WorldLaws, WorldWarState, Alliance, Family } from './types';
 import { T, R, RACES, TRAITS, CIV_RACES, DEFAULT_LAWS, ITEM_DEFS, describeCond, JOBS, JOB_KEY, BUILDING_DEFS, BUILD_KINDS, CAPTURABLE, SLOT_FIELD, SLOT_ORDER, RARITY_META, BEST_BY_SLOT, CASUS_META, RACE_REL_BASE, ALLIANCE_COLORS } from './types';
 import { EVO_KIND_META, applyEmTechMods, describeVis, inventIdea, inventTech, inventTrait, invalidateVisCache, mutateVis, tupleToVis, visFromGene, visToTuple } from './emergence';
 import type { EmModKey, EmTech, EvoKind, EvoNode, IdeaDef, VisGenome } from './emergence';
@@ -62,6 +62,10 @@ function rowToTrigger(row: unknown): TriggerDef {
 /** 河道八方向编码（1-8）：索引 = dirCode - 1 */
 const RIVER_DIRS: [number, number][] = [
   [0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1],
+];
+/** 【中枢二笔】迁徙方向 0-7 单位向量（与 Worker decide 提示词同口径：0=北 y-，2=东 x+，4=南 y+，6=西 x-，奇数对角） */
+const MIGRATION_DIR: ReadonlyArray<readonly [number, number]> = [
+  [0, -1], [0.7071, -0.7071], [1, 0], [0.7071, 0.7071], [0, 1], [-0.7071, 0.7071], [-1, 0], [-0.7071, -0.7071],
 ];
 function encodeRiverDir(dx: number, dy: number): number {
   for (let k = 0; k < 8; k++) {
@@ -2148,6 +2152,19 @@ export class GameEngine {
     // 【机制②】农田改道开垦（不再走建筑选址）；【机制③】海上要塞独立水域选址（数量克制）
     if (kind === BUILD_KINDS.FARM) return this.openFarmland(civ);
     if (kind === BUILD_KINDS.SEA_FORT) return this.buildSeaFort(civ);
+    // 【中枢二笔】迁徙方向锥：中枢钦定 migration 方向的选址偏向（2/3 采样受锥、1/3 自由——领土全背向时不饿死建设；
+    // continue 不增耗 rng，local 无国策零影响——位等安全）
+    const mig = civ.core?.decisions?.migration;
+    const coneFilter = (x: number, y: number, attempt: number): boolean => {
+      if (mig == null || civ.capital < 0 || attempt % 3 === 2) return true;
+      const dx = x - this.tileX(civ.capital);
+      const dy = y - this.tileY(civ.capital);
+      const d2 = dx * dx + dy * dy;
+      if (d2 <= 4) return true; // 贴都格不滤（怎么选都在都旁）
+      const inv = 1 / Math.sqrt(d2);
+      const dir = MIGRATION_DIR[mig & 7];
+      return dx * inv * dir[0] + dy * inv * dir[1] >= 0; // 背向钦定方向的采样点弃置
+    };
     const needWater = kind === BUILD_KINDS.PORT || kind === BUILD_KINDS.FISHERY;
     const spacing = kind === BUILD_KINDS.FISHERY ? 2 : 3;
     for (let attempt = 0; attempt < 24; attempt++) {
@@ -2157,6 +2174,7 @@ export class GameEngine {
       if (!buildable(this.terrain[i]) || this.building[i] > 0) continue;
       const x = i % W;
       const y = (i / W) | 0;
+      if (!coneFilter(x, y, attempt)) continue; // 【中枢二笔】迁徙方向锥
       if (needWater) {
         // 港口：周边 2 格内须有海面
         let nearSea = false;
@@ -2201,12 +2219,24 @@ export class GameEngine {
   }
 
   /** AI 垦田选址：领土采样 24 次择草地空地（文明恳田入口——tryBuildBuilding(FARM) 改道于此） */
+  /** 【中枢二笔】迁徙方向锥同步生效（恳田偏向同建筑选址：2/3 采样受锥 1/3 自由，位等安全） */
   openFarmland(civ: Civ): boolean {
+    const mig = civ.core?.decisions?.migration;
     for (let attempt = 0; attempt < 24; attempt++) {
       if (civ.tiles.length === 0) return false;
       const i = civ.tiles[Math.floor(this.rng() * civ.tiles.length)];
       if (this.owner[i] !== civ.id) continue;
       if (this.terrain[i] !== T.GRASS || this.building[i] > 0 || this.farmland[i] > 0) continue;
+      if (mig != null && civ.capital >= 0 && attempt % 3 !== 2) {
+        const dx = (i % W) - this.tileX(civ.capital);
+        const dy = ((i / W) | 0) - this.tileY(civ.capital);
+        const d2 = dx * dx + dy * dy;
+        if (d2 > 4) {
+          const inv = 1 / Math.sqrt(d2);
+          const dir = MIGRATION_DIR[mig & 7];
+          if (dx * inv * dir[0] + dy * inv * dir[1] < 0) continue;
+        }
+      }
       if (this.openFarmlandAt(i, civ.id)) return true;
     }
     return false;
@@ -2339,12 +2369,17 @@ export class GameEngine {
   civCoreTick(c: Civ) {
     const core = c.core;
     if (!core) return;
+    // 【中枢二笔】结构化国政消费（local/api 通吃：上期云端回执的 one-shot 动作本期刊落）
+    this.consumeCoreDecisions(c);
     const per = core.persona;
     const push = (note: string) => { core.notes.unshift(note); if (core.notes.length > 5) core.notes.pop(); };
     // —— API 模式：每期向所接大模型递交国情（fire-and-forget 不阻塞 tick；pending 期交给 API，失败回退本地）——
     if (core.mode === 'api') {
       const cfgStr = typeof localStorage !== 'undefined' ? localStorage.getItem(`wb_civ_api_${c.id}`) : null;
       if (cfgStr) {
+        // 【中枢二笔】结构化国政递交（低频：每 4 个经济期一次；死信 90s 自愈；云端中继 builtin 零配置）
+        const busyAt = core.decideBusy ?? 0;
+        if (core.gen % 4 === 1 && Date.now() - busyAt > 90_000) this.dispatchCoreDecide(c, cfgStr);
         if (this.dispatchCivBrain(c, cfgStr)) return; // 本期已外接——人格以 API 回执为准
       } else {
         this.civBrainFail(c, '未配置 API（面板「中枢核心」段可配置）');
@@ -2548,6 +2583,135 @@ export class GameEngine {
     if (core.apiFails >= 3) { core.mode = 'local'; core.apiFails = 0; core.lastApiNote = `${why}——连续失败回落本地模式`; }
   }
 
+  // ---------------- 【中枢二笔】结构化国政（云端 decide 端点 ↔ 引擎消费） ----------------
+
+  /** 结构化国政消费：one-shot 动作（宣战/议和/结盟）即取即焚，持续型（stance/build_focus/migration）由各消费点直读。
+   *  过期作废（> 8 期）：过时国策不永久化。所有动作走引擎公共入口（declareWar/makePeace/formAlliance）零旁路。 */
+  consumeCoreDecisions(c: Civ) {
+    const core = c.core!;
+    const d = core.decisions;
+    if (!d) return; // local 模式无云端回执：零影响（位等安全——本地文明路径与改动前逐字节一致）
+    if (core.gen - d.gen > 8) { core.decisions = undefined; return; }
+    if (d.war_target != null) {
+      const t = this.civs[d.war_target];
+      if (this.laws.wars && t?.alive && t.pop > 0 && !this.atWar(c.id, t.id)) {
+        const w = this.declareWar(c.id, t.id, 'conquest');
+        if (w) this.addEvent('war', `「${c.name}」中枢核心经帷幄运筹，决意兴征讨之师——向「${t.name}」宣战`, { colorHex: c.colorHex });
+      }
+      d.war_target = null; // 即取即焚（未成也不重试——中枢下期重议）
+    }
+    if (d.peace_offer != null) {
+      const t = this.civs[d.peace_offer];
+      if (t?.alive && this.atWar(c.id, t.id)) {
+        this.makePeace(c.id, t.id, `「${c.name}」中枢权衡再三，主动遣使议和——两国罢兵`, 5);
+      }
+      d.peace_offer = null;
+    }
+    if (d.alliance_target != null) {
+      const t = this.civs[d.alliance_target];
+      if (t?.alive && t.pop > 0 && !this.allianceOf.has(c.id) && !this.allianceOf.has(t.id)) {
+        if (this.formAlliance(c.pop >= t.pop ? c : t, c.pop >= t.pop ? t : c)) {
+          this.addEvent('alliance', `「${c.name}」中枢遣使修好——与「${t.name}」歃血为盟`, { colorHex: c.colorHex });
+        }
+      }
+      d.alliance_target = null;
+    }
+  }
+
+  /** 【中枢二笔】递交结构化国政请求（fire-and-forget 不阻塞 tick）：云端中继 /api/agent/decide。
+   *  通道：文明自配 relayUrl > 官方云端中继（resolveCloudBackend）。decide 端点仅 Worker 有——
+   *  oracle-server/同源 404 属预期，静默跳过不计失败（decide 是增强非必需，civ-brain 主链路独立计败）。
+   *  provider：文明自配 openai/anthropic 透传（中继转发），否则 builtin（Workers AI 零配置免费）。 */
+  dispatchCoreDecide(c: Civ, cfgStr: string): void {
+    const core = c.core!;
+    let cfg: { kind?: unknown; baseUrl?: unknown; model?: unknown; apiKey?: unknown; relayUrl?: unknown } = {};
+    try { cfg = JSON.parse(cfgStr) as typeof cfg; } catch { return; }
+    core.decideBusy = Date.now(); // 在途标记（90s 死信自愈——消费点时间戳兜底，读档后 pending 网络永不复活）
+    const done = () => { core.decideBusy = 0; };
+    const relay = typeof cfg.relayUrl === 'string' ? cfg.relayUrl.trim().replace(/\/+$/, '') : '';
+    const start = (base: string): void => {
+      const provider = cfg.kind === 'openai' || cfg.kind === 'anthropic'
+        ? { kind: cfg.kind, baseUrl: cfg.baseUrl, model: cfg.model, apiKey: cfg.apiKey }
+        : { kind: 'builtin' }; // 缺省 builtin：Worker 映射 Workers AI（llama-3.1-8b）零配置免费
+      const acts = this.decideActions(c);
+      const body = { provider, civ: this.decideCivBrief(c), world: this.decideWorldBrief(c), actions: acts };
+      fetch(`${base}/api/agent/decide`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(20_000) })
+        .then(async (r) => {
+          if (!r.ok) { done(); return; } // 404=非 Worker 中继 / 5xx=上游波动：静默（增强非必需）
+          const j = await r.json().catch(() => null) as { decisions?: unknown; note?: unknown } | null;
+          done();
+          if (!j || typeof j !== 'object' || !j.decisions || typeof j.decisions !== 'object') return;
+          this.applyCoreDecisions(c, j.decisions as Record<string, unknown>, acts, typeof j.note === 'string' ? j.note : '');
+        })
+        .catch(() => done());
+    };
+    if (relay) { start(relay); return; }
+    import('../oracle/direct-client').then((m) => m.resolveCloudBackend())
+      .then((base) => { if (base) start(base); else done(); })
+      .catch(() => done());
+  }
+
+  /** decide 回执落地：引擎侧第二道白名单闸（Worker 已校验——防旧档注入/中间改写，宁可少决断不可错决断） */
+  private applyCoreDecisions(c: Civ, raw: Record<string, unknown>, acts: { enemies: number[]; atWar: number[]; canAlly: number[] }, note: string) {
+    const core = c.core!;
+    const d: CivCoreDecisions = { gen: core.gen };
+    if (raw.stance === 'expand' || raw.stance === 'defend' || raw.stance === 'turtle') d.stance = raw.stance;
+    const FOCI = ['farm', 'house', 'tower', 'harbor', 'market', 'wall', 'none'] as const;
+    const bf = String(raw.build_focus ?? '');
+    if ((FOCI as readonly string[]).includes(bf)) d.build_focus = bf as CivCoreDecisions['build_focus'];
+    const pick = (f: 'war_target' | 'peace_offer' | 'alliance_target', list: number[]): number | null => {
+      const v = raw[f];
+      return typeof v === 'number' && Number.isInteger(v) && v >= 0 && list.includes(v) ? v : null;
+    };
+    const wt = pick('war_target', acts.enemies); if (wt != null) d.war_target = wt;
+    const pt = pick('peace_offer', acts.atWar); if (pt != null) d.peace_offer = pt;
+    const at = pick('alliance_target', acts.canAlly); if (at != null) d.alliance_target = at;
+    if (typeof raw.migration === 'number' && Number.isInteger(raw.migration) && raw.migration >= 0 && raw.migration <= 7) d.migration = raw.migration;
+    core.decisions = d;
+    core.notes.unshift(`[国策] ${note || '中枢经帷幄运筹，颁下本年度国策'}`.slice(0, 96));
+    if (core.notes.length > 5) core.notes.pop();
+  }
+
+  /** decide 入参：国情速报（人格六维 + 在任国策一并呈报——中枢决策有连续性） */
+  private decideCivBrief(c: Civ): Record<string, unknown> {
+    return {
+      name: c.name, race: RACES[c.race]?.name ?? '?', pop: c.pop, gold: c.gold, food: c.food,
+      knowledge: c.knowledge, stability: c.stability, militarism: c.militarism,
+      atWar: this.civAtWar(c.id), farms: this.farmTileCountOf(c), houses: c.houses,
+      tiles: c.tiles.length, gov: c.gov, persona: c.core?.persona,
+      stance: c.core?.decisions?.stance, build_focus: c.core?.decisions?.build_focus,
+    };
+  }
+
+  /** decide 入参：世界形势（列国简表按人口取强 8 国 + 世界盟局） */
+  private decideWorldBrief(c: Civ): Record<string, unknown> {
+    const nations = this.civs.filter((o) => o.alive && o.id !== c.id && o.pop > 0)
+      .sort((a, b) => b.pop - a.pop).slice(0, 8)
+      .map((o) => ({
+        id: o.id, name: o.name, pop: o.pop, tiles: o.tiles.length,
+        rel: Math.round(this.rel.get(pairKey(c.id, o.id)) ?? 0), atWar: this.atWar(c.id, o.id),
+        allied: this.allianceOf.get(o.id) != null,
+      }));
+    return { year: Math.floor(this.tickCount / 100), nations, alliances: this.alliances.length };
+  }
+
+  /** decide 入参：可行动作清单（白名单三清单——宣战/求和/结盟目标的合法值域） */
+  private decideActions(c: Civ): { enemies: number[]; atWar: number[]; canAlly: number[] } {
+    const enemies: number[] = [];
+    const atWar: number[] = [];
+    const canAlly: number[] = [];
+    const myAl = this.allianceOf.has(c.id);
+    for (const o of this.civs) {
+      if (!o.alive || o.id === c.id || o.pop <= 0) continue;
+      if (!this.met.has(pairKey(c.id, o.id))) continue; // 未接触不列（宣战须有名有实）
+      const v = this.rel.get(pairKey(c.id, o.id)) ?? 0;
+      if (v < -20) atWar.push(o.id); // 交战中：求和候选
+      else if (v < 0) enemies.push(o.id); // 敌对未战：宣战候选
+      if (!myAl && !this.allianceOf.has(o.id) && v >= 40) canAlly.push(o.id); // 可结盟：睦邻且双方自由身
+    }
+    return { enemies, atWar, canAlly };
+  }
+
   // ---------------- diplomacy ----------------
   diplomacyMeet(a: number, b: number) {
     const key = pairKey(a, b);
@@ -2564,7 +2728,10 @@ export class GameEngine {
     // 【机制④】中枢核心人格注入：好战国遇好战国，火药味自然浓（双边的战争人格都算数）
     const perA = ca.core?.persona.war ?? 0.5;
     const perB = cb.core?.persona.war ?? 0.5;
-    const warChance = Math.max(0.04, Math.min(0.92, (0.2 + ((ca.militarism ?? 30) + (cb.militarism ?? 30)) / 400 + ((ca.gov === 4 || cb.gov === 4) ? 0.1 : 0) - ((ca.gov === 3 || cb.gov === 3) ? 0.12 : 0) - (raceDiplo - 0.5) * 0.3) * (0.6 + (perA + perB) * 0.4)));
+    // 【中枢二笔】外交姿态缩放：扩张国更易燃战火，闭守国息事宁人（持续型国策；双边取均值）
+    const stanceMul = (s?: string) => (s === 'expand' ? 1.45 : s === 'turtle' ? 0.45 : 1);
+    const sm = (stanceMul(ca.core?.decisions?.stance) + stanceMul(cb.core?.decisions?.stance)) / 2;
+    const warChance = Math.max(0.04, Math.min(0.92, (0.2 + ((ca.militarism ?? 30) + (cb.militarism ?? 30)) / 400 + ((ca.gov === 4 || cb.gov === 4) ? 0.1 : 0) - ((ca.gov === 3 || cb.gov === 3) ? 0.12 : 0) - (raceDiplo - 0.5) * 0.3) * (0.6 + (perA + perB) * 0.4))) * sm;
     if (this.laws.wars && this.rng() < warChance) {
       // 战争必须有名有实：按社会气质/复仇记忆/实力对比挑选开战理由
       const pick = this.pickCasus(ca, cb);
@@ -7659,6 +7826,20 @@ export class GameEngine {
         else if (cd.kind === BUILD_KINDS.TEMPLE) m = 0.4 + per.faith;
         else if (cd.kind === BUILD_KINDS.HOUSE || cd.kind === BUILD_KINDS.LIBRARY) m = 0.4 + per.build;
         cd.w = Math.max(1, Math.round(cd.w * m));
+      }
+    }
+    // ——【中枢二笔】结构化国政加权：建设优先 ×3.2（wall 映射城堡防御意象）；外交姿态缩放军事建筑（闭守国更修防御工事）——
+    const dec = civ.core?.decisions;
+    if (dec) {
+      if (dec.build_focus && dec.build_focus !== 'none') {
+        const FOCUS_KIND: Record<string, number> = { farm: BUILD_KINDS.FARM, house: BUILD_KINDS.HOUSE, tower: BUILD_KINDS.TOWER, harbor: BUILD_KINDS.PORT, market: BUILD_KINDS.MARKET, wall: BUILD_KINDS.CASTLE };
+        const fk = FOCUS_KIND[dec.build_focus];
+        if (fk !== undefined) for (const cd of cands) if (cd.kind === fk) cd.w = Math.max(1, Math.round(cd.w * 3.2));
+      }
+      if (dec.stance === 'turtle' || dec.stance === 'defend') {
+        for (const cd of cands) if (cd.kind === BUILD_KINDS.TOWER || cd.kind === BUILD_KINDS.CASTLE || cd.kind === BUILD_KINDS.BARRACKS) cd.w = Math.max(1, Math.round(cd.w * (dec.stance === 'turtle' ? 1.8 : 1.4)));
+      } else if (dec.stance === 'expand') {
+        for (const cd of cands) if (cd.kind === BUILD_KINDS.BARRACKS) cd.w = Math.max(1, Math.round(cd.w * 1.5));
       }
     }
     // 过滤财富不足的候选

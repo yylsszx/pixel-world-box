@@ -648,6 +648,29 @@ export interface CivCore {
   apiFails?: number;
   /** 最近一次 API 决策纪要（面板展示；本地模式不用） */
   lastApiNote?: string;
+  /** 【中枢二笔】结构化国策（云端 /api/agent/decide 回执，Worker 白名单已校验；
+   *  one-shot 动作即取即焚、持续型保留至过期——旧档无此字段天然兼容） */
+  decisions?: CivCoreDecisions;
+  /** decide 在途时刻（ms 时间戳；超 90s 视为死信自愈清零——读档后 pending 网络永不复活） */
+  decideBusy?: number;
+}
+
+/** 【中枢二笔】结构化国策（与 Worker DECIDE_FIELDS 白名单同构；引擎消费驱动外交/建设/迁徙） */
+export interface CivCoreDecisions {
+  /** 决断时的中枢代数（过期基准：距 core.gen > 8 期自动作废——过时国策不永久化） */
+  gen: number;
+  /** 外交姿态：expand 扩张（易燃战火+兵营）/ defend 防御（修工事）/ turtle 闭守（息事宁人+重防御） */
+  stance?: 'expand' | 'defend' | 'turtle';
+  /** 建设优先：对应建筑 kind 建造权重 ×3.2（wall 映射城堡防御意象） */
+  build_focus?: 'farm' | 'house' | 'tower' | 'harbor' | 'market' | 'wall' | 'none';
+  /** 宣战目标（须在敌对清单内；即取即焚） */
+  war_target?: number | null;
+  /** 求和目标（须在交战清单内；即取即焚） */
+  peace_offer?: number | null;
+  /** 结盟目标（须在可结盟清单内；即取即焚） */
+  alliance_target?: number | null;
+  /** 迁徙方向 0-7（0=北，2=东，4=南，6=西，余对角——建筑/恳田选址方向锥） */
+  migration?: number | null;
 }
 
 export type BuildKind = number; // 0 none, 1 house, 2 capital, 3 tower, 4 farm, 5 barracks, 6 castle, 7 port, 8 library, 9 market, 10 temple, 11 wall
