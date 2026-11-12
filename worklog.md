@@ -6734,3 +6734,5 @@ Stage Summary:
 **#82 补记（CI failure 修复）**: 首推触发的 Worker 部署 run 43226784981 在「Ensure KV」步骤失败——根因：`bunx wrangler`（未钉版本）拉新版输出混入 banner 行致 `jq: parse error`，且 create 分支输出被 grep 吞掉无诊断信息；修复三件：①wrangler 全工作流钉死 4.160.1（杀版本漂移）②KV list 输出先剥 JSON 数组段（banner 容错）③create 失败时打印原始输出前 600 字符（诊断可见）。域名巡检步骤首跑成功——**账号暂无域名**（大陆根治位需用户先注册域名，已入遗留池②）。
 
 **#82 补记二（CI failure 真根因 + v3 根治）**: 第二跑诊断输出立功——真根因是 **wrangler 4.160.x 已不支持 `kv namespace list --json`**（`✘ Unknown argument: json`）：#80 当年 list 分支其实一直静默报错，是 create 分支 grep 32 位 hex 碰巧建库成功救场；如今库已存在 → create 报 already-exists → grep 无 id → 死锁。v3 根治：KV ensure 全改裸 REST API（curl+jq 直连 /accounts → /storage/kv/namespaces 查建，彻底绕开 wrangler CLI 输出格式漂移），wrangler 表格解析兜底；wrangler 仅保留 deploy 一职（输出 URL grep 本就容错）。
+
+**#82 终记（第三跑双绿 + 线上实弹收官）**: KV ensure v3 第三跑全绿——REST API 主通道一次通过（账号 id 解析 → 复用既有 PWB_SAVES namespace → 注入 → wrangler deploy → 探活 Worker live）；Pages 同步双绿。线上终验三层：①Worker /healthz（cachebust）v2.0.0 十端点全量在线（ai:true/kv:true）；②线上站点 v0.73 徽章确认 + 史官按钮部署到位；③**线上史官按钮实弹（沙箱线路≈大陆线路）**——点击 → 云端探测真实超时 → 秒级自动降级本地简史徽章 + 大陆不可达根治指引 note，零卡死零误报——「线路通时零配置自动用上、线路断时优雅降级、根治位自定义域名三步走、随时可测可诊断」四件套全链在线，本轮交付闭环。
