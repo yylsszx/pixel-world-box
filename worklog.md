@@ -6631,3 +6631,28 @@ Stage Summary:
 **版本节奏**: 不升位（基建轮）。
 **遗留池头部更新**: ③ 改为「用户重存纯令牌 → 触发部署 → workers.dev 地址交付 + /healthz 探活 + 游戏内中继接入验证」；① D5 多帧本体（下轮主线不变）② D3 收口不动。
 **评估：D6 稳定健壮——部署链三层故障定位精确到字符级（U+4EE6），防呆检查把用户侧操作错误提前到秒级中文报错，部署基建可观测性加固一轮到位。**
+
+## 2026-11-12 #79（用户插入轮·里程碑）：Cloudflare Worker 首次部署成功——神谕中继上线，三层证据链全绿，交付 workers.dev 地址
+
+**选题**: 用户插入（「好了」=纯令牌重存完成）——遗留池③收官冲刺。
+
+**里程碑**: PWB 首个云端后端上线——神谕/议会/中枢三智能体的公网中继通道打通，游戏从「纯静态+AI 必然离线降级」进入「可接公网 AI 后端」阶段（v0.76 前置架构 ORACLE_V2 落地的最后一块拼图）。
+
+**部署链全程**:
+- workflow_dispatch 触发（run 43200214277）→ **十步骤全绿**：凭证检查（令牌纯净）→ wrangler deploy success → 密钥注入 success → **CI 内探活 success**（Worker live + ok:true 响应体）；
+- **交付地址**: https://pwb-oracle-relay.yeyilin2010.workers.dev （用户子域名 yeyilin2010）；
+- 健康响应：{"ok":true,"service":"pwb-oracle-worker","version":"1.0.0","default_provider":false,"endpoints":["GET /healthz","POST /api/oracle/agent","POST /api/civ-brain"]}。
+
+**三层复验证据链**:
+- ① CI 层（GitHub Actions 美国侧）：探活步骤 200 + ok:true；
+- ② 全球外网层：WebFetch 外部通道直连 200 + ok:true（任意公网可达）；
+- ③ 沙箱层：直连超时 ×3（workers.dev 大陆线路典型不可达——非部署问题，①②已排除）。
+
+**大陆可达性注记（用户须知）**: workers.dev 域名在大陆网络普遍不稳定；用户手机若连不上属网络环境限制非部署失败。游戏本体（GitHub Pages）不依赖 Worker，离线降级机制（神谕离线提示+本地人格接管）保持不变。后续可选升级：自定义域名绑定（需用户有域名并托管 DNS 到 Cloudflare）可根治。
+
+**用法（游戏内）**: 设置 → 厂商接入 → 中继后端填该地址 → 神谕/议会/中枢 API 调用经 Cloudflare 边缘转发（apiKey 不经手前端日志、CORS 全放行）。default_provider:false=服务端默认厂商密钥未注入（可选，用户后续可在 GitHub 追加 ORACLE_OPENAI_API_KEY secret 自动注入）。
+
+**遗留池头部更新**: ③ 云端首部署 ✅ 收官——新增 ③' 「游戏内实测中继全链路（用户手机配 API Key 实测神谕对话）+大陆可达性观察」；① D5 多帧本体（主线不变）② D3 收口不动。
+**推送**: worklog 本条 → push-web.sh。
+**版本节奏**: 不升位（基建里程碑，无游戏本体改动；攒升位清单）。
+**评估：D6 稳定健壮——部署链从「等密钥」到「全绿上线」两轮内闭环，三层证据链+字符级故障定位方法论沉淀，游戏可用性从纯静态升维到带公网 AI 后端（差异化优势「三智能体体系」补全公网形态）。**
