@@ -2432,6 +2432,11 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
         const headX = px + (u.flip ? -hw - 1 : hw);
         wc.fillStyle = hurt ? '#cf3f2e' : lod[1];
         wc.fillRect(headX, by + (h > 2 ? 1 : 0), 1, 1);
+        // 攻击张嘴点（#83：atk 窗口头前 1px 暗点 —— 远景捕食攻击可读性，全物种通用）
+        if ((u.atk ?? 0) > 0) {
+          wc.fillStyle = '#14100c';
+          wc.fillRect(headX + (u.flip ? -1 : 1), by + (h > 2 ? 1 : 0), 1, 1);
+        }
         // P4 脚底暗描边
         wc.fillStyle = 'rgba(20,16,12,0.35)';
         wc.fillRect(bx, py + 1, w, 1);
@@ -2462,11 +2467,11 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
       drawPerson(wc, u, civ && civ.alive ? civ.color : null, fcU);
       break;
     }
-    case 'sheep': drawSheep(wc, u); break;
-    case 'wolf': drawWolf(wc, u); break;
-    case 'snowwolf': drawSnowWolf(wc, u); break;
-    case 'bear': drawBear(wc, u); break;
-    case 'deer': drawDeer(wc, u); break;
+    case 'sheep': drawSheep(wc, u, fcU); break;
+    case 'wolf': drawWolf(wc, u, fcU); break;
+    case 'snowwolf': drawSnowWolf(wc, u, fcU); break;
+    case 'bear': drawBear(wc, u, fcU); break;
+    case 'deer': drawDeer(wc, u, fcU); break;
     case 'penguin': drawPenguin(wc, u, fcU); break;
     case 'camel': drawCamel(wc, u, fcU); break;
     case 'scorpion': drawScorpion(wc, u, fcU); break;

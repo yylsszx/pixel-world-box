@@ -995,50 +995,194 @@ export function drawEmergentCreature(ctx: CanvasRenderingContext2D, u: Unit, vc:
   if (scaled) ctx.restore();
 }
 
-export function drawSheep(ctx: CanvasRenderingContext2D, u: Unit) {
-  const px = u.dpx ?? (u.rx ?? u.x) * 2;
-  const py = u.dpy ?? (u.ry ?? u.y) * 2;
-  const f = u.flip ? -1 : 1;
-  ctx.fillStyle = u.infected ? '#b8e2b4' : '#f2ead8';
-  ctx.fillRect(px - 1, py, 2, 1);
-  ctx.fillStyle = '#575757';
-  ctx.fillRect(px + f, py, 1, 1);
+// ============ 野生动物五件多帧化（D5 表现线第二刀，#83）：全精灵档对齐 #77 同拍标准 ============
+// 节奏统一：四相对角步态 (t>>2)&3（前簇 ph1/3 提起藏进躯干、后簇 ph0/2 提起——与中档 LOD/精绘档同韵律），
+// 推进相 bob 双峰起伏、静息呼吸 >>4 慢拍；攻击窗口 u.atk>0：猎手张嘴露齿/立身挥爪，猎物受惊抬头。
+
+/** 提取公共步态参数：ph/bob/breath + 前后腿簇可见性（对角交替） */
+function quadGait(u: Unit, t: number) {
+  const isMoving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  const ph = isMoving ? ((t >> 2) & 3) : -1;
+  const bob = isMoving && (ph === 1 || ph === 3) ? 1 : 0;
+  const breath = !isMoving && ((t >> 4) & 1) === 1 ? 1 : 0;
+  const showFront = !isMoving || (ph & 1) === 0; // 前簇可见相
+  const showBack = !isMoving || (ph & 1) === 1; // 后簇可见相（与前簇交替）
+  const atk = (u.atk ?? 0) > 0;
+  return { ph, bob, breath, showFront, showBack, atk, moving: isMoving };
 }
 
-export function drawWolf(ctx: CanvasRenderingContext2D, u: Unit) {
+/** 绵羊：羊毛疙瘩躯干 + 小尾摆 + 受惊抬头（atk） */
+export function drawSheep(ctx: CanvasRenderingContext2D, u: Unit, t = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
   const f = u.flip ? -1 : 1;
-  ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#8d8d8d';
-  ctx.fillRect(px - 1, py, 3, 1);
-  ctx.fillStyle = '#3a342c';
-  ctx.fillRect(px + f, py - 1, 1, 1);
+  const g = quadGait(u, t);
+  const dark = u.infected ? '#6c8c60' : '#575757';
+  const wool = u.infected ? '#b8e2b4' : '#f2ead8';
+  const by = py - g.bob - g.breath; // 躯干顶行
+  // 腿两簇（对角交替：可见簇落地 py+1，提起簇藏进躯干不画）
+  ctx.fillStyle = dark;
+  if (g.showFront) ctx.fillRect(px + f, py + 1, 1, 1);
+  if (g.showBack) ctx.fillRect(px - f, py + 1, 1, 1);
+  // 躯干（羊毛 3x2）+ 疙瘩暗点（缓移——羊毛被风梳动）
+  ctx.fillStyle = wool;
+  ctx.fillRect(px - 1, by - 1, 3, 2);
+  ctx.fillStyle = dark;
+  ctx.fillRect(px - 1 + ((t >> 3) & 1), by - 1, 1, 1);
+  // 头（前缘；受惊时抬头 1px）
+  ctx.fillStyle = dark;
+  ctx.fillRect(px + f, (g.atk ? by - 2 : by - 1), 1, 1);
+  // 小尾（身后，随相位摆）
+  ctx.fillRect(px - 2 * f, by - 1 + (((t >> 3) & 1) === 1 ? -1 : 0), 1, 1);
 }
 
-export function drawSnowWolf(ctx: CanvasRenderingContext2D, u: Unit) {
+/** 灰狼：背纹 + 双段尾摆 + 攻击张嘴露齿（atk 前探下颌） */
+export function drawWolf(ctx: CanvasRenderingContext2D, u: Unit, t = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
   const f = u.flip ? -1 : 1;
-  // 雪地阴影下仍可辨的白身
-  ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#eef2f5';
-  ctx.fillRect(px - 1, py, 3, 1);
-  // 头 + 竖耳
-  ctx.fillStyle = '#d4dde4';
-  ctx.fillRect(px + f, py - 1, 1, 1);
-  ctx.fillRect(px + f, py - 2, 1, 1);
-  // 冰蓝鼻尖（朝向前方）
+  const g = quadGait(u, t);
+  const hurt = u.hurt > 0;
+  const body = hurt ? '#ff6b5e' : '#8d8d8d';
+  const dark = '#3a342c';
+  const by = py - g.bob - g.breath;
+  ctx.fillStyle = dark;
+  if (g.showFront) ctx.fillRect(px + f, py + 1, 1, 1);
+  if (g.showBack) ctx.fillRect(px - f, py + 1, 1, 1);
+  // 躯干（3x2）+ 背部受光 + 背纹两点
+  ctx.fillStyle = body;
+  ctx.fillRect(px - 1, by - 1, 3, 2);
+  ctx.fillStyle = hurt ? '#ffc4b8' : '#a5a5a9';
+  ctx.fillRect(px, by - 1, 1, 1);
+  ctx.fillStyle = dark;
+  ctx.fillRect(px - 1, by, 1, 1);
+  ctx.fillRect(px + 1, by, 1, 1);
+  // 头（前缘）+ 竖耳
+  const headY = g.atk ? by : by - 1; // 攻击前倾下探
+  ctx.fillStyle = dark;
+  ctx.fillRect(px + f, headY, 1, 1);
+  ctx.fillRect(px + f, headY - 1, 1, 1);
+  // 攻击张嘴露齿（前下 1px 白齿）
+  if (g.atk) {
+    ctx.fillStyle = '#e8e8e8';
+    ctx.fillRect(px + 2 * f, headY, 1, 1);
+  }
+  // 双段尾（身后斜上，随相位摆）
+  const wag = ((t >> 3) & 1) === 1 ? -1 : 0;
+  ctx.fillStyle = body;
+  ctx.fillRect(px - 2 * f, by + wag, 1, 1);
+  ctx.fillRect(px - 3 * f, by - 1 + wag, 1, 1);
+}
+
+/** 雪狼：狼形骨架 + 雪白色板 + 冰蓝鼻尖 + 竖耳双点 */
+export function drawSnowWolf(ctx: CanvasRenderingContext2D, u: Unit, t = 0) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const g = quadGait(u, t);
+  const hurt = u.hurt > 0;
+  const body = hurt ? '#ff6b5e' : '#eef2f5';
+  const shade = hurt ? '#ffc4b8' : '#d4dde4';
+  const by = py - g.bob - g.breath;
+  ctx.fillStyle = shade;
+  if (g.showFront) ctx.fillRect(px + f, py + 1, 1, 1);
+  if (g.showBack) ctx.fillRect(px - f, py + 1, 1, 1);
+  // 躯干（雪白 3x2）+ 背部冷光
+  ctx.fillStyle = body;
+  ctx.fillRect(px - 1, by - 1, 3, 2);
+  ctx.fillStyle = hurt ? '#ffd9d0' : '#f8fbfd';
+  ctx.fillRect(px, by - 1, 1, 1);
+  // 头 + 双竖耳（雪地轮廓感）
+  const headY = g.atk ? by : by - 1;
+  ctx.fillStyle = shade;
+  ctx.fillRect(px + f, headY, 1, 1);
+  ctx.fillRect(px + f, headY - 1, 1, 1);
+  ctx.fillRect(px + f, headY - 2, 1, 1);
+  // 冰蓝鼻尖（朝向前方）+ 攻击露齿
   ctx.fillStyle = '#38bdf8';
-  ctx.fillRect(px + 2 * f, py - 1, 1, 1);
+  ctx.fillRect(px + 2 * f, headY, 1, 1);
+  if (g.atk) {
+    ctx.fillStyle = '#e8e8e8';
+    ctx.fillRect(px + 2 * f, headY + 1, 1, 1);
+  }
+  // 尾摆
+  const wag = ((t >> 3) & 1) === 1 ? -1 : 0;
+  ctx.fillStyle = shade;
+  ctx.fillRect(px - 2 * f, by + wag, 1, 1);
+  ctx.fillRect(px - 3 * f, by - 1 + wag, 1, 1);
 }
 
-export function drawBear(ctx: CanvasRenderingContext2D, u: Unit) {
+/** 棕熊：宽躯肩峰 + 圆耳吻部 + 攻击立身挥爪（atk 升起 + 爪尖前伸） */
+export function drawBear(ctx: CanvasRenderingContext2D, u: Unit, t = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
-  ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#6e4a2b';
-  ctx.fillRect(px - 1, py - 1, 3, 2);
-  ctx.fillStyle = '#3a342c';
-  ctx.fillRect(px - 1, py - 2, 1, 1);
-  ctx.fillRect(px + 1, py - 2, 1, 1);
+  const f = u.flip ? -1 : 1;
+  const g = quadGait(u, t);
+  const hurt = u.hurt > 0;
+  const body = hurt ? '#ff6b5e' : '#6e4a2b';
+  const dark = '#3a342c';
+  const rise = g.atk ? 1 : 0; // 攻击立身
+  const by = py - g.bob - g.breath - rise;
+  // 腿两簇（粗壮：静止/立身双簇着地蓄力，移动时对角交替）
+  ctx.fillStyle = dark;
+  if (g.showFront) ctx.fillRect(px + 1, py + 1, 1, 1);
+  if (g.showBack) ctx.fillRect(px - 2, py + 1, 1, 1);
+  // 躯干（宽 4x2）+ 背部受光 + 肩峰
+  ctx.fillStyle = body;
+  ctx.fillRect(px - 2, by - 1, 4, 2);
+  ctx.fillStyle = hurt ? '#ffc4b8' : '#8a6a42';
+  ctx.fillRect(px - 1, by - 1, 2, 1);
+  ctx.fillStyle = dark;
+  ctx.fillRect(px + f - (f > 0 ? 1 : 2), by - 1, 1, 1); // 肩峰（前侧隆起）
+  // 头（前上 2x1 视觉块：头点 + 吻点）+ 圆耳 ×2
+  const headY = by - 1;
+  ctx.fillStyle = body;
+  ctx.fillRect(px + (f > 0 ? 1 : -2), headY - 1, 2, 1);
+  ctx.fillStyle = dark;
+  ctx.fillRect(px + (f > 0 ? 1 : -2), headY - 2, 1, 1); // 耳
+  ctx.fillRect(px + (f > 0 ? 2 : -1), headY - 2, 1, 1); // 耳
+  // 吻部浅色 + 鼻尖
+  ctx.fillStyle = hurt ? '#ffd9d0' : '#9a7a52';
+  ctx.fillRect(px + (f > 0 ? 3 : -3), headY - 1, 1, 1);
+  // 攻击挥爪：爪尖白点前伸（立身扑击意象）
+  if (g.atk) {
+    ctx.fillStyle = '#e8e0d0';
+    ctx.fillRect(px + (f > 0 ? 4 : -4), headY - 1, 1, 1);
+  }
+}
+
+/** 梅花鹿：分枝鹿角 + 白臀斑 + 细长腿四相 + 小白尾摆 + 受惊抬头 */
+export function drawDeer(ctx: CanvasRenderingContext2D, u: Unit, t = 0) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const g = quadGait(u, t);
+  const hurt = u.hurt > 0;
+  const body = hurt ? '#ff6b5e' : '#c98d5a';
+  const dark = '#6e4a2b';
+  const by = py - g.bob - g.breath;
+  // 细长腿两簇（对角交替）
+  ctx.fillStyle = dark;
+  if (g.showFront) ctx.fillRect(px + f, py + 1, 1, 1);
+  if (g.showBack) ctx.fillRect(px - f, py + 1, 1, 1);
+  // 躯干（浅棕 3x2）+ 背部受光
+  ctx.fillStyle = body;
+  ctx.fillRect(px - 1, by - 1, 3, 2);
+  ctx.fillStyle = hurt ? '#ffc4b8' : '#d9a870';
+  ctx.fillRect(px, by - 1, 1, 1);
+  // 白臀斑（尾侧 1px）
+  ctx.fillStyle = '#f2ead8';
+  ctx.fillRect(px - 2 * f, by - 1, 1, 1);
+  // 头（深棕前缘；受惊抬头）+ 分枝鹿角（主枝 + 前叉）
+  const headY = g.atk ? by - 2 : by - 1;
+  ctx.fillStyle = dark;
+  ctx.fillRect(px + f, headY, 1, 1);
+  ctx.fillStyle = '#ffd93d';
+  ctx.fillRect(px + f, headY - 1, 1, 1); // 主枝
+  ctx.fillRect(px + 2 * f, headY - 2, 1, 1); // 前叉
+  // 小白尾（身后 wag）
+  ctx.fillStyle = '#f2ead8';
+  ctx.fillRect(px - 2 * f, by - 1 + (((t >> 3) & 1) === 1 ? -1 : 0), 1, 1);
 }
 
 export function drawDragon(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
@@ -1520,25 +1664,6 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
     ctx.fillStyle = rgb(color);
     ctx.fillRect(ox + w + 2, py - 4, 4, 2);
   }
-}
-
-/** 鹿：棕色身体 + 金色小角 + 头部朝向移动方向 */
-export function drawDeer(ctx: CanvasRenderingContext2D, u: Unit) {
-  const px = u.dpx ?? (u.rx ?? u.x) * 2;
-  const py = u.dpy ?? (u.ry ?? u.y) * 2;
-  const f = u.flip ? -1 : 1;
-  // 鹿角（金色，1px 两叉）
-  ctx.fillStyle = '#ffd93d';
-  ctx.fillRect(px + f, py - 2, 1, 1);
-  ctx.fillRect(px + 2 * f, py - 2, 1, 1);
-  // 身体（浅棕）+ 头（深棕）
-  ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#c98d5a';
-  ctx.fillRect(px - 1, py, 3, 1);
-  ctx.fillStyle = '#6e4a2b';
-  ctx.fillRect(px + f, py - 1, 1, 1);
-  // 腿
-  ctx.fillRect(px - 1, py + 1, 1, 1);
-  ctx.fillRect(px + 1, py + 1, 1, 1);
 }
 
 /** 企鹅：黑色轮廓 + 白肚 + 橙喙，走路左右蹒跚 */
@@ -3625,7 +3750,9 @@ export function drawQuadFine(ctx: CanvasRenderingContext2D, u: Unit, kind: 'wolf
   const slender = kind === 'deer';
   const bw = bulk ? 10 : slender ? 7 : 8; // 身长
   const bh = bulk ? 4 : slender ? 2 : 3; // 身高
-  const bx = fx - (bw >> 1);
+  // 攻击前扑（#83）：atk 窗口前半身前倾 1px + 下颌张开 —— 与人形 lunge 同窗不同层（姿态 vs 位移）
+  const lunge = (u.atk ?? 0) > 6 ? f : 0;
+  const bx = fx - (bw >> 1) + lunge;
   const by = fy - 1 - bh; // 身体顶行
 
   // —— 阴影 ——
@@ -3679,6 +3806,10 @@ export function drawQuadFine(ctx: CanvasRenderingContext2D, u: Unit, kind: 'wolf
   ctx.fillRect(hx + (f > 0 ? 3 : -1), by, 1, 1); // 吻部
   ctx.fillStyle = '#14100c';
   ctx.fillRect(hx + (f > 0 ? 3 : -1), by, 1, 1); // 鼻尖
+  if (lunge !== 0) {
+    ctx.fillStyle = rgb(mix(dark, [0, 0, 0], 0.2));
+    ctx.fillRect(hx + (f > 0 ? 3 : -1), by + 1, 1, 1); // 下颌张开（扑咬意象）
+  }
   ctx.fillStyle = hurt ? '#ffd93d' : '#14100c';
   ctx.fillRect(hx + (f > 0 ? 1 : 1), by - 1, 1, 1); // 眼
   // 耳

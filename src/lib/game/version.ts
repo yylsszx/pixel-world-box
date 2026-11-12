@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.73-preview';
+export const GAME_VERSION = 'v0.74-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.74-preview',
+    date: '2026-11-13',
+    items: [
+      '野生动物全面动画化：羊/狼/雪狼/熊/鹿告别两帧色块——四相对角步态（腿簇交替+起伏），静息呼吸，羊毛疙瘩/背纹/肩峰/鹿角分枝/白臀斑/冰蓝鼻尖逐一可见',
+      '捕食攻击有了肢体语言：狼与雪狼张嘴露齿前探、熊立身挥爪、羊鹿受惊抬头（全远景档同步可读）；精绘特写下狼/熊扑咬时身体前倾、下颌张开',
+    ],
+  },
   {
     ver: 'v0.73-preview',
     date: '2026-11-12',
