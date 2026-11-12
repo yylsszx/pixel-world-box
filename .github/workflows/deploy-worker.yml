@@ -73,12 +73,25 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           cd cloudflare
-          NS=$(bunx wrangler kv namespace list --json 2>/dev/null | jq -r '.[] | select(.title=="PWB_SAVES" or (.title|tostring|contains("PWB_SAVES"))) | .id' | head -1 || true)
+          # wrangler 版本钉死（bunx 不钉版每次拉 latest——新版输出格式漂移会打断 jq 解析，#82 实弹教训）
+          W="wrangler@4.160.1"
+          # wrangler 可能在 JSON 前后混入 banner/告警行（stdout）——先剥出 JSON 数组段再解析
+          OUT=$(bunx "$W" kv namespace list --json 2>&1 || true)
+          SEG=$(printf '%s' "$OUT" | sed -n '/^[[:space:]]*\[/,$p')
+          NS=""
+          if [ -n "$SEG" ]; then
+            NS=$(printf '%s' "$SEG" | jq -r '.[]? | select(.title=="PWB_SAVES" or (.title|tostring|contains("PWB_SAVES"))) | .id' 2>/dev/null | head -1 || true)
+          fi
           if [ -n "$NS" ]; then
             echo "复用既有 KV namespace PWB_SAVES：$NS"
           else
-            NS=$(bunx wrangler kv namespace create PWB_SAVES 2>&1 | grep -oE '[0-9a-f]{32}' | head -1 || true)
-            if [ -n "$NS" ]; then echo "已创建 KV namespace PWB_SAVES：$NS"; fi
+            echo "KV list 未解析出 namespace（原始输出前 600 字符，诊断用）："
+            printf '%s' "$OUT" | head -c 600; echo
+            NS=$(bunx "$W" kv namespace create PWB_SAVES 2>&1 | grep -oE '[0-9a-f]{32}' | head -1 || true)
+            if [ -n "$NS" ]; then echo "已创建 KV namespace PWB_SAVES：$NS"; else
+              echo "KV create 原始输出（前 600 字符，诊断用）："
+              bunx "$W" kv namespace create PWB_SAVES 2>&1 | head -c 600; echo
+            fi
           fi
           if [ -z "$NS" ]; then
             echo "::error::无法确定/创建 KV namespace PWB_SAVES——令牌可能缺 KV 权限（请用模板「Edit Cloudflare Workers」重建令牌并更新仓库密钥）。"
@@ -95,7 +108,7 @@ jobs:
         run: |
           set -o pipefail
           cd cloudflare
-          bunx wrangler@latest deploy 2>&1 | tee deploy.log || {
+          bunx wrangler@4.160.1 deploy 2>&1 | tee deploy.log || {
             if grep -qi 'subdomain' deploy.log; then
               echo "::error::账户尚未注册 workers.dev 子域名——请在手机浏览器打开 dash.cloudflare.com → Workers & Pages，按提示设置一次子域名（如你的用户名），然后重新运行本工作流。"
             else

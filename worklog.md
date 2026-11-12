@@ -6730,3 +6730,5 @@ Stage Summary:
 **推送**: direct-client.ts / chronicler.ts / Chronicle.tsx / OraclePanel.tsx / version.ts / docs/大陆直连指南.md / deploy-worker.yml + worklog 本条 → push-web.sh（双 workflow：Pages + Worker 部署含域名巡检首跑）。
 
 **评估：D5 表现与体验——世界纪事从「事件流水账」升维「AI 史官叙事」（云端全家桶十端点全部接线完毕），大陆用户后端可用性从「听天由命」升为「可测可换可根治」（多镜像竞速+测试连接+自定义域名快车道+用户中继双重路径 bug 根治）。**
+
+**#82 补记（CI failure 修复）**: 首推触发的 Worker 部署 run 43226784981 在「Ensure KV」步骤失败——根因：`bunx wrangler`（未钉版本）拉新版输出混入 banner 行致 `jq: parse error`，且 create 分支输出被 grep 吞掉无诊断信息；修复三件：①wrangler 全工作流钉死 4.160.1（杀版本漂移）②KV list 输出先剥 JSON 数组段（banner 容错）③create 失败时打印原始输出前 600 字符（诊断可见）。域名巡检步骤首跑成功——**账号暂无域名**（大陆根治位需用户先注册域名，已入遗留池②）。
