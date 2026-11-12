@@ -12,6 +12,7 @@
 // dsh 持久会话面（M-O4 相三前端接线）：仅中继通道附加 body.dsh（服务端权威历史）——
 //   本站后端（Next 静态白名单路由）与 corsDirect 不识别该面，永不发送；无 dsh 时 body 逐字节不变。
 import type { AgentChatMessage, OracleProviderConfig } from './types';
+import { loadStoredProvider } from './provider-store';
 
 /** 统一模型调用结果（与 agent.ts callModel 返回同构）；via：非默认路径成功时的说明（如自动换协议） */
 export interface ModelCallResult {
@@ -497,8 +498,63 @@ function isCustomVendorHost(p: OracleProviderConfig): boolean {
 
 /** builtin（内置 Z.ai）专用：后端不在时的准确文案（唯一允许「离线」字样的场景） */
 const BUILTIN_OFFLINE_MSG =
-  '神谕离线：此部署为纯静态托管，内置 Z.ai 需要服务端。替代路径：厂商接入中改用自定义厂商（浏览器直连）、' +
-  '本地模型（浏览器推理），或部署 oracle-server 中继后端后填入「中继后端」地址。';
+  '神谕离线：此部署为纯静态托管且官方云端中继不可达（大陆网络对 workers.dev 常不稳，或配额已满）。' +
+  '替代路径：厂商接入中改用自定义厂商（浏览器直连）、本地模型（浏览器推理），或部署中继后端后填入「中继后端」地址。';
+
+// ============ 官方云端中继（PWB Worker v2.0：Workers AI 接活 builtin，零配置真 AI） ============
+
+/**
+ * PWB 官方 Cloudflare Worker 中继（Workers AI 免费配额供 builtin 厂商）。
+ * 静态托管（GitHub Pages）下 builtin 的自动接活通路：探测 /api/capabilities（60s TTL），
+ * builtin_alive=true 才走它；探测失败（大陆线路不可达 workers.dev 等）→ 原离线文案降级，不误报。
+ */
+export const OFFICIAL_RELAY_URL = 'https://pwb-oracle-relay.yeyilin2010.workers.dev';
+
+export interface OfficialRelayState {
+  ok: boolean;
+  ai: boolean;
+  kv: boolean;
+}
+
+let officialRelayProbe: { at: number; state: OfficialRelayState | null } | null = null;
+const OFFICIAL_RELAY_TTL_MS = 60_000;
+
+export async function probeOfficialRelay(now = Date.now()): Promise<OfficialRelayState | null> {
+  if (officialRelayProbe && now - officialRelayProbe.at < OFFICIAL_RELAY_TTL_MS) return officialRelayProbe.state;
+  let state: OfficialRelayState | null = null;
+  try {
+    const res = await fetch(`${OFFICIAL_RELAY_URL}/api/capabilities`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+    if (res.ok) {
+      const j = (await res.json()) as { builtin_alive?: boolean; ai?: boolean; kv?: boolean };
+      state = { ok: !!j.builtin_alive, ai: !!j.ai, kv: !!j.kv };
+    }
+  } catch {
+    state = null; // 不可达（超时/DNS/拦截）——静默降级，不打扰用户
+  }
+  officialRelayProbe = { at: now, state };
+  return state;
+}
+
+/** 探测结果失效（测试连通/云面板手动刷新前调用） */
+export function invalidateOfficialRelayProbe(): void {
+  officialRelayProbe = null;
+}
+
+/**
+ * 解析「当前生效的云后端地址」：用户显式中继 > 官方中继（若可达且带所需能力）。
+ * cloudSync（云存档）共用此决策，保证 UI 与路由单一事实源。
+ */
+export async function resolveCloudBackend(): Promise<string | null> {
+  try {
+    const relay = loadStoredProvider()?.relayUrl?.trim();
+    if (relay) return normalizeRelayUrl(relay);
+  } catch {
+    /* provider-store 不可用 → 继续官方中继路径 */
+  }
+  const official = await probeOfficialRelay();
+  if (official && official.ok) return OFFICIAL_RELAY_URL;
+  return null;
+}
 
 /**
  * 统一路由入口：按 provider 配置选择最优通道。永不 throw——错误折进 err。
@@ -537,6 +593,12 @@ export async function routeCallModel(
 
   // ③ 静态托管 / 后端不可达 → 浏览器直连厂商；自定义端点 404/405 自动换协议重试（OpenAI 兼容 ↔ Anthropic）
   if (provider.kind === 'builtin') {
+    // PWB 官方云端中继（Worker v2.0 Workers AI）：builtin_alive 时零配置接活——
+    // 大陆线路不可达时探测失败 → 原离线文案降级（不误报「在线但超时」）
+    const official = await probeOfficialRelay();
+    if (official && official.ok) {
+      return callViaBackend(OFFICIAL_RELAY_URL, provider, messages, deep, cb, '官方云端');
+    }
     return { content: '', reasoning: '', err: BUILTIN_OFFLINE_MSG };
   }
   if (provider.kind === 'openai' || provider.kind === 'anthropic') {

@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.71-preview';
+export const GAME_VERSION = 'v0.72-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.72-preview',
+    date: '2026-11-12',
+    items: [
+      '云端后端全家桶：PWB 云服务（Cloudflare Worker）升级 v2.0——内置神谕 AI 零配置自动接活（官方云端中继探测 60 秒缓存，大陆线路不可达时自动降级本地模式不打扰）',
+      '云端存档：保存/读取对话框新增「备份到云端」——存档上传 PWB 云服务持久保存，清除浏览器数据、换设备都不丢；每设备有专属备份码，粘贴即可拉回云端存档',
+      '云决策协议就绪：文明中枢新增结构化决策通道（宣战/求和/结盟/建设优先级/迁徙方向白名单校验）与编年史生成端点——为下一步「AI 中枢真正统治王国」铺路',
+    ],
+  },
   {
     ver: 'v0.71-preview',
     date: '2026-11-11',

@@ -44,6 +44,26 @@ jobs:
             exit 1
           fi
 
+      - name: Ensure KV namespace（云存档）
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          cd cloudflare
+          NS=$(bunx wrangler kv namespace list --json 2>/dev/null | jq -r '.[] | select(.title=="PWB_SAVES" or (.title|tostring|contains("PWB_SAVES"))) | .id' | head -1 || true)
+          if [ -n "$NS" ]; then
+            echo "复用既有 KV namespace PWB_SAVES：$NS"
+          else
+            NS=$(bunx wrangler kv namespace create PWB_SAVES 2>&1 | grep -oE '[0-9a-f]{32}' | head -1 || true)
+            if [ -n "$NS" ]; then echo "已创建 KV namespace PWB_SAVES：$NS"; fi
+          fi
+          if [ -z "$NS" ]; then
+            echo "::error::无法确定/创建 KV namespace PWB_SAVES——令牌可能缺 KV 权限（请用模板「Edit Cloudflare Workers」重建令牌并更新仓库密钥）。"
+            exit 1
+          fi
+          sed -i "s/__PWB_SAVES_KV_ID__/$NS/" wrangler.jsonc
+          echo "wrangler.jsonc 已注入 KV id（本地仪表盘部署时请手动填入 dash 显示的 namespace id）"
+
       - name: Deploy（wrangler deploy）
         id: deploy
         env:

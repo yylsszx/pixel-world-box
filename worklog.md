@@ -6656,3 +6656,29 @@ Stage Summary:
 **推送**: worklog 本条 → push-web.sh。
 **版本节奏**: 不升位（基建里程碑，无游戏本体改动；攒升位清单）。
 **评估：D6 稳定健壮——部署链从「等密钥」到「全绿上线」两轮内闭环，三层证据链+字符级故障定位方法论沉淀，游戏可用性从纯静态升维到带公网 AI 后端（差异化优势「三智能体体系」补全公网形态）。**
+
+## 2026-11-12 #80（用户插入轮·主线切换）：后端全家桶 v2.0 第一刀——Worker 五端点全家桶（Workers AI 零配置接活/KV 云存档/决策协议/编年史）+ 前端双接线，升位 v0.72-preview
+
+**选题**: 用户最高优先插入指令（2026-11-12）：「把所有可以用后端进行升级的内容全部弄上去，以大幅提升体验和水准，包括一些服务（如模型，agent，harness等等）」——按任务书自修订协议触发 v4→v5（新 Job 2943792，「后端全家桶」升最先重点，D5 表现线退次重点）。
+
+**Worker v2.0（cloudflare/worker.js 470→~640 行，单文件零依赖铁律保持）**:
+- **Workers AI 接活 builtin**（核心体验跃迁）：wrangler.jsonc 加 `"ai":{"binding":"AI"}`；resolveProvider 链 builtin→Workers AI（llama-3.1-8b-instruct）→服务端默认组→error 三级；streamWorkersAI 流式泵（AI.run stream:true SSE `{"response"}` 行解析）+ runWorkersAIOnce 非流式（civ-brain/decide/chronicle 共用）；45s 超时保护；「零配置用户直接获得真 AI 神谕」——builtin 从必然离线变为云端接活（免费计划 10k neurons/日配额即天然限流）；
+- **KV 云存档四端点**：/api/save/backup|list|get|delete——备份码鉴权（前端 96bit 熵 pwb-xxx 设备码）、payload 2MB 上限、slot 0-99、list by prefix + metadata、429 友好文案（免费 KV 1k 写/日配额即写入限流）；wrangler.jsonc 加 kv_namespaces 占位 id；
+- **/api/agent/decide 结构化决策端点**（中枢二笔服务端半件）：入参 civ/world/actions 清单，LLM 出 JSON → 白名单校验器（stance 三值/build_focus 七值/war_target·peace_offer·alliance_target 须在敌对交战可盟清单内/migration 0-7）——「宁可少决断不可错决断」，Worker 零游戏逻辑铁律保持；
+- **/api/chronicle 编年史端点**：≤48 事件结构化 → 120-240 字编年史官叙事；
+- **/api/capabilities 能力协商**：ai/kv/default_provider/builtin_alive 全量上报（前端探测单一事实源）；healthz 同步升 v2.0.0 字段。
+
+**workflow 升级（deploy-worker.yml）**: 新增「Ensure KV namespace」步骤——list 查找 PWB_SAVES→无则 create→sed 注入 id 占位符（幂等，令牌 KV 权限缺失时中文报错指引）。
+
+**前端双接线**:
+- **direct-client.ts 官方中继路由**：OFFICIAL_RELAY_URL 常量 + probeOfficialRelay（60s TTL capabilities 探测）+ resolveCloudBackend（用户显式中继>官方中继）——builtin 在静态托管下自动探测官方云端、builtin_alive 即接活 Workers AI，大陆不可达则原离线文案降级不误报；BUILTIN_OFFLINE_MSG 更新为「官方云端中继不可达」语境；
+- **cloudSync.ts 新件**（~180 行）：设备码生成/校验/切换 + backup/list/get/delete 封装 + cloudPayloadToFile（云恢复走 importSave 全校验链零旁路）；
+- **SaveDialog 云端备份 UI**：保存模式「备份到云端」（serialize→轮换槽 0-9 自动选空位/覆盖最旧）、读取模式云端清单（恢复/删除/刷新）+ 备份码复制 + 换设备恢复（粘贴原备份码切换）+ 可达性探测自动隐藏；文案区提示「清除浏览器数据后凭备份码可拉回」。
+
+**版本**: v0.72-preview 升位（云端全家桶批次）+ CHANGELOG 三条（云端 AI 接活/云端存档/决策协议）。
+
+**QA**: tsc 全量零错误 ✓ + eslint 三文件零告警（1 处 unused disable 修除）✓ + export-static 预验证通过（4.3MB/49 文件，#77 教训执行）✓ + wrangler.jsonc JSONC 可解析 ✓ + workflow YAML 7 步骤解析 ✓ + worker.js node --check 语法 ✓。KV/AI binding 实弹验证随本轮 push 的 Worker deploy workflow（Ensure KV 步骤 + healthz 新字段 ai/kv）。
+**任务书修订**: v4→v5（Job 2939271 删除、2943792 在位）：「后端全家桶」升最先（头部=中枢二笔引擎接线：decisions 白名单已就绪待引擎消费——#69 遗留「API 决策驱动军团/外交」服务端半件已备）；D5 表现线退次重点。
+**推送**: worker.js/wrangler.jsonc/deploy-worker.yml/cloudSync.ts/SaveDialog.tsx/direct-client.ts/version.ts + worklog → push-web.sh（双 workflow 触发：Pages + Worker v2.0 部署）。
+**遗留池头部（v5 口径）**: ① **中枢二笔引擎接线**（决策端点消费：stance/build_focus/war/peace/alliance/migration 驱动真实外交建设迁徙）；② 编年史 UI 接线（Chronicle 面板 AI 叙事按钮）；③ Worker deploy CI 实弹复验（KV ensure + AI binding 首次部署）；④ D5 多帧本体第二刀（非人形+攻击/死亡多帧）；⑤ D3 收口不变。
+**评估：D2+D6 双维——文明模拟深度补「云端决策智能」服务端半件（结构化决策白名单协议上线），稳定健壮补「云存档持久层」（移动端丢档风险根除）；差异化优势「三智能体体系+云后端」扩为 WorldBox 完全没有的「开箱即云 AI」形态。**
