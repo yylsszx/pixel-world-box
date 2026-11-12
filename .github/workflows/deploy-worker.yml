@@ -73,28 +73,38 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           cd cloudflare
-          # wrangler 版本钉死（bunx 不钉版每次拉 latest——新版输出格式漂移会打断 jq 解析，#82 实弹教训）
-          W="wrangler@4.160.1"
-          # wrangler 可能在 JSON 前后混入 banner/告警行（stdout）——先剥出 JSON 数组段再解析
-          OUT=$(bunx "$W" kv namespace list --json 2>&1 || true)
-          SEG=$(printf '%s' "$OUT" | sed -n '/^[[:space:]]*\[/,$p')
+          # KV ensure v3：裸 REST API（curl+jq）主通道——彻底绕开 wrangler CLI 输出格式漂移
+          #（wrangler 4.160.x 已不支持 `kv namespace list --json`——#82 实弹教训），wrangler 表格解析兜底。
+          API="https://api.cloudflare.com/client/v4"
+          AUTH="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          echo "解析 Cloudflare 账号 id（REST API /accounts）…"
+          ACC=$(curl -s -m 20 -H "$AUTH" "$API/accounts?per_page=5" | jq -r '.result[0].id // empty')
           NS=""
-          if [ -n "$SEG" ]; then
-            NS=$(printf '%s' "$SEG" | jq -r '.[]? | select(.title=="PWB_SAVES" or (.title|tostring|contains("PWB_SAVES"))) | .id' 2>/dev/null | head -1 || true)
+          if [ -n "$ACC" ]; then
+            echo "账号 id：$ACC"
+            NS=$(curl -s -m 20 -H "$AUTH" "$API/accounts/$ACC/storage/kv/namespaces?per_page=100" | jq -r '.result[]? | select(.title=="PWB_SAVES") | .id' | head -1)
+          else
+            echo "账号 id 解析失败（令牌可能缺账号读权限）——尝试 wrangler 兜底…"
           fi
           if [ -n "$NS" ]; then
             echo "复用既有 KV namespace PWB_SAVES：$NS"
-          else
-            echo "KV list 未解析出 namespace（原始输出前 600 字符，诊断用）："
-            printf '%s' "$OUT" | head -c 600; echo
-            NS=$(bunx "$W" kv namespace create PWB_SAVES 2>&1 | grep -oE '[0-9a-f]{32}' | head -1 || true)
-            if [ -n "$NS" ]; then echo "已创建 KV namespace PWB_SAVES：$NS"; else
-              echo "KV create 原始输出（前 600 字符，诊断用）："
-              bunx "$W" kv namespace create PWB_SAVES 2>&1 | head -c 600; echo
+          elif [ -n "$ACC" ]; then
+            NS=$(curl -s -m 20 -X POST -H "$AUTH" -H "Content-Type: application/json" -d '{"title":"PWB_SAVES"}' "$API/accounts/$ACC/storage/kv/namespaces" | jq -r '.result.id // empty')
+            if [ -n "$NS" ]; then
+              echo "已创建 KV namespace PWB_SAVES：$NS"
+            else
+              # 并发已建等边界——重列一次
+              NS=$(curl -s -m 20 -H "$AUTH" "$API/accounts/$ACC/storage/kv/namespaces?per_page=100" | jq -r '.result[]? | select(.title=="PWB_SAVES") | .id' | head -1)
+              [ -n "$NS" ] && echo "复用既有 KV namespace PWB_SAVES：$NS"
             fi
           fi
           if [ -z "$NS" ]; then
-            echo "::error::无法确定/创建 KV namespace PWB_SAVES——令牌可能缺 KV 权限（请用模板「Edit Cloudflare Workers」重建令牌并更新仓库密钥）。"
+            # 兜底：wrangler 表格输出解析（API 通道失败时）
+            NS=$(bunx wrangler@4.160.1 kv namespace list 2>/dev/null | grep -i "PWB_SAVES" | grep -oE '[0-9a-f]{32}' | head -1 || true)
+            [ -n "$NS" ] && echo "wrangler 表格解析得到 KV namespace：$NS"
+          fi
+          if [ -z "$NS" ]; then
+            echo "::error::无法确定/创建 KV namespace PWB_SAVES——REST API 与 wrangler 双通道均未取到（令牌可能缺 KV/账号读权限——请用模板「Edit Cloudflare Workers」重建令牌并更新仓库密钥）。"
             exit 1
           fi
           sed -i "s/__PWB_SAVES_KV_ID__/$NS/" wrangler.jsonc

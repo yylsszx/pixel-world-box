@@ -6732,3 +6732,5 @@ Stage Summary:
 **评估：D5 表现与体验——世界纪事从「事件流水账」升维「AI 史官叙事」（云端全家桶十端点全部接线完毕），大陆用户后端可用性从「听天由命」升为「可测可换可根治」（多镜像竞速+测试连接+自定义域名快车道+用户中继双重路径 bug 根治）。**
 
 **#82 补记（CI failure 修复）**: 首推触发的 Worker 部署 run 43226784981 在「Ensure KV」步骤失败——根因：`bunx wrangler`（未钉版本）拉新版输出混入 banner 行致 `jq: parse error`，且 create 分支输出被 grep 吞掉无诊断信息；修复三件：①wrangler 全工作流钉死 4.160.1（杀版本漂移）②KV list 输出先剥 JSON 数组段（banner 容错）③create 失败时打印原始输出前 600 字符（诊断可见）。域名巡检步骤首跑成功——**账号暂无域名**（大陆根治位需用户先注册域名，已入遗留池②）。
+
+**#82 补记二（CI failure 真根因 + v3 根治）**: 第二跑诊断输出立功——真根因是 **wrangler 4.160.x 已不支持 `kv namespace list --json`**（`✘ Unknown argument: json`）：#80 当年 list 分支其实一直静默报错，是 create 分支 grep 32 位 hex 碰巧建库成功救场；如今库已存在 → create 报 already-exists → grep 无 id → 死锁。v3 根治：KV ensure 全改裸 REST API（curl+jq 直连 /accounts → /storage/kv/namespaces 查建，彻底绕开 wrangler CLI 输出格式漂移），wrangler 表格解析兜底；wrangler 仅保留 deploy 一职（输出 URL grep 本就容错）。
