@@ -6613,3 +6613,21 @@ Stage Summary:
 **推送**: sprites.ts + scripts/qa-gait.js + scripts/qa-gait-sim.ts + worklog 本条 → push-web.sh。
 **版本节奏**: 不升位（D5 本体首笔，攒升位清单）。
 **评估：D5 手感与表现——最常用人形八种族（全绘档）行走从 2 相升 4 相步态（步幅错位+双峰起伏+钟摆摆臂），「多帧动画本体」缺口首刀落地、与精绘档节奏标准拉齐；#76 最大差距①持续推进。**
+
+## 2026-11-12 #78（用户插入轮）：Cloudflare 部署链实弹首测——凭证步骤转绿 + wrangler 字符级报错定位「令牌混入中文」，workflow 防呆加固
+
+**选题**: 用户插入指令最高优先（「存好了」）——遗留池③ Cloudflare Workers 首次实弹部署。#75 建链后第 3 次触发（前两次「检查部署凭证」步骤 failure=预期等待态）。
+
+**三层进展（基建从「等密钥」推进到「密钥有杂质待重存」）**:
+- ① API workflow_dispatch 触发成功（HTTP 204，run 43197452364）；
+- ② **「检查部署凭证」步骤首次转绿**——用户 secret CLOUDFLARE_API_TOKEN 入库成功（GitHub 侧链路全通）；
+- ③ 「Deploy（wrangler deploy）」failure：wrangler 4.160.1 字符级报错——**令牌混入中文字符「令」（U+4EE6）**："The configured Cloudflare API token contains a character that cannot be used in an HTTP Authorization header"。定性：移动端复制令牌时把页面标签文字（如「您的令牌：」类前缀）一并复制，非账号/权限/网络问题。
+
+**处置（双管）**:
+- workflow「检查部署凭证」步骤新增**令牌纯净性防呆检查**（grep -boP '[^A-Za-z0-9_-]' 定位首个杂质字符位置 + 中文操作指引报错）——下次杂质令牌在凭证步骤即报「第 N 个字符不是令牌合法字符 + 手机重存路径」，不再等 wrangler 装完才报英文错。YAML 语法校验 6 步骤全通过 + 纯净性 grep 逻辑单测（'abc令def' 定位 0-index=3 正确）；
+- 交付用户手机三步重存指引（Cloudflare 令牌页只复制 Value 纯值 → GitHub Secret Update 重贴 → 回我「存好了」再触发）。防呆检查随本轮 push 自动实弹验证一次（预期 failure=新报错文案生效）。
+
+**推送**: deploy-worker.yml 防呆加固 + worklog 本条 → push-web.sh（push 触发 worker workflow 自动重跑一次，其 failure=令牌仍带杂质，属预期等待态，非 CI 债）。
+**版本节奏**: 不升位（基建轮）。
+**遗留池头部更新**: ③ 改为「用户重存纯令牌 → 触发部署 → workers.dev 地址交付 + /healthz 探活 + 游戏内中继接入验证」；① D5 多帧本体（下轮主线不变）② D3 收口不动。
+**评估：D6 稳定健壮——部署链三层故障定位精确到字符级（U+4EE6），防呆检查把用户侧操作错误提前到秒级中文报错，部署基建可观测性加固一轮到位。**

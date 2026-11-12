@@ -36,6 +36,13 @@ jobs:
             echo "::error::缺少仓库密钥 CLOUDFLARE_API_TOKEN——请到仓库 Settings → Secrets and variables → Actions 添加（Cloudflare 令牌模板：Edit Cloudflare Workers）。添加后重新运行本工作流即可。"
             exit 1
           fi
+          # 令牌纯净性防呆：Cloudflare 令牌只含 ASCII 字母/数字/_-，含中文/空格/标点说明
+          # 复制时混入了页面文字（如「您的令牌：」标签）——提前报错比等 wrangler 报错更直观。
+          POS=$(printf '%s' "$CF_TOKEN" | LC_ALL=C grep -boP '[^A-Za-z0-9_-]' | head -1 | cut -d: -f1)
+          if [ -n "$POS" ]; then
+            echo "::error::令牌第 $((POS+1)) 个字符不是令牌合法字符——通常是复制时把中文标签/空格一起带上了。请回 Cloudflare「我的个人资料 → API 令牌」页，在令牌详情里只复制 Value 值（一长串纯字母数字），到 GitHub 仓库 Settings → Secrets → Actions → CLOUDFLARE_API_TOKEN → Update 更新粘贴，再重跑本工作流。"
+            exit 1
+          fi
 
       - name: Deploy（wrangler deploy）
         id: deploy
