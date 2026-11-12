@@ -504,35 +504,53 @@ const BUILTIN_OFFLINE_MSG =
 // ============ 官方云端中继（PWB Worker v2.0：Workers AI 接活 builtin，零配置真 AI） ============
 
 /**
- * PWB 官方 Cloudflare Worker 中继（Workers AI 免费配额供 builtin 厂商）。
+ * PWB 官方 Cloudflare Worker 中继镜像池（Workers AI 免费配额供 builtin 厂商）。
  * 静态托管（GitHub Pages）下 builtin 的自动接活通路：探测 /api/capabilities（60s TTL），
  * builtin_alive=true 才走它；探测失败（大陆线路不可达 workers.dev 等）→ 原离线文案降级，不误报。
+ * 大陆稳定方案：① 多镜像竞速探测（任一可达即胜出、低延迟优先——未来官方域名镜像在此追加）；
+ * ② 根治位 = 自定义域名绑定（见 docs/大陆直连指南.md），绑定后填入「厂商接入→中继后端」即全端点生效。
  */
 export const OFFICIAL_RELAY_URL = 'https://pwb-oracle-relay.yeyilin2010.workers.dev';
+export const OFFICIAL_RELAY_POOL: readonly string[] = [OFFICIAL_RELAY_URL];
 
 export interface OfficialRelayState {
   ok: boolean;
   ai: boolean;
   kv: boolean;
+  /** 胜出镜像基地址（多镜像竞速后真正用于请求的那一个） */
+  baseUrl?: string;
+  /** 胜出镜像探测耗时（ms） */
+  latencyMs?: number;
 }
 
 let officialRelayProbe: { at: number; state: OfficialRelayState | null } | null = null;
 const OFFICIAL_RELAY_TTL_MS = 60_000;
 
-export async function probeOfficialRelay(now = Date.now()): Promise<OfficialRelayState | null> {
-  if (officialRelayProbe && now - officialRelayProbe.at < OFFICIAL_RELAY_TTL_MS) return officialRelayProbe.state;
-  let state: OfficialRelayState | null = null;
+/** 单镜像探测：/api/capabilities 带 _cb 缓存击穿参数（防中间层缓存旧响应误判——#81 实测教训） */
+async function probeRelayOne(baseUrl: string): Promise<OfficialRelayState | null> {
+  const t0 = Date.now();
   try {
-    const res = await fetch(`${OFFICIAL_RELAY_URL}/api/capabilities`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+    const res = await fetch(`${baseUrl}/api/capabilities?_cb=${t0}`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
     if (res.ok) {
       const j = (await res.json()) as { builtin_alive?: boolean; ai?: boolean; kv?: boolean };
-      state = { ok: !!j.builtin_alive, ai: !!j.ai, kv: !!j.kv };
+      return { ok: !!j.builtin_alive, ai: !!j.ai, kv: !!j.kv, baseUrl, latencyMs: Date.now() - t0 };
     }
   } catch {
-    state = null; // 不可达（超时/DNS/拦截）——静默降级，不打扰用户
+    /* 不可达（超时/DNS/拦截）——静默降级，不打扰用户 */
   }
-  officialRelayProbe = { at: now, state };
-  return state;
+  return null;
+}
+
+export async function probeOfficialRelay(now = Date.now(), force = false): Promise<OfficialRelayState | null> {
+  if (!force && officialRelayProbe && now - officialRelayProbe.at < OFFICIAL_RELAY_TTL_MS) return officialRelayProbe.state;
+  // 多镜像竞速：全部探测，取「可达且 builtin_alive」中延迟最低者为胜者；全败 → null（静默降级）
+  const states = await Promise.all(OFFICIAL_RELAY_POOL.map((u) => probeRelayOne(u)));
+  const winner =
+    states
+      .filter((s): s is OfficialRelayState => !!s)
+      .sort((a, b) => (a.latencyMs ?? 9e9) - (b.latencyMs ?? 9e9))[0] ?? null;
+  officialRelayProbe = { at: now, state: winner };
+  return winner;
 }
 
 /** 探测结果失效（测试连通/云面板手动刷新前调用） */
@@ -540,19 +558,70 @@ export function invalidateOfficialRelayProbe(): void {
   officialRelayProbe = null;
 }
 
+/** 中继端点探测结果（「测试连接」按钮用：可达性 + 延迟 + 能力 + 版本） */
+export interface RelayEndpointProbe {
+  ok: boolean;
+  ai: boolean;
+  kv: boolean;
+  latencyMs: number;
+  version?: string;
+  err?: string;
+}
+
 /**
- * 解析「当前生效的云后端地址」：用户显式中继 > 官方中继（若可达且带所需能力）。
+ * 探测任一中继端点（「测试连接」按钮）：url 已填 → 实测该地址；留空 → 官方云端中继池竞速实测
+ * （force 绕过 TTL 缓存——测的就是当前这一刻的线路）。
+ */
+export async function probeRelayEndpoint(url?: string): Promise<RelayEndpointProbe> {
+  const t0 = Date.now();
+  const raw = url?.trim();
+  if (raw) {
+    const base = raw.replace(/\/+$/, '').replace(/\/api\/oracle\/agent$/, '');
+    try {
+      const res = await fetch(`${base}/api/capabilities?_cb=${t0}`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+      if (res.ok) {
+        const j = (await res.json()) as { builtin_alive?: boolean; ai?: boolean; kv?: boolean; version?: string };
+        return {
+          ok: !!j.builtin_alive,
+          ai: !!j.ai,
+          kv: !!j.kv,
+          latencyMs: Date.now() - t0,
+          version: typeof j.version === 'string' ? j.version : undefined,
+        };
+      }
+      return { ok: false, ai: false, kv: false, latencyMs: Date.now() - t0, err: `HTTP ${res.status}（地址可达但不是 PWB 中继？）` };
+    } catch (e) {
+      return { ok: false, ai: false, kv: false, latencyMs: Date.now() - t0, err: e instanceof Error ? e.message : '不可达' };
+    }
+  }
+  const official = await probeOfficialRelay(Date.now(), true);
+  if (!official) {
+    return {
+      ok: false,
+      ai: false,
+      kv: false,
+      latencyMs: Date.now() - t0,
+      err: '官方云端中继不可达（大陆线路对 workers.dev 常不稳——绑定自定义域名可根治，见下方指引）',
+    };
+  }
+  return { ok: official.ok, ai: official.ai, kv: official.kv, latencyMs: official.latencyMs ?? Date.now() - t0 };
+}
+
+/**
+ * 解析「当前生效的云后端基地址」：用户显式中继 > 官方中继（若可达且带所需能力）。
+ * 返回【裸基地址】（不含 /api/oracle/agent 后缀）——云存档 /api/save/*、国策 /api/agent/decide、
+ * 编年史 /api/chronicle 等云端端点直接拼接即可；神谕 agent 线仍由 routeCallModel 走 normalizeRelayUrl。
  * cloudSync（云存档）共用此决策，保证 UI 与路由单一事实源。
  */
 export async function resolveCloudBackend(): Promise<string | null> {
   try {
     const relay = loadStoredProvider()?.relayUrl?.trim();
-    if (relay) return normalizeRelayUrl(relay);
+    if (relay) return relay.replace(/\/+$/, '').replace(/\/api\/oracle\/agent$/, '');
   } catch {
     /* provider-store 不可用 → 继续官方中继路径 */
   }
   const official = await probeOfficialRelay();
-  if (official && official.ok) return OFFICIAL_RELAY_URL;
+  if (official && official.ok) return official.baseUrl ?? OFFICIAL_RELAY_URL;
   return null;
 }
 
@@ -597,7 +666,7 @@ export async function routeCallModel(
     // 大陆线路不可达时探测失败 → 原离线文案降级（不误报「在线但超时」）
     const official = await probeOfficialRelay();
     if (official && official.ok) {
-      return callViaBackend(OFFICIAL_RELAY_URL, provider, messages, deep, cb, '官方云端');
+      return callViaBackend(official.baseUrl ?? OFFICIAL_RELAY_URL, provider, messages, deep, cb, '官方云端');
     }
     return { content: '', reasoning: '', err: BUILTIN_OFFLINE_MSG };
   }

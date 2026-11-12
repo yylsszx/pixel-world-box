@@ -6704,3 +6704,29 @@ Stage Summary:
 **遗留池头部更新**: ①编年史 UI 接线（/api/chronicle → Chronicle 面板 AI 叙事按钮——v2.0 端点唯一未接线者）；②用户真机实测中继全链路（decide/civ-brain/云存档三件，大陆可达性观察）；③ D5 多帧本体第二刀（非人形+攻击/死亡多帧）；④ D3 收口不变。
 **推送**: engine.ts + types.ts + worklog 本条 → push-web.sh。
 **评估：D2 文明深度——文明中枢从「人格漂移的观察者」升维为「真实驱动外交/建设/迁徙的决策者」（#69 遗留「API 决策驱动军团/外交」全链闭环），云端 AI 决策首次贯通到引擎行为层，WorldBox 完全没有的「开箱即云 AI 国策」差异化优势成型。**
+
+## 2026-11-12 #82（用户插入轮·手动指令）：编年史 UI 接线收口（/api/chronicle）+ 大陆稳定接入工具链——多镜像竞速/测试连接/自定义域名快车道，升位 v0.73-preview
+
+**选题**: 用户手动指令「进行下一轮：编年史 UI 接线，但不触发定时任务，同时，用尽一切办法让我在大陆地区稳定用上 worker 后端能力」——本轮全程手动执行，未触发/新建/修改任何定时任务（cron Job 2943792 原样保留未动）。
+
+**编年史 UI 接线（Worker v2.0 十端点唯一未接线者收口）**:
+- chronicler.ts 新件：composeChronicle（近期 ≤48 条纪事 → resolveCloudBackend 通道 POST /api/chronicle；provider=用户已配云厂商透传 / 缺省 builtin Workers AI 零配置免费）+ localChronicleText 纯确定性本地简史（按年份归并，零网络零随机）——云端不可达/超时/空稿一律降级本地代笔，史官永不当机；触发方式=纯用户点击（Chronicle 面板「史官」羽毛按钮），零定时器零自动轮询（用户指令铁律）。
+- Chronicle.tsx 双端接线：桌面面板头 + 移动端抽屉头各一「史官」按钮；史官叙事卡片（云端 AI/本地简史徽章 + 重撰/复制 + 「已有 N 条新纪事」提示）双端共用；成稿 localStorage 'pwb-chronicle-last' 跨会话留存（惰性 useState 初始化——组件仅 boot='game' 后客户端挂载零水合错配；react-hooks v6 set-state-in-effect 规则以惰性初始化家法满足）。
+
+**大陆稳定接入工具链（用尽一切办法四件套）**:
+- ①官方中继多镜像竞速：OFFICIAL_RELAY_POOL 注册表 + probeRelayOne 全镜像并行探测（_cb 缓存击穿参数防中间层缓存旧响应误判——#81 教训），取低延迟可达者为胜者（baseUrl+latencyMs 入探测态），builtin 神谕路由与 resolveCloudBackend 均改走胜者镜像；未来官方域名镜像只需池内追加一行。
+- ②测试连接：OraclePanel 厂商接入新增 RelayTestRow——实测用户中继地址（留空测官方池竞速、force 绕 TTL），即时显示「✓ 可达 · 延迟 · 版本 · AI✓ · 云存档✓」/「✗ 原因」；附大陆直连根治三步指引文案。
+- ③自定义域名快车道（根治位）：docs/大陆直连指南.md（注册域名无需备案 → Cloudflare 添加站点改 NS → Workers 绑自定义域 → 游戏内填中继后端即全端点切换）+ 游戏内指引；Worker 侧零改动（CORS 全放行不校验 Host）绑定即生效。
+- ④部署链账号域名巡检：deploy-worker.yml 新增「账号域名巡检」步骤（continue-on-error 信息性）——Cloudflare API 列账号 zones，有域名即 notice 提示可绑（发现域名后下轮可代用户绑定）。
+
+**存量 bug 根治（大陆用户中继路径）**: resolveCloudBackend 旧版对用户中继返回 normalizeRelayUrl 后缀地址（…/api/oracle/agent），cloudSync 云存档（/api/save/*）与中枢 decide（/api/agent/decide）再拼路径成双重路径必 404——用户一旦配置自定义中继，云存档与国策递交全部静默失败；本轮改返回裸基地址（兼容已含 /api/oracle/agent 的粘贴形式自动剥后缀），云存档/国策/编年史三端点地址拼接全部归正。
+
+**QA（三链实弹 + 双端）**: tsc 全量零错误 ✓ + eslint 五文件零告警（1 处 react-hooks v6 set-state-in-effect 以惰性初始化家法修复）✓ + export-static 预验证 4.3M/49 文件 ✓ + agent-browser 实弹三链：①离线降级——route mock 拦截官方探测 → 史官按钮 → 秒级本地简史徽章 + 大陆不可达 note + localStorage 缓存三件全绿；②云端路径——localStorage 注入用户中继（裸基地址修复验证）+ 同源 mock /api/chronicle → 重撰 → 云端 AI 徽章 + mock 正文 + via=cloud 缓存 ✓；③测试连接——mock capabilities → 「✓ 可达 · 130ms · v2.0.0 · AI✓ · 云存档✓」✓；④移动端抽屉（390×844）史官卡片与徽章 ✓ + 桌面截图非空白 ✓。engine.ts 零改动（位等不受影响）。
+
+**版本**: v0.73-preview 升位 + CHANGELOG 三条（编年史官入驻世界纪事 / 中继连接可测 / 大陆直连快车道）。
+
+**遗留池头部更新**: ①用户真机实测大陆全链路（编年史/云存档/decide + 测试连接——大陆线路对 workers.dev 实际表现观察）；②自定义域名绑定实弹（用户购域名后绑 Worker → 游戏内填入；反馈后可代操作）；③ D5 多帧本体第二刀（非人形+攻击/死亡多帧）；④ D3 收口不变。
+
+**推送**: direct-client.ts / chronicler.ts / Chronicle.tsx / OraclePanel.tsx / version.ts / docs/大陆直连指南.md / deploy-worker.yml + worklog 本条 → push-web.sh（双 workflow：Pages + Worker 部署含域名巡检首跑）。
+
+**评估：D5 表现与体验——世界纪事从「事件流水账」升维「AI 史官叙事」（云端全家桶十端点全部接线完毕），大陆用户后端可用性从「听天由命」升为「可测可换可根治」（多镜像竞速+测试连接+自定义域名快车道+用户中继双重路径 bug 根治）。**

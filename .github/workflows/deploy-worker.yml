@@ -44,6 +44,29 @@ jobs:
             exit 1
           fi
 
+      # —— 账号域名巡检（大陆直连根治候选发现）：列出 Cloudflare 账号 zones——
+      #    有域名 → 可按 docs/大陆直连指南.md 绑定为 Worker 自定义域（大陆稳定直连根治位）。
+      #    无域名 / 令牌缺 Zone 读权限 → 信息性输出，绝不阻塞部署。
+      - name: 账号域名巡检（大陆直连候选）
+        continue-on-error: true
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          echo "巡检 Cloudflare 账号 zones（寻找可绑定 Worker 自定义域的域名）…"
+          RESP=$(curl -s -m 20 -H "Authorization: Bearer $CF_TOKEN" "https://api.cloudflare.com/client/v4/zones?per_page=50" || true)
+          if echo "$RESP" | jq -e '.success == true' >/dev/null 2>&1; then
+            COUNT=$(echo "$RESP" | jq -r '.result | length')
+            echo "zones 数量：$COUNT"
+            if [ "$COUNT" != "0" ]; then
+              echo "$RESP" | jq -r '.result[] | "可绑定候选域名：\(.name)（状态 \(.status)）"' | head -20
+              echo "::notice::账号已有域名——可按仓库 docs/大陆直连指南.md 绑定为 Worker 自定义域，根治大陆 workers.dev 不稳。"
+            else
+              echo "账号暂无域名——大陆直连根治需先注册任意域名（无需备案）再按指南绑定。"
+            fi
+          else
+            echo "zones 查询未成功（令牌可能缺 Zone:Read 权限——信息性巡检，不影响部署）"
+          fi
+
       - name: Ensure KV namespace（云存档）
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

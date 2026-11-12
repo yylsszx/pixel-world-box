@@ -13,7 +13,7 @@ import { useGameStore, getEngine } from '@/store/gameStore';
 import type { OracleMode, OracleMsg, CondExpr } from '@/lib/game/types';
 import type { AgentChatMessage, AgentToolResult, OracleProviderConfig, ProviderKind } from '@/lib/oracle/types';
 import { runOracleAgentTurn, type AgentTurnResult } from '@/lib/oracle/agent';
-import { runConnectivityTest, validateProviderConfig, runDshSessionTurn, type DshSnapshot } from '@/lib/oracle/direct-client';
+import { runConnectivityTest, validateProviderConfig, runDshSessionTurn, probeRelayEndpoint, type DshSnapshot, type RelayEndpointProbe } from '@/lib/oracle/direct-client';
 import { executeOracleTool } from '@/lib/oracle/bridge';
 import { loadDshOn, storeDshOn, loadOrCreateSessionId, rotateSessionId } from '@/lib/oracle/session';
 import { loadStoredProvider, DEFAULT_PROVIDER, PROVIDER_STORE_KEY as STORE_KEY } from '@/lib/oracle/provider-store';
@@ -24,7 +24,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   Sparkles, X, ScrollText, ChartLine, Eye, SendHorizontal, Eraser, BrainCircuit,
-  Scale, Search, Zap, Square, Trash2, Cpu, FlaskConical, Crown, Swords, CloudLightning, Database,
+  Scale, Search, Zap, Square, Trash2, Cpu, FlaskConical, Crown, Swords, CloudLightning, Database, PlugZap,
 } from 'lucide-react';
 
 // ---------------- 基础常量 ----------------
@@ -617,20 +617,23 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
 
       {/* 中继后端（corsDirect 直连 Sealos oracle-server；静态托管接入无 CORS 厂商端点与内置 Z.ai 的唯一通路） */}
       {!isLocal && (
-        <label className="flex flex-col gap-0.5">
-          <span className={labelCls}>中继后端（可选）</span>
-          <input
-            value={provider.relayUrl ?? ''}
-            onChange={(e) => onApply({ ...provider, relayUrl: e.target.value || undefined })}
-            placeholder="http://<sealos-host>:8787"
-            spellCheck={false}
-            className={inputCls}
-            aria-label="中继后端地址"
-          />
-          <span className="text-[8px] leading-relaxed text-zinc-600">
-            填入后所有云端请求改经该后端转发（内网网关可填 /api/oracle/agent?XTransformPort=8787）；留空则自动路由：本站后端 → 浏览器直连厂商。
-          </span>
-        </label>
+        <>
+          <label className="flex flex-col gap-0.5">
+            <span className={labelCls}>中继后端（可选）</span>
+            <input
+              value={provider.relayUrl ?? ''}
+              onChange={(e) => onApply({ ...provider, relayUrl: e.target.value || undefined })}
+              placeholder="http://<sealos-host>:8787 或 https://你的自定义域名"
+              spellCheck={false}
+              className={inputCls}
+              aria-label="中继后端地址"
+            />
+            <span className="text-[8px] leading-relaxed text-zinc-600">
+              填入后所有云端请求改经该后端转发（内网网关可填 /api/oracle/agent?XTransformPort=8787）；留空则自动路由：官方云端中继（多镜像竞速）→ 本站后端 → 浏览器直连厂商。
+            </span>
+          </label>
+          <RelayTestRow url={provider.relayUrl} />
+        </>
       )}
 
       <label className="flex flex-col gap-0.5">
@@ -1484,5 +1487,43 @@ export function OraclePanel() {
         </SheetContent>
       </Sheet>
     </>
+  );
+}
+
+// ---------------- 中继连接测试（大陆直连稳定性工具） ----------------
+
+/** 「测试连接」行：实测中继地址（留空则测官方云端中继池）——可达性/延迟/AI/云存档能力即时可见；
+ *  附大陆直连根治三步指引（自定义域名绑定，详见仓库 docs/大陆直连指南.md）。 */
+function RelayTestRow({ url }: { url?: string }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<RelayEndpointProbe | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      setResult(await probeRelayEndpoint(url));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-center gap-1.5">
+        <Button type="button" variant="outline" size="sm" onClick={run} disabled={busy} className="h-5 gap-1 px-1.5 text-[9px] font-bold">
+          <PlugZap className="h-3 w-3" aria-hidden />
+          {busy ? '测试中…' : url?.trim() ? '测试中继连接' : '测试官方云端中继'}
+        </Button>
+        {result && !busy && (
+          <span className={`text-[9px] leading-snug ${result.ok ? 'text-emerald-300' : 'text-rose-400'}`}>
+            {result.ok
+              ? `✓ 可达 · ${result.latencyMs}ms${result.version ? ` · ${result.version}` : ''}${result.ai ? ' · AI✓' : ''}${result.kv ? ' · 云存档✓' : ''}`
+              : `✗ ${result.err ?? '不可达'}`}
+          </span>
+        )}
+      </div>
+      <span className="text-[8px] leading-relaxed text-zinc-600">
+        大陆线路对 workers.dev 常不稳——根治三步：① 注册任意域名（无需备案）→ ② Cloudflare「添加站点」按提示改域名 NS → ③ Workers → pwb-oracle-worker → 设置 → 域和路由 → 添加自定义域；随后把 https://你的域名 填进上方「中继后端」即全端点稳定直连。
+      </span>
+    </div>
   );
 }
