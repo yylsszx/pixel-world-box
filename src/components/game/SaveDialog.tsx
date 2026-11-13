@@ -1,22 +1,12 @@
 'use client';
-// ============ Save slot dialog: 3 手动槽 + 自动槽 + 旧版兼容槽 + 文件导出导入 + 云端备份（v2.0） ============
-import { useEffect, useRef, useState } from 'react';
+// ============ Save slot dialog: 3 手动槽 + 自动槽 + 旧版兼容槽 + 文件导出导入 ============
+import { useRef } from 'react';
 import { useGameStore, type SlotKey } from '@/store/gameStore';
 import type { SaveSlotMeta } from '@/lib/game/types';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { InlineNote } from './InlineNote';
-import {
-  cloudBackup, cloudList, cloudGet, cloudDelete, cloudPayloadToFile,
-  getDeviceCode, setDeviceCode, type CloudSaveMeta,
-} from '@/lib/game/cloudSync';
-import { Save, FolderOpen, Trash2, Clock, Users, Crown, Sparkles, History, ShieldAlert, Download, Upload, Cloud, CloudUpload, CloudDownload, RefreshCw, Copy, Check } from 'lucide-react';
-
-interface EngineWindow {
-  __wbEngine?: { serialize(source: string): unknown; yearF: number };
-}
-
-const CLOUD_SLOTS = 10; // 云端轮换槽 0-9（KV 每日免费写入配额即限流，轮换避免单槽覆盖丢历史）
+import { Save, FolderOpen, Trash2, Clock, Users, Crown, Sparkles, History, ShieldAlert, Download, Upload } from 'lucide-react';
 
 const MANUAL_SLOTS: SlotKey[] = ['slot0', 'slot1', 'slot2'];
 
@@ -209,115 +199,6 @@ export function SaveDialog() {
   const autoMeta = metaOf('auto');
   const legacyMeta = metaOf('legacy');
 
-  // —— 云端备份状态（v2.0） ——
-  const [cloudSlots, setCloudSlots] = useState<CloudSaveMeta[] | null>(null);
-  const [cloudBusy, setCloudBusy] = useState(false);
-  const [cloudMsg, setCloudMsg] = useState('');
-  const [cloudReachable, setCloudReachable] = useState<boolean | null>(null); // null=探测中
-  const [codeInput, setCodeInput] = useState('');
-  const [copied, setCopied] = useState(false);
-
-  const refreshCloudList = async () => {
-    setCloudBusy(true);
-    const r = await cloudList();
-    setCloudBusy(false);
-    if (r.ok && r.data) {
-      setCloudSlots(r.data);
-      setCloudReachable(true);
-      setCloudMsg('');
-    } else {
-      setCloudMsg(r.err ?? '云端不可达');
-    }
-  };
-
-  // 打开且读取模式 → 探测可达性 + 拉取云端清单
-  useEffect(() => {
-    if (!open || isSave) return;
-    let alive = true;
-    (async () => {
-      const { cloudSyncAvailable } = await import('@/lib/game/cloudSync');
-      const reachable = await cloudSyncAvailable();
-      if (!alive) return;
-      setCloudReachable(reachable);
-      if (reachable) void refreshCloudList();
-    })();
-    return () => { alive = false; };
-  }, [open, isSave]);
-
-  const onCloudBackup = async () => {
-    const eng = (window as EngineWindow).__wbEngine;
-    if (!eng) {
-      setCloudMsg('引擎尚未就绪（请先进入世界）');
-      return;
-    }
-    setCloudBusy(true);
-    try {
-      const data = eng.serialize('manual');
-      const payload = JSON.stringify(data);
-      const name = `纪元 ${Math.floor(eng.yearF)} 年 · ${stats?.civs?.length ?? 0} 王国`;
-      // 轮换槽：0-9 中首个空位；全满则覆盖最旧的
-      let slot = 0;
-      const used = cloudSlots ?? [];
-      const usedSet = new Set(used.map((s) => s.slot));
-      while (slot < CLOUD_SLOTS && usedSet.has(slot)) slot++;
-      if (slot >= CLOUD_SLOTS) {
-        const oldest = [...used].filter((s) => s.slot < CLOUD_SLOTS).sort((a, b) => a.savedAt - b.savedAt)[0];
-        slot = oldest ? oldest.slot : 0;
-      }
-      const r = await cloudBackup(payload, name, slot);
-      if (r.ok) {
-        setCloudMsg(`已备份到云端（槽位 ${slot + 1}/${CLOUD_SLOTS}）——清除浏览器数据也不丢`);
-        setCloudReachable(true);
-        void refreshCloudList();
-      } else {
-        setCloudMsg(r.err ?? '云端备份失败');
-      }
-    } finally {
-      setCloudBusy(false);
-    }
-  };
-
-  const onCloudRestore = async (slot: number) => {
-    setCloudBusy(true);
-    const r = await cloudGet(slot);
-    setCloudBusy(false);
-    if (!r.ok || !r.data) {
-      setCloudMsg(r.err ?? '云端读取失败');
-      return;
-    }
-    const file = cloudPayloadToFile(r.data);
-    const ok = await importSave(file);
-    if (ok) setCloudMsg('已从云端恢复——记得保存到本地槽位留存');
-  };
-
-  const onCloudDelete = async (slot: number) => {
-    setCloudBusy(true);
-    const r = await cloudDelete(slot);
-    setCloudBusy(false);
-    if (r.ok) void refreshCloudList();
-    else setCloudMsg(r.err ?? '云端删除失败');
-  };
-
-  const onCopyCode = async () => {
-    try {
-      await navigator.clipboard.writeText(getDeviceCode());
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setCloudMsg('复制失败——请长按备份码手动复制');
-    }
-  };
-
-  const onApplyCode = () => {
-    if (setDeviceCode(codeInput)) {
-      setCodeInput('');
-      setCloudMsg('备份码已切换——正在拉取该码的云端存档');
-      void refreshCloudList();
-    } else {
-      setCloudMsg('备份码格式不正确（应为 pwb- 开头的一长串字母数字）');
-    }
-  };
-
   const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) await importSave(file);
@@ -399,101 +280,10 @@ export function SaveDialog() {
             )}
           </div>
 
-          {/* 云端备份（v2.0 后端全家桶：Cloudflare KV 持久层，备份码鉴权） */}
-          <div className="mt-1 grid gap-2 border-t-2 border-zinc-800 pt-2">
-            <div className="flex items-center gap-2">
-              <Cloud className="h-3.5 w-3.5 shrink-0 text-sky-300" aria-hidden />
-              <span className="text-[10px] font-bold text-zinc-300">云端备份</span>
-              {isSave ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={cloudBusy || cloudReachable === false}
-                  onClick={onCloudBackup}
-                  className="h-6 flex-1 gap-1 rounded-sm border-2 border-zinc-600 bg-zinc-900 text-[10px] font-bold text-sky-200 enabled:hover:bg-sky-500/15 disabled:opacity-40"
-                >
-                  <CloudUpload className="h-3 w-3" aria-hidden />
-                  {cloudBusy ? '上传中…' : '备份到云端'}
-                </Button>
-              ) : (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={cloudBusy || cloudReachable === false}
-                  onClick={refreshCloudList}
-                  className="h-6 flex-1 gap-1 rounded-sm border-2 border-zinc-600 bg-zinc-900 text-[10px] font-bold text-sky-200 enabled:hover:bg-sky-500/15 disabled:opacity-40"
-                >
-                  <RefreshCw className="h-3 w-3" aria-hidden />
-                  {cloudReachable === null ? '探测中…' : cloudReachable === false ? '云端不可达' : '刷新云端清单'}
-                </Button>
-              )}
-            </div>
-
-            {/* 读取模式：云端存档列表 */}
-            {!isSave && cloudReachable && (cloudSlots === null || cloudSlots.length > 0) && (
-              <div className="grid gap-1.5">
-                {(cloudSlots ?? []).map((s) => (
-                  <div key={s.slot} className="flex items-center gap-2 rounded-sm border-2 border-zinc-700 bg-zinc-800/70 px-2.5 py-1.5">
-                    <CloudDownload className="h-3 w-3 shrink-0 text-sky-300" aria-hidden />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[10px] font-bold text-zinc-200">{s.name || `云端存档 ${s.slot + 1}`}</p>
-                      <p className="font-mono text-[8px] text-zinc-500">{formatTime(s.savedAt)} · 槽位 {s.slot + 1} · {Math.round(s.size / 1024)}KB</p>
-                    </div>
-                    <Button
-                      variant="ghost" size="sm" disabled={cloudBusy} onClick={() => onCloudRestore(s.slot)}
-                      className="h-6 shrink-0 gap-1 rounded-sm border-2 border-zinc-600 bg-zinc-900 px-1.5 text-[9px] font-bold text-teal-200 enabled:hover:bg-teal-500/15 disabled:opacity-40"
-                    >
-                      恢复
-                    </Button>
-                    <Button
-                      variant="ghost" size="sm" disabled={cloudBusy} onClick={() => onCloudDelete(s.slot)}
-                      className="h-6 shrink-0 rounded-sm border-2 border-zinc-600 bg-zinc-900 px-1.5 text-[9px] font-bold text-red-300 enabled:hover:bg-red-500/15 disabled:opacity-40"
-                      aria-label={`删除云端存档 ${s.slot + 1}`}
-                    >
-                      <Trash2 className="h-3 w-3" aria-hidden />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* 备份码：复制 / 换设备恢复 */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                onClick={onCopyCode}
-                className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm border-2 border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-[9px] text-zinc-400 hover:border-zinc-600 hover:text-zinc-300"
-                aria-label="复制备份码"
-              >
-                <span className="shrink-0 text-zinc-600">备份码</span>
-                <span className="truncate">{getDeviceCode()}</span>
-                {copied ? <Check className="h-3 w-3 shrink-0 text-teal-300" aria-hidden /> : <Copy className="h-3 w-3 shrink-0" aria-hidden />}
-              </button>
-            </div>
-            {!isSave && (
-              <div className="flex items-center gap-1.5">
-                <input
-                  value={codeInput}
-                  onChange={(e) => setCodeInput(e.target.value)}
-                  placeholder="换设备恢复：粘贴原备份码"
-                  className="min-w-0 flex-1 rounded-sm border-2 border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-[9px] text-zinc-300 placeholder:text-zinc-600"
-                  aria-label="输入原设备备份码"
-                />
-                <Button
-                  variant="ghost" size="sm" onClick={onApplyCode} disabled={!codeInput.trim()}
-                  className="h-6 shrink-0 rounded-sm border-2 border-zinc-600 bg-zinc-900 px-1.5 text-[9px] font-bold text-sky-200 enabled:hover:bg-sky-500/15 disabled:opacity-40"
-                >
-                  切换
-                </Button>
-              </div>
-            )}
-            {cloudMsg && <p className="px-1 text-[9px] leading-relaxed text-amber-300/90">{cloudMsg}</p>}
-          </div>
-
           <p className="flex items-start gap-1.5 pt-0.5 text-[9px] leading-relaxed text-zinc-600">
             <ShieldAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
-            存档保存在浏览器本地（约 500KB/槽）；自动存档写入独立槽位，不会覆盖手动存档。导出文件可跨设备导入；
-            云端备份存于 PWB 云服务（Workers KV），清除浏览器数据后凭备份码可从云端拉回。
+            存档保存在浏览器本地（约 500KB/槽）；自动存档写入独立槽位，不会覆盖手动存档。导出文件可跨设备导入。
+            清除浏览器数据会丢失本地槽位。
           </p>
         </div>
       </DialogContent>

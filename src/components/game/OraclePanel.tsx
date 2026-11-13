@@ -13,10 +13,9 @@ import { useGameStore, getEngine } from '@/store/gameStore';
 import type { OracleMode, OracleMsg, CondExpr } from '@/lib/game/types';
 import type { AgentChatMessage, AgentToolResult, OracleProviderConfig, ProviderKind } from '@/lib/oracle/types';
 import { runOracleAgentTurn, type AgentTurnResult } from '@/lib/oracle/agent';
-import { runConnectivityTest, validateProviderConfig, runDshSessionTurn, probeRelayEndpoint, type DshSnapshot, type RelayEndpointProbe } from '@/lib/oracle/direct-client';
+import { runConnectivityTest, validateProviderConfig, runDshSessionTurn, type DshSnapshot } from '@/lib/oracle/direct-client';
 import { executeOracleTool } from '@/lib/oracle/bridge';
 import { loadDshOn, storeDshOn, loadOrCreateSessionId, rotateSessionId } from '@/lib/oracle/session';
-import { loadStoredProvider, DEFAULT_PROVIDER, PROVIDER_STORE_KEY as STORE_KEY } from '@/lib/oracle/provider-store';
 import { renderToolCatalog, AGENT_TOOLS } from '@/lib/oracle/tools';
 import { buildSystemPrompt } from '@/lib/oracle/prompt';
 import { Button } from '@/components/ui/button';
@@ -24,7 +23,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   Sparkles, X, ScrollText, ChartLine, Eye, SendHorizontal, Eraser, BrainCircuit,
-  Scale, Search, Zap, Square, Trash2, Cpu, FlaskConical, Crown, Swords, CloudLightning, Database, PlugZap,
+  Scale, Search, Zap, Square, Trash2, Cpu, FlaskConical, Crown, Swords, CloudLightning, Database,
 } from 'lucide-react';
 
 // ---------------- 基础常量 ----------------
@@ -97,18 +96,28 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   { key: 'local-qwen05b', label: '本地 Qwen-0.5B', config: { kind: 'local', label: '本地 Qwen-0.5B', model: 'XENova/qwen2.5-0.5b-instruct', temperature: 0.7 } },
 ];
 
-// 共享存取模块（议会 council / 中枢 / 面板同一份配置，单一事实源）
-const PROVIDER_STORE_KEY = STORE_KEY;
+const PROVIDER_STORE_KEY = 'oracle-provider-v1';
+const DEFAULT_PROVIDER: OracleProviderConfig = { kind: 'builtin', label: '内置 Z.ai' };
 
 /** 从 localStorage 恢复 provider 配置（防御式：坏 JSON / 非法 kind 一律回默认） */
 function loadProvider(): OracleProviderConfig {
-  return loadStoredProvider();
+  try {
+    const raw = localStorage.getItem(PROVIDER_STORE_KEY);
+    if (!raw) return DEFAULT_PROVIDER;
+    const p = JSON.parse(raw) as OracleProviderConfig;
+    if (p && (p.kind === 'builtin' || p.kind === 'openai' || p.kind === 'anthropic' || p.kind === 'local')) {
+      return { kind: p.kind as ProviderKind, label: p.label, baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.model, temperature: p.temperature, forceCpu: p.forceCpu, relayUrl: p.relayUrl };
+    }
+  } catch {
+    /* 坏存档回默认 */
+  }
+  return DEFAULT_PROVIDER;
 }
 
-/** 当前配置命中的预设 key（用于预设网格高亮）：anthropic 非官方端点算自定义（协议可手选） */
+/** 当前配置命中的预设 key（用于预设网格高亮） */
 function matchPresetKey(p: OracleProviderConfig): string {
   if (p.kind === 'builtin') return 'builtin';
-  if (p.kind === 'anthropic') return (p.baseUrl ?? '').includes('api.anthropic.com') ? 'anthropic' : 'custom';
+  if (p.kind === 'anthropic') return 'anthropic';
   if (p.kind === 'local') {
     for (const pre of PROVIDER_PRESETS) {
       if (pre.key !== 'custom' && pre.config.kind === 'local' && pre.config.model === p.model) return pre.key;
@@ -474,16 +483,16 @@ function Empty({ onPick }: { onPick: (m: 'narrate' | 'analyze' | 'prophesy' | 'c
 // ---------------- 厂商配置 Popover ----------------
 
 function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig; onApply: (p: OracleProviderConfig) => void }) {
-  const [test, setTest] = useState<{ state: 'idle' | 'testing' | 'ok' | 'fail'; msg?: string; via?: string }>({ state: 'idle' });
+  const [test, setTest] = useState<{ state: 'idle' | 'testing' | 'ok' | 'fail'; msg?: string }>({ state: 'idle' });
   const activeKey = matchPresetKey(provider);
   const isBuiltin = provider.kind === 'builtin';
   const isLocal = provider.kind === 'local';
 
-  /** 测试连通：走 routeCallModel 全路由（中继→本站后端→浏览器直连+协议自动重试），与真实对话完全同路径 */
+  /** 测试连通：走 routeCallModel 全路由（中继→本站后端→浏览器直连），与真实对话完全同路径 */
   const runTest = useCallback(async () => {
     setTest({ state: 'testing' });
     const r = await runConnectivityTest(provider);
-    setTest(r.ok ? { state: 'ok', via: r.via } : { state: 'fail', msg: r.msg ?? '无响应' });
+    setTest(r.ok ? { state: 'ok' } : { state: 'fail', msg: r.msg ?? '无响应' });
   }, [provider]);
 
   const inputCls =
@@ -526,47 +535,6 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
           );
         })}
       </div>
-
-      {/* 接口协议选择（云端厂商）：自定义网关可任选 OpenAI 兼容 / Anthropic——选错时 404 自动换协议重试 */}
-      {(provider.kind === 'openai' || provider.kind === 'anthropic') && (
-        <div className="flex items-center gap-1.5">
-          <span className={`${labelCls} shrink-0`}>协议</span>
-          <div className="flex min-w-0 flex-1 gap-1">
-            {(
-              [
-                ['openai', 'OpenAI 兼容'],
-                ['anthropic', 'Anthropic'],
-              ] as const
-            ).map(([k, name]) => {
-              const active = provider.kind === k;
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  aria-pressed={active}
-                  title={k === 'openai' ? 'POST {baseUrl}/chat/completions（绝大多数厂商与中转站）' : 'POST {baseUrl}/v1/messages（Anthropic 原生风格）'}
-                  onClick={() => {
-                    if (active) return;
-                    setTest({ state: 'idle' });
-                    onApply({
-                      ...provider,
-                      kind: k,
-                      label: k === 'openai' ? '自定义（OpenAI 兼容）' : '自定义（Anthropic）',
-                    });
-                  }}
-                  className={`min-w-0 flex-1 truncate rounded-sm border-2 px-1 py-1 text-[9px] font-bold transition-colors ${
-                    active
-                      ? 'border-amber-400/60 bg-amber-400/10 text-amber-200'
-                      : 'border-zinc-700 bg-zinc-800/60 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
-                  }`}
-                >
-                  {name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* 端点配置（内置 Z.ai 免密钥，仅温度） */}
       {isBuiltin || isLocal ? (
@@ -617,26 +585,20 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
 
       {/* 中继后端（corsDirect 直连 Sealos oracle-server；静态托管接入无 CORS 厂商端点与内置 Z.ai 的唯一通路） */}
       {!isLocal && (
-        <>
-          <label className="flex flex-col gap-0.5">
-            <span className={labelCls}>中继后端（可选）</span>
-            <input
-              value={provider.relayUrl ?? ''}
-              onChange={(e) => onApply({ ...provider, relayUrl: e.target.value || undefined })}
-              placeholder="http://<sealos-host>:8787 或 https://你的自定义域名"
-              spellCheck={false}
-              className={inputCls}
-              aria-label="中继后端地址"
-            />
-            <span className="text-[8px] leading-relaxed text-zinc-600">
-              填入后所有云端请求改经该后端转发（内网网关可填 /api/oracle/agent?XTransformPort=8787）；留空则自动路由：官方云端中继（多镜像竞速）→ 本站后端 → 浏览器直连厂商。
-            </span>
-          </label>
-          <RelayTestRow url={provider.relayUrl} />
-          <p className="text-[8px] leading-relaxed text-zinc-500">
-            大陆线路打不开中继时：选 DeepSeek / Kimi / 通义千问 预设并填各自 API Key（platform.deepseek.com 等注册获取），即可浏览器直连使用 AI——实测三家均支持网页跨域，无需中继与域名。
-          </p>
-        </>
+        <label className="flex flex-col gap-0.5">
+          <span className={labelCls}>中继后端（可选）</span>
+          <input
+            value={provider.relayUrl ?? ''}
+            onChange={(e) => onApply({ ...provider, relayUrl: e.target.value || undefined })}
+            placeholder="http://<sealos-host>:8787"
+            spellCheck={false}
+            className={inputCls}
+            aria-label="中继后端地址"
+          />
+          <span className="text-[8px] leading-relaxed text-zinc-600">
+            填入后所有云端请求改经该后端转发（内网网关可填 /api/oracle/agent?XTransformPort=8787）；留空则自动路由：本站后端 → 浏览器直连厂商。
+          </span>
+        </label>
       )}
 
       <label className="flex flex-col gap-0.5">
@@ -690,9 +652,9 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
         </div>
       )}
 
-      {/* 测试连通（仅云端厂商）——失败文案全量换行展示（移动端不再截断，根因可读） */}
+      {/* 测试连通（仅云端厂商） */}
       {!isLocal && (
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex items-center gap-1.5">
           <Button
             variant="ghost"
             size="sm"
@@ -705,16 +667,13 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
             <span className="truncate">{test.state === 'testing' ? '测试中…' : '测试连通'}</span>
           </Button>
         {test.state === 'ok' && (
-          <span
-            className="shrink-0 rounded-sm border border-emerald-400/50 bg-emerald-400/10 px-1 py-0.5 text-[9px] font-bold text-emerald-300"
-            title={test.via}
-          >
-            ✓ 连通{test.via ? `（${test.via}）` : ''}
+          <span className="shrink-0 rounded-sm border border-emerald-400/50 bg-emerald-400/10 px-1 py-0.5 text-[9px] font-bold text-emerald-300">
+            ✓ 连通
           </span>
         )}
         {test.state === 'fail' && (
           <span
-            className="min-w-0 w-full max-h-24 shrink-0 overflow-y-auto rounded-sm border border-red-400/50 bg-red-400/10 px-1.5 py-1 text-[9px] font-bold leading-relaxed break-words whitespace-pre-wrap text-red-300"
+            className="min-w-0 max-w-[110px] shrink-0 truncate rounded-sm border border-red-400/50 bg-red-400/10 px-1 py-0.5 text-[9px] font-bold text-red-300"
             title={test.msg}
           >
             ✗ {test.msg ?? '失败'}
@@ -724,7 +683,7 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
       )}
 
       <p className="text-[8px] leading-relaxed text-zinc-600">
-        apiKey 仅存本浏览器 localStorage；云端请求按「中继后端 → 本站后端 → 浏览器直连（自定义端点 404 自动换协议重试）」路由转发至厂商——不出现在日志与世界存档中。
+        apiKey 仅存本浏览器 localStorage；云端请求按「中继后端 → 本站后端 → 浏览器直连」路由转发至厂商——不出现在日志与世界存档中。
       </p>
     </div>
   );
@@ -1490,43 +1449,5 @@ export function OraclePanel() {
         </SheetContent>
       </Sheet>
     </>
-  );
-}
-
-// ---------------- 中继连接测试（大陆直连稳定性工具） ----------------
-
-/** 「测试连接」行：实测中继地址（留空则测官方云端中继池）——可达性/延迟/AI/云存档能力即时可见；
- *  附大陆直连根治三步指引（自定义域名绑定，详见仓库 docs/大陆直连指南.md）。 */
-function RelayTestRow({ url }: { url?: string }) {
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<RelayEndpointProbe | null>(null);
-  const run = async () => {
-    setBusy(true);
-    setResult(null);
-    try {
-      setResult(await probeRelayEndpoint(url));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="flex flex-col gap-0.5">
-      <div className="flex items-center gap-1.5">
-        <Button type="button" variant="outline" size="sm" onClick={run} disabled={busy} className="h-5 gap-1 px-1.5 text-[9px] font-bold">
-          <PlugZap className="h-3 w-3" aria-hidden />
-          {busy ? '测试中…' : url?.trim() ? '测试中继连接' : '测试官方云端中继'}
-        </Button>
-        {result && !busy && (
-          <span className={`text-[9px] leading-snug ${result.ok ? 'text-emerald-300' : 'text-rose-400'}`}>
-            {result.ok
-              ? `✓ 可达 · ${result.latencyMs}ms${result.version ? ` · ${result.version}` : ''}${result.ai ? ' · AI✓' : ''}${result.kv ? ' · 云存档✓' : ''}`
-              : `✗ ${result.err ?? '不可达'}`}
-          </span>
-        )}
-      </div>
-      <span className="text-[8px] leading-relaxed text-zinc-600">
-        大陆线路对 workers.dev 常不稳——根治三步：① 注册任意域名（无需备案）→ ② Cloudflare「添加站点」按提示改域名 NS → ③ Workers → pwb-oracle-worker → 设置 → 域和路由 → 添加自定义域；随后把 https://你的域名 填进上方「中继后端」即全端点稳定直连。
-      </span>
-    </div>
   );
 }

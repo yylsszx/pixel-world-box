@@ -1,7 +1,7 @@
 // ============ WorldBox Replica — Rendering pipeline ============
 import type { Army, Effect, Unit } from './types';
 import { T, R, RACES } from './types';
-import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawHydra, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster, drawPersonFine, drawQuadFine, drawTrollFine, drawOgreFine, drawHydraFine, drawChicken, drawPig, drawRabbit, drawFox, drawFish, drawCrab, drawTurtle, drawShark } from './sprites';
+import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawHydra, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster, drawPersonFine, drawQuadFine, drawChicken, drawPig, drawRabbit, drawFox, drawFish, drawCrab, drawTurtle, drawShark } from './sprites';
 import { visCacheFor } from './emergence';
 import { BUILDING_DEFS, BUILD_KINDS } from './types';
 import { GameEngine } from './engine';
@@ -380,26 +380,6 @@ function drawAmbience(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numb
 /** 滚动波带亮度查表（6 档加性淡白 —— 热路径零字符串拼接；上限压低避免「棋盘感」） */
 const DEEP_WAVE_ALPHA = Array.from({ length: 6 }, (_, k) => `rgba(224,244,255,${(0.03 + k * 0.018).toFixed(3)})`);
 
-// —— 【GC 治理 v77】热路径 fillStyle 量化缓存（#47 画像：唯一 rgba 串 1339/s 全部进 GC 堆，
-//    天气云层占 81%、贴花血/骸 ~2%）—— 连续浮点 alpha（及火山灰连续调色）每帧拼新串；
-//    量化 alpha 至 1/16 档（半透明叠加层 0.03 级差低于可感知阈值，贴花淡出周期数游戏年更不可辨），
-//    同 key 命中返回同一字符串实例 → 稳态零分配，且 Chromium 对同实例串的样式解析走内部缓存。
-//    缓存上限 4096 防御病态组合（实际组合 ~数百）。这是 worklog 遗留池「贴花 rgba LUT 量化」处方的通用化实现。
-const _fsCache = new Map<number, string>();
-function qStyle(r: number, g: number, b: number, a: number): string {
-  const rq = r < 0 ? 0 : r > 255 ? 255 : Math.round(r);
-  const gq = g < 0 ? 0 : g > 255 ? 255 : Math.round(g);
-  const bq = b < 0 ? 0 : b > 255 ? 255 : Math.round(b);
-  const aq = a <= 0 ? 0 : a >= 1 ? 15 : Math.round(a * 15);
-  const key = (rq << 20) | (gq << 12) | (bq << 4) | aq;
-  let s = _fsCache.get(key);
-  if (s === undefined) {
-    s = `rgba(${rq},${gq},${bq},${(aq / 15).toFixed(3)})`;
-    if (_fsCache.size < 4096) _fsCache.set(key, s);
-  }
-  return s;
-}
-
 /** P1 深海滚动波带：沿风向移动的斜向微光（周期 ~6s；stride 7 步进采样；只画深海格）
  *  实现：每带一条固定斜率的斜线（错开基线），只画行进波波峰尖（sin>0.8）——稀疏点缀而非连续亮带 */
 function drawDeepWaves(engine: GameEngine, wc: CanvasRenderingContext2D, tx0: number, tx1: number, ty0: number, ty1: number) {
@@ -456,7 +436,7 @@ function drawWeather(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numbe
         if (winter) { cr = 224; cg = 228; cb = 234; }
         if (ash > 0.1) { cr = Math.round(cr - 40 * ash); cg = Math.round(cg - 30 * ash); cb = Math.round(cb - 10 * ash); }
         if (stormy) { cr = Math.round(cr * 0.72); cg = Math.round(cg * 0.74); cb = Math.round(cb * 0.8); ca = Math.min(0.62, a + 0.12); }
-        wc.fillStyle = qStyle(cr, cg, cb, ca); // 【GC v77】云层连续 alpha/灰调 → 量化缓存（画像 81% 唯一串源头）
+        wc.fillStyle = `rgba(${cr},${cg},${cb},${ca})`;
         wc.fillRect(px, py, 9, 5);
         wc.fillRect(px + 3, py - 3, 6, 3);
         wc.fillRect(px + 6, py + 4, 7, 3);
@@ -469,7 +449,7 @@ function drawWeather(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numbe
         const px = cx * CELL * 2 + 1 + offX;
         const py = cy * CELL * 2 + 1 + Math.cos(fc * 0.004 + cy * 0.5) * 1.5 + v2 * 2;
         const alpha = Math.min(0.5, ashC * 0.72);
-        wc.fillStyle = qStyle(84 + 34 * ashC, 76 + 28 * ashC, 70 + 22 * ashC, alpha); // 【GC v77】
+        wc.fillStyle = `rgba(${Math.round(84 + 34 * ashC)},${Math.round(76 + 28 * ashC)},${Math.round(70 + 22 * ashC)},${alpha.toFixed(3)})`;
         wc.fillRect(px, py, 10, 6);
         wc.fillRect(px + 4, py - 2, 7, 4);
       }
@@ -487,7 +467,7 @@ function drawWeather(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numbe
           if (onWater) {
             const ph = ((hsh >> 3) + fc * 0.8) % 18;
             const ra = ph < 6 ? 0.5 : ph < 12 ? 0.32 : 0.16; // 三段扩散渐隐
-            wc.fillStyle = qStyle(196, 222, 244, ra); // 【GC v77】三档离散 → 缓存仅 3 串
+            wc.fillStyle = `rgba(196,222,244,${ra})`;
             if (ph < 6) {
               wc.fillRect(rx, ry, 1, 1); // 落点
             } else if (ph < 12) {
@@ -595,8 +575,8 @@ function drawWeather(engine: GameEngine, wc: CanvasRenderingContext2D, x0: numbe
         const w = 5 - t * 2;
         const alpha = (st.strength * 0.5) * (1 - t * 0.45);
         wc.fillStyle = ice
-          ? qStyle(214, 232, 246, alpha)
-          : qStyle(232 - t * 40, 236 - t * 30, 242 - t * 10, alpha); // 【GC v77】
+          ? `rgba(214,232,246,${alpha})`
+          : `rgba(${Math.round(232 - t * 40)},${Math.round(236 - t * 30)},${Math.round(242 - t * 10)},${alpha})`;
         wc.fillRect(Math.round(ax - w / 2), Math.round(ay - w / 2), Math.max(2, w), Math.max(2, w));
       }
     }
@@ -938,8 +918,7 @@ function applyLighting(engine: GameEngine, wc: CanvasRenderingContext2D, x0: num
     const bhp = engine.bHp.get(b.i);
     const lit = bhp == null || bhp > (BUILDING_DEFS[b.kind]?.hp ?? 70) * 0.35;
     if (lit) {
-      // v78 GC 第二刀：连续 alpha 量化缓存（qStyle）—— 稳态零分配 + 串实例复用
-      wc.fillStyle = qStyle(255, 224, 150, (0.75 + 0.2 * Math.sin((fc + b.i * 7) * 0.05)) * glow);
+      wc.fillStyle = `rgba(255,224,150,${(0.75 + 0.2 * Math.sin((fc + b.i * 7) * 0.05)) * glow})`;
       wc.fillRect(px + 1, py - 3, 1, 1);
       if ((b.i & 1) === 0) wc.fillRect(px, py - 2, 1, 1);
     }
@@ -954,12 +933,11 @@ function applyLighting(engine: GameEngine, wc: CanvasRenderingContext2D, x0: num
     const px = x * 2;
     const py = y * 2;
     const flick = 0.75 + 0.25 * Math.sin((fc + i * 13) * 0.09);
-    // v78 GC 第二刀：火焰三层连续 alpha → qStyle 量化缓存
-    g.fillStyle = qStyle(255, 130, 40, 0.22 * glow * flick);
+    g.fillStyle = `rgba(255,130,40,${(0.22 * glow * flick).toFixed(3)})`;
     g.fillRect(px - 3, py - 3, 8, 8);
-    g.fillStyle = qStyle(255, 170, 70, 0.26 * glow * flick);
+    g.fillStyle = `rgba(255,170,70,${(0.26 * glow * flick).toFixed(3)})`;
     g.fillRect(px - 2, py - 2, 6, 6);
-    g.fillStyle = qStyle(255, 200, 90, 0.22 * glow * flick);
+    g.fillStyle = `rgba(255,200,90,${(0.22 * glow * flick).toFixed(3)})`;
     g.fillRect(px - 1, py - 1, 4, 4);
     budget--;
   }
@@ -979,10 +957,9 @@ function applyLighting(engine: GameEngine, wc: CanvasRenderingContext2D, x0: num
       const breathe = 0.7 + 0.3 * Math.sin((fc + h % 100) * 0.02);
       const px = x * 2;
       const py = y * 2;
-      // v78 GC 第二刀：岩浆两层连续 alpha → qStyle 量化缓存
-      g.fillStyle = qStyle(255, 110, 30, 0.15 * glow * breathe);
+      g.fillStyle = `rgba(255,110,30,${(0.15 * glow * breathe).toFixed(3)})`;
       g.fillRect(px - 3, py - 3, 8, 8);
-      g.fillStyle = qStyle(255, 160, 60, 0.18 * glow * breathe);
+      g.fillStyle = `rgba(255,160,60,${(0.18 * glow * breathe).toFixed(3)})`;
       g.fillRect(px - 1, py - 1, 4, 4);
       budget--;
     }
@@ -1009,10 +986,11 @@ function applyLighting(engine: GameEngine, wc: CanvasRenderingContext2D, x0: num
         if (b2 < 0.12) continue;
         const px = wx * 2;
         const py = wy * 2;
-        // 微光晕 + 亮芯（暖绿；bloom 后呈真实萤光）—— v78 GC 第二刀：qStyle 量化缓存
-        g.fillStyle = qStyle(150, 220, 90, 0.16 * b2 * fg);
+        const a = (0.55 * b2 * fg).toFixed(3);
+        // 微光晕 + 亮芯（暖绿；bloom 后呈真实萤光）
+        g.fillStyle = `rgba(150,220,90,${(0.16 * b2 * fg).toFixed(3)})`;
         g.fillRect(px - 1.5, py - 1.5, 3, 3);
-        g.fillStyle = qStyle(210, 255, 140, 0.55 * b2 * fg);
+        g.fillStyle = `rgba(210,255,140,${a})`;
         g.fillRect(px - 0.5, py - 0.5, 1, 1);
       }
     }
@@ -1158,9 +1136,6 @@ const FP_SNOW_EDGE = Array.from({ length: 8 }, (_, k) => `rgba(235,242,250,${(0.
 
 function drawFootprints(engine: GameEngine, wc: CanvasRenderingContext2D, x0: number, x1: number, y0: number, y1: number) {
   const fps = engine.footprints;
-  // v78 GC 第二刀：脚印按时间序排列且同档聚簇——局部 last 去重免重复 setter 解析（赋值计数热点 Top4）
-  let lf = '';
-  let lf2 = '';
   for (let k = 0; k < fps.length; k++) {
     const fp = fps[k];
     if (fp.x < x0 - 2 || fp.x > x1 + 2 || fp.y < y0 - 2 || fp.y > y1 + 2) continue;
@@ -1174,25 +1149,19 @@ function drawFootprints(engine: GameEngine, wc: CanvasRenderingContext2D, x0: nu
     // 颜色查表（寿命 8 档量化）
     const li = Math.min(7, ((1 - life) * 8) | 0);
     const ci = fp.t === T.SNOW ? 0 : fp.t === T.SAND ? 1 : fp.t === T.ICE ? 3 : 2;
-    const cs = FP_COLORS[ci][li];
-    if (cs !== lf) { wc.fillStyle = cs; lf = cs; }
+    wc.fillStyle = FP_COLORS[ci][li];
     wc.fillRect(bx + side, by, 1, 1);
     if (fp.t === T.SNOW && life > 0.55) {
       // 新鲜雪印：边缘挤起的雪痕
-      const es = FP_SNOW_EDGE[li];
-      if (es !== lf2) { wc.fillStyle = es; lf2 = es; }
+      wc.fillStyle = FP_SNOW_EDGE[li];
       wc.fillRect(bx + side - 1, by - 0.75, 1, 0.75);
     }
   }
 }
 
 /** —— Task 48-B2：鸟群（迁徙鸟斜掠天空：V 字队形 + 双帧扇翅 + 前后错位扑翼相位） —— */
-const BIRD_BODY_STYLE = 'rgba(44,44,52,0.88)';
-const BIRD_WING_STYLE = 'rgba(58,58,68,0.8)';
 function drawBirds(engine: GameEngine, wc: CanvasRenderingContext2D, x0: number, x1: number, y0: number, y1: number) {
   const fc = engine.frameCount;
-  // v78 GC 第二刀：连续同串赋值去重（鸟群常量串逐鸟重复赋）
-  let lf = '';
   for (const f of engine.flocks) {
     if (f.x < x0 - 14 || f.x > x1 + 14 || f.y < y0 - 14 || f.y > y1 + 14) continue;
     const mag = Math.hypot(f.vx, f.vy) || 1;
@@ -1207,11 +1176,11 @@ function drawBirds(engine: GameEngine, wc: CanvasRenderingContext2D, x0: number,
       const py = Math.round((f.y - dirY * back + dirX * spread) * 8) / 4;
       // 扑翼：每只鸟相位错开（i*3），两帧一扇
       const flap = ((fc >> 2) + i * 3) & 1;
-      if (BIRD_BODY_STYLE !== lf) { wc.fillStyle = BIRD_BODY_STYLE; lf = BIRD_BODY_STYLE; }
+      wc.fillStyle = 'rgba(44,44,52,0.88)';
       wc.fillRect(px, py - flap * 0.5, 1, 1); // 身体（扇翅时略升）
       // 翅膀：扇起时左右张开两点，收拢时贴身一点
       if (flap) {
-        if (BIRD_WING_STYLE !== lf) { wc.fillStyle = BIRD_WING_STYLE; lf = BIRD_WING_STYLE; }
+        wc.fillStyle = 'rgba(58,58,68,0.8)';
         wc.fillRect(px - 1, py - 0.5, 1, 0.5);
         wc.fillRect(px + 1, py - 0.5, 1, 0.5);
       }
@@ -1373,31 +1342,6 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
     }
   }
 
-  // 【机制②耕地土地化】垦田层：土地覆盖（地表之上、建筑之下——田是地不是房）
-  if (engine.farmN > 0) {
-    const fm = engine.farmland;
-    for (let ty = y0; ty <= y1; ty++) {
-      const row = ty * 256;
-      const fy = ty * 2;
-      for (let tx = x0; tx <= x1; tx++) {
-        const i = row + tx;
-        if (fm[i] === 0) continue;
-        const h = ((i * 40503) >>> 0) % 7;
-        // 翻耕土底（三档色阶抖动——成片田地不是死板一块）
-        g.fillStyle = h < 3 ? '#9a8a4a' : h < 5 ? '#a8964e' : '#8f7f42';
-        g.fillRect(tx * 2, fy, 2, 2);
-        // 堡沟（每格下缘深土——水平条纹的翻耕纹）
-        g.fillStyle = 'rgba(90,74,34,0.55)';
-        g.fillRect(tx * 2, fy + 1, 2, 1);
-        // 禾苗点缀（抽样两成格：青/金苗错行）
-        if (h === 0 || h === 4) {
-          g.fillStyle = ty % 2 === 0 ? '#c9b45a' : '#7d9a3e';
-          g.fillRect(tx * 2 + ((i >> 2) & 1), fy, 1, 1);
-        }
-      }
-    }
-  }
-
   // buildings（超细粒度：4px/格 ×4 坐标）
   const nightNow = engine.dayPhase() > 0.545 && engine.dayPhase() < 0.865; // 与睡眠系统同一夜窗（归家灯火/卧床联动）
   for (const b of engine.buildings) {
@@ -1479,7 +1423,7 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
       // 种子哈希：每处血迹形状固定（3~5 滴，飞溅方向随机）；颜色仅随 decal 变化 → 提出滴循环免重复拼接
       const s = bd.seed;
       const n = bd.big ? 5 : 3;
-      wc.fillStyle = bd.big ? qStyle(122, 16, 16, 0.55 * fade) : qStyle(158, 28, 22, 0.5 * fade); // 【GC v77】贴花 LUT 量化（钦定项）
+      wc.fillStyle = bd.big ? `rgba(122,16,16,${0.55 * fade})` : `rgba(158,28,22,${0.5 * fade})`;
       for (let k = 0; k < n; k++) {
         const ox = (((s >> (k * 3)) & 7) - 3) * (bd.big ? 1 : 1);
         const oy = (((s >> (k * 3 + 2)) & 3) - 1);
@@ -1528,38 +1472,18 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
       const fade = Math.max(0.2, 1 - c.age / (GameEngine.CORPSE_TTL * (c.stone ? 2.2 : 1)));
       if (c.stone) {
         // 蛇怪的石像：灰白人形剪影（头+身+双腿）+ 底座
-        wc.fillStyle = qStyle(150, 150, 150, 0.85 * fade); // 【GC v77】
+        wc.fillStyle = `rgba(150,150,150,${0.85 * fade})`;
         wc.fillRect(bx - 1, by - 5, 2, 2); // 头
         wc.fillRect(bx - 1, by - 3, 2, 3); // 身
-        wc.fillStyle = qStyle(110, 110, 110, 0.9 * fade); // 【GC v77】
+        wc.fillStyle = `rgba(110,110,110,${0.9 * fade})`;
         wc.fillRect(bx - 2, by, 4, 1); // 底座
         // 石化高光
-        wc.fillStyle = qStyle(200, 205, 210, 0.7 * fade); // 【GC v77】
+        wc.fillStyle = `rgba(200,205,210,${0.7 * fade})`;
         wc.fillRect(bx - 1, by - 5, 1, 1);
         if (frameCount % 90 < 45) { wc.fillRect(bx, by - 2, 1, 1); }
       } else {
-        // 【表现 v0.66】死亡倒下过渡：age<FALL 先画侧躺本体剪影（头朝死亡瞬间朝向），
-        // 与骸骨堆交叉淡化（剪影渐隐 + 骨堆渐显）—— 消除「站立瞬变骨堆」的跳变
-        const FALL = 14;
-        const cr = c.race;
-        const rdef = cr !== undefined ? RACES[cr] : null;
-        const rt = rdef && !c.undead ? 1 - c.age / FALL : 0;
-        if (rt > 0) {
-          const lod = rdef ? ANIMAL_LOD[rdef.sprite] : null;
-          const col = lod ? lod[0] : rdef && rdef.sprite === 'person' ? '#c9a06a' : '#9a8460';
-          const dark = lod ? lod[1] : '#6e685e';
-          const cf = c.flip ? -1 : 1;
-          wc.globalAlpha = rt * 0.95;
-          wc.fillStyle = col;
-          wc.fillRect(bx - 1, by, 3, 1); // 侧躺躯干（贴地）
-          wc.fillStyle = dark;
-          wc.fillRect(bx + (cf > 0 ? 2 : -2), by, 1, 1); // 头（死亡朝向前缘）
-          wc.fillRect(bx - (cf > 0 ? 2 : -2), by, 1, 1); // 腿（后缘）
-          wc.globalAlpha = 1;
-        }
-        // 骸骨堆：白色/暗色骨点组合（头骨+散乱骨片）；亡者为暗色骨尘；前段随倒下过渡渐显
-        const boneT = cr !== undefined && !c.undead ? Math.min(1, c.age / FALL) : 1;
-        const bone = c.undead ? qStyle(70, 64, 58, 0.7 * fade) : qStyle(226, 222, 212, 0.85 * fade * boneT); // 【GC v77】
+        // 骸骨堆：白色/暗色骨点组合（头骨+散乱骨片）；亡者为暗色骨尘
+        const bone = c.undead ? `rgba(70,64,58,${0.7 * fade})` : `rgba(226,222,212,${0.85 * fade})`;
         wc.fillStyle = bone;
         wc.fillRect(bx - 1, by, 2, 2); // 主骨堆
         wc.fillRect(bx, by - 1, 1, 1); // 头骨点
@@ -1573,28 +1497,6 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
   // units
   for (const u of engine.units) {
     if (u.x < x0 || u.x > x1 || u.y < y0 || u.y > y1) continue;
-    // 【表现 v0.66】攻击前扑 lunge：atk 窗口（12→0）内向朝向方向正弦包络位移脉冲（弹出→回弹），
-    // 经 dpx/dpy 通道覆盖全 LOD（色点/迷你/全精灵/精绘）；下帧 engine 重写 dpx 不受影响，本帧内生效
-    if ((u.atk ?? 0) > 0 && !u.boat && (u.caravan ?? 0) === 0) {
-      const lk = Math.sin(Math.PI * (1 - (u.atk ?? 0) / 12)); // 0→1→0 平滑包络
-      u.dpx = (u.rx ?? u.x) * 2 + lk * (u.flip ? -2.5 : 2.5);
-      u.dpy = (u.ry ?? u.y) * 2;
-    }
-    // 【表现 v0.66 #65】受击后仰：hurt 高位段（>14，即受击后前 6 ticks）沿击退方向线性衰减位移
-    // （被打瞬间最大 → 弹性回位）。hurt 为 Rust 批内核 writeback 与 JS 双路径同步的公共字段——
-    // 方向优先级：hitKx（方向性伤害源写入：近战背向攻击者/远程弹道飞行向/爆心向外冲）> flip 背向
-    // （环境伤害「在火里挣扎」与 hitKx 缺失/正上下来源的 fallback）；船/商队排除。
-    if (u.hurt > 14 && !u.boat && (u.caravan ?? 0) === 0) {
-      // 【表现 v0.66 #66·池⑦】zoom 联动增幅：2.2 峰值折算屏显仅 0.55×zoom CSS px——
-      // 低倍率（2.5–5.6 中档/迷你档，百人战场的主视野）亚像素踉跄不可读；
-      // 按 8/zoom 反比放大峰值并 clamp ×1.0–1.45：zoom≥8 精绘档原手感不动，
-      // zoom≤5.5 峰值升至 ~3.19（屏显 ~1.6×zoom，约为迷你档身高的 40%——肉眼可辨的踉跄）
-      const hkPeak = 2.2 * Math.min(1.45, Math.max(1, 8 / zoom));
-      const hk = ((u.hurt - 14) / 6) * hkPeak; // 1→0 线性衰减（×2 画布空间）
-      const kx = (u.hitKx ?? 0) !== 0 ? (u.hitKx as number) : (u.flip ? 1 : -1);
-      u.dpx = (u.dpx ?? (u.rx ?? u.x) * 2) + hk * kx;
-      u.dpy = (u.dpy ?? (u.ry ?? u.y) * 2);
-    }
     drawUnitSprite(engine, u, wc);
     // —— 原子级：受损单位头顶血条（受损时才显示；可关闭）——
     // 质感工程 v3：血条/恐慌标记门限 zoom≥4 → zoom≥6（746 单位规模下逐单位标记
@@ -2147,24 +2049,18 @@ function drawArmyBanner(engine: GameEngine, a: Army, wc: CanvasRenderingContext2
   }
 }
 
-/** 【表现 v0.66】每单位固定相位种子（Knuth 乘法散列 → 0..255 帧偏移）：
- *  步态/呼吸/摆尾等个体动画以 frameCount+seed 驱动 —— 去全局同步（原千人一律阅兵式相位 → 各自节奏的生命感） */
-function unitPhaseSeed(u: Unit): number {
-  return (u.id * 0x9e3779b1) >>> 24;
-}
-
 function drawUnitSprite(engine: GameEngine, u: Unit, wc: CanvasRenderingContext2D) {
   // 殖民船优先：航海中的单位画船而非本体
   if (u.boat) {
     const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-    drawBoat(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount + unitPhaseSeed(u));
+    drawBoat(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount);
     return;
   }
   const def = RACES[u.race];
   // 深度打磨：贸易商队 — 满载行商画驮马货车（王国尖旗 + 货物堆）
   if ((u.caravan ?? 0) > 0) {
     const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-    drawCaravan(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount + unitPhaseSeed(u));
+    drawCaravan(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount);
     return;
   }
   // —— 深度打磨：统一脚下软阴影（陆行单位半透明椭圆，水生/飞行除外） ——
@@ -2297,7 +2193,7 @@ function tryDrawFine(engine: GameEngine, u: Unit, def: (typeof RACES)[number], w
     wc.save();
     wc.scale(0.5, 0.5);
     wc.translate(tx, ty);
-    drawPersonFine(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount + unitPhaseSeed(u), king);
+    drawPersonFine(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount, king);
     wc.restore();
     return true;
   }
@@ -2306,21 +2202,9 @@ function tryDrawFine(engine: GameEngine, u: Unit, def: (typeof RACES)[number], w
     wc.save();
     wc.scale(0.5, 0.5);
     wc.translate(tx, ty);
-    drawQuadFine(wc, u, quad, engine.frameCount + unitPhaseSeed(u), king);
+    drawQuadFine(wc, u, quad, engine.frameCount, king);
     wc.restore();
     return true;
-  }
-  // 精绘巨怪三兄弟（#62）：troll/ogre/hydra ×4 精细网格版——结构逐段对照中档（#59 三段挥击帧全保留）
-  if (!def.vis) {
-    const bossFine = def.sprite === 'troll' ? drawTrollFine : def.sprite === 'ogre' ? drawOgreFine : def.sprite === 'hydra' ? drawHydraFine : null;
-    if (bossFine) {
-      wc.save();
-      wc.scale(0.5, 0.5);
-      wc.translate(tx, ty);
-      bossFine(wc, u, engine.frameCount + unitPhaseSeed(u));
-      wc.restore();
-      return true;
-    }
   }
   return false;
 }
@@ -2329,7 +2213,6 @@ function tryDrawFine(engine: GameEngine, u: Unit, def: (typeof RACES)[number], w
 function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], wc: CanvasRenderingContext2D) {
   const zoom = engine.cam.zoom;
   const fc = engine.frameCount;
-  const fcU = fc + unitPhaseSeed(u); // 【表现 v0.66】个体相位：全绘档步态/呼吸/摆尾去同步
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
   const king = !!u.king;
@@ -2370,7 +2253,7 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
       const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
       const bx0 = f > 0 ? px : px - 1; // 身体左缘（朝向对齐）
       const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
-      const g = moving ? ((fc + unitPhaseSeed(u)) >> 3) & 1 : -1;
+      const g = moving ? (fc >> 3) & 1 : -1;
       // 双腿（两相步态；暗色裤装 —— 免国色系暗化字符串拼接）
       wc.fillStyle = '#3a342c';
       if (g === 0) {
@@ -2408,17 +2291,15 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
         const w = lod[2], h = lod[3];
         const hw = w >> 1;
         const bx = px - hw;
+        const by = py - h;
         const f = u.flip ? -1 : 1;
         const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
-        const g = moving ? ((fc + unitPhaseSeed(u)) >> 3) & 3 : -1;
-        // walk 四相步态（表现线 v3 #59：两相交替提腿 → 左中/全着地/右中/全着地四拍韵律，
-        // 与全绘档对角步态节奏一致；推进相（1/3）躯干前倾起伏 1px——提起的腿藏进躯干不画）
-        const lope = moving && (g === 1 || g === 3) ? 1 : 0;
-        const by = py - h - lope;
+        const g = moving ? (fc >> 3) & 1 : -1;
+        // 四肢步态：前后腿常驻；中腿按对角相位起落（提起的腿藏进躯干不画）
         wc.fillStyle = hurt ? '#cf3f2e' : lod[1];
         wc.fillRect(bx, py, 1, 1);
         wc.fillRect(bx + w - 1, py, 1, 1);
-        if (g !== 2) wc.fillRect(bx + 1, py, 1, 1);
+        if (g !== 1) wc.fillRect(bx + 1, py, 1, 1);
         if (w >= 4 && g !== 0) wc.fillRect(bx + w - 2, py, 1, 1);
         // 躯干
         wc.fillStyle = hurt ? '#ff6b5e' : lod[0];
@@ -2432,11 +2313,6 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
         const headX = px + (u.flip ? -hw - 1 : hw);
         wc.fillStyle = hurt ? '#cf3f2e' : lod[1];
         wc.fillRect(headX, by + (h > 2 ? 1 : 0), 1, 1);
-        // 攻击张嘴点（#83：atk 窗口头前 1px 暗点 —— 远景捕食攻击可读性，全物种通用）
-        if ((u.atk ?? 0) > 0) {
-          wc.fillStyle = '#14100c';
-          wc.fillRect(headX + (u.flip ? -1 : 1), by + (h > 2 ? 1 : 0), 1, 1);
-        }
         // P4 脚底暗描边
         wc.fillStyle = 'rgba(20,16,12,0.35)';
         wc.fillRect(bx, py + 1, w, 1);
@@ -2464,44 +2340,44 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
   switch (def.sprite) {
     case 'person': {
       const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-      drawPerson(wc, u, civ && civ.alive ? civ.color : null, fcU);
+      drawPerson(wc, u, civ && civ.alive ? civ.color : null, fc);
       break;
     }
-    case 'sheep': drawSheep(wc, u, fcU); break;
-    case 'wolf': drawWolf(wc, u, fcU); break;
-    case 'snowwolf': drawSnowWolf(wc, u, fcU); break;
-    case 'bear': drawBear(wc, u, fcU); break;
-    case 'deer': drawDeer(wc, u, fcU); break;
-    case 'penguin': drawPenguin(wc, u, fcU); break;
-    case 'camel': drawCamel(wc, u, fcU); break;
-    case 'scorpion': drawScorpion(wc, u, fcU); break;
-    case 'snake': drawSnake(wc, u, fcU); break;
-    case 'dragon': drawDragon(wc, u, fcU); break;
-    case 'skeleton': drawSkeleton(wc, u, fcU); break;
-    case 'demon': drawDemon(wc, u, fcU); break;
+    case 'sheep': drawSheep(wc, u); break;
+    case 'wolf': drawWolf(wc, u); break;
+    case 'snowwolf': drawSnowWolf(wc, u); break;
+    case 'bear': drawBear(wc, u); break;
+    case 'deer': drawDeer(wc, u); break;
+    case 'penguin': drawPenguin(wc, u, fc); break;
+    case 'camel': drawCamel(wc, u, fc); break;
+    case 'scorpion': drawScorpion(wc, u, fc); break;
+    case 'snake': drawSnake(wc, u, fc); break;
+    case 'dragon': drawDragon(wc, u, fc); break;
+    case 'skeleton': drawSkeleton(wc, u, fc); break;
+    case 'demon': drawDemon(wc, u, fc); break;
     // —— 神话种族（仓库线：光明/浴火/守护/死灵/九头）——
-    case 'angel': drawAngel(wc, u, fcU); break;
-    case 'phoenix': drawPhoenix(wc, u, fcU); break;
-    case 'ent': drawEnt(wc, u, fcU); break;
-    case 'lich': drawLich(wc, u, fcU); break;
-    case 'hydra': drawHydra(wc, u, fcU); break;
-    case 'mage': drawMage(wc, u, fcU); break;
-    case 'troll': drawTroll(wc, u, fcU); break;
-    case 'ogre': drawOgre(wc, u, fcU); break;
-    case 'whitewalker': drawWhiteWalker(wc, u, fcU); break;
-    case 'vampire': drawVampire(wc, u, fcU); break;
-    case 'kraken': drawKraken(wc, u, fcU); break;
-    case 'sandworm': drawSandworm(wc, u, fcU); break;
-    case 'basilisk': drawBasilisk(wc, u, fcU); break;
+    case 'angel': drawAngel(wc, u, fc); break;
+    case 'phoenix': drawPhoenix(wc, u, fc); break;
+    case 'ent': drawEnt(wc, u, fc); break;
+    case 'lich': drawLich(wc, u, fc); break;
+    case 'hydra': drawHydra(wc, u, fc); break;
+    case 'mage': drawMage(wc, u, fc); break;
+    case 'troll': drawTroll(wc, u, fc); break;
+    case 'ogre': drawOgre(wc, u, fc); break;
+    case 'whitewalker': drawWhiteWalker(wc, u, fc); break;
+    case 'vampire': drawVampire(wc, u, fc); break;
+    case 'kraken': drawKraken(wc, u, fc); break;
+    case 'sandworm': drawSandworm(wc, u, fc); break;
+    case 'basilisk': drawBasilisk(wc, u, fc); break;
     // —— P2：八新动物（完整档；水生已在函数头顶门控） ——
-    case 'chicken': drawChicken(wc, u, fcU); break;
-    case 'pig': drawPig(wc, u, fcU); break;
-    case 'rabbit': drawRabbit(wc, u, fcU); break;
-    case 'fox': drawFox(wc, u, fcU); break;
-    case 'fish': drawFish(wc, u, fcU); break;
-    case 'crab': drawCrab(wc, u, fcU); break;
-    case 'turtle': drawTurtle(wc, u, fcU); break;
-    case 'shark': drawShark(wc, u, fcU); break;
+    case 'chicken': drawChicken(wc, u, fc); break;
+    case 'pig': drawPig(wc, u, fc); break;
+    case 'rabbit': drawRabbit(wc, u, fc); break;
+    case 'fox': drawFox(wc, u, fc); break;
+    case 'fish': drawFish(wc, u, fc); break;
+    case 'crab': drawCrab(wc, u, fc); break;
+    case 'turtle': drawTurtle(wc, u, fc); break;
+    case 'shark': drawShark(wc, u, fc); break;
     // —— P2：未知精灵安全回退 —— 走 ANIMAL_LOD 色块（新种族接线遗漏时单位不消失、不崩溃） ——
     default: {
       const lod = ANIMAL_LOD[def.sprite];
@@ -3935,14 +3811,13 @@ export function renderMinimap(engine: GameEngine, ctx: CanvasRenderingContext2D,
     ctx.drawImage(engine.overlayCanvas, 0, 0, mw, mh);
     ctx.globalAlpha = 1;
   }
-  // units as dots —— v78 GC 第二刀：局部 last 去重（单位序按文明聚簇，同色连续段命中率高；赋值计数热点 Top1）
-  let lastCol = '';
+  // units as dots
   for (const u of engine.units) {
     const c = RACES[u.race];
     let col: string;
     if (c.isCiv && u.civ >= 0 && engine.civs[u.civ]?.alive) col = engine.civs[u.civ].colorHex;
     else col = u.race === R.ZOMBIE ? '#64c95d' : u.race === R.DRAGON ? '#cf3f2e' : '#f2ead8';
-    if (col !== lastCol) { ctx.fillStyle = col; lastCol = col; }
+    ctx.fillStyle = col;
     // 殖民船在小地图上画稍大的 2x2 点，更易追踪
     if (u.boat) ctx.fillRect((u.x / 256) * mw - 1, (u.y / 160) * mh - 1, 2, 2);
     else ctx.fillRect((u.x / 256) * mw, (u.y / 160) * mh, 1, 1);

@@ -68,8 +68,6 @@ export function Inspector() {
   };
 
   useEffect(() => {
-    // 选中切走（选文明/清空选择）时不清残留 unit 数据 —— 渲染体以 showUnit 判定内容，
-    // 残留数据不会被渲染（防「点文明仍显示旧生物」的判定在 showUnit，不依赖此处清理）
     if (selUnit == null) return;
     const read = () => {
       const engine = (window as unknown as { __wbEngine?: { getUnitInfo(id: number): UnitInfo | null; families?: Map<number, { name: string }> } }).__wbEngine;
@@ -119,7 +117,7 @@ export function Inspector() {
       </Button>
       <div className="game-scroll relative min-h-0 flex-1 overflow-y-auto p-3">
 
-      {showUnit && unit && (
+      {unit && (
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2.5 pr-5">
             <div className="flex h-12 w-12 items-center justify-center border-2 border-zinc-700 bg-zinc-800">
@@ -348,7 +346,7 @@ export function Inspector() {
         </div>
       )}
 
-      {showCiv && civ && (
+      {!unit && civ && (
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2.5 pr-5">
             <div className="flex h-12 w-12 items-center justify-center border-2 border-zinc-700 bg-zinc-800">

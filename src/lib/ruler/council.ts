@@ -9,8 +9,6 @@ import type {
   CouncilAgentStatus, CouncilFeedItem, CouncilPendingItem, ConveneContext, FeedAction, RulerIntent, RulerRole,
 } from './types';
 import { RULER_ROLES, cooldownKey } from './whitelist';
-import { routeCallModel } from '@/lib/oracle/direct-client';
-import { loadStoredProvider } from '@/lib/oracle/provider-store';
 import { buildAnchors, buildDigest, takeSnapshot, type WorldSnapshot } from './digest';
 import { parseAgentOutput } from './parse';
 import { arbitrate } from './arbiter';
@@ -42,22 +40,61 @@ interface PendingVerification {
   slots: Record<string, string | number | undefined>;
 }
 
-/** 单次 LLM 调用（经统一三通道路由：中继后端→本站后端→浏览器直连；SSE 全量收集，不做流式 UI——议会只在后台决断）。
- *  与神谕面板共用同一份 provider 配置（localStorage 'oracle-provider-v1'，含中继后端地址）——
- *  用户配了 Workers 中继后，线上静态托管的议会/中枢即可用（此前硬编码同源 /api 在静态托管下必 404/405）。 */
+/** 单次 LLM 调用（SSE 全量收集，不做流式 UI——议会只在后台决断） */
 async function llmOnce(systemPrompt: string, userMessage: string, signal: AbortSignal): Promise<{ text: string; err?: string }> {
   try {
-    const r = await routeCallModel(
-      loadStoredProvider(),
-      [
-        { role: 'assistant', content: systemPrompt },
-        { role: 'user', content: userMessage },
-      ],
-      false,
-      { signal },
-    );
-    if (!r.content && r.err) return { text: '', err: r.err };
-    return { text: r.content, err: r.err || undefined };
+    const res = await fetch('/api/oracle/agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider: { kind: 'builtin' },
+        messages: [
+          { role: 'assistant', content: systemPrompt },
+          { role: 'user', content: userMessage },
+        ],
+        deep: false,
+      }),
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      let msg = `HTTP ${res.status}`;
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (j.error) msg = j.error;
+      } catch { /* 非 JSON 错误体 */ }
+      // 静态托管（GitHub Pages 等）上 /api/* 不存在：404/405 → 友好降级文案
+      if (res.status === 404 || res.status === 405) {
+        msg = '议会离线：此部署为纯静态托管，无 AI 后端（游戏本体不受影响）';
+      }
+      return { text: '', err: msg };
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let text = '';
+    for (;;) {
+      if (signal.aborted) {
+        void reader.cancel();
+        return { text: '', err: '已中止' };
+      }
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() ?? '';
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t.startsWith('data:')) continue;
+        const payload = t.slice(5).trim();
+        if (payload === '[DONE]') continue;
+        try {
+          const ev = JSON.parse(payload) as { t?: string; err?: string };
+          if (ev.t) text += ev.t;
+          if (ev.err) return { text, err: ev.err };
+        } catch { /* 忽略坏行 */ }
+      }
+    }
+    return { text };
   } catch (e) {
     if (signal.aborted) return { text: '', err: '已中止' };
     return { text: '', err: e instanceof Error ? e.message : String(e) };

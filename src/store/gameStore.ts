@@ -228,25 +228,15 @@ function queueAutoSave(data: SaveData) {
     console.error('[WB-SAVE-AUTO]', err);
   }
 }
-/** 从存档提取轻量元信息（列表展示用）——兼容 v1 units 与 v2 列式 u（按表头行定位列，防字段错位） */
+/** 从存档提取轻量元信息（列表展示用）——兼容 v1 units 与 v2 列式 u */
 function metaFromData(key: SlotKey, d: SaveData, source: SaveSlotMeta['source']): SaveSlotMeta {
   let pop = 0;
   let civs = 0;
   const isV2 = d.v === 2;
-  let units: { race: number; dead?: boolean }[];
-  if (isV2 && Array.isArray(d.u) && d.u.length > 1 && Array.isArray(d.u[0])) {
-    // v2 列式：首行是 UNIT_FIELDS 表头，按字段名定位 race/dead 列。
-    // 曾硬编码 row[1]=race/row[22]=dead：22 实为 breath（呼吸相位），活单位被误判死亡 → 列表人口恒 0。
-    const header = (d.u[0] as unknown[]).map(String);
-    const ri = header.indexOf('race');
-    const di = header.indexOf('dead');
-    units = (d.u.slice(1) as unknown[][]).map((row) => ({
-      race: (ri >= 0 ? row[ri] : row[1]) as number,
-      dead: di >= 0 ? (row[di] as boolean | undefined) : undefined,
-    }));
-  } else {
-    units = d.units;
-  }
+  const units: { race: number; dead?: boolean }[] =
+    isV2 && Array.isArray(d.u) && d.u.length > 1
+      ? (d.u.slice(1) as unknown[][]).map((row) => ({ race: row[1] as number, dead: row[22] as boolean | undefined }))
+      : d.units;
   for (const u of units) if (!u.dead && RACES[u.race]?.isCiv) pop++;
   for (const c of d.civs) if (c.alive) civs++;
   return { key, savedAt: d.savedAt, source, year: Math.floor(d.yearF), pop, civs, tick: d.tickCount, seed: d.seed };
@@ -258,24 +248,10 @@ function listSlots(): SaveSlotMeta[] {
   for (const key of ['slot0', 'slot1', 'slot2', 'auto'] as SlotKey[]) {
     const data = localStorage.getItem(SLOT_DATA_KEY[key]);
     const meta = metas[key];
-    if (data && meta) { out.push(meta); continue; }
-    if (data && !meta) {
-      // 数据孤儿复活：存档在但 meta 索引缺失（写失败/被单独清理）时从存档解析重建——
-      // 此前此态永不显示（「继续旅程」隐身根因之一）；600KB parse 仅在孤儿态发生一次，随后写回 meta
-      try {
-        const m = metaFromData(key, JSON.parse(data) as SaveData, key === 'auto' ? 'auto' : 'manual');
-        metas[key] = m;
-        writeMetas(metas);
-        out.push(m);
-      } catch {
-        // 坏档跳过展示（不删数据）
-      }
-      continue;
-    }
-    if (!data && meta) {
-      // 对账：meta 孤儿（数据已被清理）→ 删除展示信息
-      delete metas[key];
-      writeMetas(metas);
+    if (data && meta) out.push(meta);
+    else if (data || meta) {
+      // 对账：只有单边存在 → 清理孤儿（数据在但 meta 丢失时仅能丢弃展示信息，数据不动）
+      if (!data && meta) { delete metas[key]; writeMetas(metas); }
     }
   }
   // 旧单槽存档：存在则解析一次元信息并缓存进 meta（后续不再重复 parse）

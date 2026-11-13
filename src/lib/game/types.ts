@@ -303,11 +303,6 @@ export const JOBS: JobDef[] = [
   { key: 'noble', name: '贵族', desc: '居于王都，供养国库', hpMul: 1.25, dmgMul: 1.1, speedMul: 1, weight: 1, color: '#b56cf0' },
   // 国王：唯一（建国/继承加冕产生；weight 0 = 永不自然出生），hp/dmg ×1.5
   { key: 'king', name: '国王', desc: '一国之主：驾崩则举国缟素，继承者加冕', hpMul: 1.5, dmgMul: 1.5, speedMul: 1, weight: 0, color: '#ffd700' },
-  // —— 职业分工（#68 机制①·复杂精细职业）：专职工种尾追追加（旧档 job 索引 0-7 全稳定）——
-  // 渔民：渔场 staffing 专职工种（渔场须渔民在岗方产出——农民不再越权出海）；weight 0 = 仅由文明宏观调控改派产生
-  { key: 'fisher', name: '渔民', desc: '驻渔场出海捕捞，向海要粮', hpMul: 1, dmgMul: 0.95, speedMul: 1.1, weight: 0, color: '#4ecdc4' },
-  // 猎手：村野专职工种（猎获归仓通道的资格主体；猎期野味丰饶时编入、猎期终结归田）；weight 0 = 仅由宏观调控改派产生
-  { key: 'hunter', name: '猎手', desc: '巡猎村野，猎获归仓', hpMul: 1.05, dmgMul: 1.1, speedMul: 1.15, weight: 0, color: '#c9a227' },
 ];
 export type JobId = number; // index into JOBS
 export const JOB_KEY: Record<string, number> = Object.fromEntries(JOBS.map((j, i) => [j.key, i]));
@@ -332,7 +327,7 @@ export const BUILDING_DEFS: BuildingDef[] = [
   { key: 'house', name: '住宅', hp: 70, popCap: 4, cost: 0, desc: '容量 +4 人的居所' },
   { key: 'capital', name: '王都', hp: 240, popCap: 6, cost: 0, desc: '王国的心脏，陷落即亡国之危' },
   { key: 'tower', name: '箭塔', hp: 120, cost: 8, desc: '自动射击射程 4.5 格内的敌人' },
-  { key: 'farm', name: '农田', hp: 0, cost: 5, desc: '开垦田地：类土地覆盖而非建筑——农民在其上耕作产粮，随领土易主、可被战火践毁' },
+  { key: 'farm', name: '农田', hp: 40, popCap: 2, cost: 5, desc: '容量 +2 人，农民的劳作之处' },
   { key: 'barracks', name: '兵营', hp: 150, cost: 12, desc: '战时把附近平民训练为战士' },
   { key: 'castle', name: '城堡', hp: 340, cost: 34, needKnowledge: 18, desc: '射程 5.5 的强力箭矢防御' },
   { key: 'port', name: '港口', hp: 90, cost: 16, needKnowledge: 8, desc: '加速殖民船的派出' },
@@ -341,13 +336,12 @@ export const BUILDING_DEFS: BuildingDef[] = [
   { key: 'temple', name: '神殿', hp: 140, cost: 22, needKnowledge: 10, desc: '治疗光环庇佑周边单位' },
   { key: 'wall', name: '城墙', hp: 200, cost: 2, desc: '环都城防：敌方陆行单位不可逾越，守军借墙而战' },
   { key: 'fishery', name: '渔场', hp: 70, popCap: 2, cost: 14, needKnowledge: 6, desc: '邻海而建：渔民出海捕捞产出粮食——海洋资源的唯一入口' },
-  { key: 'seaFort', name: '海上要塞', hp: 180, cost: 28, needKnowledge: 12, desc: '钉入邻疆海面的堡垒：自动炮击射程内敌舰与来犯之敌（每国至多 2 座）' },
 ];
 export const BUILD_KINDS = {
-  HOUSE: 1, CAPITAL: 2, TOWER: 3, FARM: 4, BARRACKS: 5, CASTLE: 6, PORT: 7, LIBRARY: 8, MARKET: 9, TEMPLE: 10, WALL: 11, FISHERY: 12, SEA_FORT: 13,
+  HOUSE: 1, CAPITAL: 2, TOWER: 3, FARM: 4, BARRACKS: 5, CASTLE: 6, PORT: 7, LIBRARY: 8, MARKET: 9, TEMPLE: 10, WALL: 11, FISHERY: 12,
 } as const;
 /** 可被占领（易帜而非摧毁）的建筑 */
-export const CAPTURABLE = new Set<number>([BUILD_KINDS.HOUSE, BUILD_KINDS.MARKET, BUILD_KINDS.BARRACKS, BUILD_KINDS.PORT, BUILD_KINDS.FISHERY]);
+export const CAPTURABLE = new Set<number>([BUILD_KINDS.HOUSE, BUILD_KINDS.FARM, BUILD_KINDS.MARKET, BUILD_KINDS.BARRACKS, BUILD_KINDS.PORT, BUILD_KINDS.FISHERY]);
 
 export interface Unit {
   id: number;
@@ -370,9 +364,6 @@ export interface Unit {
   flip: boolean;
   name: string;
   hurt: number; // ticks of "recently damaged" flash
-  /** 受击击退方向 x 符号（±1=左右，0=来源正上/正下无水平分量）。运行时渲染辅助字段不入档；
-   *  各方向性伤害源写入（近战=背向攻击者/远程=弹道飞行方向/爆炸=离爆心向外），环境伤害不写（后仰退化 flip 背向） */
-  hitKx?: number;
   breath: number; // dragon breath timer
   /** 神经决策核心：战或逃/伤重脱离的接触冷却（tick；>0 期间脱离接触不接战 —— 瞬态不入档，读档自然消散） */
   fleeT?: number;
@@ -617,60 +608,6 @@ export interface Civ {
   // ---------------- 涌现社会理念（Infinite Ideas） ----------------
   /** 已采纳的涌现理念 key 列表（上限 3；效果由 engine.ideaModsOf 汇总） */
   ideas?: string[];
-
-  // ---------------- 文明中枢核心（机制④：每文明独立的超级决策智能体） ----------------
-  /** 本地智能判断的人格六维——动态演化且各文明不同；API 模式下作为发给大模型的禀性基线 */
-  core?: CivCore;
-}
-
-/** 文明中枢核心的人格六维（0.05-0.95）：好战/筑城/重农/通商/向海/虔信 */
-export interface CivPersona {
-  war: number;
-  build: number;
-  farm: number;
-  trade: number;
-  sea: number;
-  faith: number;
-}
-
-/** 文明中枢核心：每文明完全分开的决策大脑 */
-export interface CivCore {
-  /** 决策模式：local 本地智能判断（默认，动态人格驱动）/ api 外接大模型（各文明可接不同 API） */
-  mode: 'local' | 'api';
-  /** 人格六维权重（建国时按种族底色+随机扰动各不相同；随国情事件动态漂移） */
-  persona: CivPersona;
-  /** 人格演化代数（每次漂移 +1） */
-  gen: number;
-  /** 最近决策纪要（滚动上限 5 条，新决策顶替最旧） */
-  notes: string[];
-  /** API 模式运行态（不入档：pending 请求数 / 连败计数，3 连败自动回落 local） */
-  apiBusy?: number;
-  apiFails?: number;
-  /** 最近一次 API 决策纪要（面板展示；本地模式不用） */
-  lastApiNote?: string;
-  /** 【中枢二笔】结构化国策（云端 /api/agent/decide 回执，Worker 白名单已校验；
-   *  one-shot 动作即取即焚、持续型保留至过期——旧档无此字段天然兼容） */
-  decisions?: CivCoreDecisions;
-  /** decide 在途时刻（ms 时间戳；超 90s 视为死信自愈清零——读档后 pending 网络永不复活） */
-  decideBusy?: number;
-}
-
-/** 【中枢二笔】结构化国策（与 Worker DECIDE_FIELDS 白名单同构；引擎消费驱动外交/建设/迁徙） */
-export interface CivCoreDecisions {
-  /** 决断时的中枢代数（过期基准：距 core.gen > 8 期自动作废——过时国策不永久化） */
-  gen: number;
-  /** 外交姿态：expand 扩张（易燃战火+兵营）/ defend 防御（修工事）/ turtle 闭守（息事宁人+重防御） */
-  stance?: 'expand' | 'defend' | 'turtle';
-  /** 建设优先：对应建筑 kind 建造权重 ×3.2（wall 映射城堡防御意象） */
-  build_focus?: 'farm' | 'house' | 'tower' | 'harbor' | 'market' | 'wall' | 'none';
-  /** 宣战目标（须在敌对清单内；即取即焚） */
-  war_target?: number | null;
-  /** 求和目标（须在交战清单内；即取即焚） */
-  peace_offer?: number | null;
-  /** 结盟目标（须在可结盟清单内；即取即焚） */
-  alliance_target?: number | null;
-  /** 迁徙方向 0-7（0=北，2=东，4=南，6=西，余对角——建筑/恳田选址方向锥） */
-  migration?: number | null;
 }
 
 export type BuildKind = number; // 0 none, 1 house, 2 capital, 3 tower, 4 farm, 5 barracks, 6 castle, 7 port, 8 library, 9 market, 10 temple, 11 wall
@@ -1680,10 +1617,6 @@ export interface CorpseDecal {
   stone: boolean;
   /** 亡灵残骸（暗色骨尘） */
   undead: boolean;
-  /** 【表现 v0.66】死亡倒下过渡：种族 id（渲染侧躺本体剪影→骸骨交叉淡化；瞬态不入档） */
-  race?: number;
-  /** 死亡瞬间朝向（倒下剪影头端方向） */
-  flip?: boolean;
 }
 
 // ---------------- 神谕 AI（Oracle LLM，专门打造的 AI 大模型融入） ----------------
@@ -1910,8 +1843,6 @@ export interface SaveDataV2 {
   /** RLE 压缩的数组：值-次数对交替，Uint16Array 的 base64 */
   terrain: string;
   variant: string;
-  /** 【机制②耕地土地化】田地覆盖层 RLE（0=荒 1=垦）：旧档缺省 = 全荒（随后旧 FARM 建筑实体一次性迁移为田块） */
-  farmland?: string;
   /** Int16Array owner 按字节视图 RLE */
   owner: string;
   building: string;
@@ -1920,20 +1851,6 @@ export interface SaveDataV2 {
   river?: string;
   /** 道路网络（RLE；旧档缺省 = 无路，新建筑将重新铺设） */
   road?: string;
-  /** 【稳定性 v79→v81】昼夜钟（旧帧钟；v81 起 dayPhase 改 tick 钟驱动，本字段仅作旧档相位迁移源，
-   *  模拟不再消费）：旧档缺省 = 0（黎明开局）。 */
-  frameCount?: number;
-  /** 【稳定性 v81】昼夜 tick 钟相位随档偏移（dayPhase = (tickCount+dayTickOff)%DAY_TICKS）：
-   *  旧档缺省按 frameCount 相位一次性折算；读档日相无缝续日。 */
-  dayTickOff?: number;
-  /** 【稳定性 v80】生态再繁衍记录年（ecoTick 门控 yearNow-ecoRepopYear>25）：旧档缺省 = -999（generate 初值）。
-   *  不入档时读档取上个会话残留 → 再繁衍触发时机漂移 → spawn 消费 rng 序分叉（同档重载不可复现）。 */
-  ecoRepopYear?: number;
-  /** 【稳定性 v80】生态状态变更播报节流年（>15 年才记一笔）：旧档缺省 = -999。同上因果链。 */
-  ecoLastNoteYear?: number;
-  /** 【稳定性 v80】终极世界大战引燃冷却钟（tickCount-wwIgniteTick>=400 门控）：旧档缺省 = -400（字段初值）。
-   *  不入档时读档残留上个会话拨动值 → 引燃时机漂移 → 全局战局分叉。 */
-  wwIgniteTick?: number;
   /** 世界法则（可选：旧存档回退默认值） */
   laws?: WorldLaws;
   /** 野生生物繁殖倍率（0-1；基准 = 最慢文明生物的 repro；旧档缺省 = 1） */

@@ -5,14 +5,9 @@
 
 ## 🎮 在线游玩
 
-**https://yylsszx.github.io/pixel-world-box/**（大陆推荐入口）
-
-全功能版（游戏本体 + 云端 AI/云存档同源一体，线路可达时体验最全）：
-**https://pwb-oracle-relay.yeyilin2010.workers.dev**
+**https://yylsszx.github.io/pixel-world-box/**
 
 无需安装、无需注册、无需服务器 —— 整个游戏（含模拟引擎与存档）全部在你的浏览器本地运行。
-大陆网络打不开全功能版属 workers.dev 线路污染（非部署故障），见 docs/大陆直连指南.md；
-GitHub Pages 入口游戏本体完全一致，AI 神谕可选 DeepSeek/Kimi/通义千问 预设浏览器直连。
 
 ## ✨ 特性
 

@@ -1,13 +1,12 @@
 'use client';
 // ============ World Chronicle: 世界纪事事件流面板（桌面右下 + 移动端底部抽屉） ============
 // 支持按事件类型过滤（全部/王国/战争/天灾/传奇/大地）
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useGameStore, EVENT_CATEGORY, type EventFilter } from '@/store/gameStore';
 import type { WorldEvent, WorldEventKind } from '@/lib/game/types';
-import { composeChronicle, type ChronicleResult } from '@/lib/game/chronicler';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { ScrollText, X, Flag, Feather, RefreshCw, Copy, Check, Swords, Handshake, Skull, Crown, Flame, Award, Biohazard, Radiation, Sparkles, Star, Ship, Home, Waves, Castle, CloudLightning, Trophy, Mountain, Droplets, Sword, Ghost, Flame as FlameIcon, Zap as ZapIcon, Hammer, Landmark, Coins, Gem, CloudRain, Snowflake, Bug, Sun, MountainSnow, Cloudy, Sparkle, PersonStanding, Eye, FlagTriangleRight, Swords as SwordsIcon, TrendingDown, Map, Landmark as LandmarkIcon, Scroll, BadgeCheck, BadgeX, Lightbulb, TriangleAlert, PartyPopper, Megaphone, CloudDrizzle, Dna, Orbit, Wind, Tornado, CircleDot, Snowflake as SnowIcon, Wheat, Leaf, FlaskConical, Route, Users, HeartCrack, Network, Wand2, TreePine, Hourglass, Sprout, FastForward, Anchor } from 'lucide-react';
+import { ScrollText, X, Flag, Swords, Handshake, Skull, Crown, Flame, Award, Biohazard, Radiation, Sparkles, Star, Ship, Home, Waves, Castle, CloudLightning, Trophy, Mountain, Droplets, Sword, Ghost, Flame as FlameIcon, Zap as ZapIcon, Hammer, Landmark, Coins, Gem, CloudRain, Snowflake, Bug, Sun, MountainSnow, Cloudy, Sparkle, PersonStanding, Eye, FlagTriangleRight, Swords as SwordsIcon, TrendingDown, Map, Landmark as LandmarkIcon, Scroll, BadgeCheck, BadgeX, Lightbulb, TriangleAlert, PartyPopper, Megaphone, CloudDrizzle, Dna, Orbit, Wind, Tornado, CircleDot, Snowflake as SnowIcon, Wheat, Leaf, FlaskConical, Route, Users, HeartCrack, Network, Wand2, TreePine, Hourglass, Sprout, FastForward, Anchor } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 /** 事件类型的图标与主题色 */
@@ -134,44 +133,6 @@ const FILTER_META: Record<EventFilter, { icon: LucideIcon; label: string; active
   world: { icon: Mountain, label: '大地', active: 'border-teal-400 bg-teal-400/15 text-teal-300' },
 };
 const FILTER_ORDER: EventFilter[] = ['all', 'kingdom', 'war', 'disaster', 'legend', 'world'];
-
-/** 史官叙事本地缓存键（跨会话留存上次成稿；纯展示缓存，与存档无关） */
-const CHRON_CACHE_KEY = 'pwb-chronicle-last';
-
-/** 史官叙事面板状态（纯按需触发——零定时器零自动轮询，仅用户点击时递交） */
-interface SageState {
-  status: 'idle' | 'loading' | 'done';
-  text: string;
-  via: 'cloud' | 'local' | '';
-  note: string;
-  /** 撰写时的纪事条数（新纪事提示基准） */
-  n: number;
-}
-
-const SAGE_IDLE: SageState = { status: 'idle', text: '', via: '', note: '', n: 0 };
-
-/** 从 localStorage 恢复上次史官成稿（Chronicle 仅在 boot='game' 后客户端挂载——SSG 树外，无水合错配；
- *  损坏缓存静默忽略） */
-function loadCachedSage(): SageState {
-  if (typeof window === 'undefined') return SAGE_IDLE;
-  try {
-    const raw = window.localStorage.getItem(CHRON_CACHE_KEY);
-    if (!raw) return SAGE_IDLE;
-    const c = JSON.parse(raw) as Partial<SageState> | null;
-    if (c && c.status === 'done' && typeof c.text === 'string' && c.text) {
-      return {
-        status: 'done',
-        text: c.text,
-        via: c.via === 'cloud' ? 'cloud' : 'local',
-        note: typeof c.note === 'string' ? c.note : '',
-        n: typeof c.n === 'number' ? c.n : 0,
-      };
-    }
-  } catch {
-    /* 损坏缓存忽略 */
-  }
-  return SAGE_IDLE;
-}
 
 /** 事件行内分类徽章色调（战争红 / 生态绿 / 社会紫 / 自然青 / 王国琥珀 / 传奇金） */
 const CAT_BADGE: Record<string, string> = {
@@ -308,91 +269,6 @@ export function Chronicle() {
     [events, eventFilter],
   );
 
-  // —— 史官叙事（按需触发：仅用户点击时递交云端 AI；零定时器零自动轮询） ——
-  // 惰性初始化恢复上次成稿（localStorage 跨会话留存——组件仅客户端挂载，零水合错配）
-  const [sage, setSage] = useState<SageState>(loadCachedSage);
-  const [copied, setCopied] = useState(false);
-
-  const compose = async () => {
-    if (sage.status === 'loading' || events.length === 0) return;
-    setSage({ status: 'loading', text: '', via: '', note: '', n: events.length });
-    let r: ChronicleResult;
-    try {
-      r = await composeChronicle(events);
-    } catch {
-      r = { text: '史官暂时搁笔——稍后再试。', via: 'local', note: '' };
-    }
-    setSage({ status: 'done', text: r.text, via: r.via, note: r.note ?? '', n: events.length });
-    try {
-      localStorage.setItem(CHRON_CACHE_KEY, JSON.stringify({ status: 'done', text: r.text, via: r.via, note: r.note ?? '', n: events.length }));
-    } catch {
-      /* 隐私模式等存储不可用——本次会话内可见即可 */
-    }
-  };
-  const copyChronicle = async () => {
-    try {
-      await navigator.clipboard.writeText(sage.text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* 剪贴板不可用（非安全上下文等）——静默 */
-    }
-  };
-
-  /** 史官叙事卡片（桌面面板与移动端抽屉共用） */
-  const sageCard = sage.status !== 'idle' && (
-    <div className="border-2 border-b-0 border-zinc-700/90 bg-zinc-900/95 px-2 py-1.5" role="region" aria-label="史官叙事">
-      <div className="flex items-center gap-1.5">
-        <Feather className="h-3 w-3 shrink-0 text-fuchsia-300" aria-hidden />
-        <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-300">史官叙事</span>
-        {sage.status === 'done' && sage.via === 'cloud' && (
-          <span className="rounded-sm border border-emerald-600/50 bg-emerald-400/10 px-1 text-[8px] font-bold text-emerald-300">云端 AI</span>
-        )}
-        {sage.status === 'done' && sage.via === 'local' && (
-          <span className="rounded-sm border border-amber-600/50 bg-amber-400/10 px-1 text-[8px] font-bold text-amber-300">本地简史</span>
-        )}
-        <span className="ml-auto flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={compose}
-            disabled={sage.status === 'loading' || events.length === 0}
-            aria-label="重撰编年史（按需递交云端 AI）"
-            className="h-5 w-5 border-2 border-transparent text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
-          >
-            <RefreshCw className="h-3 w-3" aria-hidden />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={copyChronicle}
-            disabled={!sage.text}
-            aria-label="复制编年史"
-            className="h-5 w-5 border-2 border-transparent text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
-          >
-            {copied ? <Check className="h-3 w-3 text-emerald-400" aria-hidden /> : <Copy className="h-3 w-3" aria-hidden />}
-          </Button>
-        </span>
-      </div>
-      {sage.status === 'loading' ? (
-        <p className="flex items-center gap-1.5 py-1.5 text-[11px] text-zinc-400">
-          <span className="inline-block h-1.5 w-1.5 animate-ping rounded-full bg-fuchsia-300" aria-hidden />
-          史官执笔中…（递交近期纪事于云端史官，不可达时自动降级本地简史）
-        </p>
-      ) : (
-        <>
-          <p className="game-scroll mt-1 max-h-24 overflow-y-auto text-[11px] leading-relaxed text-zinc-200">{sage.text}</p>
-          {sage.note && <p className="mt-0.5 text-[8px] leading-relaxed text-zinc-500">{sage.note}</p>}
-          {events.length - sage.n >= 8 && (
-            <p className="mt-0.5 text-[8px] leading-relaxed text-amber-400/80">
-              已有 {events.length - sage.n} 条新纪事——点重撰收入史册
-            </p>
-          )}
-        </>
-      )}
-    </div>
-  );
-
   return (
     <>
       {/* 桌面面板（窄屏隐藏，改由底部抽屉承载）—— 仅顶栏纪事按钮触发时出现，主界面无常驻折叠条 */}
@@ -405,16 +281,6 @@ export function Chronicle() {
               世界纪事
             </span>
             <span className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={compose}
-                disabled={events.length === 0 || sage.status === 'loading'}
-                aria-label="史官撰史（递交近期纪事于云端 AI 撰写编年史，按需触发）"
-                className="h-6 w-6 border-2 border-transparent text-fuchsia-300/90 hover:bg-zinc-800 hover:text-fuchsia-200"
-              >
-                <Feather className="h-3.5 w-3.5" aria-hidden />
-              </Button>
               <span className="font-mono text-[10px] font-bold text-zinc-500">{events.length}</span>
               <Button
                 variant="ghost"
@@ -427,7 +293,6 @@ export function Chronicle() {
               </Button>
             </span>
           </div>
-          {sageCard}
           <FilterRow />
           <EventList events={filtered} jumpToEvent={jumpToEvent} />
         </div>
@@ -441,19 +306,8 @@ export function Chronicle() {
               <ScrollText className="h-4 w-4 text-amber-300" aria-hidden />
               世界纪事
               <span className="ml-auto font-mono text-[10px] font-bold text-zinc-500">{events.length} 条</span>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={compose}
-                disabled={events.length === 0 || sage.status === 'loading'}
-                aria-label="史官撰史（递交近期纪事于云端 AI 撰写编年史，按需触发）"
-                className="h-6 w-6 border-2 border-transparent text-fuchsia-300/90 hover:bg-zinc-800 hover:text-fuchsia-200"
-              >
-                <Feather className="h-3.5 w-3.5" aria-hidden />
-              </Button>
             </SheetTitle>
           </SheetHeader>
-        {sageCard}
           <FilterRow />
           <div className="game-scroll max-h-[34vh] overflow-y-auto pb-2">
             {filtered.length === 0 ? (

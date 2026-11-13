@@ -23,8 +23,6 @@ PWB（pixel-world-box）神谕的**云端厂商统一 SSE 网关 + dsh 运行时
 | GET | `/healthz` | `{ok, service, version, uptime_s, builtin, dsh:{enabled,ready,packages,boot_ms,error,store_root,persistence:{backend,sessions,open_writers}}, node}` |
 | POST | `/api/oracle/agent` | 请求体 `AgentRequestBody`（与前端 types.ts 同构）→ SSE 流；带 `dsh:true\|{...}` 走 dsh 会话面 |
 | GET | `/api/oracle/agent` | `405 {"error":"POST only"}`（前端探测识别「后端在」） |
-| POST | `/api/civ-brain` | 文明中枢核心非流式决策中继（机制④）：`{provider, civ, persona}` → 转发厂商收全量 → 白名单过滤 `{personaPatch, note}`；线上静态托管时浏览器直连本端点 |
-| GET | `/api/civ-brain` | `405 {"error":"POST only"}` |
 | GET | `/` | 服务信息 |
 
 CORS 全放行（`*`）；请求体上限 1MB；上游超时 120s；apiKey 只经内存转发，绝不写日志。

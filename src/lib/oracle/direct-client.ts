@@ -12,14 +12,12 @@
 // dsh 持久会话面（M-O4 相三前端接线）：仅中继通道附加 body.dsh（服务端权威历史）——
 //   本站后端（Next 静态白名单路由）与 corsDirect 不识别该面，永不发送；无 dsh 时 body 逐字节不变。
 import type { AgentChatMessage, OracleProviderConfig } from './types';
-import { loadStoredProvider } from './provider-store';
 
-/** 统一模型调用结果（与 agent.ts callModel 返回同构）；via：非默认路径成功时的说明（如自动换协议） */
+/** 统一模型调用结果（与 agent.ts callModel 返回同构） */
 export interface ModelCallResult {
   content: string;
   reasoning: string;
   err: string;
-  via?: string;
 }
 
 export interface RouteCallbacks {
@@ -131,31 +129,6 @@ export async function probeSiteBackend(now = Date.now()): Promise<BackendState> 
 /** 探测结果变化时失效缓存（测试连通按钮手动触发前调用，保证及时性） */
 export function invalidateBackendProbe(): void {
   probeCache = null;
-  sameOriginCloudCache = null;
-}
-
-// ============ 同源云后端探测（Worker 托管游戏本体形态，v0.75） ============
-// 仅 Worker v2.0+ 全家桶形态满足（同源 /api/capabilities 200 且是 PWB 后端）：
-//   · Worker 托管游戏本体（workers.dev / 未来自定义域直开即玩）——同源全端点族在；
-//   · next dev / node 部署：/api/capabilities 不存在（404）→ 不满足，官方中继路径不变；
-//   · GitHub Pages 纯静态：404 → 不满足。
-
-let sameOriginCloudCache: { at: number; ok: boolean } | null = null;
-
-async function probeSameOriginCloud(now = Date.now()): Promise<boolean> {
-  if (sameOriginCloudCache && now - sameOriginCloudCache.at < PROBE_TTL_MS) return sameOriginCloudCache.ok;
-  let ok = false;
-  try {
-    const res = await fetch(`/api/capabilities?_cb=${now}`, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
-    if (res.ok) {
-      const j = (await res.json()) as { service?: string; builtin_alive?: boolean };
-      ok = j.service === 'pwb-oracle-worker' || !!j.builtin_alive;
-    }
-  } catch {
-    ok = false;
-  }
-  sameOriginCloudCache = { at: now, ok };
-  return ok;
 }
 
 // ============ 通道 A/B：中继后端 / 本站后端（同一线协议 SSE 泵） ============
@@ -510,154 +483,10 @@ async function streamDirectAnthropic(
 
 // ============ 路由决策入口 ============
 
-/** 路由级失败特征（端点活着但路径不存在）——自定义网关协议选错时的典型信号 */
-function isRoutableMiss(err: string): boolean {
-  return /HTTP 40[45]/.test(err);
-}
-
-/** 官方端点协议固定不换（api.openai.com / api.anthropic.com）；换协议重试仅对自定义端点有意义 */
-function isCustomVendorHost(p: OracleProviderConfig): boolean {
-  const b = (p.baseUrl ?? '').toLowerCase();
-  return !b.includes('api.openai.com') && !b.includes('api.anthropic.com');
-}
-
 /** builtin（内置 Z.ai）专用：后端不在时的准确文案（唯一允许「离线」字样的场景） */
 const BUILTIN_OFFLINE_MSG =
-  '神谕离线：此部署为纯静态托管且官方云端中继不可达（大陆网络对 workers.dev 常不稳，或配额已满）。' +
-  '替代路径：厂商接入中改用自定义厂商（浏览器直连）、本地模型（浏览器推理），或部署中继后端后填入「中继后端」地址。';
-
-// ============ 官方云端中继（PWB Worker v2.0：Workers AI 接活 builtin，零配置真 AI） ============
-
-/**
- * PWB 官方 Cloudflare Worker 中继镜像池（Workers AI 免费配额供 builtin 厂商）。
- * 静态托管（GitHub Pages）下 builtin 的自动接活通路：探测 /api/capabilities（60s TTL），
- * builtin_alive=true 才走它；探测失败（大陆线路不可达 workers.dev 等）→ 原离线文案降级，不误报。
- * 大陆稳定方案：① 多镜像竞速探测（任一可达即胜出、低延迟优先——未来官方域名镜像在此追加）；
- * ② 根治位 = 自定义域名绑定（见 docs/大陆直连指南.md），绑定后填入「厂商接入→中继后端」即全端点生效。
- */
-export const OFFICIAL_RELAY_URL = 'https://pwb-oracle-relay.yeyilin2010.workers.dev';
-export const OFFICIAL_RELAY_POOL: readonly string[] = [OFFICIAL_RELAY_URL];
-
-export interface OfficialRelayState {
-  ok: boolean;
-  ai: boolean;
-  kv: boolean;
-  /** 胜出镜像基地址（多镜像竞速后真正用于请求的那一个） */
-  baseUrl?: string;
-  /** 胜出镜像探测耗时（ms） */
-  latencyMs?: number;
-}
-
-let officialRelayProbe: { at: number; state: OfficialRelayState | null } | null = null;
-const OFFICIAL_RELAY_TTL_MS = 60_000;
-
-/** 单镜像探测：/api/capabilities 带 _cb 缓存击穿参数（防中间层缓存旧响应误判——#81 实测教训） */
-async function probeRelayOne(baseUrl: string): Promise<OfficialRelayState | null> {
-  const t0 = Date.now();
-  try {
-    const res = await fetch(`${baseUrl}/api/capabilities?_cb=${t0}`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
-    if (res.ok) {
-      const j = (await res.json()) as { builtin_alive?: boolean; ai?: boolean; kv?: boolean };
-      return { ok: !!j.builtin_alive, ai: !!j.ai, kv: !!j.kv, baseUrl, latencyMs: Date.now() - t0 };
-    }
-  } catch {
-    /* 不可达（超时/DNS/拦截）——静默降级，不打扰用户 */
-  }
-  return null;
-}
-
-export async function probeOfficialRelay(now = Date.now(), force = false): Promise<OfficialRelayState | null> {
-  if (!force && officialRelayProbe && now - officialRelayProbe.at < OFFICIAL_RELAY_TTL_MS) return officialRelayProbe.state;
-  // 多镜像竞速：全部探测，取「可达且 builtin_alive」中延迟最低者为胜者；全败 → null（静默降级）
-  const states = await Promise.all(OFFICIAL_RELAY_POOL.map((u) => probeRelayOne(u)));
-  const winner =
-    states
-      .filter((s): s is OfficialRelayState => !!s)
-      .sort((a, b) => (a.latencyMs ?? 9e9) - (b.latencyMs ?? 9e9))[0] ?? null;
-  officialRelayProbe = { at: now, state: winner };
-  return winner;
-}
-
-/** 探测结果失效（测试连通/云面板手动刷新前调用） */
-export function invalidateOfficialRelayProbe(): void {
-  officialRelayProbe = null;
-}
-
-/** 中继端点探测结果（「测试连接」按钮用：可达性 + 延迟 + 能力 + 版本） */
-export interface RelayEndpointProbe {
-  ok: boolean;
-  ai: boolean;
-  kv: boolean;
-  latencyMs: number;
-  version?: string;
-  err?: string;
-}
-
-/**
- * 探测任一中继端点（「测试连接」按钮）：url 已填 → 实测该地址；留空 → 官方云端中继池竞速实测
- * （force 绕过 TTL 缓存——测的就是当前这一刻的线路）。
- */
-export async function probeRelayEndpoint(url?: string): Promise<RelayEndpointProbe> {
-  const t0 = Date.now();
-  const raw = url?.trim();
-  if (raw) {
-    const base = raw.replace(/\/+$/, '').replace(/\/api\/oracle\/agent$/, '');
-    try {
-      const res = await fetch(`${base}/api/capabilities?_cb=${t0}`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
-      if (res.ok) {
-        const j = (await res.json()) as { builtin_alive?: boolean; ai?: boolean; kv?: boolean; version?: string };
-        return {
-          ok: !!j.builtin_alive,
-          ai: !!j.ai,
-          kv: !!j.kv,
-          latencyMs: Date.now() - t0,
-          version: typeof j.version === 'string' ? j.version : undefined,
-        };
-      }
-      return { ok: false, ai: false, kv: false, latencyMs: Date.now() - t0, err: `HTTP ${res.status}（地址可达但不是 PWB 中继？）` };
-    } catch (e) {
-      return { ok: false, ai: false, kv: false, latencyMs: Date.now() - t0, err: e instanceof Error ? e.message : '不可达' };
-    }
-  }
-  const official = await probeOfficialRelay(Date.now(), true);
-  if (!official) {
-    return {
-      ok: false,
-      ai: false,
-      kv: false,
-      latencyMs: Date.now() - t0,
-      err: '官方云端中继不可达（大陆线路对 workers.dev 常不稳——绑定自定义域名可根治，见下方指引）',
-    };
-  }
-  return { ok: official.ok, ai: official.ai, kv: official.kv, latencyMs: official.latencyMs ?? Date.now() - t0 };
-}
-
-/**
- * 解析「当前生效的云后端基地址」：用户显式中继 > 同源云后端（Worker 托管游戏本体形态）> 官方中继（若可达且带所需能力）。
- * 返回【裸基地址】（不含 /api/oracle/agent 后缀）——云存档 /api/save/*、国策 /api/agent/decide、
- * 编年史 /api/chronicle 等云端端点直接拼接即可；神谕 agent 线仍由 routeCallModel 走 normalizeRelayUrl。
- * cloudSync（云存档）共用此决策，保证 UI 与路由单一事实源。
- */
-export async function resolveCloudBackend(): Promise<string | null> {
-  try {
-    const relay = loadStoredProvider()?.relayUrl?.trim();
-    if (relay) return relay.replace(/\/+$/, '').replace(/\/api\/oracle\/agent$/, '');
-  } catch {
-    /* provider-store 不可用 → 继续同源/官方中继路径 */
-  }
-  // 同源云后端（Worker 托管游戏本体：同源即全端点族）——免跨域预检、
-  // 天然跟随当前访问域名（自定义域绑定后零配置全端点切换）。
-  if (await probeSameOriginCloud()) {
-    try {
-      if (typeof location !== 'undefined') return location.origin;
-    } catch {
-      /* 非 window 环境 → 继续官方中继 */
-    }
-  }
-  const official = await probeOfficialRelay();
-  if (official && official.ok) return official.baseUrl ?? OFFICIAL_RELAY_URL;
-  return null;
-}
+  '神谕离线：此部署为纯静态托管，内置 Z.ai 需要服务端。替代路径：厂商接入中改用自定义厂商（浏览器直连）、' +
+  '本地模型（浏览器推理），或部署 oracle-server 中继后端后填入「中继后端」地址。';
 
 /**
  * 统一路由入口：按 provider 配置选择最优通道。永不 throw——错误折进 err。
@@ -694,40 +523,12 @@ export async function routeCallModel(
     return callViaBackend('/api/oracle/agent', provider, messages, deep, cb, '本站后端');
   }
 
-  // ③ 静态托管 / 后端不可达 → 浏览器直连厂商；自定义端点 404/405 自动换协议重试（OpenAI 兼容 ↔ Anthropic）
+  // ③ 静态托管 / 后端不可达
   if (provider.kind === 'builtin') {
-    // PWB 官方云端中继（Worker v2.0 Workers AI）：builtin_alive 时零配置接活——
-    // 大陆线路不可达时探测失败 → 原离线文案降级（不误报「在线但超时」）
-    const official = await probeOfficialRelay();
-    if (official && official.ok) {
-      return callViaBackend(official.baseUrl ?? OFFICIAL_RELAY_URL, provider, messages, deep, cb, '官方云端');
-    }
     return { content: '', reasoning: '', err: BUILTIN_OFFLINE_MSG };
   }
-  if (provider.kind === 'openai' || provider.kind === 'anthropic') {
-    const kindName = (k: string) => (k === 'openai' ? 'OpenAI 兼容' : 'Anthropic');
-    const direct =
-      provider.kind === 'openai'
-        ? await streamDirectOpenAI(provider, messages, deep, cb)
-        : await streamDirectAnthropic(provider, messages, deep, cb);
-    // 自定义网关常只开一种协议（或路径不同）：404/405 = 路径不存在 → 换另一协议自动重试一次
-    if (direct.err && isRoutableMiss(direct.err) && isCustomVendorHost(provider)) {
-      const altKind: 'openai' | 'anthropic' = provider.kind === 'openai' ? 'anthropic' : 'openai';
-      const altProvider: OracleProviderConfig = { ...provider, kind: altKind };
-      const retry =
-        altKind === 'openai'
-          ? await streamDirectOpenAI(altProvider, messages, deep, cb)
-          : await streamDirectAnthropic(altProvider, messages, deep, cb);
-      if (!retry.err) {
-        return { ...retry, via: `经${kindName(altKind)}协议自动重试接通` };
-      }
-      return {
-        ...retry,
-        err: `双协议均未命中——${kindName(provider.kind)}路径 ${direct.err}；${kindName(altKind)}路径 ${retry.err}`,
-      };
-    }
-    return direct;
-  }
+  if (provider.kind === 'openai') return streamDirectOpenAI(provider, messages, deep, cb);
+  if (provider.kind === 'anthropic') return streamDirectAnthropic(provider, messages, deep, cb);
   return { content: '', reasoning: '', err: `未知的 provider.kind：${String(provider.kind)}` };
 }
 
@@ -736,8 +537,6 @@ export async function routeCallModel(
 export interface ConnectTestResult {
   ok: boolean;
   msg?: string;
-  /** 非默认路径接通说明（如自动换协议成功） */
-  via?: string;
 }
 
 /** 最小会话连通测试：走 routeCallModel 全路由（与真实对话完全同路径），读首个增量判定。 */
@@ -757,7 +556,7 @@ export async function runConnectivityTest(provider: OracleProviderConfig): Promi
       },
     },
   );
-  if (ok) return { ok: true, via: result.via };
+  if (ok) return { ok: true };
   if (result.err) return { ok: false, msg: result.err };
   // 无增量也无错误 → 上游已判定（err 应非空；双保险）
   return { ok: false, msg: result.err || '无响应' };
@@ -800,9 +599,7 @@ export function validateProviderConfig(p: OracleProviderConfig): string | null {
     return p.model?.trim() ? null : '本地模型需要模型标识符（如 XENova/qwen2.5-0.5b-instruct）';
   }
   const label = p.label || p.kind;
-  // 中继后端已配置：baseUrl/model 可留空——由中继侧校验/补全（Workers 版可注入服务端默认厂商三元组，密钥不出现在前端）
-  if (p.relayUrl?.trim()) return null;
-  if (!p.baseUrl?.trim()) return `[${label}] 缺少 Base URL——请补全下方「厂商接入」端点配置，或填写「中继后端」地址（服务端可代配厂商）`;
+  if (!p.baseUrl?.trim()) return `[${label}] 缺少 Base URL——请补全下方「厂商接入」端点配置`;
   const b = p.baseUrl.trim();
   if (!/^https?:\/\//i.test(b) && !b.includes('XTransformPort=')) {
     return `[${label}] Base URL 需以 http(s):// 开头`;

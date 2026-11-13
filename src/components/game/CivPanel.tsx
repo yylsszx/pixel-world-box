@@ -4,7 +4,7 @@
 // 布局：桌面右侧固定面板 / 移动端底部抽屉 —— 三个页签：概览 · 科技树 · 社会
 import { useEffect, useMemo, useState } from 'react';
 import { useGameStore } from '@/store/gameStore';
-import { RACES, BUILDING_DEFS, JOBS } from '@/lib/game/types';
+import { RACES, BUILDING_DEFS } from '@/lib/game/types';
 import { TECHS, TECH_BY_KEY, TECH_CATS, ERAS, GOV_DEFS } from '@/lib/game/tech';
 import type { TechCat } from '@/lib/game/tech';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import {
   X, Crown, Users, Landmark, Home, Coins, BookOpen, Swords, Crosshair, FlaskConical,
   Lightbulb, Lock, Check, ChevronRight, Scale, Coins as CoinsIcon, Palette, Shield,
-  TrendingUp, TrendingDown, Sparkles, PartyPopper, Scroll, Castle, TriangleAlert, Sword, Wheat, Brain,
+  TrendingUp, TrendingDown, Sparkles, PartyPopper, Scroll, Castle, TriangleAlert, Sword, Wheat,
 } from 'lucide-react';
 
 interface CivInfo {
@@ -22,8 +22,6 @@ interface CivInfo {
   colorHex: string;
   pop: number;
   tiles: number;
-  /** 各职业在册人数（#68 职业分工：与 JOBS 下标对应；getCivInfo 普查） */
-  jobCensus: number[];
   houses: number;
   houseCap: number;
   kingName: string;
@@ -71,22 +69,12 @@ interface CivInfo {
   ideas: string[];
   houseTier: number;
   houseTierName: string;
-  /** 【机制④】中枢核心快照（null = 旧档迁移前）：每文明独立的超级决策智能体 */
-  core: {
-    mode: 'local' | 'api';
-    persona: { war: number; build: number; farm: number; trade: number; sea: number; faith: number };
-    gen: number;
-    notes: string[];
-    lastApiNote: string;
-  } | null;
 }
 
 interface EngineWindow extends Window {
   __wbEngine?: {
     getCivInfo(id: number): CivInfo | null;
     jumpTo(x: number, y: number): void;
-    /** 【机制④】中枢核心模式切换（API 配置存 localStorage wb_civ_api_<id>） */
-    setCivCoreMode?(id: number, mode: 'local' | 'api'): void;
   };
 }
 
@@ -262,19 +250,6 @@ function TechTab({ civ }: { civ: CivInfo }) {
 
 /** 社会页：政治 / 经济 / 文化 / 军事 四体系 */
 function SocietyTab({ civ }: { civ: CivInfo }) {
-  // 【机制④】中枢 API 配置表单（保存在本机 localStorage——每文明可接不同 API；密钥绝不入库）
-  const [apiCfg, setApiCfg] = useState({ kind: 'openai' as 'openai' | 'anthropic', baseUrl: '', model: '', apiKey: '', relayUrl: '' });
-  const saveApiCfg = () => {
-    // 中继后端已填：baseUrl/model 可留空（中继侧可注入服务端默认厂商——Workers 版特性）；直连则必填
-    const relay = apiCfg.relayUrl.trim();
-    if (!relay && (!apiCfg.baseUrl.trim() || !apiCfg.model.trim())) return;
-    localStorage.setItem(`wb_civ_api_${civ.id}`, JSON.stringify({ kind: apiCfg.kind, baseUrl: apiCfg.baseUrl.trim(), model: apiCfg.model.trim(), apiKey: apiCfg.apiKey.trim(), relayUrl: relay, label: apiCfg.model.trim() || '中继默认厂商' }));
-    getEng()?.setCivCoreMode?.(civ.id, 'api');
-  };
-  const backToLocal = () => {
-    localStorage.removeItem(`wb_civ_api_${civ.id}`);
-    getEng()?.setCivCoreMode?.(civ.id, 'local');
-  };
   const govDef = GOV_DEFS[civ.gov] ?? GOV_DEFS[0];
   const builds = new Map(civ.builds.map((b) => [b.kind, b.n]));
   const net = civ.income - civ.expense;
@@ -363,145 +338,6 @@ function SocietyTab({ civ }: { civ: CivInfo }) {
             </p>
           )}
         </div>
-      </section>
-
-      {/* —— 职业（#68 机制①：文明自动宏观调控的编制实况） —— */}
-      <section className="rounded-sm border-2 border-teal-800/60 bg-zinc-900/70">
-        <header className="flex items-center gap-1.5 border-b-2 border-zinc-800 px-2 py-1">
-          <Users className="h-3.5 w-3.5 text-teal-300" aria-hidden />
-          <h4 className="text-[10px] font-bold uppercase tracking-widest text-teal-200">社会 · 职业编制</h4>
-        </header>
-        <div className="flex flex-wrap gap-1 px-2 py-1.5">
-          {(civ.jobCensus ?? []).map((n, i) => n > 0 ? (
-            <span key={i} className="flex items-center gap-1 rounded-sm border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 text-[9px] text-zinc-300" title={JOBS[i]?.desc ?? ''}>
-              <span className="inline-block h-2 w-2 rounded-full" style={{ background: JOBS[i]?.color ?? '#666' }} aria-hidden />
-              {JOBS[i]?.name ?? '?'} <b className="font-mono text-zinc-100">{n}</b>
-            </span>
-          ) : null)}
-          {(civ.jobCensus ?? []).every((n) => n === 0) && (
-            <p className="text-[9px] text-zinc-500">尚无在册国民</p>
-          )}
-        </div>
-        <p className="px-2 pb-1.5 text-[8px] leading-relaxed text-zinc-500">
-          文明按田港工商与战备猎期自动调控编制：缺口补员、过剩归农；各安其业互不越权，新生儿营生倾向亦随国情流动。
-        </p>
-      </section>
-
-      {/* —— 文明中枢核心（【机制④】：每文明完全分开的超级决策智能体） —— */}
-      <section className="rounded-sm border-2 border-violet-800/60 bg-zinc-900/70">
-        <header className="flex items-center gap-1.5 border-b-2 border-zinc-800 px-2 py-1">
-          <Brain className="h-3.5 w-3.5 text-violet-300" aria-hidden />
-          <h4 className="text-[10px] font-bold uppercase tracking-widest text-violet-200">中枢核心</h4>
-          {civ.core && (
-            <span className={`ml-auto rounded-sm px-1.5 py-0.5 text-[8px] font-bold ${civ.core.mode === 'api' ? 'bg-amber-900/60 text-amber-200' : 'bg-teal-900/60 text-teal-200'}`}>
-              {civ.core.mode === 'api' ? `API 外脑 · 第${civ.core.gen}代` : `本地智能 · 第${civ.core.gen}代`}
-            </span>
-          )}
-        </header>
-        {civ.core ? (
-          <div className="px-2 py-1.5">
-            {/* 人格六维（各文明不同，随国情动态漂移） */}
-            <div className="grid grid-cols-3 gap-x-2 gap-y-1">
-              {([
-                ['war', '好战', '#f87171'], ['build', '筑城', '#fbbf24'], ['farm', '重农', '#a3e635'],
-                ['trade', '通商', '#38bdf8'], ['sea', '向海', '#22d3ee'], ['faith', '虔信', '#c084fc'],
-              ] as const).map(([k, label, color]) => (
-                <div key={k} className="flex items-center gap-1" title={`${label} ${(civ.core!.persona[k] * 100).toFixed(0)}%`}>
-                  <span className="w-6 shrink-0 text-[8px] text-zinc-400">{label}</span>
-                  <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-zinc-800">
-                    <div className="h-full rounded-full" style={{ width: `${Math.round(civ.core!.persona[k] * 100)}%`, background: color }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-            {/* 决策纪要（最近三条） */}
-            {civ.core.notes.length > 0 ? (
-              <ul className="mt-1.5 space-y-0.5">
-                {civ.core.notes.slice(0, 3).map((n, i) => (
-                  <li key={i} className="truncate text-[8px] text-zinc-400">· {n}</li>
-                ))}
-              </ul>
-            ) : (
-              <p className="mt-1.5 text-[8px] text-zinc-600">核心正在观察国情…</p>
-            )}
-            {civ.core.mode === 'api' && civ.core.lastApiNote && (
-              <p className="mt-1 truncate text-[8px] text-amber-300/80">外脑：{civ.core.lastApiNote}</p>
-            )}
-            {/* API 接入配置（每文明可接不同 API；配置存 localStorage，不入存档不入库） */}
-            <details className="mt-1.5">
-              <summary className="cursor-pointer text-[8px] font-bold text-violet-300/80">接入外脑 API（各文明可接不同模型）</summary>
-              <div className="mt-1 space-y-1">
-                <div className="flex gap-1">
-                  <select
-                    value={apiCfg.kind}
-                    onChange={(e) => setApiCfg({ ...apiCfg, kind: e.target.value as 'openai' | 'anthropic' })}
-                    className="min-w-0 flex-1 rounded-sm border border-zinc-700 bg-zinc-800 px-1 py-0.5 text-[8px] text-zinc-200"
-                    aria-label="API 类型"
-                  >
-                    <option value="openai">openai 兼容</option>
-                    <option value="anthropic">anthropic</option>
-                  </select>
-                  <input
-                    value={apiCfg.baseUrl}
-                    onChange={(e) => setApiCfg({ ...apiCfg, baseUrl: e.target.value })}
-                    placeholder="baseUrl（如 http://127.0.0.1:11434/v1）"
-                    className="min-w-0 flex-[2] rounded-sm border border-zinc-700 bg-zinc-800 px-1 py-0.5 text-[8px] text-zinc-200 placeholder:text-zinc-600"
-                  />
-                </div>
-                <div className="flex gap-1">
-                  <input
-                    value={apiCfg.model}
-                    onChange={(e) => setApiCfg({ ...apiCfg, model: e.target.value })}
-                    placeholder="模型名（model）"
-                    className="min-w-0 flex-1 rounded-sm border border-zinc-700 bg-zinc-800 px-1 py-0.5 text-[8px] text-zinc-200 placeholder:text-zinc-600"
-                  />
-                  <input
-                    value={apiCfg.apiKey}
-                    onChange={(e) => setApiCfg({ ...apiCfg, apiKey: e.target.value })}
-                    placeholder={apiCfg.kind === 'anthropic' ? 'apiKey（仅本机存储）' : 'apiKey（可选，官方端点需填）'}
-                    type="password"
-                    className="min-w-0 flex-1 rounded-sm border border-zinc-700 bg-zinc-800 px-1 py-0.5 text-[8px] text-zinc-200 placeholder:text-zinc-600"
-                  />
-                </div>
-                <div className="flex gap-1">
-                  <input
-                    value={apiCfg.relayUrl}
-                    onChange={(e) => setApiCfg({ ...apiCfg, relayUrl: e.target.value })}
-                    placeholder="中继后端（可选，如 https://xxx.sealos.io——线上静态托管时经它转发）"
-                    className="min-w-0 flex-1 rounded-sm border border-zinc-700 bg-zinc-800 px-1 py-0.5 text-[8px] text-zinc-200 placeholder:text-zinc-600"
-                  />
-                </div>
-                <div className="flex gap-1">
-                  <Button
-                    onClick={saveApiCfg}
-                    size="sm"
-                    className="h-5 flex-1 rounded-sm border border-violet-700 bg-violet-900/50 px-1 text-[8px] font-bold text-violet-100 hover:bg-violet-800/60"
-                  >
-                    接入并切为外脑模式
-                  </Button>
-                  {civ.core.mode === 'api' && (
-                    <Button
-                      onClick={backToLocal}
-                      size="sm"
-                      variant="outline"
-                      className="h-5 flex-1 rounded-sm border border-zinc-700 bg-zinc-800 px-1 text-[8px] font-bold text-zinc-300 hover:bg-zinc-700"
-                    >
-                      切回本地智能
-                    </Button>
-                  )}
-                </div>
-                <p className="text-[7px] leading-relaxed text-zinc-600">
-                  递交路由：中继后端（若填）→ 本站后端 → 浏览器直连（需端点支持 CORS，如 OpenAI/Anthropic 官方端点；线上静态站自动降级直连）。每经济期递交一次，回执校验后生效；失败原因显示在上方「外脑：」行，3 连败切回本地——中枢永不当机。密钥只存本机浏览器。
-                </p>
-              </div>
-            </details>
-          </div>
-        ) : (
-          <p className="px-2 py-1.5 text-[8px] text-zinc-600">中枢核心尚未苏醒…</p>
-        )}
-        <p className="px-2 pb-1.5 text-[8px] leading-relaxed text-zinc-500">
-          每个文明拥有完全独立的中枢核心：人格六维随国情事件动态漂移、各文明互不相同；好战国遇饥荒思战争、农耕国遇饥荒思恳田——同一世界两样国运。
-        </p>
       </section>
 
       {/* —— 文化 —— */}

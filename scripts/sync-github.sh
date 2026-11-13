@@ -20,19 +20,6 @@ cd "$STAGE"
 git config user.name "deploy-bot"; git config user.email "deploy@users.noreply.github.com"
 git add -A
 if git diff --cached --quiet; then echo "SYNC_SKIP: 白名单零差（幂等跳过）"; exit 0; fi
-
-# ---- 回退防护闸（2026-11-10 #71 事故增设）----
-# 事故形态：本地克隆过期 → 推送时用陈旧整树覆盖远端新成果（曾 -2584/+342 静默回退 23 轮成果）。
-# 拦截：staged 净删除 >400 行且删除>新增时中止并打印 Top 回退文件；确属有意删除需 PWB_ALLOW_REVERT=1。
-GUARD_INS=$(git diff --cached --numstat | awk '{s+=$1} END {print s+0}')
-GUARD_DEL=$(git diff --cached --numstat | awk '{s+=$2} END {print s+0}')
-if [ "$GUARD_DEL" -gt 400 ] && [ "$GUARD_DEL" -gt "$GUARD_INS" ] && [ "${PWB_ALLOW_REVERT:-0}" != "1" ]; then
-  echo "SYNC_REVERT_GUARD: 疑似回退事故，已中止推送（新增 $GUARD_INS 行 / 删除 $GUARD_DEL 行）——本地克隆可能落后于远端，请先 git fetch 并合流远端新成果。"
-  echo "  Top 回退文件（-删除/+新增）："
-  git diff --cached --numstat | sort -t$'\t' -k2,2rn | head -8 | awk -F'\t' '{print "  -"$3"  -"$2"/+"$1}'
-  echo "  确认有意为之请携 PWB_ALLOW_REVERT=1 重跑本脚本。"
-  exit 1
-fi
 git commit -q -m "update $TS"
 PUSH_OK=0
 for i in 1 2 3; do

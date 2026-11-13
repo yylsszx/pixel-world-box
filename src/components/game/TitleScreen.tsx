@@ -252,18 +252,9 @@ export function TitleScreen() {
               }}
               className="h-12 gap-2.5 rounded-none border-2 border-zinc-600 bg-zinc-900/80 text-sm font-bold text-zinc-200 shadow-[4px_4px_0_rgba(0,0,0,0.45)] transition-transform hover:translate-x-[2px] hover:translate-y-[2px] hover:border-amber-400/70 hover:text-amber-200 hover:shadow-[2px_2px_0_rgba(0,0,0,0.45)] active:translate-x-[4px] active:translate-y-[4px] active:shadow-none"
             >
-              <FolderOpen className="h-5 w-5 shrink-0 text-amber-300" aria-hidden />
+              <FolderOpen className="h-5 w-5 text-amber-300" aria-hidden />
               继续旅程
-              <span className="ml-auto flex items-center gap-1.5 font-mono text-[10px] font-normal text-zinc-400">
-                {latestSave.key === 'auto' && (
-                  <span className="rounded-sm border border-amber-400/40 bg-amber-400/10 px-1 text-[9px] font-bold text-amber-300">自动</span>
-                )}
-                {latestSave.key === 'legacy' && (
-                  <span className="rounded-sm border border-zinc-500/40 bg-zinc-500/10 px-1 text-[9px] font-bold text-zinc-300">旧档</span>
-                )}
-                {latestSave.key.startsWith('slot') && (
-                  <span className="rounded-sm border border-zinc-500/40 bg-zinc-500/10 px-1 text-[9px] font-bold text-zinc-300">槽位{parseInt(latestSave.key.slice(4), 10) + 1}</span>
-                )}
+              <span className="ml-auto font-mono text-[10px] font-normal text-zinc-400">
                 第{latestSave.year}年 · 人口{latestSave.pop}
               </span>
             </Button>

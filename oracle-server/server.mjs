@@ -197,50 +197,6 @@ async function pumpAnthropicLines(upstream, label, send) {
 
 // ============ 厂商通道（与 src/lib/oracle/providers.ts 同逻辑） ============
 
-// ============ 文明中枢核心（机制④）：/api/civ-brain 非流式决策端点 ============
-
-const CIV_BRAIN_DIMS = ['war', 'build', 'farm', 'trade', 'sea', 'faith'];
-
-/** 中枢决策提示词（与游戏仓库 /api/civ-brain 路由、引擎直连三端同一份心智） */
-function civBrainMessages(civ, persona) {
-  const sys = [
-    '你是像素沙盒世界中一个文明的「中枢核心」——这个文明唯一的超级决策智能体。',
-    '你以王国的整体存续与繁荣为唯一目标，基于国情与禀性做出本年度国策决断。',
-    '你只输出一个 JSON 对象，禁止任何其它文本、markdown 代码块或解释。格式：',
-    '{"personaPatch":{"war":0.55,"farm":0.7},"note":"一句话决策纪要"}',
-    '规则：',
-    '1. personaPatch 每维都是 0-1 数字（war 好战 / build 筑城 / farm 重农 / trade 通商 / sea 向海 / faith 虔信），只需给出想调整的维度，每维相对当前值变动幅度 ≤0.2。',
-    '2. note：不超过 40 字的中文决策纪要（以该王国的口吻，如「粮仓将罄，举国恳田，暂休刀兵」）。',
-    `3. 当前人格六维：${JSON.stringify(persona ?? {})}`,
-    `4. 本年度国情速报：${JSON.stringify(civ ?? {})}`,
-  ].join('\n');
-  return [
-    { role: 'assistant', content: sys },
-    { role: 'user', content: '请做出本年度的中枢决策（只输出 JSON）。' },
-  ];
-}
-
-/** 从模型输出提取首个 JSON 对象（容忍围栏与前后杂文；括号配平） */
-function extractCivJson(text) {
-  const s = text.indexOf('{');
-  if (s < 0) return null;
-  let depth = 0;
-  for (let i = s; i < text.length; i++) {
-    if (text[i] === '{') depth++;
-    else if (text[i] === '}') {
-      depth--;
-      if (depth === 0) {
-        try {
-          return JSON.parse(text.slice(s, i + 1));
-        } catch {
-          return null;
-        }
-      }
-    }
-  }
-  return null;
-}
-
 function normalizeOpenAIUrl(baseUrl) {
   const base = baseUrl.trim().replace(/\/+$/, '');
   if (base.endsWith('/chat/completions')) return base;
@@ -871,100 +827,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // —— 文明中枢核心（机制④）：非流式 JSON 决策（前端静态托管时浏览器直连本端点；CORS 已放行） ——
-  if (url === '/api/civ-brain') {
-    if (req.method !== 'POST') {
-      json(res, 405, { error: 'POST only' });
-      return;
-    }
-    const chunks = [];
-    let size = 0;
-    let tooBig = false;
-    await new Promise((resolve) => {
-      req.on('data', (c) => {
-        size += c.length;
-        if (size > MAX_BODY_BYTES) {
-          tooBig = true;
-          resolve();
-          return;
-        }
-        chunks.push(c);
-      });
-      req.on('end', resolve);
-      req.on('error', resolve);
-    });
-    if (tooBig) {
-      json(res, 413, { error: `请求体超限（>${MAX_BODY_BYTES} 字节）` });
-      return;
-    }
-    let body;
-    try {
-      body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    } catch {
-      json(res, 400, { error: '请求体不是合法 JSON' });
-      return;
-    }
-    const provider = jsonRec(body)?.provider ?? null;
-    const kind = jsonRec(provider) ? String(provider.kind) : '';
-    if (!['builtin', 'openai', 'anthropic'].includes(kind)) {
-      json(res, 400, { error: 'provider.kind 必须是 builtin / openai / anthropic' });
-      return;
-    }
-    if (kind !== 'builtin') {
-      if (!String(provider.baseUrl ?? '').trim()) {
-        json(res, 400, { error: '缺少 baseUrl' });
-        return;
-      }
-      if (!String(provider.model ?? '').trim()) {
-        json(res, 400, { error: '缺少 model' });
-        return;
-      }
-    }
-    const { signal, cleanup } = makeAbort(req);
-    try {
-      let text = '';
-      let streamErr = '';
-      // send 收集器：复用既有流式转发（openai/anthropic/builtin），收全量文本后一次性提取 JSON
-      const send = (ev) => {
-        if (ev && typeof ev.t === 'string') text += ev.t;
-        if (ev && typeof ev.err === 'string' && !text) streamErr = ev.err;
-      };
-      const messages = civBrainMessages(jsonRec(body)?.civ, jsonRec(body)?.persona);
-      const reqBody = { provider, messages };
-      if (kind === 'builtin') await streamBuiltin(reqBody, send);
-      else if (kind === 'anthropic') await streamAnthropic(reqBody, send, signal);
-      else await streamOpenAI(reqBody, send, signal);
-      if (!text) {
-        json(res, 502, { error: streamErr || '外脑无输出' });
-        return;
-      }
-      const obj = extractCivJson(text);
-      if (!obj) {
-        json(res, 502, { error: '外脑未输出可解析的 JSON 决策' });
-        return;
-      }
-      const personaPatch = {};
-      const raw = jsonRec(obj.personaPatch) ?? {};
-      for (const dim of CIV_BRAIN_DIMS) {
-        const v = raw[dim];
-        if (typeof v === 'number' && Number.isFinite(v)) personaPatch[dim] = Math.max(0.05, Math.min(0.95, v));
-      }
-      const note = typeof obj.note === 'string' ? obj.note.slice(0, 80) : '';
-      json(res, 200, { personaPatch, note });
-    } catch (e) {
-      json(res, 502, { error: e && e.message ? e.message : '上游不可达' });
-    } finally {
-      cleanup();
-    }
-    return;
-  }
-
   if (url === '/' && req.method === 'GET') {
     json(res, 200, {
       service: 'pwb-oracle-server',
       version: VERSION,
-      endpoints: ['GET /healthz', 'POST /api/oracle/agent', 'POST /api/civ-brain'],
-      note: 'PWB 神谕中继后端（Sealos 容器版）——前端「厂商接入 → 中继后端」填本服务地址即可；body.dsh=true 走 dsh 会话面（运行时工具循环）；body.dsh.sessionId 走服务端权威持久会话（事件溯源 + compaction）；/api/civ-brain 为文明中枢核心的非流式决策中继（机制④）。',
+      endpoints: ['GET /healthz', 'POST /api/oracle/agent'],
+      note: 'PWB 神谕中继后端（Sealos 容器版）——前端「厂商接入 → 中继后端」填本服务地址即可；body.dsh=true 走 dsh 会话面（运行时工具循环）；body.dsh.sessionId 走服务端权威持久会话（事件溯源 + compaction）。',
     });
     return;
   }
