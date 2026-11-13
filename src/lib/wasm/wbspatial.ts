@@ -1160,7 +1160,7 @@ class WbBatch {
         //   虚拟船化后克拉肯全部走 JS 参考路径，12B 写入路径彻底不可达。
         // 根因链：OFF_UCVN 列 TS i32/步长4 vs Rust f64/步长8 —— u_caravan0 读乱位垃圾 → CVMKT[垃圾] 越界读 → 每帧 WASM OOB。
         // 休眠 cvn 列（恒 0）后 u_caravan0 恒≤0/NaN→0，Rust 商队逻辑全部休眠，永不越界。
-        const vb = (!u.boat && ((u.caravan ?? 0) > 0 || RACES[u.race]?.sprite === 'kraken')) ? 1 : 0;
+        const vb = (!u.boat && ((u.caravan ?? 0) > 0 || RACES[u.race]?.sprite === 'kraken' || RACES[u.race]?.sprite === 'plane')) ? 1 : 0;
         R.boat[i] = (u.boat || vb) ? 1 : 0; R.btl[i] = u.boatTTL ?? 0; R.cvn[i] = 0;
         this.virtBoat[i] = vb;
         R.army[i] = u.army ?? -1;
@@ -1201,7 +1201,7 @@ class WbBatch {
       for (let i = 0; i < n; i += step) {
         const u = units[i];
         // Task 50：boat 比较按虚拟船语义归一（商队 + 克拉肯）；caravan 已休眠不比（cvn 列错位遗产）
-        const vb = (u.boat || (u.caravan ?? 0) > 0 || RACES[u.race]?.sprite === 'kraken') ? 1 : 0;
+        const vb = (u.boat || (u.caravan ?? 0) > 0 || RACES[u.race]?.sprite === 'kraken' || RACES[u.race]?.sprite === 'plane') ? 1 : 0;
         if (
           R.job[i] !== (u.job ?? -1) ||
           R.fam[i] !== (u.fam ?? -1) ||
@@ -1320,7 +1320,7 @@ class WbBatch {
       if (this.rowDirty !== null && this.rowDirtyN > 0 && this.rowDirty[i] === 1) continue;
       const u = units[i];
       const tr = u.trait != null ? (this.traitIdMap.get(u.trait) ?? -2) : -2;
-      const vb = (u.boat || (u.caravan ?? 0) > 0 || RACES[u.race]?.sprite === 'kraken') ? 1 : 0; // Task 50：虚拟船语义归一（商队 + 克拉肯）
+      const vb = (u.boat || (u.caravan ?? 0) > 0 || RACES[u.race]?.sprite === 'kraken' || RACES[u.race]?.sprite === 'plane') ? 1 : 0; // Task 50：虚拟船语义归一（商队 + 克拉肯）
       if (
         this.vUciv[i] !== u.civ || this.vUrace[i] !== u.race || this.vUid[i] !== u.id ||
         R.maxHp[i] !== u.maxHp || R.maxAge[i] !== u.maxAge || R.dmg[i] !== u.dmg || R.speed[i] !== u.speed ||

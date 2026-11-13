@@ -1,7 +1,7 @@
 // ============ WorldBox Replica — Rendering pipeline ============
 import type { Army, Effect, Unit } from './types';
 import { T, R, RACES } from './types';
-import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawHydra, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster, drawPersonFine, drawQuadFine, drawChicken, drawPig, drawRabbit, drawFox, drawFish, drawCrab, drawTurtle, drawShark } from './sprites';
+import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawHydra, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster, drawPersonFine, drawQuadFine, drawChicken, drawPig, drawRabbit, drawFox, drawFish, drawCrab, drawTurtle, drawShark, drawHorse, drawEagle, drawPlane } from './sprites';
 import { visCacheFor } from './emergence';
 import { BUILDING_DEFS, BUILD_KINDS } from './types';
 import { GameEngine } from './engine';
@@ -1359,7 +1359,7 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
     const bhp = engine.bHp.get(b.i);
     const bMax = BUILDING_DEFS[b.kind]?.hp ?? 70;
     const bRatio = bhp != null ? bhp / bMax : 1;
-    drawBuilding(wc, b, civ.color, engine.houseTierOf(civ), bRatio, frameCount, nightNow, b.kind === BUILD_KINDS.HOUSE ? engine.bedCountAt(b.i) : 0);
+    drawBuilding(wc, b, civ.color, engine.buildTierOf(b.kind, civ), bRatio, frameCount, nightNow, b.kind === BUILD_KINDS.HOUSE ? engine.bedCountAt(b.i) : 0);
     // —— 原子级：受损建筑冒烟（耐久 <60% 轻烟，<30% 浓烟 + 火点）——
     if (bhp != null) {
       const ratio = bRatio;
@@ -2053,7 +2053,7 @@ function drawUnitSprite(engine: GameEngine, u: Unit, wc: CanvasRenderingContext2
   // 殖民船优先：航海中的单位画船而非本体
   if (u.boat) {
     const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-    drawBoat(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount);
+    drawBoat(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount, civ && civ.alive ? engine.navalTierOf(civ) : 0);
     return;
   }
   const def = RACES[u.race];
@@ -2182,6 +2182,17 @@ function onWaterTile(engine: GameEngine, u: Unit, beachOk: boolean): boolean {
 /** P0-A：精绘档分发（zoom≥8）：人形 → drawPersonFine / 四足 → drawQuadFine。
  *  ×4 精细像素 = 0.25 tile = 1 用户像素：层 B(2px/tile) 内 scale(0.5) 回到 4px/tile
  *  精细网格，脚底 (fx,fy) 锚定到插值位置（吸附 1 用户像素 → 设备像素恒整，零 AA 糊边） */
+// —— 时代深化（v0.76）：军备等级帧缓存 —— 每帧每文明至多算一次（制式武备视觉的渲染层底座）——
+let _armFrame = -1;
+const _armCache = new Map<number, number>();
+function armLvOf(engine: GameEngine, civId: number): number {
+  if (civId < 0) return 0;
+  if (_armFrame !== engine.frameCount) { _armFrame = engine.frameCount; _armCache.clear(); }
+  let lv = _armCache.get(civId);
+  if (lv === undefined) { lv = engine.armamentOf(engine.civs[civId]); _armCache.set(civId, lv); }
+  return lv;
+}
+
 function tryDrawFine(engine: GameEngine, u: Unit, def: (typeof RACES)[number], wc: CanvasRenderingContext2D, px: number, py: number, king: boolean): boolean {
   const fx = Math.round(u.rx ?? u.x);
   const fy = Math.round(u.ry ?? u.y) + 1;
@@ -2193,7 +2204,7 @@ function tryDrawFine(engine: GameEngine, u: Unit, def: (typeof RACES)[number], w
     wc.save();
     wc.scale(0.5, 0.5);
     wc.translate(tx, ty);
-    drawPersonFine(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount, king);
+    drawPersonFine(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount, king, armLvOf(engine, u.civ));
     wc.restore();
     return true;
   }
@@ -2340,7 +2351,7 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
   switch (def.sprite) {
     case 'person': {
       const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-      drawPerson(wc, u, civ && civ.alive ? civ.color : null, fc);
+      drawPerson(wc, u, civ && civ.alive ? civ.color : null, fc, armLvOf(engine, u.civ));
       break;
     }
     case 'sheep': drawSheep(wc, u); break;
@@ -2378,6 +2389,14 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
     case 'crab': drawCrab(wc, u, fc); break;
     case 'turtle': drawTurtle(wc, u, fc); break;
     case 'shark': drawShark(wc, u, fc); break;
+    // —— 时代深化（v0.76）：马/鹰/巡逻机（草原骏足 / 高空猛禽 / 绕都巡航）——
+    case 'horse': drawHorse(wc, u, fc); break;
+    case 'eagle': drawEagle(wc, u, fc); break;
+    case 'plane': {
+      const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
+      drawPlane(wc, u, fc, civ && civ.alive ? civ.color : null);
+      break;
+    }
     // —— P2：未知精灵安全回退 —— 走 ANIMAL_LOD 色块（新种族接线遗漏时单位不消失、不崩溃） ——
     default: {
       const lod = ANIMAL_LOD[def.sprite];
@@ -3790,6 +3809,106 @@ function drawWorldEffect(engine: GameEngine, e: Effect, wc: CanvasRenderingConte
       if (sciv && sciv.alive) {
         wc.fillStyle = `rgba(${sciv.color[0]},${sciv.color[1]},${sciv.color[2]},${A})`;
         wc.fillRect(ex + 4, ey - 11 + flap, 2, 2);
+      }
+      break;
+    }
+    case 'boulder': {
+      // —— 时代深化（v0.76）：投石机弹道——从营械飞向敌建（灰岩巨石 + 抛物线弧顶 + 落点爆尘）——
+      const t = Math.min(1, e.age / e.ttl);
+      const sx = e.x0 ?? e.x, sy = e.y0 ?? e.y;
+      const bx = sx + (e.x - sx) * t;
+      const by = sy + (e.y - sy) * t;
+      const arc = Math.sin(t * Math.PI) * (3 + Math.hypot(e.x - sx, e.y - sy) * 0.35); // 抛物线弧顶
+      const px2 = Math.round(bx * 2);
+      const py2 = Math.round((by - arc) * 2);
+      // 巨石（3×3 灰岩 + 暗面）
+      wc.fillStyle = '#8d8d8d';
+      wc.fillRect(px2 - 1, py2 - 1, 3, 3);
+      wc.fillStyle = '#5e5e62';
+      wc.fillRect(px2, py2 + 1, 2, 1);
+      wc.fillStyle = '#a5a5a9';
+      wc.fillRect(px2 - 1, py2 - 1, 1, 1);
+      // 飞行尘迹（石后淡尘）
+      if (t < 0.9) {
+        wc.fillStyle = 'rgba(160,150,130,0.4)';
+        wc.fillRect(px2 - 3, py2 + 1, 2, 1);
+      }
+      // 落点：爆尘（前 15% 时序）
+      if (t > 0.85) {
+        const boom = (t - 0.85) / 0.15;
+        wc.fillStyle = `rgba(180,160,130,${0.7 * (1 - boom)})`;
+        wc.fillRect(px2 - 4, py2 - 1, 3, 2);
+        wc.fillRect(px2 + 2, py2 - 1, 3, 2);
+        wc.fillRect(px2 - 1, py2 - 3, 2, 2);
+      }
+      break;
+    }
+    case 'rowboat': {
+      // —— 时代深化（v0.76）：渔船出海——渔场↔渔场往返的小舟（船体+双桨+收获闪光）——
+      const t = Math.min(1, e.age / e.ttl);
+      // 往返：前半程出港（渔场→远海）、后半程归港（远海→渔场）
+      const half = t < 0.5 ? t * 2 : (1 - t) * 2;
+      const sx = e.x0 ?? e.x, sy = e.y0 ?? e.y;
+      const bx = sx + (e.x - sx) * half;
+      const by = sy + (e.y - sy) * half;
+      const px2 = Math.round(bx * 2);
+      const bob = ((engine.frameCount >> 3) & 1);
+      const py2 = Math.round(by * 2) - bob;
+      // 尾迹
+      const back = t < 0.5 ? 1 : -1;
+      wc.fillStyle = 'rgba(240,248,255,0.5)';
+      wc.fillRect(px2 - 3 * back, Math.round(by * 2) + 1, 2, 1);
+      // 船体（小舟 3×1 + 艏）
+      wc.fillStyle = '#9c6a3c';
+      wc.fillRect(px2 - 1, py2, 3, 1);
+      wc.fillRect(px2 + 1 * back, py2 - 1, 1, 1);
+      // 渔夫剪影 + 双桨（fc 交替划水）
+      wc.fillStyle = '#2e2a24';
+      wc.fillRect(px2, py2 - 1, 1, 1);
+      const row = (engine.frameCount >> 2) & 1;
+      wc.fillStyle = '#5c3a1c';
+      wc.fillRect(px2 + (row ? 1 : -1), py2, 1, 1);
+      // 归港满舱（后半程：船尾鱼获银光）
+      if (t >= 0.5 && ((engine.frameCount >> 4) & 1)) {
+        wc.fillStyle = '#d8e6f2';
+        wc.fillRect(px2 - 2 * back, py2, 1, 1);
+      }
+      break;
+    }
+    case 'wonderdone': {
+      // —— 时代深化（v0.76）：奇观竣工庆典——金光柱冲天 + 双环光波扩散 + 缤纷纸屑 ——
+      const t = Math.min(1, e.age / e.ttl);
+      const ex = Math.round(px);
+      const ey = Math.round(py);
+      const fade = 1 - t;
+      // 金光柱（前 40%：冲天而起）
+      if (t < 0.4) {
+        const hgt = Math.min(1, t / 0.4);
+        wc.fillStyle = `rgba(255,217,61,${0.75 * fade})`;
+        wc.fillRect(ex - 1, ey - Math.round(hgt * 18), 2, Math.round(hgt * 18));
+        wc.fillStyle = `rgba(255,243,196,${0.9 * fade})`;
+        wc.fillRect(ex, ey - Math.round(hgt * 18), 1, Math.round(hgt * 18));
+      }
+      // 双环光波（扩散）
+      const r1 = t * 14;
+      const r2 = t * 22;
+      wc.strokeStyle = `rgba(255,217,61,${0.5 * fade})`;
+      wc.lineWidth = 1;
+      wc.strokeRect(ex - r1, ey - r1 * 0.6, r1 * 2, r1 * 1.2);
+      wc.strokeStyle = `rgba(255,243,196,${0.3 * fade})`;
+      wc.strokeRect(ex - r2, ey - r2 * 0.6, r2 * 2, r2 * 1.2);
+      // 缤纷纸屑（随机散落——seed 驱动）
+      for (let k = 0; k < 12; k++) {
+        const ph = ((e.seed + k * 37) % 100) / 100;
+        const ct = Math.min(1, Math.max(0, (t - ph * 0.3) / 0.7));
+        if (ct <= 0 || ct >= 1) continue;
+        const ang = ((e.seed * 7 + k * 53) % 360) * Math.PI / 180;
+        const dist = 3 + ct * 10;
+        const cx2 = ex + Math.round(Math.cos(ang) * dist);
+        const cy2 = ey + Math.round(Math.sin(ang) * dist - ct * ct * 6);
+        const cols = ['#ffd93d', '#ff9e5f', '#5fe8ff', '#c9ff5f', '#b45fff'];
+        wc.fillStyle = cols[(e.seed + k) % 5];
+        wc.fillRect(cx2, cy2, 1, 1);
       }
       break;
     }

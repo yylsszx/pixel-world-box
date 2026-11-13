@@ -598,6 +598,10 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
           <span className="text-[8px] leading-relaxed text-zinc-600">
             填入后所有云端请求改经该后端转发（内网网关可填 /api/oracle/agent?XTransformPort=8787）；留空则自动路由：本站后端 → 浏览器直连厂商。
           </span>
+          {/* 大陆直连提示（时代深化）：无需中继的三家大陆厂商——填 Key 即浏览器直连 */}
+          <span className="mt-1 rounded-sm border border-teal-800/60 bg-teal-500/10 px-1.5 py-1 text-[8px] leading-relaxed text-teal-300">
+            大陆直连：DeepSeek / Kimi / 通义千问三家的 API 支持浏览器 CORS——选择对应预设并填入 API Key 即可直连使用，无需中继后端与自定义域名（智谱 GLM 不支持 CORS 不在此列）。
+          </span>
         </label>
       )}
 

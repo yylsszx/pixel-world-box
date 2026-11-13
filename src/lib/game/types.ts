@@ -84,6 +84,13 @@ export const R = {
   TURTLE: 39,
   /** 鲨鱼：海洋顶级掠食者，捕食鱼群与游泳单位 */
   SHARK: 40,
+  // —— 时代深化三单位（ID 41-43：马/鹰/巡逻机 —— 驯马骑兵与航空时代的可观察载体）——
+  /** 马：草原群居的骏足兽，驯马科技后成为文明的坐骑（骑兵） */
+  HORSE: 41,
+  /** 鹰：盘旋高空的猛禽，俯冲捕食兔/鸡/鱼 */
+  EAGLE: 42,
+  /** 巡逻机：航空引擎科技后文明升空的侦察双翼机（绕首都巡航，不参战） */
+  PLANE: 43,
 } as const;
 export type RaceId = (typeof R)[keyof typeof R];
 
@@ -125,7 +132,11 @@ export interface RaceDef {
   speed: number; // tiles per tick
   maxAge: number; // in game years
   repro: number; // reproduction chance per update
-  sprite: 'person' | 'sheep' | 'wolf' | 'bear' | 'dragon' | 'deer' | 'penguin' | 'camel' | 'scorpion' | 'snake' | 'snowwolf' | 'skeleton' | 'demon' | 'mage' | 'troll' | 'ogre' | 'whitewalker' | 'vampire' | 'kraken' | 'sandworm' | 'basilisk' | 'angel' | 'phoenix' | 'ent' | 'lich' | 'hydra' | 'chicken' | 'pig' | 'rabbit' | 'fox' | 'fish' | 'crab' | 'turtle' | 'shark';
+  sprite: 'person' | 'sheep' | 'wolf' | 'bear' | 'dragon' | 'deer' | 'penguin' | 'camel' | 'scorpion' | 'snake' | 'snowwolf' | 'skeleton' | 'demon' | 'mage' | 'troll' | 'ogre' | 'whitewalker' | 'vampire' | 'kraken' | 'sandworm' | 'basilisk' | 'angel' | 'phoenix' | 'ent' | 'lich' | 'hydra' | 'chicken' | 'pig' | 'rabbit' | 'fox' | 'fish' | 'crab' | 'turtle' | 'shark' | 'horse' | 'eagle' | 'plane';
+  /** 可驯服（马）：驯马科技后可被文明征为坐骑（骑兵） */
+  tamable?: boolean;
+  /** 空中悬停高度（鹰/巡逻机：渲染抬升 + 地面阴影，飞行者专属） */
+  soar?: boolean;
   /** 涌现物种标记：动态种化产生的新物种头顶 1px 突变色点（undefined = 预设原种） */
   dynTint?: string;
   /** 视觉基因组（涌现进化 v3）：动态物种携带 —— 色相/体型/角刺鬃尾/花纹全部程序化漂移 */
@@ -199,6 +210,10 @@ export const RACES: Record<number, RaceDef> = {
   [R.CRAB]: { key: 'crab', name: '蟹', isCiv: false, hostile: false, flying: false, predator: false, undead: false, lavaImmune: false, aquatic: true, beach: true, hp: 16, dmg: 3, speed: 0.03, maxAge: 16, repro: 0.007, sprite: 'crab' },
   [R.TURTLE]: { key: 'turtle', name: '龟', isCiv: false, hostile: false, flying: false, predator: false, undead: false, lavaImmune: false, coldBlood: true, aquatic: true, hp: 40, dmg: 1, speed: 0.028, maxAge: 120, repro: 0.003, sprite: 'turtle' },
   [R.SHARK]: { key: 'shark', name: '鲨鱼', isCiv: false, hostile: false, flying: false, predator: true, undead: false, lavaImmune: false, aquatic: true, reach: 1.3, hp: 85, dmg: 18, speed: 0.1, maxAge: 40, repro: 0.002, sprite: 'shark' },
+  // —— 时代深化三单位（马/鹰/巡逻机）——
+  [R.HORSE]: { key: 'horse', name: '马', isCiv: false, hostile: false, flying: false, predator: false, undead: false, lavaImmune: false, tamable: true, hp: 42, dmg: 4, speed: 0.145, maxAge: 30, repro: 0.004, sprite: 'horse', archetype: '草原骏足：群居奔行，驯马之术后成为文明的坐骑' },
+  [R.EAGLE]: { key: 'eagle', name: '鹰', isCiv: false, hostile: false, flying: true, predator: true, undead: false, lavaImmune: false, soar: true, hp: 26, dmg: 7, speed: 0.13, maxAge: 28, repro: 0.003, sprite: 'eagle', archetype: '高空猛禽：盘旋搜索，俯冲捕食兔/鸡/鱼' },
+  [R.PLANE]: { key: 'plane', name: '巡逻机', isCiv: false, hostile: false, flying: true, predator: false, undead: false, lavaImmune: false, soar: true, hp: 55, dmg: 0, speed: 0.16, maxAge: 9999, repro: 0, sprite: 'plane', archetype: '双翼侦察机：绕首都巡航，为文明提供侦察预警' },
 };
 
 // ---------------- 种族系统 v2：种族关系（Race Relations） ----------------
@@ -300,6 +315,7 @@ export const JOBS: JobDef[] = [
   { key: 'archer', name: '弓手', desc: '远程箭矢压制，守城攻城皆宜', hpMul: 1.05, dmgMul: 1.15, speedMul: 1, weight: 8, ranged: 5, color: '#5ba8e0' },
   { key: 'builder', name: '建筑师', desc: '加速王国建造新房屋', hpMul: 1.15, dmgMul: 0.95, speedMul: 1.05, weight: 5, color: '#ff9b2d' },
   { key: 'merchant', name: '商人', desc: '往来集市贸易，为王國积累财富', hpMul: 1, dmgMul: 0.9, speedMul: 1.2, weight: 2, color: '#6fd66f' },
+  { key: 'miner', name: '矿工', desc: '在矿井中开凿矿脉，产出财富与知识（矿井优先雇佣）', hpMul: 1.1, dmgMul: 1.05, speedMul: 0.95, weight: 0, color: '#c9a84a' },
   { key: 'noble', name: '贵族', desc: '居于王都，供养国库', hpMul: 1.25, dmgMul: 1.1, speedMul: 1, weight: 1, color: '#b56cf0' },
   // 国王：唯一（建国/继承加冕产生；weight 0 = 永不自然出生），hp/dmg ×1.5
   { key: 'king', name: '国王', desc: '一国之主：驾崩则举国缟素，继承者加冕', hpMul: 1.5, dmgMul: 1.5, speedMul: 1, weight: 0, color: '#ffd700' },
@@ -336,10 +352,29 @@ export const BUILDING_DEFS: BuildingDef[] = [
   { key: 'temple', name: '神殿', hp: 140, cost: 22, needKnowledge: 10, desc: '治疗光环庇佑周边单位' },
   { key: 'wall', name: '城墙', hp: 200, cost: 2, desc: '环都城防：敌方陆行单位不可逾越，守军借墙而战' },
   { key: 'fishery', name: '渔场', hp: 70, popCap: 2, cost: 14, needKnowledge: 6, desc: '邻海而建：渔民出海捕捞产出粮食——海洋资源的唯一入口' },
+  // —— 战争机械（攻城营械：战争期间临时部署，和平时自毁）——
+  { key: 'ram', name: '冲车', hp: 260, cost: 0, desc: '攻城营械：覆木冲架，撞击城门城墙（伤害 ×4）' },
+  { key: 'catapult', name: '投石机', hp: 200, cost: 0, desc: '攻城营械：摇臂地石，远程轰击建筑与守军' },
+  // —— 大型组装式奇观（2×2 巨构，分阶段组装，每国限一座）——
+  { key: 'pyramid', name: '大金字塔', hp: 900, cost: 150, needKnowledge: 10, desc: '远古奇观：繁衍 +15%，人口容量 +12%（组装工期最长）' },
+  { key: 'lighthouse', name: '大灯塔', hp: 700, cost: 160, needKnowledge: 26, desc: '古典奇观：殖民间隔 -40%，航海寿命 +50%（海难大减）' },
+  { key: 'cathedral', name: '大教堂', hp: 800, cost: 180, needKnowledge: 42, desc: '中世纪奇观：稳定 +18，文化积累 +60%' },
+  // —— 地下开发（矿脉经济链）——
+  { key: 'mine', name: '矿井', hp: 130, cost: 10, desc: '建在矿脉上：矿工开凿产出财富与知识（铁矿/金矿/水晶）' },
+  // —— 海洋开发（海带养殖/石油平台）——
+  { key: 'kelp', name: '海带田', hp: 50, popCap: 1, cost: 10, needKnowledge: 12, desc: '浅海养殖：浮球阵列随波摇摆，产出粮食' },
+  { key: 'rig', name: '石油平台', hp: 320, cost: 60, needKnowledge: 55, desc: '海上铜铁巨构：钻井采油财富大增，但井口火炬污染海洋' },
 ];
 export const BUILD_KINDS = {
   HOUSE: 1, CAPITAL: 2, TOWER: 3, FARM: 4, BARRACKS: 5, CASTLE: 6, PORT: 7, LIBRARY: 8, MARKET: 9, TEMPLE: 10, WALL: 11, FISHERY: 12,
+  RAM: 13, CATAPULT: 14, PYRAMID: 15, LIGHTHOUSE: 16, CATHEDRAL: 17, MINE: 18, KELP: 19, RIG: 20,
 } as const;
+/** 大型奇观（2×2 巨构：每国限一座，分阶段组装） */
+export const WONDERS = new Set<number>([BUILD_KINDS.PYRAMID, BUILD_KINDS.LIGHTHOUSE, BUILD_KINDS.CATHEDRAL]);
+/** 攻城营械（战争期间临时部署：和平时自毁） */
+export const SIEGE_ENGINES = new Set<number>([BUILD_KINDS.RAM, BUILD_KINDS.CATAPULT]);
+/** 可升级建筑（科技解锁后阶位提升：存量自动跟随） */
+export const TIERABLE = new Set<number>([BUILD_KINDS.FARM, BUILD_KINDS.MARKET, BUILD_KINDS.PORT, BUILD_KINDS.BARRACKS, BUILD_KINDS.TOWER, BUILD_KINDS.MINE]);
 /** 可被占领（易帜而非摧毁）的建筑 */
 export const CAPTURABLE = new Set<number>([BUILD_KINDS.HOUSE, BUILD_KINDS.FARM, BUILD_KINDS.MARKET, BUILD_KINDS.BARRACKS, BUILD_KINDS.PORT, BUILD_KINDS.FISHERY]);
 
@@ -391,6 +426,8 @@ export interface Unit {
   job?: number;
   /** 装备：武器（剑/斧/弓/杖） */
   wep?: _ItemKind | null;
+  /** 骑乘：1 = 骑兵（驭马而战：速度×1.45 伤害×1.2 已计入属性；驯马科技后战士概率骑乘） */
+  mount?: number;
   /** 装备：护甲 */
   arm?: _ItemKind | null;
   /** 装备：头盔 */
@@ -895,7 +932,11 @@ export type EffectKind =
   // —— 海战残骸（v0.55：击沉/弃船留下的沉船——倾斜船体随时间没入海面 + 漂木 + 气泡）——
   | 'wreck'
   // —— 施工场地（v0.55：地形工程脚手架——凿山/运河/填海的肉眼可见施工过程）——
-  | 'site';
+  | 'site'
+  // —— 时代深化（v0.76：投石弹道 / 渔船出海 / 奇观竣工庆典）——
+  | 'boulder'
+  | 'rowboat'
+  | 'wonderdone';
 
 export interface Effect {
   kind: EffectKind;
@@ -928,6 +969,7 @@ export interface Effect {
 /** 世界纪事事件类型 */
 export type WorldEventKind =
   | 'found' | 'war' | 'peace' | 'fall' | 'unify' | 'dragon'
+  | 'flight' | 'quake' // 时代深化（v0.76）：巡逻机首航 / 矿井塌方
   | 'legend' | 'plague' | 'zombie' | 'nuke' | 'meteor' | 'battle'
   | 'colonize' | 'settle' | 'shipwreck' | 'river' | 'oasis'
   | 'rebel' | 'bandit' | 'demon' | 'skeleton' | 'trigger'

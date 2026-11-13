@@ -223,6 +223,9 @@ export function generateWorld(seed: number, params?: WorldGenParams): WorldGenRe
   trySpawn(R.RABBIT, 12, [3, 6], T.GRASS);  // 兔：草地群穴（狐的猎物）
   trySpawn(R.RABBIT, 5, [2, 4], T.FOREST);  // 兔：林缘亦有
   trySpawn(R.FOX, 6, [1, 2], T.FOREST);     // 狐：森林猎手
+  // —— 时代深化（v0.76）：马与鹰 —— 骏马草原成群（骑兵的种源）/ 鹰山巅盘旋（空中生态）——
+  trySpawn(R.HORSE, 9, [3, 5], T.GRASS);    // 马：草原群居的骏足（驯马术的种源）
+  trySpawn(R.EAGLE, 5, [1, 2], T.MOUNTAIN); // 鹰：山巅猛禽（俯冲捕食兔/鸡/鱼）
   // 鱼：猎场网络均匀撒布（Task 98）—— 纯随机撒点会聚簇出 50+ 格无鱼真空带，而鲨鱼的通勤经济学
   // 依赖「任意海域到最近猎场的距离 ≤ 续航」。浅/深两次独立采样会有盲区：深洋候选集远大于锚数
   // （实测 6 锚拉出 59-87 格孔洞）—— 合并为单一全局采样，浅水/深海底一起参与最远点竞选。

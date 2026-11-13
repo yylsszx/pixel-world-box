@@ -129,6 +129,48 @@ export async function probeSiteBackend(now = Date.now()): Promise<BackendState> 
 /** 探测结果变化时失效缓存（测试连通按钮手动触发前调用，保证及时性） */
 export function invalidateBackendProbe(): void {
   probeCache = null;
+  sameOriginCloudCache = null;
+}
+
+// ============ 云端后端解析（v0.76：云存档/编年史共用——用户显式中继 > 同源云后端 > 官方中继） ============
+
+const OFFICIAL_CLOUD_RELAY = 'https://pwb-oracle-relay.yeyilin2010.workers.dev';
+let sameOriginCloudCache: { at: number; ok: boolean } | null = null;
+
+/** 同源云后端探测：/api/capabilities 返回 pwb-oracle-worker 即为 PWB Worker 全功能版
+ *  （Workers 上同源零配置可用——云存档/编年史经 location.origin 直连） */
+async function probeSameOriginCloud(now = Date.now()): Promise<boolean> {
+  if (sameOriginCloudCache && now - sameOriginCloudCache.at < PROBE_TTL_MS) return sameOriginCloudCache.ok;
+  let ok = false;
+  try {
+    const res = await fetch('/api/capabilities', { cache: 'no-store' });
+    if (res.ok) {
+      const j: unknown = await res.json().catch(() => null);
+      ok = !!j && typeof j === 'object' && (j as Record<string, unknown>).service === 'pwb-oracle-worker';
+    }
+  } catch {
+    ok = false;
+  }
+  sameOriginCloudCache = { at: now, ok };
+  return ok;
+}
+
+/** 云端后端解析：云存档/编年史单一事实源。
+ *  ① 用户显式中继（provider-store 的 relayUrl，用户配置优先）；
+ *  ② 同源云后端（PWB Worker 全功能版：capabilities 探测命中即用当前域名）；
+ *  ③ 官方云端中继（workers.dev 部署；大陆线路可能不可达属预期，调用方自行降级本地）。 */
+export async function resolveCloudBackend(): Promise<string> {
+  try {
+    const { loadStoredProvider } = await import('./provider-store');
+    const relay = loadStoredProvider().relayUrl?.trim();
+    if (relay) return normalizeRelayUrl(relay);
+  } catch {
+    /* provider-store 不可用（隐私模式等）→ 继续自动路由 */
+  }
+  if (await probeSameOriginCloud()) {
+    if (typeof location !== 'undefined') return location.origin;
+  }
+  return OFFICIAL_CLOUD_RELAY;
 }
 
 // ============ 通道 A/B：中继后端 / 本站后端（同一线协议 SSE 泵） ============

@@ -41,7 +41,7 @@ export const TECH_CATS: { key: TechCat; name: string; color: string; dot: string
   { key: 'civic', name: '政治', color: 'text-zinc-300', dot: '#d4d4d8' },
 ];
 
-/** 34 项科技：按纪元 4 列展开，领域内纵深依赖 */
+/** 50 项科技：按纪元 4 列展开，领域内纵深依赖（含时代深化四科技：驯马/矿业/远洋/海洋平台） */
 export const TECHS: TechDef[] = [
   // —— 远古时代（0）——
   { key: 'fire', name: '火种', cat: 'agri', era: 0, cost: 4, deps: [], desc: '熟食烹饪：繁衍速度 +8%' },
@@ -51,6 +51,7 @@ export const TECHS: TechDef[] = [
   { key: 'song', name: '图腾歌舞', cat: 'culture', era: 0, cost: 6, deps: [], desc: '篝火节庆：文化积累 +50%' },
   { key: 'gather', name: '采集术', cat: 'econ', era: 0, cost: 6, deps: [], desc: '采集储藏：人口税基 +20%' },
   { key: 'raft', name: '木筏', cat: 'naval', era: 0, cost: 8, deps: [], desc: '漂流远航：殖民间隔 -10%' },
+  { key: 'husbandry', name: '驯马术', cat: 'agri', era: 0, cost: 9, deps: [], desc: '骏马为骑：解锁骑兵（战士/军团兵骑乘：速度×1.45 冲锋伤害更高）' },
   { key: 'pottery', name: '陶器', cat: 'econ', era: 0, cost: 8, deps: ['fire'], desc: '储粮储水：人口税基 +15%' },
   // —— 古典时代（1）——
   { key: 'irrigation', name: '农耕灌溉', cat: 'agri', era: 1, cost: 14, deps: ['fire'], desc: '沟渠引水：农田容量 +1，繁衍 +8%' },
@@ -58,7 +59,8 @@ export const TECHS: TechDef[] = [
   { key: 'writing', name: '文字', cat: 'culture', era: 1, cost: 14, deps: ['song'], desc: '楔形刻痕：知识产出 +30%' },
   { key: 'masonry', name: '石匠工艺', cat: 'eng', era: 1, cost: 15, deps: ['shelter'], desc: '凿石垒砌：建筑耐久 +25%，修复速度 +50%' },
   { key: 'currency', name: '铸币', cat: 'econ', era: 1, cost: 15, deps: ['gather', 'pottery'], desc: '金属通货：集市收入 +40%' },
-  { key: 'sail', name: '帆船', cat: 'naval', era: 1, cost: 18, deps: ['raft'], desc: '乘风破浪：殖民间隔 -20%' },
+  { key: 'sail', name: '帆船', cat: 'naval', era: 1, cost: 18, deps: ['raft'], desc: '乘风破浪：殖民间隔 -20%：航船进化为帆船' },
+  { key: 'mining', name: '采矿业', cat: 'eng', era: 1, cost: 17, deps: ['shelter'], desc: '镐凿岩脉：解锁在矿脉上修建矿井（铁/金/水晶产出财富与知识）' },
   { key: 'law', name: '成文法典', cat: 'civic', era: 1, cost: 20, deps: ['clan', 'writing'], desc: '律令昭彰：稳定度 +12，叛乱风险降低' },
   { key: 'crossbow', name: '弩机', cat: 'military', era: 1, cost: 20, deps: ['bronze'], desc: '弩矢穿透：弓手伤害 +20%' },
   // —— 中世纪（2）——
@@ -70,7 +72,8 @@ export const TECHS: TechDef[] = [
   { key: 'compass', name: '罗盘', cat: 'naval', era: 2, cost: 32, deps: ['sail'], desc: '指北磁针：殖民间隔 -25%' },
   { key: 'feudal', name: '封建采邑', cat: 'civic', era: 2, cost: 34, deps: ['law'], desc: '分封效忠：税基 +30%（稳定 -4）' },
   { key: 'tactics', name: '方阵战术', cat: 'military', era: 2, cost: 36, deps: ['iron'], desc: '进退如一：军团士气上限 +8、恢复 +50%' },
-  { key: 'machinery', name: '机械装置', cat: 'eng', era: 2, cost: 38, deps: ['fortification'], desc: '绞盘滑轮：修复速度 +60% 陷阱→攻城强化' },
+  { key: 'machinery', name: '机械装置', cat: 'eng', era: 2, cost: 38, deps: ['fortification'], desc: '绞盘滑轮：解锁攻城营械（冲车/投石机随军攻城）' },
+  { key: 'oceanfaring', name: '远洋渔捞', cat: 'naval', era: 2, cost: 34, deps: ['sail'], desc: '深海渔场：渔场产出 +80%，解锁海带养殖场（浅海粮食）' },
   // —— 文艺复兴（3）——
   { key: 'crop4', name: '良种选育', cat: 'agri', era: 3, cost: 52, deps: ['plow'], desc: '良种轮种：繁衍速度 +15%' },
   { key: 'printing', name: '活字印刷', cat: 'culture', era: 3, cost: 55, deps: ['theology'], desc: '知识传布：知识产出 +50%，文化 +30%' },
@@ -82,7 +85,8 @@ export const TECHS: TechDef[] = [
   { key: 'steel', name: '钢铁淬火', cat: 'military', era: 3, cost: 60, deps: ['tactics'], desc: '板甲钢刃：全军伤害 +20%，生命 +12%' },
   { key: 'legion', name: '帝国军制', cat: 'military', era: 3, cost: 75, deps: ['steel'], desc: '常备军团：军团上限 +2，士气 +6 解锁帝国政体' },
   // —— 工业时代（4）：现代武器体系 ——
-  { key: 'steam', name: '蒸汽机', cat: 'eng', era: 4, cost: 85, deps: ['machinery'], desc: '锅炉与活塞：建筑耐久 +40%，修复 +80%' },
+  { key: 'steam', name: '蒸汽机', cat: 'eng', era: 4, cost: 85, deps: ['machinery'], desc: '锅炉与活塞：建筑耐久 +40%，修复 +80%：航船进化为轮船，矿井升级深井' },
+  { key: 'offshore', name: '海洋平台', cat: 'naval', era: 4, cost: 120, deps: ['steam', 'oceanfaring'], desc: '钢躯入海：解锁石油平台（海上财富巨构，火炬伴污染）' },
   { key: 'gunpowder', name: '火药', cat: 'military', era: 4, cost: 88, deps: ['steel', 'machinery'], desc: '黑火药枪械：全军伤害 +25% 解锁火器军备' },
   { key: 'assembly', name: '流水装配', cat: 'econ', era: 4, cost: 95, deps: ['banking', 'steam'], desc: '标准化生产：全部经济收入 +60%' },
   { key: 'sanitation', name: '公共卫生', cat: 'agri', era: 4, cost: 92, deps: ['crop4', 'medicine'], desc: '下水道与疫苗：繁衍 +12%，瘟疫传播 -30%' },
@@ -158,6 +162,15 @@ export interface TechMods {
   plasma: number;
   /** 反物质能力等级（0=无；1=反物质打击） */
   antiMatter: number;
+  // —— 时代深化（v0.76：可观察世界进化的新引擎键）——
+  /** 骑兵等级（0=无；1=战士骑乘，驯马术） */
+  cav: number;
+  /** 矿业等级（0=无；1=可建矿井，采矿业） */
+  mine: number;
+  /** 远洋渔捞等级（0=无；1=渔场强化+海带养殖，远洋渔捞） */
+  ocean: number;
+  /** 海洋平台等级（0=无；1=可建石油平台，海洋平台） */
+  rig: number;
 }
 
 export const NEUTRAL_MODS: TechMods = {
@@ -165,6 +178,7 @@ export const NEUTRAL_MODS: TechMods = {
   cult: 1, repair: 1, stab: 0, morale: 0, armyMax: 0, archer: 1, plague: 1,
   range: 0, arty: 0, bomber: 0, nukeCap: 0,
   laser: 0, drone: 0, orbital: 0, mech: 0, ai: 0, plasma: 0, antiMatter: 0,
+  cav: 0, mine: 0, ocean: 0, rig: 0,
 };
 
 /** 汇总某科技集的加成（engine 缓存调用） */
@@ -197,6 +211,11 @@ export function modsOfTechs(keys: string[]): TechMods {
       case 'feudal': m.tax += 0.3; m.stab -= 4; break;
       case 'tactics': m.morale += 8; break;
       case 'machinery': m.repair += 0.6; break;
+      // —— 时代深化（v0.76）——
+      case 'husbandry': m.cav += 1; break;
+      case 'mining': m.mine += 1; break;
+      case 'oceanfaring': m.ocean += 1; break;
+      case 'offshore': m.rig += 1; break;
       case 'crop4': m.repro += 0.15; break;
       case 'printing': m.know += 0.5; m.cult += 0.3; break;
       case 'banking': m.gold += 0.35; break;

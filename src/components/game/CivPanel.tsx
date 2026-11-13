@@ -12,7 +12,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import {
   X, Crown, Users, Landmark, Home, Coins, BookOpen, Swords, Crosshair, FlaskConical,
   Lightbulb, Lock, Check, ChevronRight, Scale, Coins as CoinsIcon, Palette, Shield,
-  TrendingUp, TrendingDown, Sparkles, PartyPopper, Scroll, Castle, TriangleAlert, Sword, Wheat,
+  TrendingUp, TrendingDown, Sparkles, PartyPopper, Scroll, Castle, TriangleAlert, Sword, Wheat, Ship,
 } from 'lucide-react';
 
 interface CivInfo {
@@ -63,6 +63,10 @@ interface CivInfo {
   // —— 军备/房屋阶位（科技深度绑定）——
   armament: number;
   armamentName: string;
+  /** 航船档位名（时代深化：木筏/帆船/轮船） */
+  navalTierName: string;
+  /** 竣工奇观名（0 = 无） */
+  wonderName: string;
   /** 持械率：全国国民持有制式武器的比例（军备时代的真实兑现度） */
   armedRate: number;
   /** 已采纳的涌现理念名列表（文化结晶） */
@@ -450,6 +454,17 @@ function OverviewTab({ civ, onJumpCapital }: { civ: CivInfo; onJumpCapital: () =
             <Home className="h-3 w-3" aria-hidden />
             {civ.houseTierName}
           </span>
+          {/* 时代深化（v0.76）：航船时代与旷世奇观（世界随科技真变的另两把尺） */}
+          <span className="flex items-center gap-0.5 rounded-sm border border-teal-700/70 bg-teal-500/10 px-1.5 py-0.5 text-[9px] font-bold text-teal-300">
+            <Ship className="h-3 w-3" aria-hidden />
+            {civ.navalTierName}
+          </span>
+          {civ.wonderName && (
+            <span className="flex items-center gap-0.5 rounded-sm border border-amber-600/70 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold text-amber-300">
+              <Landmark className="h-3 w-3" aria-hidden />
+              {civ.wonderName}
+            </span>
+          )}
         </div>
         {/* 已采纳的涌现理念（文化结晶——真实影响经济/稳定/军国/厌战六轴） */}
         {civ.ideas.length > 0 && (

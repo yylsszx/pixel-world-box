@@ -384,7 +384,7 @@ function paintBootsFine(ctx: CanvasRenderingContext2D, u: Unit, fx: number, dy: 
  * 强盗兜帽、僵尸前伸双臂、蜥蜴人吻部与摆尾、哥布林大耳）/ 呼吸起伏 / 挥击姿势。
  * 适用种族：人类/精灵/矮人/兽人/强盗/僵尸/蜥蜴人/哥布林。
  */
-export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [number, number, number] | null, t = 0) {
+export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [number, number, number] | null, t = 0, armLv = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
   const f = u.flip ? -1 : 1;
@@ -438,6 +438,14 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
     ctx.fillRect(hxm + 1, y - 1 - zp, 1, 1);
     ctx.fillRect(hxm + 2, y - zp, 1, 1);
     ctx.fillRect(hxm + 3, y - 1 - zp, 1, 1);
+    return;
+  }
+
+  // —— 骑兵（驯马时代：骏马与骑手 —— 马体步态/鬃尾/骑装王国色，冲锋扬尘）——
+  if (u.mount) {
+    paintMounted(ctx, u, px, y, f, t, civColor, cloth, pants, skin, hairCol, armLv);
+    // 骑兵职业徽标（头顶信物同绘）
+    paintJobBadge(ctx, u, px, y + 1);
     return;
   }
 
@@ -572,6 +580,9 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
         if ((u.atk ?? 0) > 0) ctx.fillRect(px + 2 * f, gy - 4, 1, 3);
         else ctx.fillRect(px + 2 * f, gy - 2, 1, 3);
       }
+    } else {
+      // 制式军械（时代深化）：无拾取武器时按文明军备等级佩发制式武器
+      paintStandardArms(ctx, px, gy - 2, f, t, armLv, (u.atk ?? 0) > 0);
     }
     // 巨躯戒指：持械侧臂末端宝石点
     paintRing(ctx, u, px + 2 * f, gy, t);
@@ -620,6 +631,8 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
     ctx.fillRect(tx, hY - 1, torsoW, 2);
     // 护甲：胸前甲片（17 种甲形制分层：底色 + 前缘细节点 + 流光呼吸）
     paintArmorPlate(ctx, u, px, hY, f, t, torsoW);
+    // 制式甲胄（时代深化）：无拾取护甲时按文明军备等级佩发（青铜鳞/锁环/板钢/军装/动力甲）
+    if (!u.arm && armLv >= 2) paintStandardArmor(ctx, px, hY, f, t, armLv);
     // 护符：胸前坠点（挂衣/甲外）
     paintAmulet(ctx, u, px, hY, t);
     // 双臂：反相摆动（僵尸双臂前伸平举）
@@ -797,6 +810,9 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
           ctx.fillRect(px + 2 * f, hY - 2, 1, 2);
         }
       }
+    } else if (armLv > 0) {
+      // 制式军械（时代深化）：无拾取武器时按文明军备等级佩发制式武器
+      paintStandardArms(ctx, px, hY - 2, f, t, armLv, (u.atk ?? 0) > 0);
     }
     // 装备戒指：持械手宝石点（攻击时画高举手底；垂持时画握柄位；空手时画前臂手端）
     if (u.rng) {
@@ -847,6 +863,367 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
   if (u.hp < u.maxHp * 0.4) {
     ctx.fillStyle = '#cf3f2e';
     ctx.fillRect(px - 1, y - 5, 3, 1);
+  }
+}
+
+// ---------- 时代深化（v0.76）：骑兵 / 制式军械 / 制式甲胄 / 马鹰机 ----------
+/** 骑兵（2px/tile 基准）：骏马 + 骑手 —— 马体步态/鬃尾/王国色骑装，冲锋扬尘 */
+function paintMounted(
+  ctx: CanvasRenderingContext2D, u: Unit, px: number, py: number, f: number, t: number,
+  civColor: [number, number, number] | null, cloth: [number, number, number],
+  pants: [number, number, number], skin: [number, number, number], hairCol: string, armLv: number,
+) {
+  const isMoving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  const step = isMoving ? ((t >> 2) & 1) : 0;
+  const hurt = u.hurt > 0;
+  // 地面阴影
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.fillRect(px - 3, py + 3, 7, 1);
+  // —— 马体（身 5x2 + 颈头 + 四腿步态 + 鬃尾）——
+  const hb = step === 1 ? 1 : 0; // 奔跑起伏
+  const hy = py - hb;
+  ctx.fillStyle = hurt ? '#ff6b5e' : '#7a4a26';
+  ctx.fillRect(px - 3, hy + 1, 6, 2); // 马身
+  ctx.fillStyle = hurt ? '#ff6b5e' : '#8a5a32';
+  ctx.fillRect(px - 3, hy + 1, 6, 1); // 背部受光
+  ctx.fillStyle = hurt ? '#ff6b5e' : '#7a4a26';
+  ctx.fillRect(px + 3 * f, hy, 2, 2); // 颈
+  ctx.fillRect(px + 4 * f, hy - 1, 2, 1); // 头（前伸）
+  ctx.fillStyle = '#4a2c18';
+  ctx.fillRect(px + 5 * f, hy - 1, 1, 1); // 鼻
+  ctx.fillRect(px + 3 * f, hy - 1, 1, 1); // 耳
+  // 鬃毛（颈脊深色）
+  ctx.fillStyle = '#3a2415';
+  ctx.fillRect(px + 3 * f, hy, 1, 1);
+  // 尾（臀后甩）
+  ctx.fillStyle = '#3a2415';
+  ctx.fillRect(px - 4 * f - (f > 0 ? 0 : 1), hy + 1, 1, 2);
+  if (step === 1) ctx.fillRect(px - 5 * f - (f > 0 ? 0 : 1), hy + 2, 1, 1);
+  // 四腿（对角步态：两组交替）
+  ctx.fillStyle = '#4a2c18';
+  if (isMoving) {
+    if (step === 1) {
+      ctx.fillRect(px - 3, py + 3, 1, 1);
+      ctx.fillRect(px - 1, py + 3, 1, 1);
+      ctx.fillRect(px + 1, py + 2, 1, 2);
+      ctx.fillRect(px + 2, py + 2, 1, 2);
+    } else {
+      ctx.fillRect(px - 3, py + 2, 1, 2);
+      ctx.fillRect(px - 1, py + 2, 1, 2);
+      ctx.fillRect(px + 1, py + 3, 1, 1);
+      ctx.fillRect(px + 2, py + 3, 1, 1);
+    }
+  } else {
+    ctx.fillRect(px - 3, py + 3, 1, 1);
+    ctx.fillRect(px - 1, py + 3, 1, 1);
+    ctx.fillRect(px + 1, py + 3, 1, 1);
+    ctx.fillRect(px + 2, py + 3, 1, 1);
+  }
+  // 马鞍毯（王国色：骑手胯下）
+  ctx.fillStyle = civColor ? rgb(civColor) : '#a86040';
+  ctx.fillRect(px - 1, hy, 2, 1);
+  // —— 骑手（马上坐姿：腿夹马腹 + 躯干 + 头 + 持械）——
+  ctx.fillStyle = rgb(pants);
+  ctx.fillRect(px - f, hy, 1, 2); // 垂腿（马侧）
+  ctx.fillStyle = hurt ? '#ff3b30' : rgb(cloth);
+  ctx.fillRect(px - 1, hy - 2, 2, 2); // 躯干
+  // 制式甲胄（同 drawPerson 口径；与 engine.armamentOf 0-6 同档）
+  if (!u.arm && armLv >= 1) paintStandardArmor(ctx, px, hy - 2, f, t, armLv);
+  // 头 + 发 + 瞳
+  ctx.fillStyle = hairCol;
+  ctx.fillRect(px - 1, hy - 4, 2, 1);
+  ctx.fillStyle = rgb(skin);
+  ctx.fillRect(px - 1, hy - 3, 2, 2);
+  ctx.fillStyle = '#14100c';
+  ctx.fillRect(px + (f > 0 ? 0 : -1), hy - 3, 1, 1);
+  // 骑枪/骑弓（前倾挟持；armLv≥5 龙骑兵持卡宾枪）
+  const atk = (u.atk ?? 0) > 0;
+  if (u.wep) {
+    // 拾取武器：斜置长杆（骑姿简形）
+    const art = ITEM_DEFS[u.wep]?.art;
+    if (art === 'bow') paintBow(ctx, px + 2 * f, hy - 1, f, atk);
+    else if (art === 'staff') paintStaff(ctx, u, px + 2 * f, hy - 1, f, t);
+    else {
+      ctx.fillStyle = u.wep === 'sword3' ? '#ffd93d' : u.wep === 'sword2' ? '#e8e8e8' : '#9a8f7a';
+      ctx.fillRect(atk ? px + 3 * f : px + 2 * f, hy - 2, 1, 3);
+    }
+  } else if (armLv > 0) {
+    // 制式骑枪（枪骑兵：斜向前平持；攻击时突刺；armLv 4+ 龙骑兵持卡宾枪）
+    const lanceCol = armLv >= 6 ? '#7df9ff' : armLv >= 4 ? '#3a3f4a' : armLv >= 3 ? '#c9d2dc' : armLv >= 2 ? '#9aa2ab' : '#b87333';
+    ctx.fillStyle = '#6e4a2b';
+    ctx.fillRect(atk ? px + 2 * f : px + f, hy - 1, 3, 1); // 枪杆（攻击前刺）
+    ctx.fillStyle = lanceCol;
+    ctx.fillRect(atk ? px + 5 * f : px + 4 * f, hy - 1, 1, 1); // 枪尖
+  }
+  // 冲锋扬尘（移动时马蹄后尘）
+  if (isMoving && ((t >> 2) & 1) === 0) {
+    ctx.fillStyle = 'rgba(180,160,130,0.5)';
+    ctx.fillRect(px - 5 * f - (f > 0 ? 0 : 1), py + 3, 1, 1);
+    ctx.fillRect(px - 6 * f - (f > 0 ? 0 : 1), py + 3, 1, 1);
+  }
+  // 低血量警示
+  if (u.hp < u.maxHp * 0.4) {
+    ctx.fillStyle = '#cf3f2e';
+    ctx.fillRect(px - 2, py - 6, 5, 1);
+  }
+}
+
+/** 制式军械（时代深化）：无拾取武器的文明单位按军备等级佩发（armLv 0-6，与 engine.armamentOf 同口径）
+ *  1 青铜剑 / 2 铁剑 / 3 钢剑 / 4 火枪 / 5 步枪 / 6 激光枪（0 = 徒手不画） */
+function paintStandardArms(ctx: CanvasRenderingContext2D, px: number, gy: number, f: number, t: number, armLv: number, atk: boolean) {
+  if (armLv <= 0) return;
+  if (armLv <= 3) {
+    // 剑类：青铜 → 铁 → 钢（色阶三段；剑身逐档增长）
+    const blade = armLv === 1 ? '#b87333' : armLv === 2 ? '#9aa2ab' : '#d3dce6';
+    const len = armLv === 1 ? 2 : armLv === 2 ? 3 : 3;
+    ctx.fillStyle = '#5c3a1c';
+    ctx.fillRect(px + 2 * f, gy + 2, 1, 1); // 柄
+    ctx.fillStyle = blade;
+    if (atk) ctx.fillRect(px + 2 * f, gy - 1, 1, len); // 举起
+    else ctx.fillRect(px + 2 * f, gy, 1, len); // 垂持
+    if (armLv >= 3) {
+      ctx.fillStyle = '#8d959e';
+      ctx.fillRect(px + 2 * f, gy + 1, 1, 1); // 护手（钢剑）
+    }
+    if (atk) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(px + 3 * f, gy - 1, 1, 1); // 挥击白光
+    }
+  } else {
+    // 枪械：火枪 → 步枪 → 激光枪（军备工业化）
+    const fut = armLv >= 6;
+    const barrel = fut ? '#1d2b36' : armLv >= 5 ? '#3a3f4a' : '#4a4038';
+    ctx.fillStyle = barrel;
+    ctx.fillRect(px + 2 * f, gy + 1, 3, 1); // 枪管
+    ctx.fillStyle = fut ? '#2e4456' : '#6e4a2b';
+    ctx.fillRect(px + f, gy + 1, 1, 1); // 枪托
+    if (fut) {
+      const glow = ((t >> 3) & 1) === 1 ? '#7df9ff' : '#3ec6d8';
+      ctx.fillStyle = glow;
+      ctx.fillRect(px + 3 * f, gy + 1, 1, 1); // 能量槽
+    }
+    if (atk) {
+      ctx.fillStyle = fut ? '#a5f3fc' : '#ffd93d';
+      ctx.fillRect(px + 5 * f, gy + 1, 1, 1); // 枪口焰
+      if (fut) {
+        ctx.fillStyle = '#22d3ee';
+        ctx.fillRect(px + 6 * f, gy + 1, 1, 1);
+      }
+    }
+  }
+}
+
+/** 制式甲胄（时代深化）：无拾取护甲的文明单位按军备等级着甲（armLv 0-6）
+ *  1-2 青铜鳞/锁环 / 3 板钢 / 4 军装 / 5 军官铁甲 / 6 动力甲 */
+function paintStandardArmor(ctx: CanvasRenderingContext2D, px: number, hY: number, f: number, t: number, armLv: number) {
+  if (armLv <= 0) return;
+  if (armLv === 1) {
+    // 青铜鳞甲：胸前铜点两枚
+    ctx.fillStyle = '#b87333';
+    ctx.fillRect(px - 1, hY, 1, 1);
+    ctx.fillRect(px + 1, hY, 1, 1);
+    ctx.fillStyle = '#d8934a';
+    ctx.fillRect(px, hY, 1, 1);
+  } else if (armLv === 2) {
+    // 锁子甲：灰环纹满胸
+    ctx.fillStyle = '#8d959e';
+    ctx.fillRect(px - 1, hY, 3, 1);
+    ctx.fillStyle = '#6e767f';
+    ctx.fillRect(px - 1, hY + 1, 1, 1);
+    ctx.fillRect(px + 1, hY + 1, 1, 1);
+  } else if (armLv === 3) {
+    // 板甲：亮钢整片 + 中缝
+    ctx.fillStyle = '#c9d2dc';
+    ctx.fillRect(px - 1, hY, 3, 2);
+    ctx.fillStyle = '#8d959e';
+    ctx.fillRect(px, hY, 1, 2);
+    ctx.fillStyle = '#eef3f8';
+    ctx.fillRect(px - 1, hY, 1, 1); // 左缘受光
+  } else if (armLv <= 5) {
+    // 军装：深绿制服 + 腰带（5 档军官肩章）
+    ctx.fillStyle = '#3f5a3a';
+    ctx.fillRect(px - 1, hY, 3, 2);
+    ctx.fillStyle = '#2a2118';
+    ctx.fillRect(px - 1, hY + 1, 3, 1); // 腰带
+    if (armLv >= 5) {
+      ctx.fillStyle = '#c9a84a';
+      ctx.fillRect(px - 1, hY, 1, 1); // 肩章（军官）
+    }
+  } else {
+    // 动力甲：蓝白装甲 + 能量呼吸灯
+    ctx.fillStyle = '#4a6a8f';
+    ctx.fillRect(px - 1, hY, 3, 2);
+    ctx.fillStyle = '#c9d8ec';
+    ctx.fillRect(px - 1, hY, 1, 1);
+    const glow = ((t >> 3) & 1) === 1 ? '#7df9ff' : '#3ec6d8';
+    ctx.fillStyle = glow;
+    ctx.fillRect(px + (f > 0 ? 1 : -1), hY, 1, 1); // 胸口能源核
+  }
+}
+
+/** 骑兵职业徽标（马上头顶）：与步兵徽标同口径的马背版本 */
+function paintJobBadge(ctx: CanvasRenderingContext2D, u: Unit, px: number, jY: number) {
+  const job = u.job ?? 0;
+  if (job === 1) {
+    ctx.fillStyle = '#ffd93d';
+    ctx.fillRect(px - 1, jY - 7, 2, 1);
+  } else if (job === 2) {
+    ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#c0c6cc';
+    ctx.fillRect(px - 1, jY - 7, 2, 1);
+    ctx.fillStyle = '#cf3f2e';
+    ctx.fillRect(px - 1, jY - 8, 1, 1);
+  } else if (job === 4) {
+    ctx.fillStyle = '#ff9b2d';
+    ctx.fillRect(px - 1, jY - 7, 2, 1);
+  }
+  if (u.infected) {
+    ctx.fillStyle = '#64c95d';
+    ctx.fillRect(px, jY - 7, 1, 1);
+  }
+}
+
+/** 野马（2px/tile 基准）：草原骏足 —— 棕身白鬃 + 四蹄对角步态 + 甩尾 */
+export function drawHorse(ctx: CanvasRenderingContext2D, u: Unit, t = 0) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const isMoving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  const step = isMoving ? ((t >> 2) & 1) : 0;
+  const hurt = u.hurt > 0;
+  const bob = isMoving && step === 1 ? 1 : 0;
+  const y = py - bob;
+  // 地面阴影
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(px - 2, py + 3, 5, 1);
+  // 身体
+  ctx.fillStyle = hurt ? '#ff6b5e' : '#7a4a26';
+  ctx.fillRect(px - 2, y + 1, 5, 2);
+  ctx.fillStyle = hurt ? '#ffc4b8' : '#8f5e36';
+  ctx.fillRect(px - 2, y + 1, 5, 1); // 背部受光
+  // 颈 + 头
+  ctx.fillStyle = hurt ? '#ff6b5e' : '#7a4a26';
+  ctx.fillRect(px + 2 * f, y, 2, 2);
+  ctx.fillStyle = hurt ? '#ff6b5e' : '#6e4222';
+  ctx.fillRect(px + 3 * f, y - 1, 2, 1);
+  ctx.fillStyle = '#2a1c10';
+  ctx.fillRect(px + 4 * f, y - 1, 1, 1); // 鼻
+  ctx.fillRect(px + 2 * f, y - 1, 1, 1); // 耳
+  // 鬃毛（浅色）
+  ctx.fillStyle = hurt ? '#ffc4b8' : '#d8c9a5';
+  ctx.fillRect(px + 2 * f, y, 1, 1);
+  ctx.fillRect(px + 1 * f, y, 1, 1);
+  // 尾（甩动）
+  ctx.fillStyle = hurt ? '#ff6b5e' : '#d8c9a5';
+  const wag = ((t >> 3) & 1) === 1 ? -1 : 0;
+  ctx.fillRect(px - 3 * f - (f > 0 ? 0 : 1), y + 1, 1, 2);
+  ctx.fillRect(px - 4 * f - (f > 0 ? 0 : 1), y + 1 + wag, 1, 1);
+  // 四腿（对角步态）
+  ctx.fillStyle = '#4a2c18';
+  if (isMoving) {
+    if (step === 1) {
+      ctx.fillRect(px - 2, py + 3, 1, 1);
+      ctx.fillRect(px + 1, py + 3, 1, 1);
+      ctx.fillRect(px, py + 2, 1, 2);
+      ctx.fillRect(px + 1 - 1, py + 2, 1, 2);
+    } else {
+      ctx.fillRect(px - 2, py + 2, 1, 2);
+      ctx.fillRect(px + 1, py + 2, 1, 2);
+      ctx.fillRect(px, py + 3, 1, 1);
+      ctx.fillRect(px - 1, py + 3, 1, 1);
+    }
+  } else {
+    ctx.fillRect(px - 2, py + 3, 1, 1);
+    ctx.fillRect(px - 1, py + 3, 1, 1);
+    ctx.fillRect(px, py + 3, 1, 1);
+    ctx.fillRect(px + 1, py + 3, 1, 1);
+  }
+  // 低血量警示
+  if (u.hp < u.maxHp * 0.4) {
+    ctx.fillStyle = '#cf3f2e';
+    ctx.fillRect(px - 2, py - 4, 5, 1);
+  }
+}
+
+/** 鹰（2px/tile 基准 + 飞行抬升）：盘旋猛禽 —— 双翅随相位扇展 / 俯冲姿态 / 地面投影 */
+export function drawEagle(ctx: CanvasRenderingContext2D, u: Unit, t = 0) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const hurt = u.hurt > 0;
+  const wing = (t >> 3) & 1; // 扇翅相位（8 帧一扇）
+  const glide = ((t >> 6) & 3) === 0; // 周期性滑翔（收翅平伸）
+  const oy = py - 5; // 飞行抬升
+  // 地面投影（高空盘旋的影子）
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.fillRect(px - 2, py + 2, 4, 1);
+  // 双翅（展 7 宽：上扇高举 / 下扇平伸；滑翔时平直）
+  ctx.fillStyle = hurt ? '#ff6b5e' : '#6b4a2e';
+  if (glide || wing === 0) {
+    ctx.fillRect(px - 4, oy, 3, 1); // 左翼平伸
+    ctx.fillRect(px + 2, oy, 3, 1); // 右翼平伸
+  } else {
+    ctx.fillRect(px - 3, oy - 2, 2, 2); // 左翼上扬
+    ctx.fillRect(px + 2, oy - 2, 2, 2); // 右翼上扬
+  }
+  // 翼尖羽（浅色分叉）
+  ctx.fillStyle = hurt ? '#ffc4b8' : '#a8895e';
+  if (glide || wing === 0) {
+    ctx.fillRect(px - 5, oy, 1, 1);
+    ctx.fillRect(px + 5, oy, 1, 1);
+  }
+  // 身体 + 尾羽（俯冲时前倾）
+  ctx.fillStyle = hurt ? '#ff6b5e' : '#7a5636';
+  ctx.fillRect(px - 1, oy, 3, 2);
+  ctx.fillStyle = hurt ? '#ffc4b8' : '#d8c9a5';
+  ctx.fillRect(px - f, oy + 2, 2, 1); // 白尾
+  // 头（白首勾喙——鹰之签名）
+  ctx.fillStyle = hurt ? '#ff6b5e' : '#e8e2d4';
+  ctx.fillRect(px + f, oy, 1, 1);
+  ctx.fillStyle = '#e8a23a';
+  ctx.fillRect(px + 2 * f, oy, 1, 1); // 勾喙
+  // 低血量警示
+  if (u.hp < u.maxHp * 0.4) {
+    ctx.fillStyle = '#cf3f2e';
+    ctx.fillRect(px - 2, oy - 4, 5, 1);
+  }
+}
+
+/** 巡逻机（2px/tile 基准 + 飞行抬升）：双翼侦察机 —— 机身/平直双翼/尾翼/旋转螺旋桨 + 地面投影 */
+export function drawPlane(ctx: CanvasRenderingContext2D, u: Unit, t = 0, civColor: [number, number, number] | null = null) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const f = u.flip ? -1 : 1;
+  const hurt = u.hurt > 0;
+  const prop = (t >> 2) & 1; // 螺旋桨旋转残影（4 帧一位）
+  const oy = py - 6; // 巡航高度
+  // 地面投影（高空掠过的影子）
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  ctx.fillRect(px - 3, py + 2, 6, 1);
+  // 机身（橄榄绿 + 座舱）
+  ctx.fillStyle = hurt ? '#ff6b5e' : '#5c6e46';
+  ctx.fillRect(px - 3, oy, 6, 2);
+  ctx.fillStyle = hurt ? '#ffc4b8' : '#74885a';
+  ctx.fillRect(px - 3, oy, 6, 1); // 背部受光
+  ctx.fillStyle = '#a5d3e8';
+  ctx.fillRect(px, oy, 2, 1); // 座舱玻璃
+  // 平直双翼（上下翼面 + 支柱）
+  ctx.fillStyle = hurt ? '#ff6b5e' : '#8a9a6e';
+  ctx.fillRect(px - 4, oy + 1, 3, 1);
+  ctx.fillRect(px + 2, oy + 1, 3, 1);
+  // 尾翼（垂直 + 水平）
+  ctx.fillStyle = hurt ? '#ff6b5e' : '#5c6e46';
+  ctx.fillRect(px - 4 * f - (f > 0 ? 0 : 1), oy - 1, 1, 1);
+  ctx.fillRect(px - 4 * f - (f > 0 ? 0 : 1), oy, 1, 1);
+  // 螺旋桨（机首旋转残影）
+  ctx.fillStyle = '#c9c9c9';
+  ctx.fillRect(px + 3 * f, oy - (prop ? 1 : 0), 1, prop ? 3 : 1);
+  // 王国籍环带（机身中部涂装）
+  ctx.fillStyle = civColor ? rgb(civColor) : '#ffd93d';
+  ctx.fillRect(px - 1, oy + 1, 1, 1);
+  // 低血量警示（冒烟）
+  if (u.hp < u.maxHp * 0.5) {
+    ctx.fillStyle = 'rgba(80,80,80,0.6)';
+    ctx.fillRect(px - 4 * f - (f > 0 ? 0 : 1), oy + ((t >> 3) & 1), 1, 1);
   }
 }
 
@@ -1059,6 +1436,36 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       // 塔基
       ctx.fillStyle = '#44444a';
       ctx.fillRect(px + 3, py + 15, 6, 1);
+      // —— 时代深化：箭塔进化（t1 城防科技：加高双层箭窗 / t2 蒸汽工程：棱堡炮台）——
+      if (tier >= 1) {
+        // 加高塔身 + 第二箭窗
+        ctx.fillStyle = '#575757';
+        ctx.fillRect(px + 4, py - 3, 4, 3);
+        ctx.fillStyle = '#8d8d8d';
+        ctx.fillRect(px + 4, py - 3, 2, 3);
+        ctx.fillStyle = '#14100c';
+        ctx.fillRect(px + 6, py - 2, 2, 2);
+        // 加宽雉堞
+        ctx.fillStyle = '#a5a5a9';
+        ctx.fillRect(px + 2, py - 5, 2, 2);
+        ctx.fillRect(px + 8, py - 5, 2, 2);
+      }
+      if (tier >= 2) {
+        // 棱堡：石裙底座 + 炮眼 + 双旗
+        ctx.fillStyle = '#6e6e72';
+        ctx.fillRect(px, py + 12, 12, 4);
+        ctx.fillStyle = '#8d8d8d';
+        ctx.fillRect(px, py + 12, 12, 1);
+        ctx.fillStyle = '#14100c';
+        ctx.fillRect(px + 2, py + 14, 2, 2);
+        ctx.fillRect(px + 8, py + 14, 2, 2); // 炮眼 ×2
+        ctx.fillStyle = '#3a342c';
+        ctx.fillRect(px - 1, py - 8, 1, 4);
+        ctx.fillRect(px + 11, py - 8, 1, 4);
+        ctx.fillStyle = rgb(color);
+        ctx.fillRect(px - 1, py - 8, 2, 2);
+        ctx.fillRect(px + 10, py - 8, 2, 2);
+      }
       return;
     }
     case 4: {
@@ -1087,6 +1494,33 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       ctx.fillRect(px + 10, py + 10, 3, 2);
       ctx.fillStyle = '#a5843a';
       ctx.fillRect(px + 10, py + 12, 3, 1);
+      // —— 时代深化：农田进化（t1 灌溉：田字水渠 / t2 良种：温室拱棚）——
+      if (tier >= 1) {
+        // 水渠（田字蓝渠环绕 + 田角水车）
+        ctx.fillStyle = '#4a9ac9';
+        ctx.fillRect(px - 2, py + 4, 16, 1);
+        ctx.fillRect(px + 6, py + 2, 1, 8);
+        ctx.fillStyle = '#7ac9e8';
+        ctx.fillRect(px + 5, py + 5, 1, 1); // 水花
+        ctx.fillStyle = '#8a5c34';
+        ctx.fillRect(px + 13, py + 1, 1, 3); // 水车架
+        ctx.fillStyle = '#c9a84a';
+        ctx.fillRect(px + 12, py, 3, 1); // 水车叶
+      }
+      if (tier >= 2) {
+        // 温室拱棚（半透玻璃 + 支架 + 内部绿意）
+        ctx.fillStyle = 'rgba(180,230,240,0.55)';
+        ctx.fillRect(px - 2, py - 1, 16, 4);
+        ctx.fillStyle = 'rgba(240,252,255,0.75)';
+        ctx.fillRect(px - 2, py - 1, 16, 1); // 玻璃反光
+        ctx.fillStyle = '#5c7a4a';
+        ctx.fillRect(px, py + 1, 3, 1);
+        ctx.fillRect(px + 6, py + 1, 3, 1);
+        ctx.fillRect(px + 11, py + 1, 3, 1); // 棚内作物行
+        ctx.fillStyle = '#7a7a7e';
+        ctx.fillRect(px + 5, py - 1, 1, 4);
+        ctx.fillRect(px + 10, py - 1, 1, 4); // 拱架
+      }
       return;
     }
     case 5: {
@@ -1112,6 +1546,30 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       ctx.fillStyle = rgb(color);
       ctx.fillRect(px - 2, py - 4, 4, 2);
       ctx.fillRect(px + 14, py - 4, 4, 2);
+      // —— 时代深化：兵营进化（t1 铁器：石墙要塞化 / t2 军团：门塔双堡 + 军旗）——
+      if (tier >= 1) {
+        // 石墙覆面 + 剑徽
+        ctx.fillStyle = 'rgba(141,141,144,0.85)';
+        ctx.fillRect(px, py + 4, 14, 6);
+        ctx.fillStyle = 'rgba(110,110,114,0.85)';
+        ctx.fillRect(px, py + 8, 14, 2);
+        ctx.fillStyle = '#e8e8e8';
+        ctx.fillRect(px + 6, py + 5, 2, 4); // 剑刃
+        ctx.fillRect(px + 5, py + 6, 4, 1); // 剑柄
+      }
+      if (tier >= 2) {
+        // 门塔双堡 + 军旗
+        ctx.fillStyle = '#a5a5a9';
+        ctx.fillRect(px - 2, py + 1, 4, 9);
+        ctx.fillRect(px + 12, py + 1, 4, 9);
+        ctx.fillStyle = '#8d8d8d';
+        ctx.fillRect(px - 2, py + 8, 4, 2);
+        ctx.fillRect(px + 12, py + 8, 4, 2);
+        ctx.fillStyle = '#cf3f2e';
+        ctx.fillRect(px + 6, py - 7, 2, 4); // 军旗杆（居中高扬）
+        ctx.fillStyle = rgb(color);
+        ctx.fillRect(px + 8, py - 7, 3, 2);
+      }
       return;
     }
     case 6: {
@@ -1223,6 +1681,31 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       ctx.fillRect(px + 8 + flap, py, 1, 3);
       ctx.fillStyle = '#3a342c';
       ctx.fillRect(px + 10, py - 4, 1, 4);
+      // —— 时代深化：港口进化（t1 石匠：石砌码头 / t2 蒸汽：起重机 + 烟囱）——
+      if (tier >= 1) {
+        // 石砌面（灰石覆面 + 系船石桩）
+        ctx.fillStyle = 'rgba(141,141,144,0.9)';
+        ctx.fillRect(px, py + 4, 14, 4);
+        ctx.fillStyle = 'rgba(110,110,114,0.9)';
+        ctx.fillRect(px, py + 6, 14, 2);
+        ctx.fillStyle = '#575757';
+        ctx.fillRect(px - 2, py + 8, 2, 4);
+        ctx.fillRect(px + 14, py + 8, 2, 4); // 系船石桩
+      }
+      if (tier >= 2) {
+        // 蒸汽港：起重机吊臂 + 烟囱冒烟
+        ctx.fillStyle = '#3a3f4a';
+        ctx.fillRect(px + 12, py - 8, 1, 8); // 吊塔
+        ctx.fillRect(px + 6, py - 8, 7, 1); // 吊臂
+        ctx.fillStyle = 'rgba(58,52,44,0.8)';
+        ctx.fillRect(px + 6, py - 7, 1, 3); // 吊索
+        ctx.fillStyle = '#c98d5a';
+        ctx.fillRect(px + 5, py - 4, 3, 3); // 吊箱
+        ctx.fillStyle = '#565e6a';
+        ctx.fillRect(px - 3, py - 6, 3, 6); // 烟囱
+        ctx.fillStyle = ((fc >> 3) & 1) === 1 ? 'rgba(200,200,200,0.7)' : 'rgba(160,160,160,0.5)';
+        ctx.fillRect(px - 3, py - 9, 2, 2); // 烟柱（fc 呼吸）
+      }
       return;
     }
     case 8: {
@@ -1268,6 +1751,30 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       ctx.fillStyle = '#6fd66f';
       ctx.fillRect(px + 4, py + 5, 2, 2);
       ctx.fillRect(px + 10, py + 5, 2, 2);
+      // —— 时代深化：集市进化（t1 铸币：硬顶商栈 / t2 银行：石墙交易所金顶）——
+      if (tier >= 1) {
+        // 硬山墙木墙商栈（覆盖篷帐）
+        ctx.fillStyle = '#8a5c34';
+        ctx.fillRect(px, py, 14, 3);
+        ctx.fillStyle = '#a06a3c';
+        ctx.fillRect(px, py, 14, 1);
+        ctx.fillStyle = '#ffd93d';
+        ctx.fillRect(px + 6, py + 1, 2, 1); // 门楣钱纹
+      }
+      if (tier >= 2) {
+        // 交易所：石墙 + 金顶圆穹 + 双色门柱
+        ctx.fillStyle = '#d8d3c5';
+        ctx.fillRect(px - 1, py - 4, 16, 5);
+        ctx.fillStyle = '#b3ae9f';
+        ctx.fillRect(px - 1, py, 16, 1);
+        ctx.fillStyle = '#ffd93d';
+        ctx.fillRect(px + 2, py - 7, 10, 3);
+        ctx.fillStyle = '#c9a02a';
+        ctx.fillRect(px + 4, py - 8, 6, 1); // 金圆穹
+        ctx.fillStyle = '#3a342c';
+        ctx.fillRect(px - 1, py + 1, 2, 3);
+        ctx.fillRect(px + 13, py + 1, 2, 3); // 门柱
+      }
       return;
     }
     case 10: {
@@ -1356,6 +1863,433 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
       ctx.fillStyle = rgb(color);
       ctx.fillRect(px - 1, py - 4, 2, 2);
       ctx.fillRect(px + 1, py - 4 + flap, 1, 2);
+      return;
+    }
+    case 13: {
+      // ram：冲车（攻城营械——覆木斜顶 + 吊桩 + 四轮；hpRatio 即组装进度：未满为木架半成品）
+      const armed = hpRatio >= 0.999;
+      // 四轮
+      ctx.fillStyle = '#3a2c1c';
+      ctx.fillRect(px + 1, py + 13, 3, 3);
+      ctx.fillRect(px + 11, py + 13, 3, 3);
+      ctx.fillStyle = '#5c4228';
+      ctx.fillRect(px + 1, py + 13, 3, 1);
+      ctx.fillRect(px + 11, py + 13, 3, 1);
+      // 车架底板
+      ctx.fillStyle = '#7a4f2a';
+      ctx.fillRect(px, py + 10, 15, 4);
+      ctx.fillStyle = '#5c3a1c';
+      ctx.fillRect(px, py + 13, 15, 1);
+      if (armed) {
+        // 覆木斜顶（防箭龟壳）
+        ctx.fillStyle = '#8a5c34';
+        ctx.fillRect(px - 1, py + 2, 17, 8);
+        ctx.fillStyle = '#a06a3c';
+        ctx.fillRect(px - 1, py + 2, 17, 2);
+        ctx.fillStyle = '#5c3a1c';
+        ctx.fillRect(px + 2, py + 5, 2, 2);
+        ctx.fillRect(px + 7, py + 5, 2, 2);
+        ctx.fillRect(px + 12, py + 5, 2, 2); // 木板拼缝
+        // 吊桩（悬于架下：铁包头）
+        ctx.fillStyle = '#5c3a1c';
+        ctx.fillRect(px + 6, py + 8, 3, 4);
+        ctx.fillStyle = '#565e6a';
+        ctx.fillRect(px + 5, py + 11, 5, 2); // 铁包头
+        ctx.fillStyle = 'rgba(58,52,44,0.8)';
+        ctx.fillRect(px + 6, py + 6 - flap, 1, 2);
+        ctx.fillRect(px + 8, py + 6 - (1 - flap), 1, 2); // 吊索双索
+      } else {
+        // 组装中：木架半成品（斜撑 + 散料）
+        ctx.fillStyle = '#7a4f2a';
+        ctx.fillRect(px + 2, py + 5, 2, 5);
+        ctx.fillRect(px + 11, py + 5, 2, 5);
+        ctx.fillRect(px + 2, py + 4, 11, 1);
+        ctx.fillStyle = '#c98d5a';
+        ctx.fillRect(px + 5, py + 7, 3, 2); // 散木料
+      }
+      return;
+    }
+    case 14: {
+      // catapult：投石机（攻城营械——基座 + 摇臂 + 配重 + 石弹；发射相位 fc 动画）
+      const armed = hpRatio >= 0.999;
+      // 基座（四轮 + 底架）
+      ctx.fillStyle = '#3a2c1c';
+      ctx.fillRect(px + 2, py + 13, 3, 3);
+      ctx.fillRect(px + 11, py + 13, 3, 3);
+      ctx.fillStyle = '#7a4f2a';
+      ctx.fillRect(px, py + 10, 16, 4);
+      ctx.fillStyle = '#5c3a1c';
+      ctx.fillRect(px, py + 13, 16, 1);
+      if (armed) {
+        // 立柱支架（A 形）
+        ctx.fillStyle = '#8a5c34';
+        ctx.fillRect(px + 6, py + 3, 2, 8);
+        ctx.fillStyle = '#5c3a1c';
+        ctx.fillRect(px + 4, py + 8, 2, 3);
+        ctx.fillRect(px + 8, py + 8, 2, 3);
+        // 摇臂（fc 两相：待发高举 / 发射前倾）—— 长臂 + 短臂配重
+        const fired = ((fc >> 4) & 1) === 1;
+        ctx.fillStyle = '#a06a3c';
+        if (fired) {
+          ctx.fillRect(px + 7, py + 1, 1, 6); // 竖起待发
+          ctx.fillStyle = '#c98d5a';
+          ctx.fillRect(px + 6, py, 3, 2); // 兜篮（石弹）
+          ctx.fillStyle = '#8d8d8d';
+          ctx.fillRect(px + 7, py, 1, 1); // 石弹
+          ctx.fillStyle = '#565e6a';
+          ctx.fillRect(px + 7, py + 7, 3, 3); // 配重箱（下）
+        } else {
+          ctx.fillRect(px + 2, py + 5, 10, 1); // 前倾发射臂
+          ctx.fillStyle = '#c98d5a';
+          ctx.fillRect(px + 1, py + 4, 2, 3); // 兜篮（前垂）
+          ctx.fillStyle = '#8d8d8d';
+          ctx.fillRect(px + 1, py + 4, 1, 1);
+          ctx.fillStyle = '#565e6a';
+          ctx.fillRect(px + 12, py + 3, 3, 3); // 配重箱（翘起）
+        }
+      } else {
+        // 组装中：散件（臂料 + 石弹堆）
+        ctx.fillStyle = '#8a5c34';
+        ctx.fillRect(px + 3, py + 7, 8, 1);
+        ctx.fillRect(px + 5, py + 6, 2, 4);
+        ctx.fillStyle = '#8d8d8d';
+        ctx.fillRect(px + 12, py + 8, 2, 2);
+        ctx.fillRect(px + 10, py + 9, 2, 1); // 石弹堆
+      }
+      return;
+    }
+    case 15: {
+      // pyramid：大金字塔（2×2 奇观——阶梯石构四层 + 金顶；hpRatio 即组装进度三阶段）
+      const wx = px - 6;
+      const wy = py - 10;
+      if (hpRatio < 0.34) {
+        // 阶段一：地基 + 脚手架 + 采石场
+        ctx.fillStyle = '#a5a5a9';
+        ctx.fillRect(wx, wy + 20, 28, 4); // 石台地基
+        ctx.fillStyle = '#8d8d8d';
+        ctx.fillRect(wx, wy + 23, 28, 1);
+        ctx.fillStyle = '#c98d5a';
+        ctx.fillRect(wx + 4, wy + 14, 1, 6);
+        ctx.fillRect(wx + 23, wy + 14, 1, 6);
+        ctx.fillRect(wx + 4, wy + 14, 20, 1); // 脚手架
+        ctx.fillStyle = '#8d8d8d';
+        ctx.fillRect(wx + 8, wy + 17, 3, 2);
+        ctx.fillRect(wx + 16, wy + 17, 3, 2); // 散石料
+      } else if (hpRatio < 1) {
+        // 阶段二：石构渐起（底部两层 + 上部脚手架）
+        ctx.fillStyle = '#a5a5a9';
+        ctx.fillRect(wx, wy + 20, 28, 4);
+        ctx.fillRect(wx + 3, wy + 15, 22, 5);
+        ctx.fillStyle = '#8d8d8d';
+        ctx.fillRect(wx, wy + 23, 28, 1);
+        ctx.fillRect(wx + 3, wy + 19, 22, 1);
+        ctx.fillStyle = '#c98d5a';
+        ctx.fillRect(wx + 9, wy + 9, 1, 6);
+        ctx.fillRect(wx + 18, wy + 9, 1, 6);
+        ctx.fillRect(wx + 9, wy + 9, 10, 1); // 顶部脚手架
+        ctx.fillStyle = '#8d8d8d';
+        ctx.fillRect(wx + 12, wy + 12, 2, 2); // 吊装石块
+      } else {
+        // 竣工：四层阶梯金字塔 + 金顶 + 王国色旗
+        const layers = [
+          { y: wy + 20, w: 28, x: wx },
+          { y: wy + 15, w: 22, x: wx + 3 },
+          { y: wy + 10, w: 16, x: wx + 6 },
+          { y: wy + 5, w: 10, x: wx + 9 },
+        ];
+        for (const l of layers) {
+          ctx.fillStyle = '#d9c9a3';
+          ctx.fillRect(l.x, l.y, l.w, 5);
+          ctx.fillStyle = '#b3a077';
+          ctx.fillRect(l.x, l.y + 4, l.w, 1); // 层间阴影
+        }
+        ctx.fillStyle = '#e8dcc0';
+        ctx.fillRect(wx, wy + 20, 28, 1); // 底缘受光
+        // 金顶（塔尖金字塔帽）
+        ctx.fillStyle = '#ffd93d';
+        ctx.fillRect(wx + 11, wy + 2, 6, 3);
+        ctx.fillRect(wx + 12, wy + 1, 4, 1);
+        ctx.fillStyle = '#c9a02a';
+        ctx.fillRect(wx + 12, wy + 4, 4, 1);
+        // 王旗
+        ctx.fillStyle = '#3a342c';
+        ctx.fillRect(wx + 13, wy - 4, 1, 5);
+        ctx.fillStyle = rgb(color);
+        ctx.fillRect(wx + 14, wy - 4, 3, 2);
+        ctx.fillRect(wx + 17, wy - 4 + flap, 2, 2);
+      }
+      return;
+    }
+    case 16: {
+      // lighthouse：大灯塔（2×2 奇观——石塔三层 + 灯室火光 + 海面反光；夜道光晕）
+      const wx = px - 6;
+      const wy = py - 10;
+      if (hpRatio < 0.34) {
+        ctx.fillStyle = '#a5a5a9';
+        ctx.fillRect(wx + 4, wy + 18, 20, 6); // 石基
+        ctx.fillStyle = '#c98d5a';
+        ctx.fillRect(wx + 9, wy + 10, 1, 8);
+        ctx.fillRect(wx + 18, wy + 10, 1, 8);
+        ctx.fillRect(wx + 9, wy + 10, 10, 1); // 脚手架
+      } else if (hpRatio < 1) {
+        ctx.fillStyle = '#a5a5a9';
+        ctx.fillRect(wx + 4, wy + 18, 20, 6);
+        ctx.fillStyle = '#d9d3c5';
+        ctx.fillRect(wx + 8, wy + 6, 12, 12); // 塔身渐起
+        ctx.fillStyle = '#b3ae9f';
+        ctx.fillRect(wx + 8, wy + 16, 12, 2);
+        ctx.fillStyle = '#c98d5a';
+        ctx.fillRect(wx + 12, wy + 2, 1, 5);
+        ctx.fillRect(wx + 16, wy + 2, 1, 5);
+        ctx.fillRect(wx + 12, wy + 2, 5, 1); // 顶部脚手架
+      } else {
+        // 石基 + 三层收分塔身 + 灯室
+        ctx.fillStyle = '#8d8d8d';
+        ctx.fillRect(wx + 2, wy + 20, 24, 4); // 石基座
+        ctx.fillStyle = '#a5a5a9';
+        ctx.fillRect(wx + 2, wy + 20, 24, 1);
+        ctx.fillStyle = '#d9d3c5';
+        ctx.fillRect(wx + 6, wy + 12, 16, 8);
+        ctx.fillStyle = '#d9d3c5';
+        ctx.fillRect(wx + 8, wy + 6, 12, 6);
+        ctx.fillStyle = '#b3ae9f';
+        ctx.fillRect(wx + 6, wy + 18, 16, 2);
+        ctx.fillRect(wx + 8, wy + 10, 12, 2); // 层间檐
+        ctx.fillStyle = '#e8e2d4';
+        ctx.fillRect(wx + 8, wy + 6, 1, 6); // 左缘受光
+        // 灯室（火光呼吸 + 夜光晕）
+        const glow = ((fc >> 3) & 1) === 1;
+        ctx.fillStyle = glow ? '#ffe8a3' : '#ffd93d';
+        ctx.fillRect(wx + 9, wy + 2, 10, 4);
+        ctx.fillStyle = '#fff3c4';
+        ctx.fillRect(wx + 11, wy + 3, 6, 2); // 火心
+        ctx.fillStyle = '#3a342c';
+        ctx.fillRect(wx + 8, wy + 1, 12, 1); // 灯室顶
+        ctx.fillStyle = '#565e6a';
+        ctx.fillRect(wx + 13, wy - 2, 2, 3); // 顶针
+        if (night) {
+          // 夜间光晕（两圈渐淡）
+          ctx.fillStyle = 'rgba(255,217,61,0.28)';
+          ctx.fillRect(wx + 4, wy - 2, 20, 10);
+          ctx.fillStyle = 'rgba(255,217,61,0.14)';
+          ctx.fillRect(wx - 2, wy - 6, 32, 18);
+        }
+        // 王旗
+        ctx.fillStyle = '#3a342c';
+        ctx.fillRect(wx + 2, wy + 12, 1, 6);
+        ctx.fillStyle = rgb(color);
+        ctx.fillRect(wx + 1, wy + 12, 3, 2);
+      }
+      return;
+    }
+    case 17: {
+      // cathedral：大教堂（2×2 奇观——双尖塔 + 中殿王国色顶 + 玫瑰窗 + 飞扶壁）
+      const wx = px - 6;
+      const wy = py - 10;
+      if (hpRatio < 0.34) {
+        ctx.fillStyle = '#a5a5a9';
+        ctx.fillRect(wx, wy + 20, 28, 4); // 地基
+        ctx.fillStyle = '#c98d5a';
+        ctx.fillRect(wx + 3, wy + 12, 1, 8);
+        ctx.fillRect(wx + 24, wy + 12, 1, 8);
+        ctx.fillRect(wx + 3, wy + 12, 22, 1);
+        ctx.fillRect(wx + 13, wy + 8, 1, 12); // 脚手架（纵 x3）
+      } else if (hpRatio < 1) {
+        ctx.fillStyle = '#a5a5a9';
+        ctx.fillRect(wx, wy + 20, 28, 4);
+        ctx.fillStyle = '#e8e0cc';
+        ctx.fillRect(wx + 2, wy + 12, 24, 8); // 中殿墙体渐起
+        ctx.fillStyle = '#c9bfa3';
+        ctx.fillRect(wx + 2, wy + 18, 24, 2);
+        ctx.fillStyle = '#c98d5a';
+        ctx.fillRect(wx + 6, wy + 6, 1, 6);
+        ctx.fillRect(wx + 21, wy + 6, 1, 6);
+        ctx.fillRect(wx + 6, wy + 6, 16, 1); // 塔部脚手架
+      } else {
+        // 中殿 + 王国色屋顶
+        ctx.fillStyle = '#e8e0cc';
+        ctx.fillRect(wx + 2, wy + 10, 24, 10);
+        ctx.fillStyle = '#c9bfa3';
+        ctx.fillRect(wx + 2, wy + 18, 24, 2);
+        ctx.fillStyle = rgb(color);
+        ctx.fillRect(wx + 3, wy + 7, 22, 4);
+        ctx.fillStyle = rgb(mix(color, [0, 0, 0], 0.3));
+        ctx.fillRect(wx + 3, wy + 10, 22, 1);
+        // 屋脊十字
+        ctx.fillStyle = '#ffd93d';
+        ctx.fillRect(wx + 13, wy + 3, 2, 4);
+        ctx.fillRect(wx + 12, wy + 4, 4, 1);
+        // 双尖塔
+        ctx.fillStyle = '#e8e0cc';
+        ctx.fillRect(wx, wy + 8, 6, 12);
+        ctx.fillRect(wx + 22, wy + 8, 6, 12);
+        ctx.fillStyle = '#ffd93d';
+        ctx.fillRect(wx + 2, wy + 2, 2, 6);
+        ctx.fillRect(wx + 24, wy + 2, 2, 6);
+        ctx.fillRect(wx + 1, wy, 4, 2);
+        ctx.fillRect(wx + 23, wy, 4, 2); // 塔尖
+        // 玫瑰窗（彩色圆窗）
+        ctx.fillStyle = '#3a6ea5';
+        ctx.fillRect(wx + 12, wy + 12, 4, 4);
+        ctx.fillStyle = '#b56cf0';
+        ctx.fillRect(wx + 13, wy + 13, 2, 2);
+        ctx.fillStyle = '#ffd93d';
+        ctx.fillRect(wx + 12, wy + 12, 1, 1);
+        ctx.fillRect(wx + 15, wy + 15, 1, 1); // 花瓣光点
+        // 飞扶壁（双层拱撑）
+        ctx.fillStyle = '#c9bfa3';
+        ctx.fillRect(wx, wy + 14, 2, 6);
+        ctx.fillRect(wx + 26, wy + 14, 2, 6);
+        ctx.fillRect(wx + 6, wy + 8, 1, 3);
+        ctx.fillRect(wx + 21, wy + 8, 1, 3);
+      }
+      return;
+    }
+    case 18: {
+      // mine：矿井（矿脉之上——井架 + 矿车轨道 fc 动画 + 矿灯；t1 深井加高 / t2 蒸汽机房）
+      // 井口（黑洞 + 石框）
+      ctx.fillStyle = '#575757';
+      ctx.fillRect(px + 2, py + 8, 12, 8);
+      ctx.fillStyle = '#14100c';
+      ctx.fillRect(px + 4, py + 10, 8, 6); // 井口黑洞
+      ctx.fillStyle = '#a5a5a9';
+      ctx.fillRect(px + 2, py + 8, 12, 1);
+      ctx.fillRect(px + 2, py + 8, 1, 8);
+      ctx.fillRect(px + 13, py + 8, 1, 8); // 石框
+      // 矿车轨道（从井口伸出）
+      ctx.fillStyle = '#565e6a';
+      ctx.fillRect(px + 4, py + 16, 10, 1);
+      ctx.fillRect(px + 5, py + 18, 8, 1); // 双轨
+      // 矿车（fc 往返：井口 ↔ 轨尾）
+      const cartX = px + 5 + ((fc >> 3) & 3);
+      ctx.fillStyle = '#7a4f2a';
+      ctx.fillRect(cartX, py + 15, 4, 3);
+      ctx.fillStyle = '#ffd93d';
+      ctx.fillRect(cartX + 1, py + 14, 2, 1); // 满车矿料（金）
+      // 井架（A 形木架 + 天轮）
+      const hh = tier >= 1 ? 10 : 7;
+      ctx.fillStyle = '#8a5c34';
+      ctx.fillRect(px + 5, py + 8 - hh, 2, hh);
+      ctx.fillRect(px + 9, py + 8 - hh, 2, hh);
+      ctx.fillRect(px + 5, py + 8 - hh, 6, 1);
+      ctx.fillStyle = '#565e6a';
+      ctx.fillRect(px + 6, py + 7 - hh, 4, 2); // 天轮
+      // 矿灯（井口一盏暖光，夜更亮）
+      ctx.fillStyle = night ? '#ffd93d' : '#c9a84a';
+      ctx.fillRect(px + 3, py + 9, 1, 1);
+      if (tier >= 2) {
+        // 蒸汽深井：机房 + 烟囱 + 升降缆
+        ctx.fillStyle = '#565e6a';
+        ctx.fillRect(px - 3, py + 4, 5, 12); // 机房
+        ctx.fillStyle = '#3a3f4a';
+        ctx.fillRect(px - 2, py + 1, 3, 4); // 烟囱
+        ctx.fillStyle = ((fc >> 3) & 1) === 1 ? 'rgba(200,200,200,0.7)' : 'rgba(160,160,160,0.5)';
+        ctx.fillRect(px - 2, py - 2, 2, 2); // 蒸汽
+        ctx.fillStyle = 'rgba(58,52,44,0.8)';
+        ctx.fillRect(px + 6, py + 7 - hh, 1, 4); // 升降缆
+        ctx.fillStyle = '#c98d5a';
+        ctx.fillRect(px + 5, py + 3, 4, 3); // 吊笼
+      } else if (tier >= 1) {
+        // 深井：双层井架 + 双矿车
+        ctx.fillStyle = '#8a5c34';
+        ctx.fillRect(px + 3, py + 8 - hh, 1, hh - 2);
+        ctx.fillRect(px + 12, py + 8 - hh, 1, hh - 2); // 外撑
+      }
+      // 王旗（矿场归属）
+      ctx.fillStyle = '#3a342c';
+      ctx.fillRect(px + 15, py + 6, 1, 4);
+      ctx.fillStyle = rgb(color);
+      ctx.fillRect(px + 16, py + 6, 2, 2);
+      return;
+    }
+    case 19: {
+      // kelp：海带田（浅海养殖——浮球阵列 fc 摇摆 + 水下海带叶 + 收获筏）
+      // 水下海带（暗绿长叶：随波摆）
+      const swayK = ((fc >> 4) & 1) === 1 ? 1 : 0;
+      ctx.fillStyle = 'rgba(46,110,70,0.75)';
+      ctx.fillRect(px + 2 + swayK, py + 4, 2, 10);
+      ctx.fillRect(px + 7 - swayK, py + 5, 2, 9);
+      ctx.fillRect(px + 12 + swayK, py + 4, 2, 10);
+      ctx.fillStyle = 'rgba(74,150,96,0.65)';
+      ctx.fillRect(px + 3 + swayK, py + 8, 3, 1);
+      ctx.fillRect(px + 6 - swayK, py + 10, 3, 1);
+      ctx.fillRect(px + 13 + swayK, py + 8, 3, 1); // 叶片
+      // 浮球阵列（系于水面：橙色浮球随浪起浮）
+      const bob = (fc >> 3) & 1;
+      ctx.fillStyle = '#ff9e5f';
+      ctx.fillRect(px + 1, py + 1 - bob, 3, 3);
+      ctx.fillRect(px + 6, py + 2 - (1 - bob), 3, 3);
+      ctx.fillRect(px + 11, py + 1 - bob, 3, 3);
+      ctx.fillStyle = '#ffb35f';
+      ctx.fillRect(px + 1, py + 1 - bob, 3, 1);
+      ctx.fillRect(px + 6, py + 2 - (1 - bob), 3, 1);
+      ctx.fillRect(px + 11, py + 1 - bob, 3, 1); // 球顶受光
+      // 浮球间缆绳
+      ctx.fillStyle = 'rgba(58,52,44,0.6)';
+      ctx.fillRect(px + 4, py + 2 - bob, 2, 1);
+      ctx.fillRect(px + 9, py + 2 - (1 - bob), 2, 1);
+      // 收获筏（旁泊小筏：随波轻晃）
+      ctx.fillStyle = '#9c6a3c';
+      ctx.fillRect(px + 15, py + 3 - bob, 4, 2);
+      ctx.fillStyle = '#5c7a4a';
+      ctx.fillRect(px + 15, py + 2 - bob, 2, 1); // 筏上海带收获
+      // 王旗（养殖场归属）
+      ctx.fillStyle = '#3a342c';
+      ctx.fillRect(px - 2, py - 1, 1, 4);
+      ctx.fillStyle = rgb(color);
+      ctx.fillRect(px - 3, py - 1, 2, 2);
+      return;
+    }
+    case 20: {
+      // rig：石油平台（海上钢构——钢桩平台 + 井架 + 井口火炬燃烧 fc 动画 + 工人剪影）
+      // 钢桩（入水三柱 + 交叉撑）
+      ctx.fillStyle = '#3a3f4a';
+      ctx.fillRect(px + 1, py + 8, 2, 10);
+      ctx.fillRect(px + 8, py + 8, 2, 10);
+      ctx.fillRect(px + 14, py + 8, 2, 10);
+      ctx.fillStyle = '#565e6a';
+      ctx.fillRect(px + 2, py + 12, 6, 1);
+      ctx.fillRect(px + 9, py + 12, 6, 1); // 交叉撑
+      // 平台甲板（钢面 + 护栏）
+      ctx.fillStyle = '#565e6a';
+      ctx.fillRect(px - 1, py + 5, 19, 4);
+      ctx.fillStyle = '#3a3f4a';
+      ctx.fillRect(px - 1, py + 8, 19, 1);
+      ctx.fillStyle = '#8d959e';
+      ctx.fillRect(px - 1, py + 5, 19, 1); // 甲板受光
+      ctx.fillStyle = '#565e6a';
+      ctx.fillRect(px - 1, py + 3, 1, 2);
+      ctx.fillRect(px + 4, py + 3, 1, 2);
+      ctx.fillRect(px + 10, py + 3, 1, 2);
+      ctx.fillRect(px + 16, py + 3, 1, 2); // 护栏柱
+      // 井架（塔式钻架：三层收分 + 顶滑轮）
+      ctx.fillStyle = '#8d959e';
+      ctx.fillRect(px + 3, py - 6, 1, 11);
+      ctx.fillRect(px + 12, py - 6, 1, 11);
+      ctx.fillRect(px + 5, py - 3, 1, 8);
+      ctx.fillRect(px + 10, py - 3, 1, 8);
+      ctx.fillRect(px + 3, py - 6, 10, 1); // 架顶
+      ctx.fillStyle = '#3a3f4a';
+      ctx.fillRect(px + 7, py - 6, 2, 2); // 顶滑轮
+      // 钻杆（井口至钻台）
+      ctx.fillStyle = '#c9a84a';
+      ctx.fillRect(px + 7, py + 2, 2, 3);
+      // 井口火炬（燃烧的废气：火焰 fc 呼吸 + 烟）
+      const flare = ((fc >> 3) & 1) === 1;
+      ctx.fillStyle = flare ? '#ffb347' : '#ff8c42';
+      ctx.fillRect(px + 15, py - 1, 2, 3);
+      ctx.fillStyle = flare ? '#fff3c4' : '#ffe8a3';
+      ctx.fillRect(px + 15, py, 2, 1); // 火心
+      ctx.fillStyle = 'rgba(80,80,80,0.5)';
+      ctx.fillRect(px + 16, py - 4, 1, 2); // 烟
+      // 工人剪影（甲板作业小人）
+      ctx.fillStyle = '#e8a23a';
+      ctx.fillRect(px + 1, py + 4, 1, 1); // 作业工（安全帽橙点）
+      // 王旗
+      ctx.fillStyle = '#3a342c';
+      ctx.fillRect(px - 3, py - 1, 1, 5);
+      ctx.fillStyle = rgb(color);
+      ctx.fillRect(px - 4, py - 1, 2, 2);
       return;
     }
   }
@@ -1572,13 +2506,61 @@ export function drawSnake(ctx: CanvasRenderingContext2D, u: Unit, frame: number)
 }
 
 /** 殖民船：木壳 + 桅杆 + 王国色船帆，随浪起伏 + 三层尾迹 + 船艏浪花 + 水手剪影（v0.54 精密度升级） */
-export function drawBoat(ctx: CanvasRenderingContext2D, u: Unit, civColor: [number, number, number] | null, frame: number) {
+export function drawBoat(ctx: CanvasRenderingContext2D, u: Unit, civColor: [number, number, number] | null, frame: number, tier = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
   const f = u.flip ? -1 : 1;
   // 随浪起伏：每 9 帧船体抬升 1px（海浪节律）
   const bob = Math.floor(frame / 9) % 2;
   const oy = py - bob;
+  // —— 时代深化：航船进化（t0 木筏→小帆 / t1 帆船→主帆加高 / t2 蒸汽轮船→铁壳烟囱）——
+  if (tier >= 2) {
+    // —— 蒸汽轮船：铁壳平甲板 + 舰桥 + 双烟囱冒烟 ——
+    const wk = Math.floor(frame / 5) % 2;
+    ctx.fillStyle = 'rgba(240,248,255,0.65)';
+    ctx.fillRect(px - 7 * f, py + 1, 3, 1);
+    ctx.fillStyle = 'rgba(240,248,255,0.4)';
+    ctx.fillRect(px - (wk ? 12 : 11) * f, py + 1, 3, 1);
+    ctx.fillStyle = 'rgba(240,248,255,0.22)';
+    ctx.fillRect(px - (wk ? 16 : 15) * f, py + (wk ? 0 : 1), 2, 1);
+    // 铁壳船体（深灰双层 + 舰艏上翘）
+    ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#3a3f4a';
+    ctx.fillRect(px - 3, oy + 1, 7, 1);
+    ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#565e6a';
+    ctx.fillRect(px - 3, oy, 7, 1);
+    ctx.fillStyle = '#565e6a';
+    ctx.fillRect(px + 4 * f, oy - 1, 1, 1); // 舰艏
+    // 甲板室（舰桥：王国色舱 + 白舷窗）
+    ctx.fillStyle = civColor ? rgb(civColor) : '#f2ead8';
+    ctx.fillRect(px - 1, oy - 2, 3, 2);
+    ctx.fillStyle = '#f7f9fb';
+    ctx.fillRect(px, oy - 2, 1, 1); // 舷窗
+    // 双烟囱（黑筒 + 烟柱 fc 呼吸）
+    ctx.fillStyle = '#1c1e24';
+    ctx.fillRect(px - 2 * f - (f > 0 ? 0 : 1), oy - 5, 2, 3);
+    ctx.fillRect(px + 2 * f - (f > 0 ? 0 : 1), oy - 5, 2, 3);
+    ctx.fillStyle = Math.floor(frame / 4) % 2 ? 'rgba(200,200,200,0.7)' : 'rgba(160,160,160,0.5)';
+    ctx.fillRect(px - 2 * f - (f > 0 ? 0 : 1), oy - 8, 1, 3);
+    ctx.fillRect(px + 2 * f - (f > 0 ? 0 : 1), oy - 8, 1, 3); // 烟柱
+    // 甲板水手剪影
+    ctx.fillStyle = '#2e2a24';
+    ctx.fillRect(px - 3 * f, oy - 1 - bob, 1, 1);
+    ctx.fillStyle = civColor ? rgb(civColor) : '#f2ead8';
+    ctx.fillRect(px - 3 * f, oy - bob, 1, 1);
+    // 商船满载（货箱堆叠）
+    if ((u.caravan ?? 0) > 0) {
+      ctx.fillStyle = '#a8763e';
+      ctx.fillRect(px + 1 * f, oy - 2, 1, 1);
+      ctx.fillRect(px + 2 * f, oy - 2, 1, 1);
+      ctx.fillStyle = '#e8dcc0';
+      ctx.fillRect(px + 1 * f, oy - 3, 2, 1);
+    }
+    if (u.hp < u.maxHp * 0.4) {
+      ctx.fillStyle = '#cf3f2e';
+      ctx.fillRect(px - 3, oy - 7, 7, 1);
+    }
+    return;
+  }
   // —— 尾迹三层（近浪浓 / 中浪摆 / 远浪淡——扩散的 V 形波纹随帧呼吸）——
   const wk = Math.floor(frame / 5) % 2;
   ctx.fillStyle = 'rgba(240,248,255,0.65)';
@@ -1611,6 +2593,15 @@ export function drawBoat(ctx: CanvasRenderingContext2D, u: Unit, civColor: [numb
   // 桅顶小旗（王国色 1px）
   ctx.fillStyle = civColor ? rgb(civColor) : '#ffd93d';
   ctx.fillRect(px, oy - 4, 1, 1);
+  // —— 时代深化 t1 帆船：主帆加高加宽（双节梯形帆 + 帆缘受风鼓胀）——
+  if (tier >= 1) {
+    ctx.fillStyle = '#f7f9fb';
+    ctx.fillRect(px - 1, oy - 5, 2, 3); // 主帆下段
+    ctx.fillStyle = civColor ? rgb(mix(civColor, [255, 255, 255], 0.35)) : '#dce4ea';
+    ctx.fillRect(px - (f > 0 ? 0 : 1), oy - 6, 2, 2); // 主帆上段（受风鼓胀）
+    ctx.fillStyle = '#3a342c';
+    ctx.fillRect(px, oy - 7, 1, 7); // 桅杆加高
+  }
   // —— 甲板水手剪影（艉部操舵的小人：头 + 王国色斗篷躯干，随浪轻晃）——
   ctx.fillStyle = '#2e2a24';
   ctx.fillRect(px - 2 * f, oy - 1 - bob, 1, 1); // 头
@@ -2998,7 +3989,7 @@ function bladeColor(w: string | null | undefined): string {
  * 分层：阴影→靴→双腿(四相步态)→腰带(扣)→躯干(受光/背阴)→双臂(反相摆)→
  * 项链/护甲→颈→头(瞳孔/种族五官)→发型(顶+背垂)→头盔→持械(攻击姿势)。
  */
-export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor: [number, number, number] | null, t = 0, crown = false) {
+export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor: [number, number, number] | null, t = 0, crown = false, armLv = 0) {
   const fx = Math.round(u.rx ?? u.x);
   const fy = Math.round(u.ry ?? u.y) + 1; // 脚底基线
   const f = u.flip ? -1 : 1;
@@ -3062,6 +4053,107 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
     if ((t >> 2) & 1) {
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.fillRect(hxm + 2, fy - 5 - zp, 1, 1);
+    }
+    return;
+  }
+
+  // —— 骑兵（时代深化：精绘骏马与骑手 —— 马体四相步态/鬃尾扬尘/王国色鞍毯，骑手持枪前倾）——
+  if (u.mount) {
+    const atk = (u.atk ?? 0) > 0;
+    const mh = ph === 1 || ph === 3 ? 1 : 0; // 奔跑起伏
+    const my = fy - mh; // 马背基线
+    // 地面阴影
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fillRect(fx - 7, fy + 1, 14, 1);
+    // —— 马体（身 10x4）——
+    ctx.fillStyle = hurt ? '#ff6b5e' : '#7a4a26';
+    ctx.fillRect(fx - 6, my - 4, 11, 4);
+    ctx.fillStyle = hurt ? '#ffc4b8' : '#8f5e36';
+    ctx.fillRect(fx - 6, my - 4, 11, 1); // 背部受光
+    ctx.fillStyle = hurt ? '#c73028' : '#5e3a1e';
+    ctx.fillRect(fx - 6, my - 1, 11, 1); // 腹部背阴
+    // 颈 + 头（前伸上扬）
+    ctx.fillStyle = hurt ? '#ff6b5e' : '#7a4a26';
+    ctx.fillRect(fx + 5 * f, my - 6, 3, 3);
+    ctx.fillRect(fx + 7 * f, my - 7, 3, 2);
+    ctx.fillStyle = '#2a1c10';
+    ctx.fillRect(fx + 10 * f - (f > 0 ? 0 : 1), my - 7, 1, 1); // 鼻孔
+    ctx.fillStyle = '#4a2c18';
+    ctx.fillRect(fx + 5 * f, my - 8, 1, 1); // 耳
+    // 鬃毛（深棕脊鬃）
+    ctx.fillStyle = '#3a2415';
+    ctx.fillRect(fx + 5 * f, my - 7, 1, 2);
+    ctx.fillRect(fx + 4 * f, my - 5, 1, 1);
+    // 尾（臀后飘扬）
+    ctx.fillRect(fx - 7 * f - (f > 0 ? 0 : 2), my - 4, 2, 3);
+    // 四腿（四相步态：对角成对交替）
+    ctx.fillStyle = '#4a2c18';
+    if (isMoving) {
+      if (ph === 0 || ph === 2) {
+        ctx.fillRect(fx - 5, fy - 1, 2, 2); ctx.fillRect(fx + 2, fy - 1, 2, 2);
+        ctx.fillRect(fx - 2, fy - 2, 2, 3); ctx.fillRect(fx + 4, fy - 2, 2, 3);
+      } else {
+        ctx.fillRect(fx - 5, fy - 2, 2, 3); ctx.fillRect(fx + 2, fy - 2, 2, 3);
+        ctx.fillRect(fx - 2, fy - 1, 2, 2); ctx.fillRect(fx + 4, fy - 1, 2, 2);
+      }
+    } else {
+      ctx.fillRect(fx - 5, fy - 1, 2, 2); ctx.fillRect(fx - 2, fy - 1, 2, 2);
+      ctx.fillRect(fx + 2, fy - 1, 2, 2); ctx.fillRect(fx + 4, fy - 1, 2, 2);
+    }
+    // 鞍毯（王国色 4 宽 + 金边）
+    ctx.fillStyle = civColor ? rgb(civColor) : '#a86040';
+    ctx.fillRect(fx - 2, my - 5, 4, 2);
+    ctx.fillStyle = 'rgba(255,217,61,0.85)';
+    ctx.fillRect(fx - 2, my - 5, 4, 1);
+    // —— 骑手（马背坐姿）——
+    ctx.fillStyle = rgb(pants);
+    ctx.fillRect(fx - 2 * f - (f > 0 ? 0 : 1), my - 4, 2, 3); // 垂腿夹马腹
+    ctx.fillStyle = hurt ? '#ff3b30' : rgb(cloth);
+    ctx.fillRect(fx - 2, my - 8, 5, 3); // 躯干
+    ctx.fillStyle = hurt ? '#c73028' : rgb(clothDark);
+    ctx.fillRect(f > 0 ? fx - 2 : fx + 2, my - 8, 1, 3); // 背阴列
+    // 制式甲胄（精绘：同军备等级口径 0-6）
+    if (!u.arm && armLv >= 1) {
+      ctx.fillStyle = armLv === 1 ? '#b87333' : armLv === 2 ? '#8d959e' : armLv === 3 ? '#c9d2dc' : armLv <= 5 ? '#3f5a3a' : '#4a6a8f';
+      ctx.fillRect(fx - 1, my - 8, 3, 2);
+      if (armLv >= 6 && ((t >> 3) & 1) === 1) {
+        ctx.fillStyle = '#7df9ff';
+        ctx.fillRect(fx + (f > 0 ? 1 : -1), my - 8, 1, 1); // 动力甲能源核
+      }
+    }
+    // 头 + 发 + 瞳
+    ctx.fillStyle = hairCol;
+    ctx.fillRect(fx - 2, my - 11, 4, 2);
+    ctx.fillStyle = rgb(skin);
+    ctx.fillRect(fx - 2, my - 9, 4, 2);
+    ctx.fillStyle = '#14100c';
+    ctx.fillRect(fx - 1 + (f > 0 ? 2 : 0), my - 9, 1, 1);
+    // 持械：制式骑枪前平（攻击突刺）/ 拾取武器斜持
+    if (u.wep) {
+      const famF = wepFamily(u.wep);
+      ctx.fillStyle = famF === 'bow' ? '#6e4a2b' : u.wep === 'sword3' ? '#ffd93d' : '#9a8f7a';
+      ctx.fillRect(atk ? fx + 3 * f : fx + 2 * f, my - 7, 1, 4);
+    } else if (armLv > 0) {
+      const lanceCol = armLv >= 6 ? '#7df9ff' : armLv >= 4 ? '#3a3f4a' : armLv >= 3 ? '#c9d2dc' : armLv >= 2 ? '#9aa2ab' : '#b87333';
+      ctx.fillStyle = '#6e4a2b';
+      ctx.fillRect(atk ? fx + 2 * f : fx + f, my - 6, 6, 1); // 枪杆
+      ctx.fillStyle = lanceCol;
+      ctx.fillRect(atk ? fx + 8 * f - (f > 0 ? 0 : 1) : fx + 7 * f - (f > 0 ? 0 : 1), my - 6, 1, 1); // 枪尖
+      if (atk) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(fx + 9 * f - (f > 0 ? 0 : 1), my - 6, 1, 1); // 突刺白光
+      }
+    }
+    // 冲锋扬尘（马蹄后翻起的尘土）
+    if (isMoving && ((t >> 2) & 1) === 0) {
+      ctx.fillStyle = 'rgba(180,160,130,0.5)';
+      ctx.fillRect(fx - 9 * f - (f > 0 ? 0 : 2), fy, 2, 1);
+      ctx.fillRect(fx - 11 * f - (f > 0 ? 0 : 3), fy + 1, 2, 1);
+    }
+    // 低血量警示
+    if (u.hp < u.maxHp * 0.4) {
+      ctx.fillStyle = '#cf3f2e';
+      ctx.fillRect(fx - 4, my - 13, 9, 1);
     }
     return;
   }
@@ -3131,6 +4223,27 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
     ctx.fillStyle = metal ? '#9aa2ac' : '#8a6238';
     ctx.fillRect(tx - 1, dy - 7, 1, 2); // 肩垫 ×2（随甲色系）
     ctx.fillRect(tx + torsoW, dy - 7, 1, 2);
+  } else if (armLv >= 1) {
+    // 制式甲胄（时代深化）：青铜鳞 / 锁环 / 板钢 / 军装 / 动力甲（无拾取护甲时按军备等级佩发；armLv 0-6 同口径）
+    const armorCol = armLv === 1 ? '#b87333' : armLv === 2 ? '#8d959e' : armLv === 3 ? '#c9d2dc' : armLv <= 5 ? '#3f5a3a' : '#4a6a8f';
+    ctx.fillStyle = armorCol;
+    ctx.fillRect(tx + 1, dy - 7, torsoW - 2, 2);
+    ctx.fillStyle = armLv === 1 ? '#d8934a' : armLv === 3 ? '#eef3f8' : armLv <= 5 ? '#c9a84a' : '#c9d8ec';
+    ctx.fillRect(tx + 1, dy - 7, 1, 1); // 甲面高光
+    if (armLv === 2) {
+      ctx.fillStyle = '#6e767f';
+      ctx.fillRect(tx + 2, dy - 6, 1, 1); // 锁环纹
+      ctx.fillRect(tx + torsoW - 2, dy - 6, 1, 1);
+    }
+    ctx.fillStyle = armLv >= 4 ? '#3a5236' : '#9aa2ac';
+    ctx.fillRect(tx - 1, dy - 7, 1, 2); // 肩垫 ×2
+    ctx.fillRect(tx + torsoW, dy - 7, 1, 2);
+    if (armLv >= 6) {
+      // 动力甲：胸口能源核呼吸
+      const glow = ((t >> 3) & 1) === 1 ? '#7df9ff' : '#3ec6d8';
+      ctx.fillStyle = glow;
+      ctx.fillRect(fx + (f > 0 ? 1 : -1), dy - 6, 1, 1);
+    }
   }
 
   // —— 4.5 护符：胸前挂坠 + 挂绳肩链点（挂衣/甲外） ——
@@ -3460,6 +4573,46 @@ export function drawPersonFine(ctx: CanvasRenderingContext2D, u: Unit, civColor:
           ctx.fillStyle = '#ffb347';
           ctx.fillRect(wx + (f > 0 ? 6 : -7), wy, 1, 1);
         }
+      }
+    }
+  } else if (armLv > 0) {
+    // 制式军械（时代深化·精绘）：无拾取武器时按文明军备等级佩发（0-6 同口径）
+    const wx = fx + 2 * f;
+    const wy = atk ? dy - 10 : dy - 7;
+    if (armLv <= 3) {
+      // 剑类：青铜 → 铁 → 钢
+      const bc = armLv === 1 ? '#b87333' : armLv === 2 ? '#9aa2ab' : '#d3dce6';
+      ctx.fillStyle = '#5a4028';
+      ctx.fillRect(wx, wy + 4, 1, 2); // 握柄
+      ctx.fillStyle = '#8a6238';
+      ctx.fillRect(wx - 1, wy + 3, 3, 1); // 护手
+      ctx.fillStyle = bc;
+      ctx.fillRect(wx, wy - 1, 1, 4); // 剑身
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.fillRect(wx, wy, 1, 1); // 刃光
+      if (atk) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(wx + f, wy - 1, 1, 1); // 挥击白光
+      }
+    } else {
+      // 枪械：火枪 → 步枪 → 激光枪
+      const fut = armLv >= 6;
+      ctx.fillStyle = fut ? '#1d2b36' : armLv >= 5 ? '#3a3f4a' : '#4a4038';
+      ctx.fillRect(wx - (f > 0 ? 0 : 4), wy, 5, 1); // 枪管
+      ctx.fillStyle = fut ? '#2e4456' : '#6e4a2b';
+      ctx.fillRect(wx - (f > 0 ? 1 : 3), wy, 1, 1); // 枪托
+      if (armLv >= 5) {
+        ctx.fillStyle = '#565e6a';
+        ctx.fillRect(wx + (f > 0 ? 1 : -3), wy - 1, 2, 1); // 瞄具
+      }
+      if (fut) {
+        const glow = ((t >> 3) & 1) === 1 ? '#7df9ff' : '#3ec6d8';
+        ctx.fillStyle = glow;
+        ctx.fillRect(wx + (f > 0 ? 2 : -3), wy, 1, 1); // 能量槽
+      }
+      if (atk) {
+        ctx.fillStyle = fut ? '#a5f3fc' : '#ffd93d';
+        ctx.fillRect(wx + (f > 0 ? 5 : -6), wy, 1, 1); // 枪口焰
       }
     }
   }

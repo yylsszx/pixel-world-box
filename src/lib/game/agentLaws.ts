@@ -44,6 +44,7 @@ const EVENT_KIND_TABLE = {
   alliance: true, extinct: true, panic: true, revenge: true, lineage: true, oracle: true, king: true,
   angel: true, phoenix: true, ent: true, lich: true, hydra: true, holystorm: true, season: true, chrono: true, bloom: true, haste: true,
   terraform: true, naval: true,
+  flight: true, quake: true, // 时代深化（v0.76）：巡逻机首航 / 矿井塌方
 } satisfies Record<WorldEventKind, true>;
 const EVENT_KINDS: ReadonlySet<string> = new Set(Object.keys(EVENT_KIND_TABLE));
 

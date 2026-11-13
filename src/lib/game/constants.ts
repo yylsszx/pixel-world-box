@@ -633,6 +633,9 @@ export const TOOLS: ToolDef[] = [
   { id: 'crab', label: '蟹', desc: '横行邻水沙滩的甲壳小将', tab: 'animals', icon: 'crab' },
   { id: 'turtle', label: '龟', desc: '海洋中缓慢游荡的长寿浮游者', tab: 'animals', icon: 'turtle' },
   { id: 'shark', label: '鲨鱼', desc: '海洋顶级掠食者：捕食鱼群与落水的游泳者', tab: 'animals', icon: 'shark' },
+  // —— 时代深化（v0.76）：马与鹰 —— 骏马草原成群（骑兵种源）/ 鹰高空盘旋（空中生态）——
+  { id: 'horse', label: '马', desc: '草原群居的骏足：驯马科技后成为文明骑兵的坐骑', tab: 'animals', icon: 'horse' },
+  { id: 'eagle', label: '鹰', desc: '高空盘旋的猛禽：俯冲捕食兔/鸡/鱼', tab: 'animals', icon: 'eagle' },
   // terrain
   { id: 'raise', label: '陆地', desc: '抬升地形：水→沙滩→草地', tab: 'terrain', icon: 'raise', brush: true },
   { id: 'water', label: '海洋', desc: '淹没大地，单位会溺水', tab: 'terrain', icon: 'water', brush: true },
@@ -795,7 +798,7 @@ export const RACE_TOOL: Record<string, number> = {
   lizard: R.LIZARD, goblin: R.GOBLIN, troll: R.TROLL, ogre: R.OGRE, whitewalker: R.WHITEWALKER, vampire: R.VAMPIRE,
   kraken: R.KRAKEN, sandworm: R.SANDWORM, basilisk: R.BASILISK, angel: R.ANGEL, phoenix: R.PHOENIX, ent: R.ENT, lich: R.LICH, hydra: R.HYDRA,
   chicken: R.CHICKEN, pig: R.PIG, rabbit: R.RABBIT, fox: R.FOX,
-  fish: R.FISH, crab: R.CRAB, turtle: R.TURTLE, shark: R.SHARK,
+  fish: R.FISH, crab: R.CRAB, turtle: R.TURTLE, shark: R.SHARK, horse: R.HORSE, eagle: R.EAGLE,
 };
 
 // —— 生物工具：统一挂「数量」参数（巨型异兽上限 8，普通生物上限 20）——

@@ -53,6 +53,8 @@ export const EVENT_CATEGORY: Record<WorldEventKind, Exclude<EventFilter, 'all'>>
   haste: 'world', // 时之奔流：神力/世界类（时间三神力同策）
   terraform: 'kingdom', // 地形工程：文明改天换地（王国类）
   naval: 'war', // 海战：舰队遭遇/拦截/岸防（战争类）
+  flight: 'world', // 时代深化：巡逻机首航（世界类——航空时代的天空事件）
+  quake: 'disaster', // 时代深化：矿井塌方（灾害类）
   // —— 生物进化与生态竞争 ——
   evolve: 'world', eco: 'world',
   river: 'world', oasis: 'world',
