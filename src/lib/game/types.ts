@@ -596,6 +596,8 @@ export interface Civ {
   banner: string; // one-word banner word
   /** 下一次允许派出殖民船的 tick */
   colonizeCd?: number;
+  /** 建国 tick（世界大战动态参战：新生国 4 年保护期后可被战火吞没；旧档 undefined = 视为古国） */
+  foundedTick?: number;
   /** 人口首次归零的 tick（幽灵王国宽限期：持续无人 10 年后自然消亡；undefined = 有人） */
   popZeroTick?: number;
   /** 兴衰历史采样点：[年份, 人口, 领土?, 房屋?]（每 5 年一次，上限 160 点；旧存档为 2 元组，领土/房屋回退 0） */
@@ -1248,10 +1250,16 @@ export interface WorldWarState {
   startYear: number;
   /** 终战 tick（phase=ended 时有效） */
   endTick: number;
-  /** 参战国名单（开战时在世的全部国家；灭亡后保留作统计） */
+  /** 参战国名单（开战时在世的全部国家；大战中动态增减——战火蔓延/新生国吞没会追加，力竭投降会移除；灭亡后保留作统计） */
   belligerents: number[];
-  /** 开战时各国人口快照（civId → pop） */
+  /** 开战时各国人口快照（civId → pop；后参战国在入伍时补记） */
   pop0: Record<number, number>;
+  /** 动态参战：大战中被卷入的后参战国记录（战火蔓延/新生国吞没/阵营共进退；按入伍顺序） */
+  joined?: { id: number; name: string; colorHex: string; tick: number; year: number }[];
+  /** 动态参战：力竭退出大战的国家记录（退出后残存为国，非灭亡） */
+  capitulated?: { id: number; name: string; colorHex: string; tick: number; year: number }[];
+  /** 动态参战防抖：civId → 参战状态解锁 tick（入伍后 15 年内不可退出；退出后 22.5 年内不可再入；大战结束清零） */
+  wwCd?: Record<number, number>;
   /** 战争期间阵亡总数（战斗击杀） */
   kills: number;
   /** 已灭亡参战国家名单（id/名/色，逐个追记） */
@@ -1308,6 +1316,10 @@ export interface WorldWarSnapshot {
   /** 涌现武器发射计数（程序化武器） */
   emergent: number;
   fallen: { name: string; colorHex: string }[];
+  /** 动态参战：大战中被卷入的后参战国数 */
+  joined: number;
+  /** 动态参战：力竭退出大战的国家数 */
+  capitulated: number;
   winner: number | null;
   winnerName: string | null;
   endText: string;

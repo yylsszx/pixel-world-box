@@ -66,6 +66,12 @@ export function WorldWarHud() {
           )}
           <span className="flex flex-wrap items-center justify-center gap-x-2 font-mono text-[9px] text-zinc-400">
             <span>存活 <b className="text-red-300">{ww.alive}</b>/{ww.belligerents} 国</span>
+            {ww.joined > 0 && (
+              <span title="大战中被战火卷入的后参战国">卷入 <b className="text-orange-300">+{ww.joined}</b></span>
+            )}
+            {ww.capitulated > 0 && (
+              <span title="力竭退出大战（残存为国，非灭亡）">退出 <b className="text-amber-300">{ww.capitulated}</b></span>
+            )}
             <span>阵亡 <b className="text-red-400">{ww.kills}</b></span>
             <span>停战 <b className="text-amber-300">{ww.truces}</b></span>
             <span>核爆 <b className="text-yellow-300">{ww.nukes}</b></span>
@@ -112,6 +118,11 @@ export function WorldWarHud() {
         {ww.fallen.length > 0 && (
           <p className="truncate text-[8px] text-zinc-600" title={ww.fallen.map((f) => f.name).join('、')}>
             陨落：{ww.fallen.map((f) => f.name).join('、')}
+          </p>
+        )}
+        {ww.capitulated > 0 && (
+          <p className="truncate text-[8px] text-zinc-600" title="力竭退出大战（残存为国）">
+            退出：{ww.endText.includes('列强力竭') ? '列强相继乞和退场' : `${ww.capitulated} 国力竭离场`}
           </p>
         )}
       </div>

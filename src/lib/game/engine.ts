@@ -254,6 +254,8 @@ export class GameEngine {
   worldWar: WorldWarState = GameEngine.IDLE_WORLD_WAR();
   /** 停战协议表：pairKey → 休战截止 tick（期间不重启战端；到期自动重燃） */
   wwTruce = new Map<string, number>();
+  /** 阵营对撞播报标记（本轮大战内首次「两个联盟的参战国互相开战」叙事；-1 = 未播） */
+  wwClashAnnounced = -1;
   /** 核弹发射全局冷却 tick（两次核打击至少间隔 15 年，防核弹洗地） */
   wwLastNukeTick = -600;
   /** 反物质打击全局冷却 tick（两次湮灭至少间隔 30 年） */
@@ -1659,6 +1661,7 @@ export class GameEngine {
       kingName: this.uniqueName(race),
       alive: true,
       banner,
+      foundedTick: this.tickCount,
       colonizeCd: 0,
       history: [],
       gold: 0,
@@ -2923,6 +2926,13 @@ export class GameEngine {
       const bi = this.worldWar.belligerents.indexOf(gone.id);
       if (!this.worldWar.belligerents.includes(keep.id)) this.worldWar.belligerents[bi] = keep.id;
       else this.worldWar.belligerents.splice(bi, 1);
+      // 动态参战防抖表：融合方的锁随席位继承（keep 若自身有锁则从严取晚者）
+      const cdGone = this.worldWar.wwCd?.[gone.id];
+      if (cdGone != null) {
+        this.worldWar.wwCd ??= {};
+        this.worldWar.wwCd[keep.id] = Math.max(this.worldWar.wwCd[keep.id] ?? 0, cdGone);
+        delete this.worldWar.wwCd[gone.id];
+      }
     }
     this.clearFrontOf(gone.id); // 融合方战线蒸发（领土已易主，keep 的前线 tick 自会重建）
     // —— 关账：alive=false + mergedInto 标记（区别于灭亡：不增加 fallen 计数）——
@@ -9303,6 +9313,16 @@ export class GameEngine {
     }
     // —— 种族关系：种族间王国的战争撕裂整个种族对彼此的看法（圣战/世仇最伤）——
     this.shiftRaceRel(ca.race, cb.race, reason === 'holy' ? -4 : -2.5);
+    // —— 世界大战·战火蔓延（v0.79 动态参战）：大战进行中，参战国对中立国开战 → 中立国即刻被卷入 ——
+    //    （叛乱/殖民争端/侵略皆然——世界大战不承认旁观者；双方都非参战国则保持局部战争不升级）
+    if (this.worldWar.phase === 'running') {
+      const aIn = this.wwIsBelligerent(agg);
+      const bIn = this.wwIsBelligerent(victim);
+      if (aIn !== bIn) {
+        const neutral = aIn ? cb : ca;
+        if (!this.wwLocked(neutral.id)) this.wwEnlist(neutral, 'spread');
+      }
+    }
     return wd;
   }
 
@@ -10458,6 +10478,10 @@ export class GameEngine {
       this.shiftRaceRel(mc.race, c.race, 4);
       this.met.add(k);
     }
+    // —— 世界大战·阵营共进退（v0.79）：大战中入盟 = 随盟参战（联盟里有参战国即全盟已入战） ——
+    if (this.worldWar.phase === 'running' && !this.wwLocked(c.id)) {
+      if (al.members.some((m) => this.wwIsBelligerent(m))) this.wwEnlist(c, 'bloc');
+    }
     this.addEvent('alliance', `「${c.name}」加入「${al.name}」——盟旗之下多了一支力量`, {
       colorHex: al.colorHex,
       x: c.capital >= 0 ? this.tileX(c.capital) : undefined,
@@ -10583,7 +10607,9 @@ export class GameEngine {
         for (const m of al.members) if ((this.rel.get(pairKey(m, c.id)) ?? 0) > 5) okCount++;
         if (okCount < Math.ceil(al.members.length / 2)) continue;
         const rd = RACES[c.race];
-        const p = 0.05 * (0.5 + (rd?.diplo ?? 0.5));
+        // 世界大战的乱世压力：中立国抱团求生，扩员概率 ×2.2（联盟=乱世的秩序孤岛）
+        const wwPressure = this.worldWar.phase === 'running' ? 2.2 : 1;
+        const p = 0.05 * (0.5 + (rd?.diplo ?? 0.5)) * wwPressure;
         if (this.rng() < p) this.joinAlliance(al, c);
       }
     }
@@ -10700,6 +10726,100 @@ export class GameEngine {
     return this.worldWar.phase === 'running' && this.worldWar.belligerents.includes(civId);
   }
 
+  /** 参战状态是否被防抖锁（入伍后短期内不可退出 / 退出后短期内不可再入） */
+  private wwLocked(civId: number): boolean {
+    return (this.worldWar.wwCd?.[civId] ?? 0) > this.tickCount;
+  }
+
+  /**
+   * 动态参战：将国家卷入进行中的世界大战（v0.79 大战不再固定名单）。
+   * cause: 'spread' 战火蔓延（遭参战国进攻）/ 'engulf' 战火吞没（新生国保护期满）/ 'bloc' 阵营共进退（随盟入战）
+   * 设计要点：只登记不宣战——战线由 worldWarTick 的重燃循环在 30 tick 内自然铺开（防递归爆炸）；
+   * 入伍即写 pop0（投降阈值与统计口径对齐）；联盟成员一并卷入（一人参战全盟参战）。
+   */
+  wwEnlist(civ: Civ, cause: 'spread' | 'engulf' | 'bloc'): boolean {
+    const ww = this.worldWar;
+    if (ww.phase !== 'running' || !civ.alive || civ.pop <= 0) return false;
+    if (ww.belligerents.includes(civ.id)) return false;
+    ww.belligerents.push(civ.id);
+    ww.pop0[civ.id] = civ.pop; // 后参战国补记人口基线（capitulate 判据用）
+    (ww.joined ??= []).push({ id: civ.id, name: civ.name, colorHex: civ.colorHex, tick: this.tickCount, year: Math.floor(this.yearF) });
+    (ww.wwCd ??= {})[civ.id] = this.tickCount + 600; // 15 年内不可力竭退出（防入伍即退的抖动）
+    // —— 广域停战继承：全球停战令期间入伍的新成员国不立刻开辟新战线——继承停战至同一到期时刻 ——
+    //    （判据：现存全部参战国两两之间都有停战条目 = 广域停火；部分停战不继承——侵略开的新战线是真实的）
+    const others = this.wwAliveBelligerents().filter((c) => c.id !== civ.id);
+    let broadTruce = others.length >= 2;
+    let truceUntil = 0;
+    for (let i = 0; i < others.length && broadTruce; i++) {
+      for (let j = i + 1; j < others.length && broadTruce; j++) {
+        const u = this.wwTruce.get(pairKey(others[i].id, others[j].id));
+        if (u == null) broadTruce = false;
+        else truceUntil = Math.max(truceUntil, u);
+      }
+    }
+    if (broadTruce && truceUntil > this.tickCount) {
+      for (const o of others) this.wwTruce.set(pairKey(civ.id, o.id), truceUntil);
+    }
+    const causeText =
+      cause === 'spread'
+        ? `战火蔓延——「${civ.name}」遭参战国进攻，被卷入世界大战`
+        : cause === 'engulf'
+          ? `「${civ.name}」无法置身事外——世界大战的战火吞噬了中立`
+          : `阵营共进退——「${civ.name}」随盟友踏入世界大战`;
+    this.addEvent('worldwar', causeText, { colorHex: civ.colorHex, x: civ.capital >= 0 ? this.tileX(civ.capital) : undefined, y: civ.capital >= 0 ? this.tileY(civ.capital) : undefined });
+    this.toast(`「${civ.name}」卷入世界大战`, 'war');
+    this.statsTick();
+    // —— 阵营连带：其联盟成员一并卷入（bloc 递归天然收敛：includes 查重短路） ——
+    //    力竭退战者的休养生息期（wwCd）不被连带击穿——刚退出大战的盟友不随新战端立刻回炉（防抖契约一致）
+    const al = this.allianceOfCiv(civ.id);
+    if (al) {
+      for (const m of al.members) {
+        if (m === civ.id) continue;
+        const mc = this.civs[m];
+        if (mc?.alive && mc.pop > 0 && !this.wwLocked(m)) this.wwEnlist(mc, 'bloc');
+      }
+    }
+    return true;
+  }
+
+  /**
+   * 动态参战：力竭退出世界大战（残存为国，非灭亡）。
+   * 判据（满足其一）：人口跌破入伍基线 28% 或（王都沦陷且人口跌破 45%）；
+   * 终局狂热（存活 ≤3）不退——不死不休的终局气质保留。
+   * 退出动作：除名 + makePeace 全线罢兵 + 清该国的停战表残留（防过期重燃）+ 联盟凝聚力受挫。
+   */
+  wwCapitulate(civ: Civ): boolean {
+    const ww = this.worldWar;
+    if (ww.phase !== 'running' || !ww.belligerents.includes(civ.id) || !civ.alive) return false;
+    const base = ww.pop0[civ.id] ?? civ.pop;
+    const devastated = civ.pop < Math.max(8, base * 0.28) || (civ.capital < 0 && civ.pop < Math.max(8, base * 0.45));
+    if (!devastated) return false;
+    ww.belligerents = ww.belligerents.filter((b) => b !== civ.id);
+    (ww.capitulated ??= []).push({ id: civ.id, name: civ.name, colorHex: civ.colorHex, tick: this.tickCount, year: Math.floor(this.yearF) });
+    (ww.wwCd ??= {})[civ.id] = this.tickCount + 900; // 22.5 年内不可再被卷入（退战的休养生息期）
+    // 全线罢兵：与仍在战的参战国逐对停战（makePeace 内部 settleFront 割让既成事实——占领土随退战易手）
+    const rest = this.wwAliveBelligerents();
+    for (const foe of rest) {
+      if (!this.atWar(civ.id, foe.id)) continue;
+      this.makePeace(civ.id, foe.id, `「${civ.name}」力竭求和，退出世界大战——割地罢兵`, 12);
+    }
+    // 清停战表残留：大战期间的历史停战对若到期会在重燃循环里复活战线（该循环不查参战名单）
+    for (const key of [...this.wwTruce.keys()]) {
+      const dash = key.indexOf('-');
+      if (+key.slice(0, dash) === civ.id || +key.slice(dash + 1) === civ.id) this.wwTruce.delete(key);
+    }
+    // 联盟连带：盟友退战 → 凝聚力受挫（阵营信誉受损）
+    const al = this.allianceOfCiv(civ.id);
+    if (al) {
+      al.cohesion = Math.max(0, al.cohesion - 12);
+      if (al.leader === civ.id) al.cohesion = Math.max(0, al.cohesion - 6); // 盟主带头退战更伤阵营
+    }
+    this.addEvent('worldwar', `「${civ.name}」力竭退出世界大战——残山剩水，苟全于乱世`, { colorHex: civ.colorHex, x: civ.capital >= 0 ? this.tileX(civ.capital) : undefined, y: civ.capital >= 0 ? this.tileY(civ.capital) : undefined });
+    this.toast(`「${civ.name}」退出大战`, 'peace');
+    this.statsTick();
+    return true;
+  }
+
   /** 引燃终极世界大战 */
   devUltimateWar(): boolean {
     if (this.worldWar.phase === 'running') return false;
@@ -10793,6 +10913,7 @@ export class GameEngine {
       this.addEvent('worldwar', `终极世界大战终局：「${firstAl.name}」的同盟笑到了最后——阵营协作击败了所有孤军`, { colorHex: firstAl.colorHex });
       this.toast(`大战结束——「${firstAl.name}」阵营胜利`, 'good');
       this.wwTruce.clear();
+      ww.wwCd = {}; // 动态参战防抖表随终战清零（新一轮大战重新开始）
       for (const m of firstAl.members) {
         const mc = this.civs[m];
         if (mc?.alive) { firstAl.cohesion = Math.min(100, firstAl.cohesion + 15); break; }
@@ -10830,8 +10951,44 @@ export class GameEngine {
         this.declareWar(alive[i].id, alive[j].id, 'annex', { force: true, total: true, quiet: true });
       }
     }
-    // —— 现代武器部署（工业时代军备的国家倾泻火力）——
-    this.wwWeaponsTick(alive);
+    // —— 动态参战①：战火吞没——世界大战不承认中立（v0.79 参战国动态化） ——
+    //    大战中诞生的国度有 4 年建国保护期（foundedTick）；期满后每轮 30% 概率被卷入。
+    //    保护期内若遭参战国进攻，则由 declareWar 的战火蔓延钩即刻卷入（不受本概率闸约束）。
+    for (const c of this.civs) {
+      if (!c.alive || c.pop <= 0 || ww.belligerents.includes(c.id)) continue;
+      if (this.wwLocked(c.id)) continue; // 力竭退战者的休养生息期
+      const age = this.tickCount - (c.foundedTick ?? 0);
+      if (age < 160) continue; // 建国保护期 4 年（旧档 undefined = 古国，立即参评）
+      if (this.rng() < 0.3) this.wwEnlist(c, 'engulf');
+    }
+    // —— 动态参战②：力竭退出——残山剩水的国家乞和离场（终局狂热 ≤3 国不退：不死不休） ——
+    //    退出即与全部参战国罢兵（割让占领土）；22.5 年休养生息期内不被再度卷入。
+    if (!wwFrenzy) {
+      for (const c of [...alive]) {
+        if (this.wwLocked(c.id)) continue; // 入伍 15 年内不退（防入伍即退抖动）
+        if (this.rng() < 0.3) this.wwCapitulate(c);
+      }
+    }
+    // —— 动态参战③：阵营对撞叙事——两个联盟的参战国首次兵戎相见（每轮大战播报一次） ——
+    if (this.wwClashAnnounced !== ww.startTick) {
+      let clashA: Alliance | null = null;
+      let clashB: Alliance | null = null;
+      outerClash: for (let i = 0; i < alive.length; i++) {
+        const alI = this.allianceOfCiv(alive[i].id);
+        if (!alI) continue;
+        for (let j = i + 1; j < alive.length; j++) {
+          if (!this.atWar(alive[i].id, alive[j].id)) continue;
+          const alJ = this.allianceOfCiv(alive[j].id);
+          if (alJ && alJ.id !== alI.id) { clashA = alI; clashB = alJ; break outerClash; }
+        }
+      }
+      if (clashA && clashB) {
+        this.wwClashAnnounced = ww.startTick;
+        this.addEvent('worldwar', `阵营对撞——「${clashA.name}」与「${clashB.name}」的军队在世界大战的战场上迎头相撞，大战成了两大军事集团的角力场`, { colorHex: clashA.colorHex });
+      }
+    }
+    // —— 现代武器部署（工业时代军备的国家倾泻火力；重算名单——含刚卷入者/剔除刚退出者）——
+    this.wwWeaponsTick(this.wwAliveBelligerents());
   }
 
   /** 大战期间的武器部署：现代（火炮/空袭/导弹/核） + 未来（激光/蜂群/轨道/等离子/反物质）
@@ -10931,7 +11088,7 @@ export class GameEngine {
     }
   }
 
-  /** 终局结算：胜者通吃 / 同归于尽 / 神谕中止 */
+  /** 终局结算：胜者通吃 / 同归于尽 / 列强力竭 / 神谕中止 */
   endWorldWar(winner: Civ | null, divine = false) {
     const ww = this.worldWar;
     ww.phase = 'ended';
@@ -10946,12 +11103,19 @@ export class GameEngine {
       ww.endText = `「${winner.name}」笑到了最后——第 ${years} 年，战火燃尽，世界归于一面旗帜之下`;
       this.addEvent('worldwar', `终极世界大战终局：${ww.belligerents.length} 国混战 ${years} 年，「${winner.name}」踏着 ${ww.fallen.length} 面倒下的旗帜统一了世界`, { colorHex: winner.colorHex });
       this.toast(`终极世界大战结束——「${winner.name}」赢得了一切`, 'good');
+    } else if ((ww.capitulated?.length ?? 0) > 0) {
+      // —— 动态参战终局（v0.79）：无人在场胜出但有力竭退场者——列强相继乞和，大战无疾而终 ——
+      const last = ww.capitulated![ww.capitulated!.length - 1];
+      ww.endText = `列强力竭——第 ${years} 年，「${last.name}」最后一个退出战争，战火自行熄灭`;
+      this.addEvent('worldwar', `终极世界大战终局：${ww.belligerents.length} 国混战 ${years} 年，列强相继乞和退场——大战无疾而终，无人赢得世界`, { colorHex: '#a1a1aa' });
+      this.toast('世界大战无疾而终——列强相继退出', 'info');
     } else {
       ww.endText = `同归于尽——第 ${years} 年，最后一个参战国也倒下了，只余焦土与寂静`;
       this.addEvent('worldwar', `终极世界大战终局：${ww.belligerents.length} 国混战 ${years} 年，同归于尽——世上再无参战国`, { colorHex: '#ff4d4d' });
       this.toast('终极世界大战结束——所有参战国同归于尽', 'danger');
     }
     this.wwTruce.clear();
+    ww.wwCd = {}; // 动态参战防抖表随终战清零（新一轮大战重新开始）
     this.shake = Math.max(this.shake, 8);
     this.statsTick();
   }
@@ -16818,6 +16982,8 @@ export class GameEngine {
         antimatters: ww.antimatters,
         emergent: ww.emerged,
         fallen: ww.fallen.map((f) => ({ name: f.name, colorHex: f.colorHex })),
+        joined: ww.joined?.length ?? 0,
+        capitulated: ww.capitulated?.length ?? 0,
         winner: ww.winner,
         winnerName: winnerCiv?.name ?? null,
         endText: ww.endText,
@@ -18367,8 +18533,15 @@ export class GameEngine {
       dirSeq: this.dirSeq,
       // 物种进化棘轮基线（[race, s, d, h, r, gen, sub?, beh?（逗号连接）]）
       speciesBase: [...this.speciesBase.entries()].map(([race, b]) => [race, b.gene.s, b.gene.d, b.gene.h, b.gene.r, b.gen, b.sub ?? '', (b.beh ?? []).join(',')] as [number, number, number, number, number, number, string?, string?]),
-      // 终极世界大战状态 + 停战协议表
-      worldWar: { ...this.worldWar, belligerents: [...this.worldWar.belligerents], fallen: this.worldWar.fallen.map((f) => ({ ...f })) },
+      // 终极世界大战状态 + 停战协议表（动态参战：joined/capitulated/wwCd 随档持久化）
+      worldWar: {
+        ...this.worldWar,
+        belligerents: [...this.worldWar.belligerents],
+        fallen: this.worldWar.fallen.map((f) => ({ ...f })),
+        joined: (this.worldWar.joined ?? []).map((j) => ({ ...j })),
+        capitulated: (this.worldWar.capitulated ?? []).map((c) => ({ ...c })),
+        wwCd: { ...(this.worldWar.wwCd ?? {}) },
+      },
       wwTruce: [...this.wwTruce.entries()],
       // 涌现层：动态物种注册表 + 涌现武器全谱系（读档时重注册/恢复） + 学说/防御（武器架构 v2）
       dyn: {
@@ -18889,6 +19062,19 @@ export class GameEngine {
         emerged: wwSave.emerged ?? 0,
         winner: typeof wwSave.winner === 'number' ? wwSave.winner : null,
         endText: wwSave.endText ?? '',
+        joined: Array.isArray(wwSave.joined) ? wwSave.joined.filter((j) => j && typeof j.id === 'number') : [],
+        capitulated: Array.isArray(wwSave.capitulated) ? wwSave.capitulated.filter((c) => c && typeof c.id === 'number') : [],
+        wwCd: (() => {
+          const out: Record<number, number> = {};
+          const src = wwSave.wwCd;
+          if (src && typeof src === 'object') {
+            for (const k of Object.keys(src)) {
+              const v = (src as Record<string, unknown>)[k];
+              if (Number.isFinite(v as number)) out[+k] = v as number;
+            }
+          }
+          return out;
+        })(),
       };
     } else {
       this.worldWar = GameEngine.IDLE_WORLD_WAR();
@@ -18903,6 +19089,7 @@ export class GameEngine {
     this.wwLastNukeTick = -600;
     this.wwLastAntiTick = -1200;
     this.wwFrenzyAnnounced = -1;
+    this.wwClashAnnounced = -1;
     // 军团成员 id 与单位表对账（存档期间手工编辑可能造成悬空引用）
     for (let ai = this.armies.length - 1; ai >= 0; ai--) {
       const a = this.armies[ai];
