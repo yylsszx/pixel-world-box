@@ -1,11 +1,17 @@
-// ============ PWB 神谕中继 Worker · wrangler 配置（v2.0「后端全家桶」） ============
+// ============ PWB 神谕中继 Worker · wrangler 配置（v3.0「全功能形态」） ============
 // 部署方式（二选一，均无需本地终端）：
 //   A. GitHub Actions 自动部署（推荐）：仓库密钥 CLOUDFLARE_API_TOKEN（Edit Cloudflare Workers 模板令牌）
-//      → push 触发 .github/workflows/deploy-worker.yml。
-//   B. Cloudflare 仪表盘在线编辑器：dash.cloudflare.com → Workers & Pages → 本 Worker → Quick edit 粘贴 worker.js。
+//      → push 触发 .github/workflows/deploy-worker.yml（自动静态导出游戏本体 → 组装 site/ → 部署）。
+//   B. Cloudflare 仪表盘在线编辑器：dash.cloudflare.com → Workers & Pages → 本 Worker → Quick edit 粘贴 worker.js
+//      （裸部署形态：无 assets，/ 返回 JSON 服务自述，API 端点行为不变）。
 // account_id 可不填：令牌为单账户作用域时 wrangler 自动发现；也可在此显式填入
 //   （dash 右侧栏 Account ID——非敏感信息）。
-// v2.0 bindings：
+// v3.0 配置（相对本文件所在目录）：
+//   assets.site/ —— 游戏本体静态导出产物（根路径形态；仅 CI 部署链组装，仪表盘裸部署不需要）。
+//     · not_found_handling=single-page-application：未命中路径回落 index.html（SPA 语义）。
+//     · run_worker_first=["/api/*","/healthz"]：API 与健康检查路由给 Worker，其余路径全部
+//       直接走静态资产（不经 Worker 调用——静态文件零 Worker 开销）；worker.js 内另有
+//       env.ASSETS 防御性兜底分发（run_worker_first 形态变化时仍正确）。
 //   AI       —— Cloudflare Workers AI（免费计划 10k neurons/日）：builtin 厂商零配置接活。
 //   SAVES_KV —— 云端存档 KV namespace：id 由 workflow 的 ensure-KV 步骤自动创建并替换
 //               占位符 __PWB_SAVES_KV_ID__（本地仪表盘部署时手动填入 dash 显示的 namespace id）。
@@ -14,6 +20,12 @@
   "name": "pwb-oracle-relay",
   "main": "worker.js",
   "compatibility_date": "2025-06-01",
+  "assets": {
+    "directory": "./site",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/healthz"]
+  },
   "ai": {
     "binding": "AI"
   },

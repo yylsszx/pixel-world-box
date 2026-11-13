@@ -633,6 +633,9 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
             </span>
           </label>
           <RelayTestRow url={provider.relayUrl} />
+          <p className="text-[8px] leading-relaxed text-zinc-500">
+            大陆线路打不开中继时：选 DeepSeek / Kimi / 通义千问 预设并填各自 API Key（platform.deepseek.com 等注册获取），即可浏览器直连使用 AI——实测三家均支持网页跨域，无需中继与域名。
+          </p>
         </>
       )}
 

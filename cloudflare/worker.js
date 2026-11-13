@@ -1,5 +1,8 @@
-// ============ PWB 神谕中继后端 · Cloudflare Workers 版（v2.0「后端全家桶」） ============
-// 职责：为 GitHub Pages 静态前端提供云端 AI 网关 + 云存档 + 结构化决策 + 编年史生成。
+// ============ PWB 神谕中继后端 · Cloudflare Workers 版（v3.0「全功能形态」） ============
+// 职责：① 为 GitHub Pages 静态前端提供云端 AI 网关 + 云存档 + 结构化决策 + 编年史生成；
+//      ② v3.0 起直接托管游戏本体（Workers Static Assets）——workers.dev 地址打开即是
+//        完整可玩游戏：同源 /api/* 全端点族零配置可用（builtin→Workers AI / 云存档 KV /
+//        中枢国策 decide / 编年史 chronicle），大陆线路打不开时另有 GitHub Pages 入口。
 //   GET  /healthz             健康检查（部署链探活）
 //   GET  /api/capabilities    能力协商（ai / kv / default_provider / 端点清单）
 //   GET  /api/oracle/agent    405（前端 probeSiteBackend 以 405 识别「后端在」）
@@ -28,7 +31,7 @@
 //   自动部署；KV namespace 由 workflow 的 ensure 步骤自动创建并注入 id。
 //   默认厂商三元组经仓库密钥 ORACLE_OPENAI_API_KEY / _BASE_URL / _MODEL 注入。
 
-const VERSION = '2.0.0';
+const VERSION = '3.0.0'; // 3.0 = 全功能形态：Worker 直接托管游戏本体（Static Assets）+ API 全家桶
 const TIMEOUT_MS = 120_000;
 const MAX_MESSAGES = 64;
 const MAX_CONTENT_CHARS = 24_000;
@@ -627,8 +630,9 @@ export default {
       });
     }
 
-    // —— 服务自述 ——
-    if (path === '/' && request.method === 'GET') {
+    // —— 服务自述（裸部署形态专属：CI 全功能部署时 / 由静态资产直出游戏本体，不经此处；
+    //    兜底分发形态（run_worker_first 覆盖 / 时）也优先 ASSETS 游戏本体，自述让位） ——
+    if (path === '/' && request.method === 'GET' && !env.ASSETS) {
       return jsonBody(200, {
         service: 'pwb-oracle-worker',
         version: VERSION,
@@ -879,6 +883,20 @@ export default {
         return jsonBody(200, { chronicle });
       } catch (e) {
         return jsonBody(502, { error: e && e.message ? e.message : '上游不可达' });
+      }
+    }
+
+    // —— 游戏本体静态托管（v3.0 全功能形态：Workers Static Assets）——
+    // CI 部署时把静态导出产物随 Worker 一起带上（wrangler.jsonc assets 配置 + run_worker_first
+    // 把 /api/* 与 /healthz 路由给 Worker，其余路径本就直接走静态资产、不经此处）——
+    // 本段是防御性兜底：万一配置形态变化（如 run_worker_first 改 true）仍有正确分发。
+    // 裸部署形态（仪表盘 Quick edit 粘贴 worker.js、无 assets 绑定）→ env.ASSETS 缺席，
+    // 保持 JSON 404 服务自述行为，零破坏。
+    if (env.ASSETS && !path.startsWith('/api/')) {
+      try {
+        return await env.ASSETS.fetch(request);
+      } catch (e) {
+        return jsonBody(500, { error: `静态资源服务异常：${e && e.message ? e.message : String(e)}` });
       }
     }
 

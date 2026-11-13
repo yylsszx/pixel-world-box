@@ -131,6 +131,31 @@ export async function probeSiteBackend(now = Date.now()): Promise<BackendState> 
 /** 探测结果变化时失效缓存（测试连通按钮手动触发前调用，保证及时性） */
 export function invalidateBackendProbe(): void {
   probeCache = null;
+  sameOriginCloudCache = null;
+}
+
+// ============ 同源云后端探测（Worker 托管游戏本体形态，v0.75） ============
+// 仅 Worker v2.0+ 全家桶形态满足（同源 /api/capabilities 200 且是 PWB 后端）：
+//   · Worker 托管游戏本体（workers.dev / 未来自定义域直开即玩）——同源全端点族在；
+//   · next dev / node 部署：/api/capabilities 不存在（404）→ 不满足，官方中继路径不变；
+//   · GitHub Pages 纯静态：404 → 不满足。
+
+let sameOriginCloudCache: { at: number; ok: boolean } | null = null;
+
+async function probeSameOriginCloud(now = Date.now()): Promise<boolean> {
+  if (sameOriginCloudCache && now - sameOriginCloudCache.at < PROBE_TTL_MS) return sameOriginCloudCache.ok;
+  let ok = false;
+  try {
+    const res = await fetch(`/api/capabilities?_cb=${now}`, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const j = (await res.json()) as { service?: string; builtin_alive?: boolean };
+      ok = j.service === 'pwb-oracle-worker' || !!j.builtin_alive;
+    }
+  } catch {
+    ok = false;
+  }
+  sameOriginCloudCache = { at: now, ok };
+  return ok;
 }
 
 // ============ 通道 A/B：中继后端 / 本站后端（同一线协议 SSE 泵） ============
@@ -608,7 +633,7 @@ export async function probeRelayEndpoint(url?: string): Promise<RelayEndpointPro
 }
 
 /**
- * 解析「当前生效的云后端基地址」：用户显式中继 > 官方中继（若可达且带所需能力）。
+ * 解析「当前生效的云后端基地址」：用户显式中继 > 同源云后端（Worker 托管游戏本体形态）> 官方中继（若可达且带所需能力）。
  * 返回【裸基地址】（不含 /api/oracle/agent 后缀）——云存档 /api/save/*、国策 /api/agent/decide、
  * 编年史 /api/chronicle 等云端端点直接拼接即可；神谕 agent 线仍由 routeCallModel 走 normalizeRelayUrl。
  * cloudSync（云存档）共用此决策，保证 UI 与路由单一事实源。
@@ -618,7 +643,16 @@ export async function resolveCloudBackend(): Promise<string | null> {
     const relay = loadStoredProvider()?.relayUrl?.trim();
     if (relay) return relay.replace(/\/+$/, '').replace(/\/api\/oracle\/agent$/, '');
   } catch {
-    /* provider-store 不可用 → 继续官方中继路径 */
+    /* provider-store 不可用 → 继续同源/官方中继路径 */
+  }
+  // 同源云后端（Worker 托管游戏本体：同源即全端点族）——免跨域预检、
+  // 天然跟随当前访问域名（自定义域绑定后零配置全端点切换）。
+  if (await probeSameOriginCloud()) {
+    try {
+      if (typeof location !== 'undefined') return location.origin;
+    } catch {
+      /* 非 window 环境 → 继续官方中继 */
+    }
   }
   const official = await probeOfficialRelay();
   if (official && official.ok) return official.baseUrl ?? OFFICIAL_RELAY_URL;

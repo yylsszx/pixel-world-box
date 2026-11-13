@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.74-preview';
+export const GAME_VERSION = 'v0.75-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.75-preview',
+    date: '2026-11-13',
+    items: [
+      '全功能版上线：云端服务地址（workers.dev）现在直接打开即是完整游戏——游戏本体与云端全家桶（AI 神谕/云存档/中枢国策/编年史）同源一体，零配置开箱即玩；线路可达时这是体验最全的入口',
+      '大陆直连三通道打通：DeepSeek / Kimi / 通义千问 预设实测支持浏览器直连——厂商接入选预设、填各自 API Key 即可用 AI，无需中继无需域名；游戏本体在 GitHub Pages 入口照常可玩',
+    ],
+  },
   {
     ver: 'v0.74-preview',
     date: '2026-11-13',

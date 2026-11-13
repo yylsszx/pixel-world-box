@@ -1,17 +1,26 @@
 name: Deploy Cloudflare Worker
 
-# PWB 神谕中继 · Cloudflare Workers 自动部署链：
+# PWB 神谕中继 · Cloudflare Workers 自动部署链（v3.0 全功能形态：Worker 直接托管游戏本体）：
 #   前提（一次性，全部可在手机浏览器完成）：
 #     ① 注册 Cloudflare 账户（免费版即可，无需信用卡）
 #     ② 创建 API Token（模板「Edit Cloudflare Workers」）→ 存入仓库密钥 CLOUDFLARE_API_TOKEN
 #     ③（可选）Account ID → 存入仓库密钥 CLOUDFLARE_ACCOUNT_ID
 #     ④（可选·服务端默认厂商）ORACLE_OPENAI_API_KEY / ORACLE_OPENAI_BASE_URL / ORACLE_OPENAI_MODEL
-#   push cloudflare/** 或手动触发（Actions 页 → 本工作流 → Run）即可部署。
+#   push 触发（cloudflare/** / 游戏本体 src、public、导出链任一变更）或手动触发即可部署。
+#   部署后 workers.dev 地址直接打开即是完整可玩游戏（同源 API 全家桶零配置）。
 # 密钥安全：全部经 GitHub 加密 secrets / wrangler secret 注入，绝不写入仓库或日志。
 on:
   push:
     branches: [main]
-    paths: ['cloudflare/**', '.github/workflows/deploy-worker.yml']
+    paths:
+      - 'cloudflare/**'
+      - '.github/workflows/deploy-worker.yml'
+      - 'src/**'
+      - 'public/**'
+      - '.zscripts/export-static.sh'
+      - 'next.config.ts'
+      - 'package.json'
+      - 'bun.lock'
   workflow_dispatch:
 
 concurrency:
@@ -27,6 +36,8 @@ jobs:
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
 
       - name: 检查部署凭证
         env:
@@ -67,12 +78,33 @@ jobs:
             echo "zones 查询未成功（令牌可能缺 Zone:Read 权限——信息性巡检，不影响部署）"
           fi
 
+      # —— 游戏本体静态导出（v3.0 全功能形态：Worker 直接托管游戏）——
+      #      与 Pages 部署链同源同脚本，仅 basePath 形态不同（Worker 根路径托管 → 不带参数）。
+      # --ignore-scripts：跳过 prisma 引擎下载等 postinstall（静态导出用不到），加速并规避额外网络依赖。
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Static export (根路径形态，供 Worker 托管)
+        run: bash .zscripts/export-static.sh
+
+      # —— 组装 Worker 部署目录：worker.js + wrangler.jsonc + 游戏本体（site/）——
+      #      与 cloudflare/ 源目录分离：源目录保持可裸粘贴部署的纯净形态，
+      #      site/ 仅在部署链组装（wrangler.jsonc 的 assets.directory=./site 相对部署目录）。
+      - name: 组装 Worker 部署目录（worker + 游戏本体）
+        run: |
+          mkdir -p worker-deploy/site
+          cp cloudflare/worker.js cloudflare/wrangler.jsonc worker-deploy/
+          cp -a out/. worker-deploy/site/
+          test -f worker-deploy/site/index.html || { echo '::error::site/index.html 缺失（导出异常）'; exit 1; }
+          test -f worker-deploy/site/wasm/wbcore.wasm || { echo '::error::site/wasm/wbcore.wasm 缺失（wasm 批内核将降级 JS 路径）'; exit 1; }
+          echo "部署目录组装完成：site/ 共 $(find worker-deploy/site -type f | wc -l) 个文件，$(du -sh worker-deploy/site | cut -f1)"
+
       - name: Ensure KV namespace（云存档）
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          cd cloudflare
+          cd worker-deploy
           # KV ensure v3：裸 REST API（curl+jq）主通道——彻底绕开 wrangler CLI 输出格式漂移
           #（wrangler 4.160.x 已不支持 `kv namespace list --json`——#82 实弹教训），wrangler 表格解析兜底。
           API="https://api.cloudflare.com/client/v4"
@@ -117,7 +149,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -o pipefail
-          cd cloudflare
+          cd worker-deploy
           bunx wrangler@4.160.1 deploy 2>&1 | tee deploy.log || {
             if grep -qi 'subdomain' deploy.log; then
               echo "::error::账户尚未注册 workers.dev 子域名——请在手机浏览器打开 dash.cloudflare.com → Workers & Pages，按提示设置一次子域名（如你的用户名），然后重新运行本工作流。"
@@ -129,7 +161,7 @@ jobs:
           URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -1 || true)
           if [ -z "$URL" ]; then echo "::warning::未能从部署日志解析 workers.dev 地址，请到 Cloudflare 仪表盘查看"; exit 0; fi
           echo "WORKER_URL=$URL" >> "$GITHUB_ENV"
-          echo "::notice::Worker 已部署：$URL —— 将此地址填入游戏「厂商接入 → 中继后端」即可。"
+          echo "::notice::Worker 已部署（全功能形态：游戏本体 + API 全家桶）：$URL —— 浏览器直接打开即玩；GitHub Pages 静态前端的「中继后端」亦可填该地址。"
 
       # —— 服务端默认厂商密钥注入（可选）：GitHub 密钥 → wrangler secret。
       #    配好后前端 apiKey/baseUrl/model 皆可留空，密钥永不出现在前端。
@@ -142,7 +174,7 @@ jobs:
           VAL_BASE_URL: ${{ secrets.ORACLE_OPENAI_BASE_URL }}
           VAL_MODEL: ${{ secrets.ORACLE_OPENAI_MODEL }}
         run: |
-          cd cloudflare
+          cd worker-deploy
           put() { # name value
             if [ -n "$2" ]; then
               printf '%s' "$2" | bunx wrangler secret put "$1" && echo "::notice::已注入 $1" || echo "::warning::$1 注入失败（不影响 Worker 部署）"
@@ -152,16 +184,24 @@ jobs:
           put DEFAULT_OPENAI_BASE_URL "$VAL_BASE_URL"
           put DEFAULT_OPENAI_MODEL "$VAL_MODEL"
 
-      - name: 探活 /healthz
+      - name: 探活 /healthz + 游戏本体
         if: ${{ env.WORKER_URL != '' }}
         run: |
           URL="${WORKER_URL}/healthz"
           for i in $(seq 1 10); do
             code=$(curl -s -o /tmp/hz.json -m 10 -w "%{http_code}" "$URL" || echo 000)
             if [ "$code" = "200" ] && grep -q '"ok":true' /tmp/hz.json; then
-              echo "Worker live: $URL"; cat /tmp/hz.json; exit 0
+              echo "Worker live: $URL"; cat /tmp/hz.json; break
             fi
             echo "[$i/10] HTTP $code — Workers 传播中，15s 后重试…"
             sleep 15
           done
-          echo "::warning::Worker 部署完成但 2.5 分钟内未探活成功——请检查部署日志或稍后访问 $URL/healthz"
+          # 游戏本体探活：/ 应返回 HTML（v3.0 全功能形态）而非 JSON 服务自述
+          ROOT="${WORKER_URL}/"
+          rcode=$(curl -s -o /tmp/root.html -m 10 -w "%{http_code}" "$ROOT" || echo 000)
+          ctype=$(curl -s -o /dev/null -m 10 -w "%{content_type}" "$ROOT" || true)
+          if [ "$rcode" = "200" ] && echo "$ctype" | grep -qi "text/html" && grep -qi "<div\|<!doctype html\|<title" /tmp/root.html; then
+            echo "游戏本体 live：$ROOT（HTML ${ctype}）"
+          else
+            echo "::warning::游戏本体探活未达预期（HTTP $rcode / $ctype）——Worker API 已在线；静态资产传播偶有延迟，可稍后刷新 ${WORKER_URL}/ 验证。"
+          fi
