@@ -6034,3 +6034,36 @@ Stage Summary:
 **推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
 **版本节奏**: 升位 v0.79-preview（CHANGELOG 四条：动态参战/力竭退出/联盟阵营体系/大战账本）。
 **评估：D7 战争系统的质变——世界大战从「一次性快照名单的死战」变为「会呼吸的活物」：战火蔓延吞噬中立、新生国在炮火中诞生又旋即卷入、阵营共进退、力竭者割地求存、狂热终局不死不休；联盟从外交装饰品升格为大战的组织单元（阵营对撞/扩员压力/退战代价）；双向防抖+广域停战继承+三账本互斥的自检设计兑现了「机制合理无隐性 bug」的要求（12 段 61 断言全绿，含 3 个自捕设计坑）。**
+
+---
+
+## 2026-11-14 #89（用户插入轮）：神谕 OS v5「Root Agent」——把游戏当电脑的全权限可调 Agent（Hermes/openclaw 标准）
+**用户诊断三连**: ①「神谕AI靠json输出，太烂了」——旧协议把工具调用伪装成 markdown JSON 围栏，靠客户端正则抢救解析，格式走样即调用丢失；②「权限很少，根本无法深入游戏底层」——66 工具没有权限模型，UI 完全不可控，无根壳；③钦定标准——「假设把整个游戏比作一台电脑，神谕AI要达到开启所有权限（权限可调节）的Hermes agent/openclaw/grok bot那种水平标准，根本性地操控整个游戏从游戏内容到游戏界面到游戏机制」。
+
+**架构重造（协议层 → 权限层 → 控制面 → UI，四层一次到位）**:
+
+**① 协议层·原生函数调用（kill「靠 json 输出」）**: 新 `native-tools.ts`——`buildNativeToolParams` 把工具目录编译成 OpenAI `tools` 参数（按当前权限过滤下发：越权工具模型根本看不见）；`NativeCallAccumulator` 流式 `delta.tool_calls` 分片累积器（index 对齐拼接 arguments + 尾逗号/零宽字符修复 + 不可修复 JSON 进 `_raw` 保调用不丢）。`direct-client.ts` 直连通道带 tools + tool_choice，`toOpenAIMessages` 协议转换（系统提示 assistant→system、assistant.tool_calls→结构化、role:'tool'+tool_call_id 逐条回传）；非流式回包 `message.tool_calls` 兜底；**双降级**：端点 400 提及 tool/function → `nfcUnsupported` 标记 → 本回合换回旧协议提示词重问（nativeDropped 剔除 tool 形态消息保留文本历史 + 工具回执摘要补记忆）；网关忽略 tools 但模型吐旧协议 JSON 块 → 旧解析器 v3 全套保留顺势接管。中继/本站后端/anthropic/local 恒走旧协议（后端讲纯文本线协议）。
+
+**② 权限层·五档位阶（「权限可调节」的核心）**: 新 `permissions.ts`——位阶 read/write/mech/ui/root（tierOfTool：显式表 + get_/find_ 前缀推导 + 缺省 write），等级 L0 观察者→L1 神使→L2 造物主→L3 界域之影→L4 ROOT（PERM_LEVELS 中文元数据）。`checkToolPerm` 永不 throw：等级不足给结构化拒绝文案（含精确解锁路径供模型如实转告）；ROOT 双保险（rootAck 未勾选时 run_script 一律拦）。每档可设「执行前批准」（confirm 位阶数组）→ agent 挂起 → 权限中心审批条三键裁决（允许/拒绝/免确认）；默认 L4 全开 + root 壳须显式解锁 + root 位阶默认逐次批准——「全权限」与「可控」并存。localStorage 'oracle-perm-v5' 持久化，agent 每次执行前过闸 + 审计推入 gameStore.oracleAudit（60 条环）。
+
+**③ 控制面·根壳与全界面遥控（「深入游戏底层」的两把钥匙）**: 新工具 6 个（66→72）——`run_script`（L7 ROOT 根壳：AsyncFunction 沙箱注入 engine/world/RACES/T/ui/log，任意 JS 直写引擎内核；拒绝清单正则拦 fetch/localStorage/eval/document/Worker/while(true)/setTimeout 等浏览器外联与延时 API；16K 字符上限 + 12s 超时 + log 采集 60 行 + 结果结构化压缩回传）；`ui_control`（16 面板开闭/调速/跳转/7 覆盖层/电影模式/声音/小地图/九项画面效果/浮层/内联提示/选中单位/存档对话框）；`get_ui_state`（界面全态 + 权限快照）；`undo_world`/`redo_world`（挂接 Task 45-b 区域快照栈）；`get_audit_log`（行为自查）。bridge 增异步执行器 `executeOracleToolAsync`（run_script 专路，其余同同步版）；`get_introspection` 增 perm 快照（模型自助查权限）。
+
+**④ prompt v5 + 面板接线**: `buildSystemPrompt(toolCatalog, {native, perm})` 双形态——原生形态讲 tool_calls 协议 + 根壳 API 速查（engine/ui/log 用法 + 「能一个 run_script 做完就不要发二十个调用」），旧协议形态保留全部铁律；权限位阶节注入当前等级与拦截时的话术（「如实转述解锁路径，不要反复撞同一道墙」）。OraclePanel：控制行二新增权限徽章（L{n}·等级名，ROOT 解锁后红色 ShieldAlert）→ 权限中心视图（五档卡选 + ROOT 解锁卡含风险说明 + 五位阶批准开关 + 本回合免确认 + 行为审计流）+ 审批条（挂起时工具名/参数 JSON/三键裁决）；askAgent 传入 perms/nativeTools/systemPromptNative 三件套；回合结束免确认自动复位、挂起审批作废；切世界/重铸同理清理。
+
+**QA（三层验证 78/78 全绿）**: ①tsc 零错误 + eslint 改动文件零告警 + next build 全绿（14.1s 编译，5 路由）✓ ②`scripts/verify/verify-oracle-v5.ts` 31 断言（位阶归属 8 + 权限闸门 12 + 累积器 8 + 非流式 1 + 旧协议解析器回归 6——含尾逗号修复/坏块 malformed/裸对象定位/stripToolBlocks 清洗）✓ ③`verify-root-shell.ts` 33 断言（根壳执行/读引擎/log 采集/改地形/批手术真生效/拒绝清单 7 项逐项拦/空码超长码运行时错误/异步路由/界面遥控真落 zustand store/浮层推送/undo 空栈中文引导/审计流/审批三键全流程——假引擎+DOM 桩，规避 GameEngine canvas 依赖）✓ ④`verify-agent-loop.ts` 14 断言端到端（bun 起真 HTTP SSE 服务器扮 OpenAI 端点：tools 参数下发/system 角色转换/流式 tool_calls 双调用并行解析/L0 闸门拦 run_script 且拦截文案进模型上下文/role:tool 回传带 tool_call_id/assistant.tool_calls 轨迹保留/最终回答收束/审计流记录 deny）✓。归档为 `bun run verify:oracle` 回归入口。
+- **测试方法沉淀**: GameEngine 构造即建 canvas（headless 会挂）——用假引擎对象（只带被触字段 as unknown as GameEngine）+ 全 Proxy canvas 2D 桩（scripts/verify/dom-stub.ts）测桥层；原生 FC 循环用 Bun.serve 起 SSE 服务器真打 HTTP 全链路——比单测更接近大陆用户「DeepSeek 直连」的真实形态。
+
+**遗留（下轮优先池）**: ①#85 八域科技已由并行线交付并随本轮合并入（远端 v0.76 时代深化九线 + v0.77-v0.79 无限演化·超限纪元/外脑谕令/世界大战动态参战——本条遗留池原判「尚未动工」系本地旧快照信息差，已勘误）；②用户真机实测三入口反馈（#84 遗留）；③中继后端 oracle-server 的原生 FC 面（服务端 ToolsService 若扩展 tools 参数可让中继路径也走结构化调用——本轮中继仍走旧协议，行为不变）；④自定义域名绑定实弹。
+**版本节奏**: 升位 v0.80-preview（CHANGELOG 四条：Root Agent 权限中心/原生函数调用/根壳/全界面遥控；版本号衔接远端 main 的 v0.79，本轮以 origin/main 为基底合并后整体重验）。
+**合并注记**: 本地基底为 #84 时代旧快照（远端 main 已领先 56 提交至 v0.79）——本轮 git merge origin/main 全量合并：OraclePanel/direct-client/gameStore 零冲突自动合（远端大陆直连提示行/resolveCloudBackend/civ-brain 全保留），version.ts 与 worklog 手工合璧（远端 #85-#88 四条在前、本条 #89 续后），合并后 tsc/verify:oracle/next build 三层全绿重验。
+**评估:D3 差异化优势再扩——神谕从「JSON 应答器」升维「全权限可调的 Root Agent」（WorldBox 无此形态：AI 拥有从机制书写到界面遥控到引擎内核直写的完整可调权限位）；协议层原生 FC 让工具调用可靠性从「正则抢救」升到「协议承载」。**
+
+---
+
+## 2026-11-14 #90（用户插入轮·运维）：凭证自愈与持久防丢——#89 Root Agent 成果续推落远端
+**背景**: #89 收尾推送失败：沙箱回收抹掉 ~/.git-credentials（push 报 could not read Username），本地三提交（7c6e65b worklog #84 / 674eb7e worklog #86 / cd34af3 merge #89）滞留，v0.80-preview 未达玩家。用户下发凭证自愈指令并要求把凭证存下来防止再丢。
+**处置**: ①凭证自愈——credential.helper=store 重建 + ~/.git-credentials 落盘（chmod 600）；②**凭证持久化防丢（本轮新基建）**——备份于 /home/z/my-project/.secrets/pwb-git-credentials（chmod 600；双保险验证：外层快照仓库无 remote + .git/info/exclude 已排除 .secrets/，永不入任何库；下轮自愈一行命令：`cp /home/z/my-project/.secrets/pwb-git-credentials ~/.git-credentials && git config --global credential.helper store`）；③探活双验证——GitHub API 200 + git 干跑过认证闸；④sync-github.sh 自愈续推（clone/push 各三连重试），#89 三提交随 deploy-bot 快照全量落 origin/main。
+**验证**: 工作树净（本轮零代码改动，引擎/面板/src/app/api/oracle/* 未触碰）；sync 输出 SYNC_OK；fetch 复核 origin/main 指向新快照、version.ts = v0.80-preview、worklog 本条在远端（结果见下轮复核）。
+**遗留（下轮优先池）**: 沿袭 #89 尾部——①用户真机实测三入口反馈（#84 遗留）；②中继后端 oracle-server 的原生 FC 面（ToolsService 扩展 tools 参数让中继路径也走结构化调用）；③自定义域名绑定实弹；④#88 世界大战遗留池（阵营对撞战争加成/斡旋调停/阵营集体投降/超限可视化二笔扩展）。
+**推送**: 本条 worklog 随快照同推（sync-github.sh）。
+**评估:D6 稳定健壮——交付链路自愈闭环升级：凭证从「每轮靠任务书粘贴复活」变为「沙箱持久区备份一行命令秒级自愈」，根因（沙箱回收抹 ~）与断链痛点双消除；#89 全权限 Root Agent 成功抵达玩家。**

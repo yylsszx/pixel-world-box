@@ -4,7 +4,7 @@
 // 纯 TS 无 SDK 依赖（z-ai-web-dev-sdk 只活在 /api/oracle/agent 路由里）。
 import type { GameEngine } from '@/lib/game/engine';
 import type { AgentToolResult } from './types';
-import { runExt } from './bridge-ext';
+import { runExt, runRootScript } from './bridge-ext';
 import { buildOracleContext } from '@/lib/game/oracle';
 import { listEngineParams, getEngineParam, setEngineParam } from '@/lib/game/engineParams';
 import { resolveRace } from '@/lib/game/agentLaws';
@@ -52,6 +52,17 @@ export function executeOracleTool(eng: GameEngine, name: string, args: Record<st
   } catch (e) {
     return { id: '', ok: false, data: null, error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/** v5 异步执行器（agent.ts 主循环专用）：run_script 根壳走 AsyncFunction 沙箱，
+ *  其余工具与同步版完全同路（回执结构不变）。永不 throw——错误折进回执。 */
+export async function executeOracleToolAsync(
+  eng: GameEngine,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<AgentToolResult> {
+  if (name === 'run_script') return runRootScript(eng, args);
+  return executeOracleTool(eng, name, args);
 }
 
 function run(eng: GameEngine, name: string, a: Record<string, unknown>): unknown {

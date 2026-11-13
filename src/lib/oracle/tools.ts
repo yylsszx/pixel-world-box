@@ -1,7 +1,8 @@
-// ============ 神谕 Agent 工具目录（v2 · 开发者级 Harness） ============
-// 纯数据目录（不 import 引擎）：描述 Agent 可调用的 66 个世界工具，按 L0-L6 七层组织
-// （层层向上覆盖全游戏：世界内核 → 生命单位 → 文明王国 → 战争外交 → 神力天灾 → 机制热插拔 → 元控制）。
+// ============ 神谕 Agent 工具目录（v5 · Root Agent Harness） ============
+// 纯数据目录（不 import 引擎）：描述 Agent 可调用的 72 个世界工具，按 L0-L7 八层组织
+// （层层向上覆盖全游戏：世界内核 → 生命单位 → 文明王国 → 战争外交 → 神力天灾 → 机制热插拔 → 界面/元控制 → ROOT 根壳）。
 // 执行器：bridge.ts（23 个基础工具）+ bridge-ext.ts（扩展工具，default 分支委托 runExt）。
+// 权限位阶（tierOfTool）见 permissions.ts：每个工具归 read/write/mech/ui/root 一档，agent 执行前过闸。
 // 分层清单 TOOL_LAYERS 与下方注释分组必须一致（get_introspection 依赖它绘制能力地图）。
 
 export interface ToolArgDef {
@@ -654,6 +655,74 @@ export const AGENT_TOOLS: ToolDef[] = [
       kingdom: { type: 'string', desc: 'follow_civ 用：国家名' },
     },
   },
+
+  // ————————————————— L6.5 界面操控（全 UI 遥控：面板/速度/覆盖层/视觉/撤销） —————————————————
+  {
+    name: 'get_ui_state',
+    desc: '界面全状态：打开中的面板/速度与暂停/镜头与缩放/地图覆盖模式/画面效果开关/选中单位/当前权限位阶——遥控界面的前提是看清界面',
+    args: {},
+  },
+  {
+    name: 'ui_control',
+    desc: '全界面遥控：开/关/切换任意面板（王国榜/生态/演化/种族/神经/社会/自然/成就/图鉴/纪事/议会/神谕/小地图/帮助/存档）、调速、跳转镜头、切覆盖层、电影模式、画面效果开关、推送浮层与内联提示、选中单位进查看器——游戏画面本身就是你的执行画布',
+    args: {
+      action: {
+        type: 'string',
+        desc: '界面动作',
+        required: true,
+        enum: [
+          'panel', 'set_speed', 'pause', 'resume', 'jump', 'overlay', 'cinema', 'sound',
+          'minimap', 'view_mode', 'toast', 'note', 'select_unit', 'select_civ', 'fx', 'save_dialog',
+        ],
+      },
+      panel: {
+        type: 'string',
+        desc: 'panel 动作用：目标面板',
+        enum: ['kingdoms', 'eco', 'ach', 'nature', 'evo', 'race', 'neuro', 'societal', 'oracle', 'council', 'codex', 'chronicle', 'civ', 'triggers', 'dev', 'help', 'minimap'],
+      },
+      mode: { type: 'string', desc: 'panel 用：open/close/toggle（默认 toggle）', enum: ['open', 'close', 'toggle'] },
+      speed: { type: 'number', desc: 'set_speed 用：速度 0-16（0=暂停 1=常速 8=极速）' },
+      x: { type: 'number', desc: 'jump 用：目标 x' },
+      y: { type: 'number', desc: 'jump 用：目标 y' },
+      overlay: {
+        type: 'string',
+        desc: 'overlay 用：地图覆盖模式',
+        enum: ['none', 'political', 'temperature', 'moisture', 'density', 'biome', 'alliance'],
+      },
+      on: { type: 'boolean', desc: 'cinema/sound/minimap/view_mode 用：目标开关状态' },
+      text: { type: 'string', desc: 'toast/note 用：文案（≤80 字）' },
+      tone: { type: 'string', desc: 'toast/note 用：色调', enum: ['info', 'good', 'war', 'peace', 'danger'] },
+      id: { type: 'number', desc: 'select_unit 用：单位 id' },
+      civ: { type: 'number', desc: 'select_civ 用：王国 id' },
+      fx: { type: 'string', desc: 'fx 动作用：效果键', enum: ['dmgNumbers', 'battleFlash', 'riverFlow', 'ambience', 'fxDensity', 'blood', 'corpses', 'hpBars', 'dayNight'] },
+      value: { type: 'number', desc: 'fx 用：fxDensity 0/1/2；其余 0/1=关/开' },
+      dialog: { type: 'string', desc: 'save_dialog 用：save 打开保存 / load 打开读取', enum: ['save', 'load'] },
+    },
+  },
+  {
+    name: 'undo_world',
+    desc: '撤销最近一次神力/笔刷操作（区域级快照回滚：地形/领土/火焰/辐射/被工具杀死单位复活；栈上限 15 步）',
+    args: {},
+  },
+  {
+    name: 'redo_world',
+    desc: '重做被撤销的神力/笔刷操作（与 undo_world 成对）',
+    args: {},
+  },
+  {
+    name: 'get_audit_log',
+    desc: '神谕行为审计：最近工具调用台账（名称/参数摘要/结果/权限判定/时间），供你自查刚才干过什么',
+    args: { limit: { type: 'number', desc: '条数，默认 20 最大 40' } },
+  },
+
+  // ————————————————— L7 ROOT 根壳（直写引擎内核：游戏本体的实时再编程） —————————————————
+  {
+    name: 'run_script',
+    desc: 'ROOT 根壳：在引擎内核执行任意 JavaScript——你是这台游戏机的 root。注入环境：engine（活引擎全对象）、world{W,H}、RACES、T（地形枚举）、ui（界面遥控）、log()（采集输出）；返回值/日志/错误结构化回传。适用：创造无工具覆盖的新机制、批量复杂手术、实时改写游戏规则、深度数据探测。能一个 run_script 做完就不要发二十个工具调用',
+    args: {
+      code: { type: 'string', desc: 'JS 代码（≤16000 字符，async 可用；可用 engine/world/RACES/T/ui/log；禁 fetch/localStorage/eval 等浏览器外联 API）', required: true },
+    },
+  },
 ];
 
 /** 七层能力地图（与 AGENT_TOOLS 的分组注释一一对应；get_introspection 渲染用） */
@@ -696,6 +765,14 @@ export const TOOL_LAYERS: { layer: string; tools: string[] }[] = [
   {
     layer: 'L6 元控制',
     tools: ['get_introspection', 'get_saves', 'save_world', 'time_control', 'camera_control'],
+  },
+  {
+    layer: 'L6.5 界面操控',
+    tools: ['get_ui_state', 'ui_control', 'undo_world', 'redo_world', 'get_audit_log'],
+  },
+  {
+    layer: 'L7 ROOT 根壳',
+    tools: ['run_script'],
   },
 ];
 

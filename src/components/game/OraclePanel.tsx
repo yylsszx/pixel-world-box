@@ -18,12 +18,18 @@ import { executeOracleTool } from '@/lib/oracle/bridge';
 import { loadDshOn, storeDshOn, loadOrCreateSessionId, rotateSessionId } from '@/lib/oracle/session';
 import { renderToolCatalog, AGENT_TOOLS } from '@/lib/oracle/tools';
 import { buildSystemPrompt } from '@/lib/oracle/prompt';
+import { buildNativeToolParams } from '@/lib/oracle/native-tools';
+import {
+  PERM_LEVELS, TIER_LABEL, loadPermSettings, savePermSettings,
+  DEFAULT_PERM_SETTINGS, type OraclePermSettings, type PermTier,
+} from '@/lib/oracle/permissions';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   Sparkles, X, ScrollText, ChartLine, Eye, SendHorizontal, Eraser, BrainCircuit,
   Scale, Search, Zap, Square, Trash2, Cpu, FlaskConical, Crown, Swords, CloudLightning, Database,
+  Shield, ShieldAlert, Lock, LockOpen, CheckCircle2, Ban,
 } from 'lucide-react';
 
 // ---------------- 基础常量 ----------------
@@ -925,21 +931,194 @@ function Switch_({ checked, id, name, onToggle }: { checked: boolean; id: string
   );
 }
 
+// ---------------- 权限中心（v5：把整个游戏当电脑的可调权限位） ----------------
+
+/** 权限位阶颜色系（read→write→mech→ui→root 递进） */
+const TIER_CLS: Record<PermTier, string> = {
+  read: 'border-sky-400/50 bg-sky-400/10 text-sky-300',
+  write: 'border-emerald-400/50 bg-emerald-400/10 text-emerald-300',
+  mech: 'border-fuchsia-400/50 bg-fuchsia-400/10 text-fuchsia-300',
+  ui: 'border-violet-400/50 bg-violet-400/10 text-violet-300',
+  root: 'border-red-400/60 bg-red-400/15 text-red-300',
+};
+
+const VERDICT_META: Record<string, { label: string; cls: string }> = {
+  ok: { label: '✓', cls: 'text-emerald-400' },
+  fail: { label: '✗', cls: 'text-red-400' },
+  deny: { label: '权限拦截', cls: 'text-amber-400' },
+  approve: { label: '已批准', cls: 'text-emerald-300' },
+  reject: { label: '已拒绝', cls: 'text-red-300' },
+};
+
+/** 权限中心视图：五档等级滑选 + ROOT 解锁 + 位阶批准开关 + 行为审计流 */
+function PermView({ perm, onChange }: { perm: OraclePermSettings; onChange: (p: OraclePermSettings) => void }) {
+  const oracleAudit = useGameStore((s) => s.oracleAudit);
+  const clearAudit = useGameStore((s) => s.clearOracleAudit);
+  const autoApprove = useGameStore((s) => s.oracleAutoApprove);
+  const setAutoApprove = useGameStore((s) => s.setOracleAutoApprove);
+
+  const setLevel = (lv: number): void => {
+    if (lv === 4 && !perm.rootAck) return; // ROOT 须先勾选解锁
+    onChange({ ...perm, level: lv });
+  };
+  const toggleConfirm = (tier: PermTier): void => {
+    const has = perm.confirm.includes(tier);
+    onChange({ ...perm, confirm: has ? perm.confirm.filter((t) => t !== tier) : [...perm.confirm, tier] });
+  };
+
+  return (
+    <div className="game-scroll min-h-0 flex-1 space-y-3 overflow-y-auto px-2 py-2 sm:max-h-[calc(100dvh-430px)]" style={{ scrollbarWidth: 'thin' }}>
+      {/* 等级选择：把整个游戏当电脑——五档权限 */}
+      <section aria-label="权限等级">
+        <h3 className="mb-1 text-[10px] font-black tracking-wider text-amber-300">权限等级（把游戏当作一台电脑）</h3>
+        <div className="space-y-1">
+          {PERM_LEVELS.map((lv) => {
+            const active = perm.level === lv.level;
+            const locked = lv.level === 4 && !perm.rootAck;
+            return (
+              <button
+                key={lv.level}
+                type="button"
+                onClick={() => setLevel(lv.level)}
+                disabled={locked}
+                aria-pressed={active}
+                title={lv.desc}
+                className={`flex w-full items-start gap-1.5 rounded-sm border-2 px-1.5 py-1 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  active
+                    ? 'border-amber-400/70 bg-amber-400/15'
+                    : 'border-zinc-700/60 bg-zinc-800/40 hover:border-amber-400/40 hover:bg-zinc-800'
+                }`}
+              >
+                <span className={`mt-px shrink-0 rounded-sm border px-1 text-[9px] font-black ${lv.level === 4 ? 'border-red-400/60 bg-red-400/10 text-red-300' : 'border-zinc-600 bg-zinc-700/40 text-zinc-300'}`}>
+                  L{lv.level}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className={`block text-[10px] font-bold ${active ? 'text-amber-200' : 'text-zinc-300'}`}>
+                    {lv.name}{locked ? '（未解锁）' : ''}
+                  </span>
+                  <span className="block text-[9px] leading-snug text-zinc-500">{lv.desc}</span>
+                </span>
+                {lv.level === 4 && perm.rootAck && <LockOpen className="h-3 w-3 shrink-0 text-red-300" aria-label="ROOT 已解锁" />}
+                {locked && <Lock className="h-3 w-3 shrink-0 text-zinc-500" aria-label="ROOT 未解锁" />}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* ROOT 解锁与批准开关 */}
+      <section aria-label="ROOT 解锁与批准策略" className="space-y-1.5">
+        <h3 className="text-[10px] font-black tracking-wider text-amber-300">ROOT 与批准策略</h3>
+        <button
+          type="button"
+          onClick={() => onChange({ ...perm, rootAck: !perm.rootAck, level: !perm.rootAck ? 4 : Math.min(perm.level, 3) })}
+          aria-pressed={perm.rootAck}
+          className={`flex w-full items-start gap-1.5 rounded-sm border-2 px-1.5 py-1 text-left transition-colors ${
+            perm.rootAck
+              ? 'border-red-400/60 bg-red-400/15'
+              : 'border-zinc-700/60 bg-zinc-800/40 hover:border-red-400/40'
+          }`}
+        >
+          <ShieldAlert className={`mt-px h-3.5 w-3.5 shrink-0 ${perm.rootAck ? 'text-red-300' : 'text-zinc-500'}`} aria-hidden />
+          <span className="min-w-0 flex-1">
+            <span className={`block text-[10px] font-bold ${perm.rootAck ? 'text-red-200' : 'text-zinc-300'}`}>
+              {perm.rootAck ? 'ROOT 已解锁' : '解锁 ROOT 根权限'}
+            </span>
+            <span className="block text-[9px] leading-snug text-zinc-500">
+              神谕获得 run_script 根壳：任意 JavaScript 直写引擎内核（创造无工具覆盖的新机制/实时改写游戏规则）。
+              关闭即收回。根壳禁浏览器外联（fetch/localStorage 等），同步死循环会被拒绝，但大计算仍可能卡顿页面——请自行斟酌。
+            </span>
+          </span>
+        </button>
+        <div className="rounded-sm border-2 border-zinc-700/60 bg-zinc-800/40 px-1.5 py-1">
+          <p className="text-[9px] font-bold text-zinc-400">执行前须经我批准的位阶：</p>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {(['read', 'write', 'mech', 'ui', 'root'] as const).map((tier) => {
+              const on = perm.confirm.includes(tier);
+              const unlocked = PERM_LEVELS[perm.level].tiers.includes(tier) && (tier !== 'root' || perm.rootAck);
+              return (
+                <button
+                  key={tier}
+                  type="button"
+                  onClick={() => toggleConfirm(tier)}
+                  aria-pressed={on}
+                  disabled={!unlocked}
+                  title={on ? `点击取消「${TIER_LABEL[tier]}」逐次批准` : `点击开启「${TIER_LABEL[tier]}」逐次批准`}
+                  className={`rounded-sm border-2 px-1.5 py-0.5 text-[9px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                    on ? TIER_CLS[tier] : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-500'
+                  }`}
+                >
+                  {TIER_LABEL[tier]}·{on ? '批准' : '自动'}
+                </button>
+              );
+            })}
+          </div>
+          <label className="mt-1.5 flex cursor-pointer items-center gap-1 text-[9px] text-zinc-400">
+            <input type="checkbox" checked={autoApprove} onChange={(e) => setAutoApprove(e.target.checked)} className="h-3 w-3 accent-amber-400" />
+            本回合免确认（agent 任务全程放行待批准位阶；回合结束自动复位）
+          </label>
+        </div>
+      </section>
+
+      {/* 行为审计流 */}
+      <section aria-label="神谕行为审计">
+        <div className="mb-1 flex items-center gap-1.5">
+          <h3 className="text-[10px] font-black tracking-wider text-amber-300">行为审计</h3>
+          <span className="rounded-sm border border-zinc-600 bg-zinc-800 px-1 text-[9px] font-bold text-zinc-400">{oracleAudit.length}</span>
+          {oracleAudit.length > 0 && (
+            <Button
+              variant="ghost" size="sm"
+              onClick={clearAudit}
+              aria-label="清空审计流"
+              className="ml-auto h-5 gap-1 rounded-sm border-2 border-transparent px-1 text-[9px] font-bold text-zinc-500 hover:text-zinc-200"
+            >
+              <Eraser className="h-3 w-3" aria-hidden /> 清空
+            </Button>
+          )}
+        </div>
+        {oracleAudit.length === 0 ? (
+          <p className="rounded-sm border-2 border-dashed border-zinc-700/60 px-2 py-2 text-center text-[9px] text-zinc-500">
+            神谕每次工具调用的权限判定与结果都会记录在此
+          </p>
+        ) : (
+          <ul className="space-y-1">
+            {oracleAudit.slice(-30).reverse().map((e, i) => (
+              <li key={`${e.ts}-${i}`} className="flex items-center gap-1 rounded-sm border-2 border-zinc-800 bg-zinc-900/60 px-1.5 py-0.5">
+                <span className="shrink-0 font-mono text-[8px] text-zinc-600">{new Date(e.ts).toISOString().slice(11, 19)}</span>
+                <span className={`shrink-0 rounded-sm border px-1 text-[8px] font-bold ${TIER_CLS[e.tier]}`}>{TIER_LABEL[e.tier]}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-[9px] text-zinc-300">{e.name}</span>
+                <span className={`shrink-0 text-[8px] font-bold ${VERDICT_META[e.verdict]?.cls ?? 'text-zinc-400'}`}>{VERDICT_META[e.verdict]?.label ?? e.verdict}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
 // ---------------- 面板主体 ----------------
 
 function OracleBody() {
   const { oracleMsgs, oracleBusy, addOracleMsg, clearOracle, setOracleBusy } = useGameStore();
+  /** 权限审批队列（v5：位阶开启「执行前批准」时挂起等待——审批条渲染源） */
+  const oracleApproval = useGameStore((s) => s.oracleApproval);
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   /** 深度思考开关（UI 状态保留：agent 循环当前固定 deep:false，厂商侧 reasoning 流已就绪） */
   const [deep, setDeep] = useState(false);
-  /** 视图切换：chat=会话流 / laws=Agent 法则管理 */
-  const [view, setView] = useState<'chat' | 'laws'>('chat');
+  /** 视图切换：chat=会话流 / laws=Agent 法则管理 / perm=权限中心 */
+  const [view, setView] = useState<'chat' | 'laws' | 'perm'>('chat');
   /** 当前厂商配置（localStorage 'oracle-provider-v1' 持久化） */
   const [provider, setProvider] = useState<OracleProviderConfig>(DEFAULT_PROVIDER);
   const [cfgOpen, setCfgOpen] = useState(false);
   /** dsh 持久会话面（M-O4 相三前端接线，localStorage 持久化）：中继后端专属——服务端权威历史 */
   const [dshOn, setDshOn] = useState(false);
+  /** 神谕权限设置（v5：五档可调 + 位阶批准开关 + ROOT 解锁；localStorage 'oracle-perm-v5'） */
+  const [perm, setPerm] = useState<OraclePermSettings>(DEFAULT_PERM_SETTINGS);
+  useEffect(() => {
+    setPerm(loadPermSettings());
+  }, []);
   /** 持久会话 id（localStorage 恢复 → 切后台/刷新续跑的服务端历史锚点） */
   const [sessionId, setSessionId] = useState('');
   /** agent 运行中的实时流（阶段/工具卡/思考流/逐 token 正文） */
@@ -1011,7 +1190,7 @@ function OracleBody() {
       const history: AgentChatMessage[] = dshOn
         ? []
         : [
-            { role: 'assistant', content: buildSystemPrompt(renderToolCatalog()) },
+            { role: 'assistant', content: buildSystemPrompt(renderToolCatalog(), { native: false, perm }) },
             ...st.oracleMsgs.slice(-8).map((m): AgentChatMessage => ({
               role: m.role === 'user' ? 'user' : 'assistant',
               content:
@@ -1142,9 +1321,19 @@ function OracleBody() {
                   });
                   return { ...prev, tools };
                 }),
-            },
+              },
               400, // 超级演化轮：取消轮数限制（400 = 事实上无限；agent 内置同签名失败/无进展双守卫防失控）
               deep,
+              {
+                // v5 Root Agent：权限闸门 + 原生函数调用（openai 兼容直连时下发结构化 tools，
+                // 中继/本站后端/anthropic/local 自动回退旧 JSON 协议）
+                perms: perm,
+                nativeTools:
+                  provider.kind === 'openai' && !provider.relayUrl?.trim() && !dshOn
+                    ? buildNativeToolParams(PERM_LEVELS[perm.level].tiers)
+                    : undefined,
+                systemPromptNative: buildSystemPrompt(renderToolCatalog(), { native: true, perm }),
+              },
             );
         addOracleMsg({
           role: 'oracle',
@@ -1162,9 +1351,13 @@ function OracleBody() {
         setOracleBusy(false);
         setLive(null);
         abortRef.current = null;
+        // v5：回合结束——免确认复位；挂起的审批作废（拒绝）
+        const gst = useGameStore.getState();
+        if (gst.oracleAutoApprove) gst.setOracleAutoApprove(false);
+        if (gst.oracleApproval) gst.resolveOracleApproval(false);
       }
     },
-    [provider, addOracleMsg, setOracleBusy, deep, dshOn, sessionId],
+    [provider, addOracleMsg, setOracleBusy, deep, dshOn, sessionId, perm],
   );
 
   /** 中止当前 agent 循环 */
@@ -1271,6 +1464,24 @@ function OracleBody() {
         <Button
           variant="ghost"
           size="sm"
+          onClick={() => setView((v) => (v === 'perm' ? 'chat' : 'perm'))}
+          aria-pressed={view === 'perm'}
+          aria-label="权限中心"
+          title={`权限中心：当前 L${perm.level} ${PERM_LEVELS[perm.level].name}${perm.rootAck ? '（ROOT 已解锁）' : '（ROOT 未解锁）'}——五档可调权限位阶`}
+          className={`h-6 shrink-0 gap-1 rounded-sm border-2 px-1.5 text-[10px] font-bold transition-colors ${
+            view === 'perm'
+              ? 'border-amber-400/60 bg-amber-400/15 text-amber-300'
+              : perm.level >= 4 && perm.rootAck
+                ? 'border-red-400/50 bg-red-400/10 text-red-300 hover:border-red-400/70'
+                : 'border-zinc-700/70 bg-zinc-800/50 text-zinc-400 hover:border-amber-400/40 hover:text-amber-300'
+          }`}
+        >
+          {perm.level >= 4 ? <ShieldAlert className="h-3.5 w-3.5 shrink-0" aria-hidden /> : <Shield className="h-3.5 w-3.5 shrink-0" aria-hidden />}
+          <span className="shrink-0">L{perm.level}·{PERM_LEVELS[perm.level].name}</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => setView((v) => (v === 'laws' ? 'chat' : 'laws'))}
           aria-pressed={view === 'laws'}
           aria-label="Agent 法则管理"
@@ -1318,9 +1529,11 @@ function OracleBody() {
         </Button>
       </div>
 
-      {/* 消息流 / 法则管理（同槽切换） */}
+      {/* 消息流 / 法则管理 / 权限中心（同槽切换） */}
       {view === 'laws' ? (
         <LawsView />
+      ) : view === 'perm' ? (
+        <PermView perm={perm} onChange={(p) => { setPerm(p); savePermSettings(p); }} />
       ) : (
         <div
           ref={scrollRef}
@@ -1337,6 +1550,43 @@ function OracleBody() {
               {oracleBusy && live && <LiveBubble live={live} />}
             </>
           )}
+        </div>
+      )}
+
+      {/* 权限审批条：位阶开启「执行前批准」时，agent 挂起等这一行裁决（允许/拒绝/免确认） */}
+      {oracleApproval && (
+        <div className="border-t-2 border-amber-400/40 bg-amber-400/10 px-2 py-1.5">
+          <div className="flex items-center gap-1.5">
+            <ShieldAlert className="h-3.5 w-3.5 shrink-0 animate-pulse text-amber-300" aria-hidden />
+            <span className="min-w-0 flex-1 truncate text-[10px] font-bold text-amber-200" title={`${oracleApproval.name} 参数：${JSON.stringify(oracleApproval.args).slice(0, 300)}`}>
+              待批准：{oracleApproval.name}（{TIER_LABEL[oracleApproval.tier]}位阶）
+            </span>
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => useGameStore.getState().resolveOracleApproval(true)}
+              className="h-6 shrink-0 gap-1 rounded-sm border-2 border-emerald-400/60 bg-emerald-400/15 px-1.5 text-[10px] font-bold text-emerald-300 hover:bg-emerald-400/25"
+            >
+              <CheckCircle2 className="h-3 w-3" aria-hidden /> 允许
+            </Button>
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => useGameStore.getState().resolveOracleApproval(false)}
+              className="h-6 shrink-0 gap-1 rounded-sm border-2 border-red-400/60 bg-red-400/10 px-1.5 text-[10px] font-bold text-red-300 hover:bg-red-400/25"
+            >
+              <Ban className="h-3 w-3" aria-hidden /> 拒绝
+            </Button>
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => useGameStore.getState().setOracleAutoApprove(true)}
+              title="本次任务全程放行该位阶（回合结束自动复位）"
+              className="h-6 shrink-0 gap-1 rounded-sm border-2 border-zinc-600 bg-zinc-800/60 px-1.5 text-[10px] font-bold text-zinc-300 hover:bg-zinc-700"
+            >
+              <LockOpen className="h-3 w-3" aria-hidden /> 免确认
+            </Button>
+          </div>
+          <p className="mt-1 line-clamp-2 font-mono text-[9px] leading-snug break-words text-amber-200/70">
+            {JSON.stringify(oracleApproval.args).slice(0, 220)}
+          </p>
         </div>
       )}
 

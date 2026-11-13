@@ -12,8 +12,11 @@ import { sfx } from '@/lib/game/sfx';
 import { safePersist, safePersistMeta, safeLoadSlot, safeRemoveSlot, validateSaveData } from '@/lib/game/saveSafe';
 import type { CouncilAgentStatus, CouncilFeedItem, CouncilPendingItem, RulerRole } from '@/lib/ruler/types';
 import { getCouncil, initialCouncilAgents } from '@/lib/ruler/council';
+import type { OracleAuditEntry, OracleApprovalRequest, PermTier } from '@/lib/oracle/permissions';
 
 let _engine: GameEngine | null = null;
+/** 神谕审批队列的挂起 resolver（模块级：非序列化；resolve 后即刻清空） */
+let _oracleApprovalResolve: ((ok: boolean) => void) | null = null;
 export function getEngine(): GameEngine {
   if (!_engine) {
     _engine = new GameEngine();
@@ -358,6 +361,19 @@ interface GameStore {
   /** 神谕唤醒待发指令（图鉴编辑器「唤醒神谕」等入口注入；OraclePanel 打开时自动以 create 模式发送并清除） */
   oraclePending: string | null;
   setOraclePending: (text: string | null) => void;
+  // ---------------- 神谕权限系统 v5（把游戏当电脑的可调权限位） ----------------
+  /** 行为审计流（最近 60 条：工具名/位阶/判定/结果摘要） */
+  oracleAudit: OracleAuditEntry[];
+  pushOracleAudit: (e: Omit<OracleAuditEntry, 'ts'>) => void;
+  clearOracleAudit: () => void;
+  /** 待造物主批准的工具调用（位阶开启「执行前批准」时 agent 挂起等待） */
+  oracleApproval: OracleApprovalRequest | null;
+  /** 批准队列消费者：返回 Promise（造物主点允许/拒绝后 resolve；免确认开→立即 true） */
+  requestOracleApproval: (name: string, tier: PermTier, args: Record<string, unknown>) => Promise<boolean>;
+  resolveOracleApproval: (ok: boolean) => void;
+  /** 本回合免确认（agent 回合结束自动复位） */
+  oracleAutoApprove: boolean;
+  setOracleAutoApprove: (v: boolean) => void;
   // ---------------- 统治者议会（AI 决策层：AI 控制决策，代码控制确定性） ----------------
   /** 议会面板开关（桌面坞 + 移动抽屉；与其余坞面板互斥） */
   showCouncil: boolean;
@@ -786,6 +802,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   oracleMsgs: [],
   oracleBusy: false,
   oraclePending: null,
+  // 神谕权限系统 v5 初始态
+  oracleAudit: [],
+  oracleApproval: null,
+  oracleAutoApprove: false,
   showCodex: false,
   civPanelCiv: null,
   mobilePanel: 'none',
@@ -1005,6 +1025,42 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }));
   },
   setOraclePending: (text) => set({ oraclePending: text }),
+  // ---------------- 神谕权限系统 v5 实现 ----------------
+  pushOracleAudit: (e) => {
+    set((s) => {
+      const audit = [...s.oracleAudit, { ...e, ts: Date.now() }];
+      return { oracleAudit: audit.length > 60 ? audit.slice(-60) : audit };
+    });
+  },
+  clearOracleAudit: () => set({ oracleAudit: [] }),
+  requestOracleApproval: (name, tier, args) =>
+    new Promise<boolean>((resolve) => {
+      // 免确认开 → 立即放行（agent 回合结束自动复位）
+      if (useGameStore.getState().oracleAutoApprove) {
+        resolve(true);
+        return;
+      }
+      _oracleApprovalResolve?.(false); // 前一笔如有残留 → 默认拒绝
+      _oracleApprovalResolve = resolve;
+      set({ oracleApproval: { name, tier, args, at: Date.now() } });
+    }),
+  resolveOracleApproval: (ok) => {
+    const r = _oracleApprovalResolve;
+    _oracleApprovalResolve = null;
+    set({ oracleApproval: null });
+    r?.(ok);
+  },
+  setOracleAutoApprove: (v) => {
+    if (v) {
+      // 开启免确认的同时，清掉已挂起的审批（均放行）
+      const r = _oracleApprovalResolve;
+      _oracleApprovalResolve = null;
+      set({ oracleApproval: null, oracleAutoApprove: true });
+      r?.(true);
+      return;
+    }
+    set({ oracleAutoApprove: false });
+  },
   // ---------------- 统治者议会 ----------------
   toggleCouncil: () => {
     sfx.ui(useGameStore.getState().showCouncil ? 'close' : 'open');
@@ -1263,7 +1319,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ events: eng.worldEvents });
     }
     getCouncil().reset();
-    set({ selUnit: null, selCiv: null, follow: false, oracleMsgs: [], oracleBusy: false, councilFeed: [], councilPending: [] });
+    set({ selUnit: null, selCiv: null, follow: false, oracleMsgs: [], oracleBusy: false, councilFeed: [], councilPending: [], oracleAutoApprove: false });
+    _oracleApprovalResolve?.(false); // 切世界：挂起审批作废（拒绝）
+    _oracleApprovalResolve = null;
+    set({ oracleApproval: null });
   },
   toggleHelp: () => {
     sfx.ui(get().showHelp ? 'close' : 'open');
@@ -1631,7 +1690,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       eng.regenerate(seed ?? Math.floor(Math.random() * 1e9), tpl?.params);
       eng.selectedId = null;
       eng.followId = null;
-      set({ events: eng.worldEvents, selUnit: null, selCiv: null, follow: false, oracleMsgs: [], oracleBusy: false });
+      set({ events: eng.worldEvents, selUnit: null, selCiv: null, follow: false, oracleMsgs: [], oracleBusy: false, oracleAutoApprove: false });
+      _oracleApprovalResolve?.(false);
+      _oracleApprovalResolve = null;
+      set({ oracleApproval: null });
     }
     // 新铸造的世界 = 新的旅程：直接进入游戏
     get().enterWorld();

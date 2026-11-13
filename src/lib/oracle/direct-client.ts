@@ -11,13 +11,21 @@
 // SSE 线协议与 /api/oracle/agent 完全一致：data: {"r"|"t"|"err"} \n\n + data: [DONE]。
 // dsh 持久会话面（M-O4 相三前端接线）：仅中继通道附加 body.dsh（服务端权威历史）——
 //   本站后端（Next 静态白名单路由）与 corsDirect 不识别该面，永不发送；无 dsh 时 body 逐字节不变。
-import type { AgentChatMessage, OracleProviderConfig } from './types';
+import type { AgentChatMessage, OracleProviderConfig, AgentToolCall } from './types';
+import { NativeCallAccumulator, parseNonStreamToolCalls, type OpenAIToolDef } from './native-tools';
 
-/** 统一模型调用结果（与 agent.ts callModel 返回同构） */
+export type { OpenAIToolDef } from './native-tools';
+
+/** 统一模型调用结果（与 agent.ts callModel 返回同构）。
+ *  v5：toolCalls 承载原生函数调用（仅 openai 兼容端点直连通道产生；旧协议路径恒 undefined）。 */
 export interface ModelCallResult {
   content: string;
   reasoning: string;
   err: string;
+  /** 原生函数调用（协议层结构化产物——告别 markdown JSON 围栏解析） */
+  toolCalls?: AgentToolCall[];
+  /** 端点不支持 tools 参数（400 且响应体提及 tool/function）——agent 回退旧协议 */
+  nfcUnsupported?: boolean;
 }
 
 export interface RouteCallbacks {
@@ -41,6 +49,9 @@ export interface DshSnapshot {
 export interface RouteExtras {
   /** dsh 持久会话面：仅中继通道生效——body.dsh={sessionId[,snapshot]}，历史由 oracle-server 事件日志权威投影 */
   dsh?: { sessionId: string; snapshot?: DshSnapshot };
+  /** 原生函数调用工具定义（v5）：仅 openai 兼容端点浏览器直连通道生效；
+   *  中继/本站后端讲旧线协议（纯文本流），不识别 tools——agent 自动回退旧 JSON 协议 */
+  nativeTools?: OpenAIToolDef[];
 }
 
 const TIMEOUT_MS = 120_000;
@@ -291,20 +302,22 @@ function toAnthropicPayload(messages: AgentChatMessage[]): {
   const rest = messages[0]?.role === 'assistant' ? messages.slice(1) : messages.slice();
   const merged: { role: 'user' | 'assistant'; content: string }[] = [];
   for (const m of rest) {
+    const role: 'user' | 'assistant' = m.role === 'user' ? 'user' : 'assistant'; // v5：tool 消息不上此道，防御归一
     const last = merged[merged.length - 1];
-    if (last && last.role === m.role) last.content = `${last.content}\n\n${m.content}`;
-    else merged.push({ role: m.role, content: m.content });
+    if (last && last.role === role) last.content = `${last.content}\n\n${m.content}`;
+    else merged.push({ role, content: m.content });
   }
   if (merged.length === 0) throw new Error('[anthropic] 除系统提示词外至少需要一条消息');
   if (merged[0].role === 'assistant') merged.unshift({ role: 'user', content: '（开始）' });
   return { system, messages: merged };
 }
 
-/** 泵取 OpenAI 兼容 SSE（reasoning_content/reasoning → r，content → t） */
+/** 泵取 OpenAI 兼容 SSE（reasoning_content/reasoning → r，content → t；v5：delta.tool_calls → 累积器） */
 async function pumpDirectOpenAI(
   upstream: ReadableStream<Uint8Array>,
   cb: RouteCallbacks,
   state: { content: string; reasoning: string },
+  nfc: NativeCallAccumulator,
 ): Promise<void> {
   const reader = upstream.getReader();
   const decoder = new TextDecoder();
@@ -342,6 +355,10 @@ async function pumpDirectOpenAI(
         if (typeof delta.content === 'string' && delta.content) {
           state.content += delta.content;
           cb.onDelta?.({ text: delta.content });
+        }
+        // v5 原生函数调用：流式 tool_calls 分片累积（index 对齐拼接 arguments）
+        if (Array.isArray((delta as Record<string, unknown>).tool_calls)) {
+          nfc.push((delta as Record<string, unknown>).tool_calls);
         }
       } catch {
         /* 忽略心跳/注释行 */
@@ -410,26 +427,69 @@ async function pumpDirectAnthropic(
   if (!gotAny && !state.content) throw new Error(`[${label}] 流式响应为空`);
 }
 
-/** 浏览器直连 OpenAI 兼容端点。兼容非流式 JSON 回包（部分网关忽略 stream:true）。 */
+/** 消息转换（v5 双协议）：
+ *  · 原生 FC：messages[0]（assistant 系统提示）→ role:'system'；assistant.tool_calls →
+ *    tool_calls 结构（arguments JSON 化）；role:'tool' 逐条回传（tool_call_id）。
+ *  · 旧协议直连：原样透传（与 v6 逐字节一致）。 */
+function toOpenAIMessages(messages: AgentChatMessage[], native: boolean): Record<string, unknown>[] {
+  if (!native) return messages as unknown as Record<string, unknown>[];
+  const out: Record<string, unknown>[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (i === 0 && m.role === 'assistant' && !m.tool_calls) {
+      out.push({ role: 'system', content: m.content });
+      continue;
+    }
+    if (m.role === 'tool') {
+      out.push({ role: 'tool', tool_call_id: m.tool_call_id ?? '', content: m.content });
+      continue;
+    }
+    if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+      out.push({
+        role: 'assistant',
+        content: m.content || '',
+        tool_calls: m.tool_calls.map((c) => ({
+          id: c.id,
+          type: 'function',
+          function: { name: c.name, arguments: JSON.stringify(c.args ?? {}) },
+        })),
+      });
+      continue;
+    }
+    out.push({ role: m.role, content: m.content });
+  }
+  return out;
+}
+
+/** 浏览器直连 OpenAI 兼容端点。兼容非流式 JSON 回包（部分网关忽略 stream:true）。
+ *  v5：nativeTools 存在时启用原生函数调用（tools + tool_choice），流式 tool_calls 分片
+ *  累积解析；端点不支持 tools（400 且提及 tool/function）→ nfcUnsupported 标记，agent 回退旧协议。 */
 async function streamDirectOpenAI(
   provider: OracleProviderConfig,
   messages: AgentChatMessage[],
   deep: boolean,
   cb: RouteCallbacks,
+  nativeTools?: OpenAIToolDef[],
 ): Promise<ModelCallResult> {
   const label = provider.label || provider.model || 'openai';
   const url = normalizeOpenAIUrl(provider.baseUrl ?? '');
+  const native = !!nativeTools && nativeTools.length > 0;
   const payload: Record<string, unknown> = {
     model: provider.model,
-    messages,
+    messages: toOpenAIMessages(messages, native),
     stream: true,
     max_tokens: 6000, // 部分兼容端点默认上限低，截断的 JSON 工具块会直接失败（与服务端同参）
   };
+  if (native) {
+    payload.tools = nativeTools;
+    payload.tool_choice = 'auto';
+  }
   if (typeof provider.temperature === 'number') payload.temperature = provider.temperature;
   void deep; // 推理模型原生输出 reasoning_content，解析侧统一处理
 
   const { signal, cleanup } = linkedAbort(cb.signal);
   const state = { content: '', reasoning: '' };
+  const nfc = new NativeCallAccumulator();
   // Ollama 等本地端点可无密钥：无 key 时不下发 Authorization（避免 "Bearer undefined" 灰头）
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (provider.apiKey?.trim()) headers.Authorization = `Bearer ${provider.apiKey}`;
@@ -440,7 +500,14 @@ async function streamDirectOpenAI(
       body: JSON.stringify(payload),
       signal,
     });
-    if (!res.ok) return { content: '', reasoning: '', err: await describeBadResponse(label, res) };
+    if (!res.ok) {
+      const bad = await describeBadResponse(label, res);
+      // 端点不认 tools 参数 → 标记回退（agent 本回合改用旧 JSON 协议，后续回合记忆）
+      if (native && res.status === 400 && /tool|function/i.test(bad)) {
+        return { content: '', reasoning: '', err: bad, nfcUnsupported: true };
+      }
+      return { content: '', reasoning: '', err: bad };
+    }
     if (!res.body) return { content: '', reasoning: '', err: `[${label}] 响应无流式体` };
     const ctype = res.headers.get('content-type') ?? '';
     if (ctype.includes('application/json')) {
@@ -457,12 +524,14 @@ async function streamDirectOpenAI(
         state.reasoning += reasoning;
         cb.onDelta?.({ reason: reasoning });
       }
-      if (!content && !reasoning) return { content: '', reasoning: '', err: `[${label}] 响应为空` };
-      return { content: state.content, reasoning: state.reasoning, err: '' };
+      const toolCalls = parseNonStreamToolCalls(msg);
+      if (!content && !reasoning && toolCalls.length === 0) return { content: '', reasoning: '', err: `[${label}] 响应为空` };
+      return { content: state.content, reasoning: state.reasoning, err: '', toolCalls: toolCalls.length ? toolCalls : undefined };
     }
-    await pumpDirectOpenAI(res.body, cb, state);
-    if (!state.content && !state.reasoning) return { content: '', reasoning: '', err: `[${label}] 流式响应为空` };
-    return { content: state.content, reasoning: state.reasoning, err: '' };
+    await pumpDirectOpenAI(res.body, cb, state, nfc);
+    const toolCalls = nfc.finalize();
+    if (!state.content && !state.reasoning && toolCalls.length === 0) return { content: '', reasoning: '', err: `[${label}] 流式响应为空` };
+    return { content: state.content, reasoning: state.reasoning, err: '', toolCalls: toolCalls.length ? toolCalls : undefined };
   } catch (e) {
     if (cb.signal?.aborted || externalAborted(e)) return { content: state.content, reasoning: state.reasoning, err: '已中止' };
     return { content: '', reasoning: state.reasoning, err: describeNetworkError(label, url, e) };
@@ -535,6 +604,8 @@ const BUILTIN_OFFLINE_MSG =
  * - local：不走此层（agent.ts 先行分流）。
  * - builtin：中继（若配）→ 本站后端（若在）→ 准确「离线」文案。
  * - openai/anthropic：中继（若配）→ 本站后端（若在）→ 浏览器直连 → 精确错误（绝不误报离线）。
+ * - extras.nativeTools（v5）：仅 openai 直连通道生效——原生函数调用工具定义下发；
+ *   中继/本站后端讲旧线协议，静默忽略。
  * - extras.dsh：dsh 持久会话面（M-O4 相三）——仅中继通道附加 body.dsh.sessionId；
  *   本站后端/corsDirect 不识别该面，静默忽略 extras（发方职责：仅在中继场景传入）。
  */
@@ -569,7 +640,7 @@ export async function routeCallModel(
   if (provider.kind === 'builtin') {
     return { content: '', reasoning: '', err: BUILTIN_OFFLINE_MSG };
   }
-  if (provider.kind === 'openai') return streamDirectOpenAI(provider, messages, deep, cb);
+  if (provider.kind === 'openai') return streamDirectOpenAI(provider, messages, deep, cb, extras?.nativeTools);
   if (provider.kind === 'anthropic') return streamDirectAnthropic(provider, messages, deep, cb);
   return { content: '', reasoning: '', err: `未知的 provider.kind：${String(provider.kind)}` };
 }

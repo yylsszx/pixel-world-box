@@ -1,11 +1,12 @@
-// ============ 神谕 Agent 扩展工具执行器（客户端桥 · v2 Harness） ============
+// ============ 神谕 Agent 扩展工具执行器（客户端桥 · v5 Root Agent Harness） ============
 // runExt：bridge.ts 的 default 分支委托到这里（41-c 接线）。
-// 覆盖 L0-L6 扩展工具：世界大战/联盟/家族/演化/种族/兴衰史/成就/纪事检索/统计快照/
-// 触发器/存档槽/能力自省 + 25+ 神力/单位改写/王国操控/外交/旨意/基因/大战/纪元/时间/镜头。
+// 覆盖 L0-L7 扩展工具：世界大战/联盟/家族/演化/种族/兴衰史/成就/纪事检索/统计快照/
+// 触发器/存档槽/能力自省 + 25+ 神力/单位改写/王国操控/外交/旨意/基因/大战/纪元/时间/镜头
+// + v5 全界面遥控（get_ui_state/ui_control）/ 撤销重做 / 行为审计 / ROOT 根壳（run_script 异步执行器）。
 // 铁律：不修改引擎文件；对 41-a 并行开发的机制 v2（update_law/counters）只走防御式 unknown cast。
 import type { GameEngine } from '@/lib/game/engine';
 import { resolveRace } from '@/lib/game/agentLaws';
-import { RACES, RACE_REL_BASE, JOBS, describeCond } from '@/lib/game/types';
+import { RACES, RACE_REL_BASE, JOBS, describeCond, T } from '@/lib/game/types';
 import type { Unit, Civ, Effect, CasusKind, DirectiveKind } from '@/lib/game/types';
 import { W, H } from '@/lib/game/constants';
 import { ITEM_DEFS, RARITY_META, SLOT_NAMES } from '@/lib/game/items';
@@ -14,6 +15,9 @@ import { ACHIEVEMENTS } from '@/lib/game/achievements';
 import { addCreation, patchCreation, removeCreation, listCreations, getCreation, describeCreation, hydrateOneItem } from '@/lib/game/creations';
 import type { ItemCreation, SpeciesCreation, WeaponCreation } from '@/lib/game/creations';
 import { AGENT_TOOLS, TOOL_LAYERS } from './tools';
+import { permSnapshot, loadPermSettings } from './permissions';
+import { undo, redo, undoDepth, redoDepth } from '@/lib/ui/undo';
+import type { AgentToolResult } from './types';
 
 // ---- 参数 coercion（与 bridge.ts 同款防御式解析，本地复制不引私有函数） ----
 const str = (v: unknown, d = ''): string => (typeof v === 'string' ? v : d);
@@ -1283,6 +1287,8 @@ export function runExt(eng: GameEngine, name: string, a: Record<string, unknown>
         toolCount: AGENT_TOOLS.length,
         tools: AGENT_TOOLS.map((t) => t.name),
         layers: TOOL_LAYERS.map((l) => ({ layer: l.layer, count: l.tools.length, tools: l.tools })),
+        // v5：当前权限位阶快照（哪些位阶已解锁/待批准）——模型据此选择可行路径
+        perm: permSnapshot(loadPermSettings()),
       };
     }
 
@@ -1362,7 +1368,261 @@ export function runExt(eng: GameEngine, name: string, a: Record<string, unknown>
       throw new Error('action 只支持 jump/follow_unit/follow_civ/unfollow');
     }
 
+    // ================= L6.5 界面操控（v5：全 UI 遥控） =================
+    case 'get_ui_state': {
+      return uiSnapshot(eng);
+    }
+
+    case 'ui_control': {
+      const action = str(a.action).trim();
+      const st = useGameStore.getState();
+      switch (action) {
+        case 'panel': {
+          const p = str(a.panel).trim();
+          const mode = str(a.mode, 'toggle') as 'open' | 'close' | 'toggle';
+          if (p === 'civ') {
+            const civId = Math.round(num(a.civ, -1));
+            if (mode === 'open') {
+              if (civId < 0) throw new Error('civ 面板需要 civ 参数（王国 id，可用 get_kingdoms 查）');
+              st.openCivPanel(civId);
+            } else if (mode === 'toggle') {
+              st.openCivPanel(st.civPanelCiv != null ? null : civId >= 0 ? civId : null);
+            } else st.openCivPanel(null);
+            return { panel: 'civ', open: useGameStore.getState().civPanelCiv != null };
+          }
+          const entry = PANEL_MAP[p];
+          if (!entry) throw new Error(`未知面板「${p}」（可用：${Object.keys(PANEL_MAP).join('/')}/civ）`);
+          const cur = (useGameStore.getState() as unknown as Record<string, boolean>)[entry.key] === true;
+          if ((mode === 'open' && !cur) || (mode === 'close' && cur) || mode === 'toggle') (st as unknown as Record<string, () => void>)[entry.toggle]();
+          const after = (useGameStore.getState() as unknown as Record<string, boolean>)[entry.key] === true;
+          return { panel: p, open: after, label: entry.label };
+        }
+        case 'set_speed': {
+          const v = Math.round(clamp(num(a.speed, 1), 0, 16));
+          st.setSpeed(v);
+          return { speed: v, paused: v === 0 };
+        }
+        case 'pause': {
+          if (st.speed !== 0) st.togglePause();
+          return { speed: 0, paused: true };
+        }
+        case 'resume': {
+          if (st.speed === 0) st.togglePause();
+          const now = useGameStore.getState();
+          return { speed: now.speed, paused: false };
+        }
+        case 'jump': {
+          const x = Math.round(clamp(num(a.x, -1), 0, W - 1));
+          const y = Math.round(clamp(num(a.y, -1), 0, H - 1));
+          st.jumpTo(x, y);
+          return { jumped: true, at: [x, y] };
+        }
+        case 'overlay': {
+          const mode = str(a.overlay, 'none') as 'none' | 'political' | 'temperature' | 'moisture' | 'density' | 'biome' | 'alliance';
+          if (!['none', 'political', 'temperature', 'moisture', 'density', 'biome', 'alliance'].includes(mode)) {
+            throw new Error('overlay 只支持 none/political/temperature/moisture/density/biome/alliance');
+          }
+          st.setOverlayMode(mode);
+          return { overlay: mode };
+        }
+        case 'cinema':
+        case 'sound':
+        case 'minimap':
+        case 'view_mode': {
+          const target = a.on != null ? bool(a.on, true) : undefined;
+          const toggleKey = { cinema: 'toggleCinema', sound: 'toggleSound', minimap: 'toggleMinimap', view_mode: 'toggleViewMode' }[action];
+          const stateKey = { cinema: 'cinema', sound: 'soundOn', minimap: 'showMinimap', view_mode: 'viewMode' }[action];
+          const cur = (st as unknown as Record<string, boolean>)[stateKey] === true;
+          if (target === undefined || target !== cur) (st as unknown as Record<string, () => void>)[toggleKey]();
+          const after = (useGameStore.getState() as unknown as Record<string, boolean>)[stateKey] === true;
+          return { [action]: after };
+        }
+        case 'toast': {
+          const text = str(a.text).trim().slice(0, 80) || '神谕轻语';
+          const tone = (['info', 'good', 'war', 'peace', 'danger'] as const).includes(str(a.tone, 'info') as 'info')
+            ? (str(a.tone, 'info') as 'info' | 'good' | 'war' | 'peace' | 'danger')
+            : 'info';
+          st.pushToast(text, tone, true);
+          return { toast: text, tone };
+        }
+        case 'note': {
+          const text = str(a.text).trim().slice(0, 80) || '神谕注视着一切';
+          const tone = (['info', 'good', 'war', 'peace', 'danger'] as const).includes(str(a.tone, 'info') as 'info')
+            ? (str(a.tone, 'info') as 'info' | 'good' | 'war' | 'peace' | 'danger')
+            : 'info';
+          st.showNote(text, tone);
+          return { note: text, tone };
+        }
+        case 'select_unit': {
+          const id = Math.round(num(a.id, -1));
+          const u = mustUnit(eng, id);
+          st.select(u.id, null);
+          return { selected: u.id, name: u.name };
+        }
+        case 'select_civ': {
+          const id = Math.round(num(a.civ, -1));
+          const c = eng.civs[id];
+          if (!c || !c.alive) throw new Error(`没有 id=${id} 的在世王国（用 get_kingdoms 查）`);
+          st.selectCiv(id);
+          return { selected: c.name, id };
+        }
+        case 'fx': {
+          const key = str(a.fx).trim();
+          const prefs = useGameStore.getState().fxPrefs;
+          if (key === 'fxDensity') {
+            const v = Math.round(clamp(num(a.value, 1), 0, 2)) as 0 | 1 | 2;
+            useGameStore.getState().setFxPrefs({ ...prefs, fxDensity: v });
+            return { fxDensity: v };
+          }
+          if (!(key in prefs)) throw new Error(`未知效果键「${key}」（可用：dmgNumbers/battleFlash/riverFlow/ambience/fxDensity/blood/corpses/hpBars/dayNight）`);
+          const v = a.value != null ? num(a.value, 1) !== 0 : !(prefs as unknown as Record<string, boolean>)[key];
+          useGameStore.getState().setFxPrefs({ ...prefs, [key]: v } as typeof prefs);
+          return { [key]: v };
+        }
+        case 'save_dialog': {
+          const mode = str(a.dialog, 'save') === 'load' ? 'load' : 'save';
+          st.openSaveDialog(mode);
+          return { dialog: mode };
+        }
+        default:
+          throw new Error('action 只支持 panel/set_speed/pause/resume/jump/overlay/cinema/sound/minimap/view_mode/toast/note/select_unit/select_civ/fx/save_dialog');
+      }
+    }
+
+    case 'undo_world': {
+      const msg = undo();
+      if (!msg) throw new Error('撤销栈为空——没有可撤销的神力/笔刷操作（只有工具操作可撤销，模拟本身不可逆）');
+      return { undone: msg, remaining: undoDepth() };
+    }
+
+    case 'redo_world': {
+      const msg = redo();
+      if (!msg) throw new Error('重做栈为空——没有可重做的操作');
+      return { redone: msg, remaining: redoDepth() };
+    }
+
+    case 'get_audit_log': {
+      const limit = Math.max(1, Math.min(40, Math.round(num(a.limit, 20))));
+      const audit = useGameStore.getState().oracleAudit;
+      return {
+        entries: audit.slice(-limit).reverse().map((e) => ({
+          ts: new Date(e.ts).toISOString().slice(11, 19),
+          name: e.name,
+          tier: e.tier,
+          verdict: e.verdict,
+          ok: e.ok,
+          brief: e.brief,
+        })),
+      };
+    }
+
     default:
       throw new Error(`未知工具 ${name}`);
+  }
+}
+
+// ---------------- v5 界面遥控辅助 ----------------
+
+/** 面板开关映射：面板键 → { store 状态键, toggle 动作名, 中文标签 } */
+const PANEL_MAP: Record<string, { key: string; toggle: string; label: string }> = {
+  kingdoms: { key: 'showKingdoms', toggle: 'toggleKingdoms', label: '王国榜' },
+  eco: { key: 'showEco', toggle: 'toggleEco', label: '生态' },
+  ach: { key: 'showAch', toggle: 'toggleAch', label: '成就' },
+  nature: { key: 'showNature', toggle: 'toggleNature', label: '自然' },
+  evo: { key: 'showEvo', toggle: 'toggleEvo', label: '演化图谱' },
+  race: { key: 'showRace', toggle: 'toggleRace', label: '种族' },
+  neuro: { key: 'showNeuro', toggle: 'toggleNeuro', label: 'NeuroCore' },
+  societal: { key: 'showSocietal', toggle: 'toggleSocietal', label: '社会涌现' },
+  oracle: { key: 'showOracle', toggle: 'toggleOracle', label: '神谕' },
+  council: { key: 'showCouncil', toggle: 'toggleCouncil', label: '统治者议会' },
+  codex: { key: 'showCodex', toggle: 'toggleCodex', label: '造物图鉴' },
+  chronicle: { key: 'showChronicle', toggle: 'toggleChronicle', label: '纪事' },
+  triggers: { key: 'showTriggers', toggle: 'toggleTriggers', label: '触发器' },
+  dev: { key: 'showDev', toggle: 'toggleDevPanel', label: '开发者' },
+  help: { key: 'showHelp', toggle: 'toggleHelp', label: '帮助' },
+  minimap: { key: 'showMinimap', toggle: 'toggleMinimap', label: '小地图' },
+};
+
+/** 界面全状态快照（get_ui_state / ui_control 回执 / ROOT 壳 api.ui.state 共用） */
+function uiSnapshot(eng: GameEngine): Record<string, unknown> {
+  const st = useGameStore.getState();
+  const panels: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(PANEL_MAP)) panels[k] = (st as unknown as Record<string, boolean>)[v.key] === true;
+  return {
+    panels,
+    civPanel: st.civPanelCiv,
+    speed: st.speed,
+    paused: st.speed === 0,
+    camera: { x: Math.round(eng.cam.x), y: Math.round(eng.cam.y), zoom: Math.round(eng.cam.zoom * 10) / 10 },
+    overlay: st.overlayMode,
+    cinema: st.cinema,
+    viewMode: st.viewMode,
+    sound: st.soundOn,
+    minimap: st.showMinimap,
+    follow: st.follow,
+    selection: { unit: st.selUnit, civ: st.selCiv },
+    fx: st.fxPrefs,
+    perm: permSnapshot(loadPermSettings()),
+  };
+}
+
+// ---------------- v5 ROOT 根壳（run_script 异步执行器） ----------------
+
+/** 根壳静态拒绝清单：浏览器外联/逃逸/定时炸弹——世界沙箱内自洽（引擎全对象仍然全开） */
+const ROOT_DENY_RE =
+  /\bfetch\s*\(|XMLHttpRequest|WebSocket\s*\(|EventSource\s*\(|localStorage|sessionStorage|indexedDB|document\s*[.[]|window\s*[.[]|self\s*[.[]|globalThis|eval\s*\(|Function\s*\(|import\s*\(|require\s*\(|location\s*[.[]|navigator\s*[.[]|postMessage|new\s+Worker|new\s+SharedWorker|setTimeout|setInterval|requestAnimationFrame|while\s*\(\s*(true|1|!!1)\s*\)|for\s*\(\s*;\s*;\s*\)/i;
+
+/** ROOT 根壳：任意 JS 直写引擎内核（bridge.executeOracleToolAsync 专路；异步 + 超时 + 日志采集） */
+export async function runRootScript(eng: GameEngine, a: Record<string, unknown>): Promise<AgentToolResult> {
+  const code = str(a.code);
+  if (!code.trim()) return { id: '', ok: false, data: null, error: 'code 不能为空' };
+  if (code.length > 16000) return { id: '', ok: false, data: null, error: `代码过长（${code.length} 字符 > 16000）——拆成多次调用` };
+  if (ROOT_DENY_RE.test(code)) {
+    const hit = (code.match(ROOT_DENY_RE) ?? [''])[0].slice(0, 40);
+    return { id: '', ok: false, data: null, error: `根壳禁用浏览器外联/逃逸/延时 API（命中：${hit}）。脚本应在引擎沙箱内自洽执行：数据操作用 engine，界面用 ui，输出用 log()。` };
+  }
+  const logs: string[] = [];
+  const log = (...xs: unknown[]): void => {
+    if (logs.length >= 60) return;
+    logs.push(xs.map((x) => (typeof x === 'string' ? x : (() => { try { return JSON.stringify(x, (_k, v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v)); } catch { return String(x); } })())).join(' '));
+  };
+  const ui = {
+    state: (): Record<string, unknown> => uiSnapshot(eng),
+    openPanel: (p: string): unknown => runExt(eng, 'ui_control', { action: 'panel', panel: p, mode: 'open' }),
+    closePanel: (p: string): unknown => runExt(eng, 'ui_control', { action: 'panel', panel: p, mode: 'close' }),
+    togglePanel: (p: string): unknown => runExt(eng, 'ui_control', { action: 'panel', panel: p }),
+    setSpeed: (v: number): unknown => runExt(eng, 'ui_control', { action: 'set_speed', speed: v }),
+    pause: (): unknown => runExt(eng, 'ui_control', { action: 'pause' }),
+    resume: (): unknown => runExt(eng, 'ui_control', { action: 'resume' }),
+    jump: (x: number, y: number): unknown => runExt(eng, 'ui_control', { action: 'jump', x, y }),
+    toast: (text: string, tone?: string): unknown => runExt(eng, 'ui_control', { action: 'toast', text, tone }),
+    fx: (key: string, value?: number): unknown => runExt(eng, 'ui_control', { action: 'fx', fx: key, value }),
+    overlay: (mode: string): unknown => runExt(eng, 'ui_control', { action: 'overlay', overlay: mode }),
+  };
+  // AsyncFunction 沙箱：注入 engine/world/RACES/T/ui/log；返回值/日志/错误结构化回传
+  const AsyncFunction = Object.getPrototypeOf(async function () { /* 沙箱构造器 */ }).constructor as new (...args: string[]) => (api: unknown) => Promise<unknown>;
+  try {
+    const fn = new AsyncFunction('api', `const {engine, world, RACES, T, ui, log} = api;\n${code}`) as (api: unknown) => Promise<unknown>;
+    const api = { engine: eng, world: { W, H }, RACES, T, ui, log };
+    const result = await Promise.race([
+      fn(api),
+      new Promise<never>((_, rej) => {
+        setTimeout(() => rej(new Error('脚本执行超时（>12s）——请缩小运算规模或拆分调用')), 12_000);
+      }),
+    ]);
+    let packedResult: unknown = null;
+    try {
+      packedResult = result === undefined ? null : JSON.parse(JSON.stringify(result, (_k, v) => {
+        if (typeof v === 'number') return Math.round(v * 100) / 100;
+        if (typeof v === 'string' && v.length > 2000) return v.slice(0, 2000) + '…';
+        return v;
+      }));
+    } catch {
+      packedResult = String(result).slice(0, 2000);
+    }
+    return { id: '', ok: true, data: { result: packedResult, logs, year: eng.yearF ? Math.round(eng.yearF) : undefined }, error: undefined };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { id: '', ok: false, data: { logs }, error: `脚本错误：${msg}` };
   }
 }

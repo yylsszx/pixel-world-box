@@ -185,7 +185,8 @@ function getZAI(): Promise<Awaited<ReturnType<typeof ZAI.create>>> {
 async function streamBuiltin(body: AgentRequestBody): Promise<ReadableStream<Uint8Array>> {
   const zai = await getZAI();
   const completion = await zai.chat.completions.create({
-    messages: body.messages,
+    // v5：tool 角色不上此道（route 已限 user/assistant）——防御归一为 SDK 的角色枚举
+    messages: body.messages.map((m) => ({ role: m.role === 'user' ? 'user' as const : 'assistant' as const, content: m.content })),
     stream: true,
     thinking: { type: body.deep ? 'enabled' : 'disabled' },
   });
@@ -292,12 +293,10 @@ function toAnthropicPayload(
   const rest = messages[0]?.role === 'assistant' ? messages.slice(1) : messages.slice();
   const merged: { role: 'user' | 'assistant'; content: string }[] = [];
   for (const m of rest) {
+    const role: 'user' | 'assistant' = m.role === 'user' ? 'user' : 'assistant'; // v5：tool 消息不上此道，防御归一
     const last = merged[merged.length - 1];
-    if (last && last.role === m.role) {
-      last.content = `${last.content}\n\n${m.content}`; // 连续同角色合并
-    } else {
-      merged.push({ role: m.role, content: m.content });
-    }
+    if (last && last.role === role) last.content = `${last.content}\n\n${m.content}`;
+    else merged.push({ role, content: m.content });
   }
   if (merged.length === 0) throw new Error('[anthropic] 除系统提示词外至少需要一条消息');
   if (merged[0].role === 'assistant') merged.unshift({ role: 'user', content: '（开始）' }); // 防御：首条必须是 user

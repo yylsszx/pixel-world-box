@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.79-preview';
+export const GAME_VERSION = 'v0.80-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.80-preview',
+    date: '2026-11-14',
+    items: [
+      '神谕 OS v5·Root Agent：把整个游戏当作一台电脑——五档可调权限位阶（观察者/神使/造物主/界域之影/ROOT），权限中心一键调级，每位阶可设「执行前须经我批准」；行为审计流全程记录每次调用的权限判定与结果',
+      '原生函数调用协议：DeepSeek/Kimi/通义千问等 OpenAI 兼容端点直连时工具调用由协议层结构化承载（tool_calls），告别 markdown JSON 围栏解析失败；不支持端点与中继后端自动回退旧协议',
+      'ROOT 根壳：解锁后神谕可用 run_script 在引擎内核执行任意 JavaScript——注入活引擎全对象直接创造无工具覆盖的新机制、批量手术、深度探测（禁浏览器外联/同步死循环拒绝/超时 12s 守卫）',
+      '全界面遥控：ui_control 开/关任意面板、调速、镜头跳转、切覆盖层、电影模式、九项画面效果开关、推送浮层与内联提示、选中单位进查看器；undo_world/redo_world 区域级撤销重做归入神谕权柄',
+    ],
+  },
   {
     ver: 'v0.79-preview',
     date: '2026-11-13',

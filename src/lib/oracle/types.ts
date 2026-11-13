@@ -27,12 +27,22 @@ export interface OracleProviderConfig {
   relayUrl?: string;
 }
 
+/** 会话消息（v5 双协议）：
+ *  · 旧协议（builtin/中继/anthropic/local）：role 仅 user/assistant，工具调用以
+ *    ```json {"tool_calls":…}``` 文本块承载，结果以 {"tool_results":…} 用户消息回传；
+ *  · 原生函数调用（openai 兼容端点直连）：assistant 消息可携带 tool_calls 结构，
+ *    执行结果以 role:'tool' + tool_call_id 逐条回传——协议层承载，无文本解析。
+ *  约定不变：messages[0] 为承载系统提示词的 assistant 消息（直连层自行转 system）。 */
 export interface AgentChatMessage {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'tool';
   content: string;
+  /** assistant 消息的原生函数调用（v5；仅原生 FC 路径使用） */
+  tool_calls?: AgentToolCall[];
+  /** tool 角色消息的对应调用 id（原生 FC 结果回传用） */
+  tool_call_id?: string;
 }
 
-/** 模型发出的工具调用（由前端解析 json 代码块中的 tool_calls 得到，执行后回传） */
+/** 模型发出的工具调用（原生 FC 由协议层解析；旧协议由前端解析 json 代码块得到） */
 export interface AgentToolCall {
   id: string;
   name: string;

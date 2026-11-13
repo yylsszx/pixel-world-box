@@ -1,22 +1,21 @@
-// ============ 神谕 Agent 任务完成引擎（v3 · Task Completion Engine） ============
-// 多轮工具调用协议：模型回复 → 解析 json tool_calls 块 → 本地执行（活引擎）→
-// 结果回传 → 继续推理……直到模型给出最终 Markdown 回答。
-// v3 大幅强化「任务完成率」：
-//   ① 解析器 v2：大小写围栏 / 裸 JSON 定位 / 尾逗号修复 / 去重——格式轻微走样不再丢调用；
-//   ② 解析失败回传纠错：疑似工具块但 JSON 坏 → 把错误与规范模板回传模型同轮重试；
-//   ③ 参数修复层：数字串→数字、"true"→布尔、JSON 串→对象/数组、enum 大小写归一；
-//   ④ 未知工具模糊建议（编辑距离）＋ 失败错误附收到的参数——模型可自我纠错；
-//   ⑤ 写操作回执台账（ledger）＋「全失败却声称完成」幻觉检测 v2；
-//   ⑥ 循环上限 8→14；到顶不空手而归——注入收束指令强制产出最终总结；
-//   ⑦ 深度思考（deep）全链路接线；空响应单次重试。
-// 每一轮模型调用都经由 direct-client.ts 的 v6 路由（中继后端 → 本站后端 → corsDirect
-// 浏览器直连），对协议端点而言是一次无状态 SSE 请求（会话历史由客户端持有）。
+// ============ 神谕 Agent 任务完成引擎（v5 · Root Agent Harness） ============
+// 造物主钦定标准：Hermes agent / OpenClaw / Grok bot 级——把整个游戏当作一台电脑，
+// 神谕拥有全部可调权限的 root。v5 三大升级：
+//   ① 双协议循环：OpenAI 兼容端点直连走「原生函数调用」（协议层结构化 tool_calls，
+//     解析失败率归零——告别 markdown JSON 围栏抢救）；中继/本站后端/anthropic/local
+//     自动回退旧 JSON 协议（v3 解析器全套保留）。
+//   ② 权限闸门：每个工具按五档位阶（read/write/mech/ui/root）过闸——等级不足给结构化
+//     拒绝文案；位阶开启「执行前批准」时挂起等待造物主批准（允许/拒绝/免确认）。
+//   ③ 根壳执行：run_script 走异步执行器（AsyncFunction 沙箱 + 超时守卫）。
+// 保留 v4 三重防失控守卫（同签名失败/无进展/中止）与写操作台账 + 幻觉检测（旧协议）。
+// 每轮模型调用经由 direct-client.ts v6 路由（中继 → 本站后端 → 浏览器直连）。
 import type { AgentChatMessage, AgentToolCall, AgentToolResult, OracleProviderConfig } from './types';
-import { executeOracleTool } from './bridge';
+import { executeOracleTool, executeOracleToolAsync } from './bridge';
 import { AGENT_TOOLS, type ToolArgDef } from './tools';
-import { getEngine } from '@/store/gameStore';
+import { getEngine, useGameStore } from '@/store/gameStore';
 import { callLocalModel } from './local-provider';
-import { routeCallModel } from './direct-client';
+import { routeCallModel, probeSiteBackend, type OpenAIToolDef } from './direct-client';
+import { checkToolPerm, loadPermSettings, tierOfTool, type OraclePermSettings, type PermTier } from './permissions';
 
 /** 单条消息里携带的工具事件（面板气泡渲染用） */
 export interface OracleToolEvent {
@@ -51,7 +50,19 @@ export interface AgentTurnResult {
   reasoning?: string;
 }
 
-// ============ 一 · JSON 修复与解析 ============
+/** v5 回合选项：权限设置 + 原生函数调用 + 批准回调 */
+export interface AgentTurnOptions {
+  /** 权限设置（缺省读 localStorage 持久化值） */
+  perms?: OraclePermSettings;
+  /** 原生函数调用工具定义（调用方按当前权限过滤后下发；agent 自行判定通道可用性） */
+  nativeTools?: OpenAIToolDef[];
+  /** 原生模式系统提示词（agent 判定通道不可用原生时自动换回旧协议提示词） */
+  systemPromptNative?: string;
+  /** 工具批准回调（缺省用 gameStore 审批队列：允许/拒绝/免确认） */
+  requestApproval?: (name: string, tier: PermTier, args: Record<string, unknown>) => Promise<boolean>;
+}
+
+// ============ 一 · JSON 修复与解析（旧协议保留） ============
 
 /** 尝试解析 JSON：原样 → 去尾逗号 → 去零宽字符+尾逗号；全部失败返回 null */
 function tryParseJson(s: string): unknown {
@@ -118,7 +129,7 @@ function looksLikeToolObject(o: Record<string, unknown>): boolean {
  * 解析器 v3：除 v2 的 ①整体 JSON ②大小写不敏感围栏 ③裸 {"tool_calls" 定位外，新增：
  *  ④ {"tool_call":{...}} 单数格；⑤ 裸 {"name":...,"args":{...}} 单对象（模型常见的自然单调用写法）
  *  ⑥ 裸 [{"name":...},...] 数组。同名同参调用去重；解析失败块进 malformed 供同轮纠错。
- *  「夸了一顿却没干活」的根因之一：模型裸单对象写法在 v2 下完全解析不到且无 malformed 上报。 */
+ */
 export function extractToolCalls(content: string): ToolParseOutcome {
   const calls: AgentToolCall[] = [];
   const malformed: string[] = [];
@@ -153,23 +164,23 @@ export function extractToolCalls(content: string): ToolParseOutcome {
         o.tool_calls.forEach((c, i) => pushCall(c, i + 1));
         return true;
       }
-      // 形态二（v3）：{"tool_call":{...}} 单数
+      // 形态二：{"tool_call":{...}} 单数
       if (o.tool_call && typeof o.tool_call === 'object') {
         pushCall(o.tool_call, 1);
         return true;
       }
-      // 形态三（v3）：{"name":...,"args":{...}} 裸单对象（须像工具名）
+      // 形态三：{"name":...,"args":{...}} 裸单对象（须像工具名）
       if (looksLikeToolObject(o)) {
         pushCall(o, 1);
         return true;
       }
-      // 形态四（v3）：{"calls":[...]}
+      // 形态四：{"calls":[...]}
       if (Array.isArray(o.calls) && o.calls.length > 0) {
         o.calls.forEach((c, i) => pushCall(c, i + 1));
         return true;
       }
     }
-    // 形态五（v3）：裸数组 [{"name":...},...]
+    // 形态五：裸数组 [{"name":...},...]
     if (j !== null && Array.isArray(j)) {
       const arr = j as unknown[];
       const toolObjs = arr.filter((c) => c && typeof c === 'object' && looksLikeToolObject(c as Record<string, unknown>));
@@ -364,7 +375,7 @@ export function suggestTools(name: string): string[] {
 
 // ============ 四 · 写操作台账与幻觉检测 ============
 
-/** 写操作工具清单（回执台账用；与 prompt 的写操作铁律同源；v5 补图鉴四写） */
+/** 写操作工具清单（回执台账用；与 prompt 的写操作铁律同源） */
 const WRITE_TOOLS = new Set([
   'terrain_paint', 'era_control', 'spawn_creatures', 'spawn_species', 'hybridize_species', 'set_unit_attr', 'teleport_unit', 'kill_units',
   'heal_area', 'gene_control', 'spawn_item', 'cast_fx', 'civ_control', 'issue_directive',
@@ -373,6 +384,7 @@ const WRITE_TOOLS = new Set([
   'forge_divine_weapon', 'merge_kingdoms',
   'save_creation', 'edit_creation', 'delete_creation', 'edit_race',
   'save_world', 'time_control', 'camera_control',
+  'ui_control', 'undo_world', 'redo_world', 'run_script',
 ]);
 
 /** 结果压成工具回传消息体的紧凑 JSON（截断保护：单结果 6000 字符） */
@@ -415,12 +427,12 @@ async function callModel(
   deep: boolean,
   signal: AbortSignal | undefined,
   onDelta: AgentTurnCallbacks['onDelta'],
-): Promise<{ content: string; reasoning: string; err: string }> {
+  nativeTools?: OpenAIToolDef[],
+): Promise<{ content: string; reasoning: string; err: string; toolCalls?: AgentToolCall[]; nfcUnsupported?: boolean }> {
   // ── 本地模型分支（浏览器端原生推理，无需服务器） ──
   if (provider.kind === 'local') {
     try {
       const result = await callLocalModel(provider, messages, signal);
-      // 本地模型一次性返回完整文本，通过 onDelta 一次性推送，兼容 agent 循环的流式接口
       onDelta?.({ text: result.content, reason: result.reasoning });
       return {
         content: result.content,
@@ -432,45 +444,42 @@ async function callModel(
     }
   }
 
-  // ── 云厂商统一路由（v6 API 接入适配）：中继后端 → 本站后端 → 浏览器直连（corsDirect）──
-  // 永不 throw；错误折进 err（自定义厂商直连失败给精确可行动文案，绝不误报「离线」——见 direct-client.ts）。
-  return routeCallModel(provider, messages, deep, { onDelta, signal });
+  // ── 云厂商统一路由：v5 附加原生函数调用面（仅 openai 直连通道生效） ──
+  const r = await routeCallModel(provider, messages, deep, { onDelta, signal }, nativeTools ? { nativeTools } : undefined);
+  return { content: r.content, reasoning: r.reasoning, err: r.err, toolCalls: r.toolCalls, nfcUnsupported: r.nfcUnsupported };
 }
 
-/** 会话防失控裁剪：保留首条系统提示 + 最近 59 条（中间整段丢弃） */
+/** 会话防失控裁剪：保留首条系统提示 + 最近 59 条（中间整段丢弃）。
+ *  v5（原生 FC）：裁剪边界不得落在 tool 消息上（tool 必须紧跟其 assistant.tool_calls，
+ *  否则兼容端点 400）——落界为 tool 时向后丢弃至非 tool 消息。 */
 function trimMessages(messages: AgentChatMessage[]): AgentChatMessage[] {
   const CAP = 60;
   if (messages.length <= CAP) return messages;
   const sys = messages[0];
-  const tail = messages.slice(-(CAP - 1));
+  let tail = messages.slice(-(CAP - 1));
+  while (tail.length > 0 && tail[0].role === 'tool') tail = tail.slice(1);
   return [sys, ...tail];
 }
 
-/** 执行一轮完整的 Agent 会话（含多轮工具循环）；永不 throw——错误进 result.error
- *  v4（超级演化轮）：工具循环轮数限制取消（默认 400 = 事实上的无限），改由三重智能守卫防失控：
- *  ① 同签名重复失败守卫：同一调用（名+参数）连续失败 ≥4 次注入换路指令，≥6 次强制收束；
- *  ② 无进展守卫：连续 8 轮没有任何成功的新工具调用 → 注入收束指令；
- *  ③ 中止信号全链路有效（造物主随时可停）。 */
 export async function runOracleAgentTurn(
   provider: OracleProviderConfig,
   history: AgentChatMessage[],
   cb: AgentTurnCallbacks = {},
   maxTurns = 400,
   deep = false,
+  options: AgentTurnOptions = {},
 ): Promise<AgentTurnResult> {
   const toolEvents: OracleToolEvent[] = [];
   const writeLedger: string[] = [];
   let failedWrites = 0;
-  // 幻觉执行保险丝：全程零工具调用 + 写操作语境 → 注入系统校验消息重跑（v5：至多 2 次）
+  let failedPerm = 0;
+  // 旧协议专用：格式纠错 / 幻觉执行保险丝
   let hallucinationRetried = 0;
-  // 格式纠错次数上限（防模型反复输出坏 JSON 打转）
   let formatRetries = 0;
   // 用户最后指令（写意图检测）
   const lastUserMsg = [...history].reverse().find((m) => m.role === 'user')?.content ?? '';
-  // v5 写意图正则大扩容：旧表漏了「放/来/给/弄/做/整/下/扔/丢/爆/炸/轰/劈/烧/淹/冻/唤/召/起/发/埋/种/布/撒/泼/掳」等高频动词
-  // ——「放核弹」「来一场瘟疫」「给我造个武器」此前全部漏判 → 守卫不触发 → 「夸了一顿就没反应」的直接根因
   const userAsksWrite =
-    /(创建|新建|建立|改|修改|改写|更新|删除|移除|废除|撤销|重命名|改名|更名|宣战|议和|停战|结盟|退盟|合并|统一|生成|创造|召唤|唤来|传送|降下|施放|降落|落下|丢下|扔下|投掷|发射|发起|开启|打开|关闭|暂停|加速|减速|保存|存档|读档|设置|设为|加|减|写|书写|颁布|发令|下令|命令|让|使|令|赐|赏赐|处决|杀|灭|清空|点燃|引燃|烧掉|铸|造|做出|弄出|来一|来个|来场|给我|放上|放置|放个|放颗|放枚|投放|扔个|扔颗|丢个|爆|炸|轰炸|核平|轰击|轰|劈|雷击|淹没|冲毁|冻住|冰封|干旱|瘟疫|感染|变异|辐射|部署|布置|安排|种植|播撒|树立|封|解封|启动|停用|启用|禁用|觉醒|唤醒|编辑|再编辑|调整|调节|微调|强化|弱化|赐予|灌输|注入|赋予|附加)/.test(
+    /(创建|新建|建立|改|修改|改写|更新|删除|移除|废除|撤销|重命名|改名|更名|宣战|议和|停战|结盟|退盟|合并|统一|生成|创造|召唤|唤来|传送|降下|施放|降落|落下|丢下|扔下|投掷|发射|发起|开启|打开|关闭|暂停|加速|减速|保存|存档|读档|设置|设为|加|减|写|书写|颁布|发令|下令|命令|让|使|令|赐|赏赐|处决|杀|灭|清空|点燃|引燃|烧掉|铸|造|做出|弄出|来一|来个|来场|给我|放上|放置|放个|放颗|放枚|投放|扔个|扔颗|丢个|爆|炸|轰炸|核平|轰击|轰|劈|雷击|淹没|冲毁|冻住|冰封|干旱|瘟疫|感染|变异|辐射|部署|布置|安排|种植|播撒|树立|封|解封|启动|停用|启用|禁用|觉醒|唤醒|编辑|再编辑|调整|调节|微调|强化|弱化|赐予|灌输|注入|赋予|附加|执行|跑一下|运行)/.test(
       lastUserMsg,
     );
   const answerClaimsDone = (t: string) =>
@@ -478,12 +487,55 @@ export async function runOracleAgentTurn(
       t,
     );
 
-  // 工作副本：系统提示 + 历史
+  // ── 权限设置 + 批准回调 ──
+  const perms = options.perms ?? loadPermSettings();
+  const approve =
+    options.requestApproval ??
+    ((name, tier, args) => useGameStore.getState().requestOracleApproval(name, tier, args));
+  const audit = (e: { name: string; tier: PermTier; ok: boolean; verdict: 'ok' | 'fail' | 'deny' | 'approve' | 'reject'; brief: string }): void => {
+    useGameStore.getState().pushOracleAudit(e);
+  };
+
+  // ── 协议判定：原生 FC 仅在 openai 兼容 + 无中继 + 非本站后端（直连）时启用 ──
+  const legacySystemPrompt = history[0]?.content ?? '';
+  let native =
+    !!options.nativeTools &&
+    (options.nativeTools.length > 0) &&
+    provider.kind === 'openai' &&
+    !provider.relayUrl?.trim();
+  if (native) {
+    try {
+      const backend = await probeSiteBackend();
+      if (backend === 'up') native = false; // 本站后端讲旧线协议（纯文本流）
+    } catch {
+      native = false;
+    }
+  }
+  if (native && !options.systemPromptNative) native = false; // 没有原生模式提示词就不开原生
+
+  // 工作副本：系统提示 + 历史（原生模式换用原生提示词）
   const messages: AgentChatMessage[] = [...history];
+  if (native && options.systemPromptNative && messages.length > 0) {
+    messages[0] = { role: 'assistant', content: options.systemPromptNative };
+  }
   // v4 守卫状态：同签名连续失败计数（防死循环重试同一坏参数）+ 无进展轮数（防无限扩展任务）
   const failStreak = new Map<string, number>();
   let lastProgressTurn = 0;
   let rerouteNotified = false;
+  const nativeDropped = (): void => {
+    if (!native) return;
+    native = false;
+    if (messages.length > 0) messages[0] = { role: 'assistant', content: legacySystemPrompt };
+    // 原生历史不可复用（tool 消息旧协议不识别）→ 剔除 tool/tool_calls 形态消息，保留纯文本历史
+    const toolOnly = messages.filter((m) => m.role === 'tool' || (m.role === 'assistant' && m.tool_calls));
+    if (toolOnly.length > 0) {
+      const kept = messages.filter((m) => m.role !== 'tool' && !(m.role === 'assistant' && m.tool_calls));
+      messages.length = 0;
+      messages.push(...kept);
+      const digest = toolEvents.slice(-10).map((e) => `${e.name}${e.ok ? '✓' : '✗'} ${e.summary.slice(0, 80)}`).join('；');
+      if (digest) messages.push({ role: 'user', content: `（系统记忆标注，勿在回答中复述：此前已执行的工具回执摘要——${digest}）` });
+    }
+  };
 
   for (let turn = 1; turn <= maxTurns; turn++) {
     if (cb.signal?.aborted) return { content: '', toolEvents, turns: turn - 1, error: '已中止' };
@@ -494,25 +546,39 @@ export async function runOracleAgentTurn(
         role: 'user',
         content: `【系统】已连续 ${turn - lastProgressTurn - 1} 轮没有任何成功的工具调用（全部失败或空转）。请立即基于已有工具回执给出最终回答，不要再调用任何工具：已完成了什么、还有什么没做完、建议造物主下一步怎么做。`,
       });
-      const wrap = await callModel(provider, trimMessages(messages), deep, cb.signal, cb.onDelta);
+      const wrap = await callModel(provider, trimMessages(messages), deep, cb.signal, cb.onDelta, native ? options.nativeTools : undefined);
       if (wrap.content) return { content: stripLedgerEcho(stripToolBlocks(wrap.content)), toolEvents, turns: turn, reasoning: wrap.reasoning };
       return { content: '', toolEvents, turns: turn, error: wrap.err || '连续多轮无进展，已收束', reasoning: wrap.reasoning };
     }
 
     // —— 一次模型调用（SSE 流式；空响应重试一次） ——
-    let model = await callModel(provider, trimMessages(messages), deep, cb.signal, cb.onDelta);
-    if (!model.content && !model.err) {
-      model = await callModel(provider, trimMessages(messages), deep, cb.signal, cb.onDelta);
+    let model = await callModel(provider, trimMessages(messages), deep, cb.signal, cb.onDelta, native ? options.nativeTools : undefined);
+    if (!model.content && !model.err && !model.toolCalls?.length && !model.nfcUnsupported) {
+      model = await callModel(provider, trimMessages(messages), deep, cb.signal, cb.onDelta, native ? options.nativeTools : undefined);
     }
     const { content, err } = model;
-    if (!content && err) return { content: '', toolEvents, turns: turn, error: err, reasoning: model.reasoning };
+    if (!content && !model.toolCalls?.length && err) return { content: '', toolEvents, turns: turn, error: err, reasoning: model.reasoning };
 
-    // —— 解析工具调用（v2） ——
-    const { calls, malformed } = extractToolCalls(content);
+    // —— 原生 FC 降级：端点不认 tools 参数 → 本回合立即回退旧协议重问 ——
+    if (model.nfcUnsupported) {
+      nativeDropped();
+      continue; // 消息未变（系统提示已换），旧协议重发
+    }
+
+    // —— 调用收集：原生 toolCalls 优先，否则旧协议文本解析 ——
+    let calls: AgentToolCall[] = model.toolCalls ?? [];
+    let malformed: string[] = [];
+    if (calls.length === 0 && !model.toolCalls) {
+      const parsed = extractToolCalls(content);
+      calls = parsed.calls;
+      malformed = parsed.malformed;
+      // 网关忽略 tools 参数但模型仍按原生提示词吐 JSON 块 → 顺势切回旧协议（后续轮次不再发 tools）
+      if (native && calls.length > 0) nativeDropped();
+    }
 
     if (calls.length === 0) {
-      // —— 格式纠错：疑似工具块但 JSON 坏 → 回传错误与规范模板同轮重试 ——
-      if (malformed.length > 0 && formatRetries < 2) {
+      // —— 旧协议格式纠错：疑似工具块但 JSON 坏 → 回传错误与规范模板同轮重试 ——
+      if (!native && malformed.length > 0 && formatRetries < 2) {
         formatRetries++;
         messages.push({ role: 'assistant', content });
         messages.push({
@@ -521,8 +587,8 @@ export async function runOracleAgentTurn(
         });
         continue;
       }
-      // —— 幻觉执行保险丝：用户要求写操作 + 全程零工具调用 → 强制重跑（v5：至多 2 次）——
-      if (hallucinationRetried < 2 && toolEvents.length === 0 && userAsksWrite) {
+      // —— 旧协议幻觉执行保险丝：用户要求写操作 + 全程零工具调用 → 强制重跑（至多 2 次）——
+      if (!native && hallucinationRetried < 2 && toolEvents.length === 0 && userAsksWrite) {
         hallucinationRetried++;
         messages.push({ role: 'assistant', content });
         messages.push({
@@ -533,7 +599,6 @@ export async function runOracleAgentTurn(
       }
       // —— 最终回答 ——
       const finalContent = stripLedgerEcho(stripToolBlocks(content));
-      // v5 兜底：用户要求写 + 全程零工具 + 两次纠错后仍是空谈 → 不返回模型空谈，返回系统级未执行声明
       if (userAsksWrite && toolEvents.length === 0 && answerClaimsDone(finalContent)) {
         return {
           content: `${finalContent}\n\n> ⚠ 神谕未执行任何工具——上述「已完成」未经真实调用。请重新下达指令或换一种表述（如「在 (x,y) 放一颗核弹」）。`,
@@ -543,40 +608,63 @@ export async function runOracleAgentTurn(
         };
       }
       const allWritesFailed = writeLedger.length === 0 && failedWrites > 0;
+      const permSuffix =
+        failedPerm > 0 && toolEvents.length === 0
+          ? '\n\n> ⚠ 本轮全部工具调用被权限闸门拦下。造物主可在神谕面板 → 权限中心调整权限等级。'
+          : '';
       const warnSuffix =
         userAsksWrite && toolEvents.length === 0
           ? '\n\n> ⚠ 造物主请注意：本轮没有任何工具调用回执，上述表述可能未经真实执行——请以机制管理视图/查询工具的实况为准。'
           : allWritesFailed && answerClaimsDone(finalContent)
             ? '\n\n> ⚠ 造物主请注意：本轮全部写操作均告失败，上述「已完成」的表述与工具回执不符——请让神谕重试或换一种方式下达指令。'
             : '';
-      return { content: finalContent + warnSuffix, toolEvents, turns: turn, reasoning: model.reasoning };
+      return { content: finalContent + warnSuffix + permSuffix, toolEvents, turns: turn, reasoning: model.reasoning };
     }
 
-    // —— 本地执行工具（活引擎 + 参数修复层） ——
+    // —— 执行工具（权限闸门 + 活引擎 + 参数修复层） ——
     cb.onToolCalls?.(calls);
     const eng = getEngine();
     const results: AgentToolResult[] = [];
     for (const raw of calls) {
       const known = TOOL_DEFS.has(raw.name);
+      const tier = tierOfTool(raw.name);
       const args = known ? repairCallArgs(raw.name, raw.args ?? {}) : (raw.args ?? {});
       let r: AgentToolResult;
-      if (!known) {
-        const sugg = suggestTools(raw.name).join('、');
-        r = {
-          id: raw.id,
-          ok: false,
-          data: null,
-          error: `未知工具「${raw.name}」${sugg ? `——你是想用：${sugg}？` : `（可用 get_introspection 查看全部 ${AGENT_TOOLS.length} 个工具）`}`,
-        };
-      } else if (!eng) {
-        r = { id: raw.id, ok: false, data: null, error: '世界引擎尚未就绪（先进入一个世界再召唤神谕）' };
+
+      // —— 权限闸门（永不 throw）：等级不足 / ROOT 未解锁 → 结构化拒绝 ——
+      const pc = checkToolPerm(raw.name, perms);
+      if (!pc.allowed) {
+        failedPerm++;
+        r = { id: raw.id, ok: false, data: null, error: pc.reason };
+        audit({ name: raw.name, tier, ok: false, verdict: 'deny', brief: pc.reason?.slice(0, 120) ?? '' });
+      } else if (pc.needConfirm && !(await approve(raw.name, tier, args))) {
+        // —— 位阶开启「执行前批准」→ 挂起等造物主（允许/拒绝/免确认） ——
+        failedPerm++;
+        r = { id: raw.id, ok: false, data: null, error: '造物主拒绝了本次操作（可在权限中心调整该位阶的批准要求）。' };
+        audit({ name: raw.name, tier, ok: false, verdict: 'reject', brief: JSON.stringify(args).slice(0, 120) });
       } else {
-        r = executeOracleTool(eng, raw.name, args);
-        if (!r.ok && r.error) {
-          // 失败附收到的参数——模型可据此自我纠错
-          const argsBrief = JSON.stringify(args).slice(0, 150);
-          r = { ...r, error: `${r.error}（收到参数 ${argsBrief}）` };
+        if (pc.needConfirm) {
+          audit({ name: raw.name, tier, ok: true, verdict: 'approve', brief: JSON.stringify(args).slice(0, 120) });
         }
+        if (!known) {
+          const sugg = suggestTools(raw.name).join('、');
+          r = {
+            id: raw.id,
+            ok: false,
+            data: null,
+            error: `未知工具「${raw.name}」${sugg ? `——你是想用：${sugg}？` : `（可用 get_introspection 查看全部 ${AGENT_TOOLS.length} 个工具）`}`,
+          };
+        } else if (!eng) {
+          r = { id: raw.id, ok: false, data: null, error: '世界引擎尚未就绪（先进入一个世界再召唤神谕）' };
+        } else {
+          r = await executeOracleToolAsync(eng, raw.name, args);
+          if (!r.ok && r.error) {
+            // 失败附收到的参数——模型可据此自我纠错
+            const argsBrief = JSON.stringify(args).slice(0, 150);
+            r = { ...r, error: `${r.error}（收到参数 ${argsBrief}）` };
+          }
+        }
+        audit({ name: raw.name, tier, ok: r.ok, verdict: r.ok ? 'ok' : 'fail', brief: r.ok ? JSON.stringify(r.data).slice(0, 120) : (r.error ?? '').slice(0, 120) });
       }
       const withIdRes = { ...r, id: raw.id };
       results.push(withIdRes);
@@ -607,7 +695,7 @@ export async function runOracleAgentTurn(
         role: 'user',
         content: `【系统】调用 ${worstSig.slice(0, 160)} 已连续失败 ${worstN} 次，继续重试同样参数没有意义。请立即停止重试该调用，基于已有工具回执给出最终回答：已完成了什么、失败的原因分析、建议造物主的替代方案。`,
       });
-      const wrap = await callModel(provider, trimMessages(messages), deep, cb.signal, cb.onDelta);
+      const wrap = await callModel(provider, trimMessages(messages), deep, cb.signal, cb.onDelta, native ? options.nativeTools : undefined);
       if (wrap.content) return { content: stripLedgerEcho(stripToolBlocks(wrap.content)), toolEvents, turns: turn, reasoning: wrap.reasoning };
       return { content: '', toolEvents, turns: turn, error: wrap.err || '重复失败守卫触发，已收束', reasoning: wrap.reasoning };
     }
@@ -620,9 +708,17 @@ export async function runOracleAgentTurn(
       continue;
     }
 
-    // —— 结果回传：assistant 原文 + user tool_results ——
-    messages.push({ role: 'assistant', content });
-    messages.push({ role: 'user', content: `{"tool_results": [${results.map(resultJson).join(',')}]}` });
+    // —— 结果回传：原生 FC → assistant.tool_calls + 逐条 tool 消息；旧协议 → 文本块 ——
+    if (native) {
+      messages.push({ role: 'assistant', content: content || '', tool_calls: calls.map((c) => ({ id: c.id, name: c.name, args: c.args ?? {} })) });
+      for (const raw of calls) {
+        const rr = results.find((x) => x.id === raw.id);
+        if (rr) messages.push({ role: 'tool', tool_call_id: raw.id, content: resultJson(rr) });
+      }
+    } else {
+      messages.push({ role: 'assistant', content });
+      messages.push({ role: 'user', content: `{"tool_results": [${results.map(resultJson).join(',')}]}` });
+    }
   }
 
   // —— 事实无限的循环也不会空手而归：收束指令强制产出最终总结 ——
@@ -630,7 +726,7 @@ export async function runOracleAgentTurn(
     role: 'user',
     content: `【系统】工具循环已达安全上限（${maxTurns} 轮——这几乎不可能自然触及）。请立即基于以上全部工具回执给出最终回答，不要再调用任何工具：已完成了什么（逐项列出工具回执）、还有什么没做完、建议造物主下一步怎么做。${writeLedger.length ? `\n已执行写操作台账：\n- ${writeLedger.join('\n- ')}` : ''}`,
   });
-  const wrap = await callModel(provider, trimMessages(messages), deep, cb.signal, cb.onDelta);
+  const wrap = await callModel(provider, trimMessages(messages), deep, cb.signal, cb.onDelta, native ? options.nativeTools : undefined);
   if (wrap.content) {
     return { content: stripLedgerEcho(stripToolBlocks(wrap.content)), toolEvents, turns: maxTurns, reasoning: wrap.reasoning };
   }
