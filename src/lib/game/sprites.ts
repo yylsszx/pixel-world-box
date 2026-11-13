@@ -990,21 +990,28 @@ function paintStandardArms(ctx: CanvasRenderingContext2D, px: number, gy: number
       ctx.fillRect(px + 3 * f, gy - 1, 1, 1); // 挥击白光
     }
   } else {
-    // 枪械：火枪 → 步枪 → 激光枪（军备工业化）
+    // 枪械：火枪 → 步枪 → 激光枪（军备工业化）；超限段（>6）能量色随阶位循环 + 肩部光环
     const fut = armLv >= 6;
+    const infEra = armLv - 6; // 超限段阶数（0 = 未来军备尚未超越）
     const barrel = fut ? '#1d2b36' : armLv >= 5 ? '#3a3f4a' : '#4a4038';
     ctx.fillStyle = barrel;
     ctx.fillRect(px + 2 * f, gy + 1, 3, 1); // 枪管
     ctx.fillStyle = fut ? '#2e4456' : '#6e4a2b';
     ctx.fillRect(px + f, gy + 1, 1, 1); // 枪托
     if (fut) {
-      const glow = ((t >> 3) & 1) === 1 ? '#7df9ff' : '#3ec6d8';
+      const glow = infEra > 0 ? INF_AURA[(infEra - 1) % INF_AURA.length] : ((t >> 3) & 1) === 1 ? '#7df9ff' : '#3ec6d8';
       ctx.fillStyle = glow;
-      ctx.fillRect(px + 3 * f, gy + 1, 1, 1); // 能量槽
+      ctx.fillRect(px + 3 * f, gy + 1, 1, 1); // 能量槽（超限段：能量色随阶位循环）
+      if (infEra > 0) {
+        // 头顶悬浮光环：超限战士的阶位徽记（呼吸明灭）
+        ctx.globalAlpha = ((t >> 4) & 1) === 0 ? 0.95 : 0.5;
+        ctx.fillRect(px - 1, gy - 6, 3, 1);
+        ctx.globalAlpha = 1;
+      }
     }
     if (atk) {
-      ctx.fillStyle = fut ? '#a5f3fc' : '#ffd93d';
-      ctx.fillRect(px + 5 * f, gy + 1, 1, 1); // 枪口焰
+      ctx.fillStyle = fut ? (infEra > 0 ? INF_AURA[(infEra - 1) % INF_AURA.length] : '#a5f3fc') : '#ffd93d';
+      ctx.fillRect(px + 5 * f, gy + 1, 1, 1); // 枪口焰（超限段：枪口焰即光环色）
       if (fut) {
         ctx.fillStyle = '#22d3ee';
         ctx.fillRect(px + 6 * f, gy + 1, 1, 1);
@@ -1410,12 +1417,27 @@ export function drawDragon(ctx: CanvasRenderingContext2D, u: Unit, frame: number
 }
 
 // ---------- buildings (houses 6x6 px, capital 8x8, tower 2x4, farm 6x4, castle 10x8 …) ----------
+/** 超限光环调色板（无限循环 8 色——超限纪元阶位的可视色环，随阶位循环永不重复观感） */
+const INF_AURA = ['#7df9ff', '#c084fc', '#f0abfc', '#fbbf24', '#a3e635', '#34d399', '#60a5fa', '#f87171'];
+
 export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: [number, number, number], tier = 0, hpRatio = 1, fc = 0, night = false, bedN = 0) {
   // —— 超细粒度建筑（4px/格基准）：所有结构细节翻倍；fc = 全局帧计数（旗帜飘动/麦浪风摆等微动画驱动）——
   const flap = (fc >> 3) & 1; // 8 帧一摆的旗帜相位
   const sway = ((fc >> 4) & 1) === 0 ? 0 : 1; // 16 帧一换的麦浪相位
   const px = b.x * 4 - 4;
   const py = b.y * 4 - 8;
+  // —— 超限纪元（无限演化可视化）：阶位 > 2 = 超限建筑——顶空悬浮光环（色环随阶位无限循环 + 呼吸）——
+  if (tier > 2) {
+    const aura = INF_AURA[(tier - 3) % INF_AURA.length];
+    const pulse = ((fc >> 4) & 1) === 0;
+    ctx.fillStyle = aura;
+    ctx.fillRect(px + 5, py - 3 - (pulse ? 1 : 0), 2, 2);
+    ctx.fillRect(px + 1, py - 2, 1, 1);
+    ctx.fillRect(px + 10, py - 2, 1, 1);
+    ctx.globalAlpha = pulse ? 0.9 : 0.45;
+    ctx.fillRect(px + 4, py - 6 - (pulse ? 1 : 0), 4, 1);
+    ctx.globalAlpha = 1;
+  }
   switch (b.kind) {
     case 3: {
       // tower：石塔（雉堞 + 箭窗 + 旗）
@@ -2513,6 +2535,16 @@ export function drawBoat(ctx: CanvasRenderingContext2D, u: Unit, civColor: [numb
   // 随浪起伏：每 9 帧船体抬升 1px（海浪节律）
   const bob = Math.floor(frame / 9) % 2;
   const oy = py - bob;
+  // —— 超限航代（无限演化可视化）：阶位 > 2 = 超限航船——船艏能量波引导光（色环随阶位循环） ——
+  if (tier > 2) {
+    const aura = INF_AURA[(tier - 3) % INF_AURA.length];
+    const pulse = ((frame >> 4) & 1) === 0;
+    ctx.fillStyle = aura;
+    ctx.globalAlpha = pulse ? 0.9 : 0.4;
+    ctx.fillRect(px + 6 * f, oy - 2, 2, 1);
+    ctx.fillRect(px + 8 * f, oy - 1 - (pulse ? 1 : 0), 2, 1);
+    ctx.globalAlpha = 1;
+  }
   // —— 时代深化：航船进化（t0 木筏→小帆 / t1 帆船→主帆加高 / t2 蒸汽轮船→铁壳烟囱）——
   if (tier >= 2) {
     // —— 蒸汽轮船：铁壳平甲板 + 舰桥 + 双烟囱冒烟 ——

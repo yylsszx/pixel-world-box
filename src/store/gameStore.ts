@@ -55,6 +55,8 @@ export const EVENT_CATEGORY: Record<WorldEventKind, Exclude<EventFilter, 'all'>>
   naval: 'war', // 海战：舰队遭遇/拦截/岸防（战争类）
   flight: 'world', // 时代深化：巡逻机首航（世界类——航空时代的天空事件）
   quake: 'disaster', // 时代深化：矿井塌方（灾害类）
+  brain: 'legend', // 文明中枢：外脑年度决断（传说类——国策纪要）
+  ascend: 'world', // 超限纪元：文明超越大典（世界类——时代天花板击碎）
   // —— 生物进化与生态竞争 ——
   evolve: 'world', eco: 'world',
   river: 'world', oasis: 'world',
@@ -368,6 +370,15 @@ interface GameStore {
   /** 高危动作「双席同议自动放行」开关（默认关：一律送呈造物主批复） */
   councilAutoConsent: boolean;
   setCouncilAutoConsent: (v: boolean) => void;
+  // ---------------- 文明中枢外脑（civ-brain 二笔） ----------------
+  /** 中枢外脑总开关（开启后各文明周期性召集中枢决策） */
+  civBrainOn: boolean;
+  setCivBrainOn: (v: boolean) => void;
+  /** 召开周期（游戏年；缺省 5） */
+  civBrainEvery: number;
+  setCivBrainEvery: (v: number) => void;
+  /** 外脑决策落地（驱动器回传：六维 patch + 纪要） */
+  applyCivBrain: (civId: number, patch: Record<string, number>, note?: string) => void;
   /** 召开进行中（LLM 决断 + 仲裁执行） */
   councilBusy: boolean;
   /** 四席运行态 */
@@ -660,6 +671,35 @@ const initialCouncil: CouncilPersist = (() => {
     return def;
   }
 })();
+// ── 文明中枢外脑设置持久化（wb_civbrain_v1：civ-brain 二笔） ──
+interface CivBrainPersist {
+  on: boolean;
+  every: number; // 召开周期（游戏年）
+}
+const CIVBRAIN_KEY = 'wb_civbrain_v1';
+const initialCivBrain: CivBrainPersist = (() => {
+  const def: CivBrainPersist = { on: false, every: 5 };
+  if (typeof window === 'undefined') return def;
+  try {
+    const raw = JSON.parse(localStorage.getItem(CIVBRAIN_KEY) ?? '{}') as Partial<CivBrainPersist>;
+    return {
+      on: raw.on === true,
+      every: typeof raw.every === 'number' && raw.every >= 2 && raw.every <= 30 ? Math.round(raw.every) : def.every,
+    };
+  } catch {
+    return def;
+  }
+})();
+function persistCivBrain(patch: Partial<CivBrainPersist>): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const raw = JSON.parse(localStorage.getItem(CIVBRAIN_KEY) ?? '{}') as Partial<CivBrainPersist>;
+    localStorage.setItem(CIVBRAIN_KEY, JSON.stringify({ ...raw, ...patch }));
+  } catch {
+    /* 损坏则忽略 */
+  }
+}
+
 function persistCouncil(patch: Partial<CouncilPersist>): void {
   if (typeof window === 'undefined') return;
   try {
@@ -740,6 +780,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
   councilOn: initialCouncil.on,
   councilInterval: initialCouncil.interval,
   councilAutoConsent: initialCouncil.autoConsent,
+  // ---------------- 文明中枢外脑初始值（civ-brain 二笔） ----------------
+  civBrainOn: initialCivBrain.on,
+  civBrainEvery: initialCivBrain.every,
   councilBusy: false,
   councilAgents: initialCouncilAgentsMerged(),
   councilFeed: [],
@@ -964,6 +1007,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setCouncilAutoConsent: (v) => {
     persistCouncil({ autoConsent: v });
     set({ councilAutoConsent: v });
+  },
+  // ---------------- 文明中枢外脑（civ-brain 二笔） ----------------
+  setCivBrainOn: (v) => {
+    persistCivBrain({ on: v });
+    set({ civBrainOn: v });
+  },
+  setCivBrainEvery: (v) => {
+    const n = Math.max(2, Math.min(30, Math.round(v)));
+    persistCivBrain({ every: n });
+    set({ civBrainEvery: n });
+  },
+  applyCivBrain: (civId, patch, note) => {
+    const eng = _engine;
+    if (eng) eng.setCivBrain(civId, patch, note, 'ai');
   },
   toggleCouncilAgent: (role) => {
     set((s) => ({

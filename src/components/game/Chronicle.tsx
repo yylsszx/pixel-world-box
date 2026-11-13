@@ -6,7 +6,7 @@ import { useGameStore, EVENT_CATEGORY, type EventFilter } from '@/store/gameStor
 import type { WorldEvent, WorldEventKind } from '@/lib/game/types';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { ScrollText, X, Flag, Swords, Handshake, Skull, Crown, Flame, Award, Biohazard, Radiation, Sparkles, Star, Ship, Home, Waves, Castle, CloudLightning, Trophy, Mountain, Droplets, Sword, Ghost, Flame as FlameIcon, Zap as ZapIcon, Hammer, Landmark, Coins, Gem, CloudRain, Snowflake, Bug, Sun, MountainSnow, Cloudy, Sparkle, PersonStanding, Eye, FlagTriangleRight, Swords as SwordsIcon, TrendingDown, Map, Landmark as LandmarkIcon, Scroll, BadgeCheck, BadgeX, Lightbulb, TriangleAlert, PartyPopper, Megaphone, CloudDrizzle, Dna, Orbit, Wind, Tornado, CircleDot, Snowflake as SnowIcon, Wheat, Leaf, FlaskConical, Route, Users, HeartCrack, Network, Wand2, TreePine, Hourglass, Sprout, FastForward, Anchor, Navigation } from 'lucide-react';
+import { Brain, ScrollText, X, Flag, Swords, Handshake, Skull, Crown, Flame, Award, Biohazard, Radiation, Sparkles, Star, Ship, Home, Waves, Castle, CloudLightning, Trophy, Mountain, Droplets, Sword, Ghost, Flame as FlameIcon, Zap as ZapIcon, Hammer, Landmark, Coins, Gem, CloudRain, Snowflake, Bug, Sun, MountainSnow, Cloudy, Sparkle, PersonStanding, Eye, FlagTriangleRight, Swords as SwordsIcon, TrendingDown, Map, Landmark as LandmarkIcon, Scroll, BadgeCheck, BadgeX, Lightbulb, TriangleAlert, PartyPopper, Megaphone, CloudDrizzle, Dna, Orbit, Wind, Tornado, CircleDot, Snowflake as SnowIcon, Wheat, Leaf, FlaskConical, Route, Users, HeartCrack, Network, Wand2, TreePine, Hourglass, Sprout, FastForward, Anchor, Navigation } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 /** 事件类型的图标与主题色 */
@@ -69,6 +69,8 @@ export const KIND_META: Record<WorldEventKind, { icon: LucideIcon; color: string
   decree: { icon: Scroll, color: 'text-purple-300' },
   decreeOk: { icon: BadgeCheck, color: 'text-emerald-300' },
   decreeFail: { icon: BadgeX, color: 'text-rose-400' },
+  brain: { icon: Brain, color: 'text-cyan-300' }, // 文明中枢：外脑年度决断
+  ascend: { icon: Sparkles, color: 'text-fuchsia-300' }, // 超限纪元：超越大典
   // —— 战争理由体系 ——
   casus: { icon: Megaphone, color: 'text-red-300' },
   collapse: { icon: TrendingDown, color: 'text-zinc-300' },

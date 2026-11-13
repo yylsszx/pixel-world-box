@@ -28,6 +28,7 @@ import { DevPanel } from './DevPanel';
 import { WorldWarHud } from './WorldWarHud';
 import { OraclePanel } from './OraclePanel';
 import { CouncilPanel, CouncilDriver } from './CouncilPanel';
+import { CivBrainDriver } from './CivBrainDriver';
 import { CodexPanel } from './CodexPanel';
 import { SaveDialog } from './SaveDialog';
 import { TitleScreen } from './TitleScreen';
@@ -109,6 +110,8 @@ export function GameShell() {
             </SideDock>
             {/* 议会驱动心跳：不随面板开合卸载（回读轮询 + 周期召开判定） */}
             <CouncilDriver />
+            {/* 文明中枢外脑驱动心跳：各文明周期性召开中枢决策（civ-brain 二笔） */}
+            <CivBrainDriver />
             <Toolbar />
             <DivineDial />
             <HelpDialog />

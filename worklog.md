@@ -5936,3 +5936,43 @@ Stage Summary:
 **版本节奏**: 升位 v0.76-preview（CHANGELOG 六条：可观察进化/骑兵/机械与奇观/地下海洋/航海天空/Worker 补档）。
 **评估：D4 内容广度 + D5 手感表现双线大跨越——科技的可观察层从「武器数值」扩至「全军制式军械/建筑群进化/草原骑兵/攻城机械/组装式奇观/矿脉经济/海洋工业/天空巡航」九维可见世界；深层机制同步落地（经济链/战争链/生态链/存档兼容全闭环）——WorldBox 同级对标再进一步。**
 **任务书 v5→v6（#85 轮末修订）**: 用户插入指令触发——时代深化九线完成移入历史闭环注记；【最先重点】换回中枢二笔引擎接线（civ-brain 路由已在库）+ #85 遗留池 + D5 多帧；流程①强化「先 fetch 恢复远端文件」为铁律（#85 本地基底旧快照教训）；QA 段增补时代深化调试口（新建筑 kind 13-20/等级读法/单测脚本）。
+
+## 2026-11-13 #86：无限演化·超限纪元 + 文明中枢外脑接线——时代深化 × civ-brain 深度融合，升位 v0.77-preview
+
+**选题**: 用户插入指令最高优先：「把刚刚搞的 deep tech（#85 时代深化）加进去深度融合（另一个类似机制提交 = #84 前 civ-brain 路由），两个取长补短，并进一步升级为无限演化发展的在底层到表层到可视化层都有实质性明显变化的超级文明全领域动态演化机制，防止越玩越无聊，后期不会有任何变化（没有上限，真正无限发展）」。
+
+**上轮复核**: #85 推送闭环确认——远端 main 9df4061（12:07Z），Deploy to GitHub Pages + pages build 双绿，v0.76 已上线。本地基底与远端一致（无旧快照残留，fetch 校验 HEAD=origin/main）。
+
+**考古发现（融合的接线面）**: ①civ-brain 路由（/api/civ-brain）#84 前已在库：白名单六维 personaPatch + 15s 超时 + extractJson，但**引擎零消费**（全库无 import/调用）——纯空中路由；②#85 时代深化已有「无限发明」涌现科技链（inventEmTech），但只叠小数值加成，**阶位（军备/航船/建筑）全部硬封顶**（armamentOf 上限 6 / navalTierOf 上限 2 / buildTierOf 上限 2），后期世界「数值涨而形态不变」正是用户诊断的无聊根源；③Civ 六维人格缺位——种族 persona 只在 stats 快照展示，不驱动任何决策。
+
+**本轮主攻 A（用户指令核心）：超限纪元（无限演化）——三大融合点**:
+- **融合点①（人格选道）**: 六大演化道途（战神/永筑/丰饶/黄金/深蓝/圣辉）与中枢人格六维一一对应——超越时按 brainOf 六维加权选道 + 道途史微惯性（路径依赖 ×0.15/次）。开启外脑决策后 AI 年度决断直接改写演化方向（每维 ±0.2/年 × 无限年 = 每个 AI 子文明走出自己的演化树）。
+- **融合点②（阶位无上限）**: armamentOf/navalTierOf/buildTierOf 三底座加 infCount 贡献——战神之道军备阶位+1/次（超限军备 N）、深蓝之道航船阶位+1/次（超限航代 N）、永筑之道全部建筑阶位+1/次（超限温室 N 等）。硬上限全部拆除，阶位名/武器索引/船档分支/armor 数组全链路防越界（wTier=min(6,tier) 复用最高制式，armamentName/buildTierName/navalTierName 超限段动态命名）。
+- **融合点③（人格反塑）**: 每次超越中枢向所修之道漂移 0.03——文明逐渐成为它所修习的样子。人格→选道→反塑的无限反馈环 = 两个文明永不走出同一条路（防后期同质化无聊的机制级答案）。
+- **底层**: infMods 复合加成（war: dmg+8%/hp+5% · build: bhp+12%/repair+15% · farm: repro+4%/tax+6% · trade: gold+12% · sea: col×0.94 · faith: cult+15%/stab+4 · 任意: know+8%——1.08^era vs 成本 1.55^era，渐缓但永不停滞）；techModsOf 缓存前注入；超越时现役全军 dmg/hp 差额回溯（与科技回溯同口径）。入场券 = 静态 50 科技全点亮；techTick 每 120 tick 注入闲置知识 40%；成本 320×1.55^era 无上限。
+- **表层**: 'ascend' 编年史大典（时代天花板击碎）+ toast + era 钟声 + 首都烟花（每 3 次大典 9 响）；CivPanel 超限纪元卡（徽章「超越 N 阶 · 主修道·兼修X」+ 研究进度条）。
+- **可视化**: INF_AURA 八色无限循环光环——超限建筑顶空悬浮光环（呼吸明灭 + 色环随阶位循环）、超限战士能量槽/枪口焰/头顶光环换光环色、超限航船船艏能量波引导光。drawBuilding/drawBoat/paintStandardArms 三处 tier>2/tier>6 分支。
+- **存档兼容**: infEra/infP/infHist 挂 Civ 可选字段（civs 展开序列化自动携带，零迁移）；旧档无字段读档 = 回退无超限态不炸（单测实证）。
+
+**本轮主攻 B：civ-brain 二笔引擎接线（#84 遗留的中枢路由闭环）**:
+- **引擎消费六决策点**: ①宣战（diplomacyMeet warChance ±0.12）②军团集结（armyTick 0.35-0.65）③建筑权重（pickBuildingKind 六维扭动 11 类建筑 ×0.75-×1.45）④集市经济（ecoBreakdownOf ×0.85-×1.15 重商主义）⑤殖民航向（tryLaunchColonyShip ×0.8-×1.2）⑥文化信仰（cultGain ×0.75-×1.35 + 节日触发 0.2-0.4）。
+- **中枢方法族**: defaultBrainOf（种族底色缺省现算：aggr→war/industry→build/growth→farm/greed→trade/piety→faith/sea 恒 0.45）/brainOf/setCivBrain（clamp 二道闸 + 'brain' 编年史 + toast）。
+- **驱动器**: CivBrainDriver 常驻心跳（GameShell 挂载）——总开关开 → 到期文明（≥15 人、距上次 ≥every 年）逐个 POST /api/civ-brain（国情速报 20 项取自 getCivInfo 单一事实源）→ personaPatch+note → applyCivBrain → engine.setCivBrain。串行召开不轰炸、失败静默下轮自愈、provider 随 localStorage 共享配置、__wbCivBrain QA 调试口。设置 wb_civbrain_v1 持久化（on/every 2-30 年，缺省 5）。
+- **UI**: CivPanel 中枢人格卡（六维彩条 + 外脑执掌徽章 + ON/OFF 开关 + 决策纪要引言带年份）。
+
+**本轮主攻 C：#85 遗留池三项**:
+- ② 骑兵冲锋首击：declareClash 揭幕瞬间——跨马成员 ≥25% 的军团发起冲锋，伤害 = (3+骑兵数×0.4) × 1.6 × (1+min(d,12)/12 距离蓄力)，砸向敌方前排四成（至多 6 人）+ 士气 -6 + 尘暴 + 震屏。军团级 JS 路径（核心无关——近战伤害在 wasm 内核，rust 工具链窗口前不动 per-hit 路径防 parity 破坏）。
+- ① 攻城械优先索敌：nearestFoeBuilding 敌 RAM/CATAPULT 等效距离 ×0.25——守军先砸冲车投石机再拆城。
+- ③ 矿脉枯竭：mineCollapseTick 前置 1.2%/600tick 枯竭掷（均值寿命 ~500 年）——oreOut 枯竭表 + ore 清零 + 井架拆除 + 'eco' 事件；serialize 携带 oreOut[]，读档 deriveOre 重导出后重放（采尽的矿读档后仍枯竭——矿脉有储量不是取之不尽）；矿业文明被迫扩张觅新脉（经济地理张力）。
+
+**新事件类型**: 'brain'（中枢年度决断/legend）+ 'ascend'（超越大典/world）——types/agentLaws/gameStore/Chronicle 四处 exhaustive 补齐（Brain/Sparkles 图标）。
+
+**QA（单测 44/44 新 + 48/48 回归 + 7/7 Worker + tsc/eslint/next build 全绿 + 自捕三坑）**: ①中枢：缺省六维域/clamp 0.95/note 入史/静默 patch；②超限：入场券/成本 320→×1.55 递增/定向选道（sea 必中）/航船+军备+建筑阶位上探/人格反塑/col 乘/know 复合/gold 精确对账/连修 13 阶无上限；③存档往返：infHist 携带/读档恢复/加成重算/旧档剥离 inf 字段不炸；④冲锋：4/8 前排受创/士气挫/步卒阴性对照零伤害；⑤索敌：近投石机优先于远房屋；⑥枯竭：ore 清零/井架拆除/事件入史/存档往返后仍枯竭。**自捕三坑**：pairKey 是 `a-b` 连字符（测试用下划线致 atWar 恒假）；destroyBuilding 走 bIdx（手插建筑须注册索引）；eng.rng 是实例字段（delete 会炸须原引用回填——#43「delete 恢复」沉淀的镜像坑，本轮实证此引擎版本两法皆需按字段类型择一）。选道概率加权的测试确定性注入：roll=0 必中首键、roll 落带内中目标键。
+
+**改动文件**: types.ts（CivBrain/brain·infEra·infP·infHist 字段/'brain'+'ascend' 事件/oreOut 存档字段）、engine.ts（+~330 行：中枢方法族/六决策点/超限全套/冲锋/索敌/枯竭）、sprites.ts（INF_AURA + 三处超限光环）、gameStore.ts（civBrainOn/every/applyCivBrain + wb_civbrain_v1）、CivBrainDriver.tsx（新）、GameShell.tsx（挂载）、CivPanel.tsx（中枢卡+超限卡）、Chronicle.tsx/agentLaws.ts（事件注册）、version.ts（v0.77 + CHANGELOG 四条）、scripts/infinite-evolution-test.mjs（新，44 断言）。
+
+**遗留（下轮优先池）**: ①超限可视化二笔（超限建筑的形态本身进化——现仅光环叠加，可做几何形态 tier 3+ 专属像素；超限航船船体形态）；②外脑决策的三通道（现仅 personaPatch 六维——可扩 issueDirective 谕令/政体倾向建议）；③超限纪元间的事件叙事（大道之争：不同道途文明的外交/战争 modifier）；④矿脉枯竭速率的世界难度参数化；⑤rust 工具链窗口（冲锋 per-hit 首击在内核侧的真等效实现 + 内核真停摆）；⑥「继续旅程」不显示自动档候选（#44 起悬案）。
+
+**推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**版本节奏**: 升位 v0.77-preview（CHANGELOG 四条：无限演化/文明中枢外脑/骑兵冲锋/矿脉枯竭）。
+**评估：D6 长线可玩性质变——「后期不变」的机制级根治：科技树尽头不是终点而是新起点（超越循环无上限），人格→选道→反塑无限反馈环让每个文明走出独一无二的演化树（AI 执掌的子文明尤其如此），阶位/光环/事件三层持续可见变化；civ-brain 从空中路由到六决策点全接线（外脑真治国有实感）；WorldBox 对标再进一步（其无无限演化概念）。**

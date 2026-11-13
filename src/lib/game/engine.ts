@@ -1,5 +1,5 @@
 // ============ WorldBox Replica — Simulation Engine ============
-import type { Army, ArmyState, Building, CasusKind, Civ, Cyclone, Directive, DirectiveKind, Effect, EmergentWeapon, FxPrefs, Gene, GroundItem, ItemDef, ItemKind, BloodDecal, CorpseDecal, OverlayMode, RaceDef, RaceId, SaveData, SaveDataV1, SaveDataV2, SoundKind, SpeciesEco, StatsSnapshot, ToastMsg, TriggerCond, TriggerDef, TriggerRow, Unit, WarInfo, WeaponDefense, WeaponDoctrine, WorldEvent, WorldEventKind, WorldLaws, WorldWarState, Alliance, Family } from './types';
+import type { Army, ArmyState, Building, CasusKind, Civ, CivBrain, Cyclone, Directive, DirectiveKind, Effect, EmergentWeapon, FxPrefs, Gene, GroundItem, ItemDef, ItemKind, BloodDecal, CorpseDecal, OverlayMode, RaceDef, RaceId, SaveData, SaveDataV1, SaveDataV2, SoundKind, SpeciesEco, StatsSnapshot, ToastMsg, TriggerCond, TriggerDef, TriggerRow, Unit, WarInfo, WeaponDefense, WeaponDoctrine, WorldEvent, WorldEventKind, WorldLaws, WorldWarState, Alliance, Family } from './types';
 import { T, R, RACES, TRAITS, CIV_RACES, DEFAULT_LAWS, ITEM_DEFS, describeCond, JOBS, JOB_KEY, BUILDING_DEFS, BUILD_KINDS, CAPTURABLE, SLOT_FIELD, SLOT_ORDER, RARITY_META, BEST_BY_SLOT, CASUS_META, RACE_REL_BASE, ALLIANCE_COLORS, WONDERS } from './types';
 import { EVO_KIND_META, applyEmTechMods, describeVis, inventIdea, inventTech, inventTrait, invalidateVisCache, mutateVis, tupleToVis, visFromGene, visToTuple } from './emergence';
 import type { EmModKey, EmTech, EvoKind, EvoNode, IdeaDef, VisGenome } from './emergence';
@@ -709,6 +709,8 @@ export class GameEngine {
   /** 矿脉场（v0.76 地下开发：0 无 / 1 铁 / 2 金 / 3 水晶 / 4 珊瑚——
    *  由地形+seed 确定性重导出（与气候场同一哲学，刻意不入存档，旧档读档自愈） */
   ore: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
+  /** 矿脉枯竭格（#85 遗留③：矿脉有储量——采尽即枯；deriveOre 后重放，存档携带） */
+  oreOut = new Set<number>();
   /** 地图覆盖模式（政治/温度/湿度）与覆盖层离屏画布 */
   overlayMode: OverlayMode = 'none';
   overlayCanvas!: HTMLCanvasElement;
@@ -2400,7 +2402,9 @@ export class GameEngine {
       if (b.civ === civId) continue;
       const o = this.civs[b.civ];
       if (!o?.alive || !this.atWar(civId, b.civ)) continue;
-      const d2 = (b.x - x) * (b.x - x) + (b.y - y) * (b.y - y);
+      let d2 = (b.x - x) * (b.x - x) + (b.y - y) * (b.y - y);
+      // #85 遗留①：敌攻城营械优先拆（等效距离 ×0.25——先砸冲车投石机再拆城）
+      if (b.kind === BUILD_KINDS.RAM || b.kind === BUILD_KINDS.CATAPULT) d2 *= 0.25;
       if (d2 < bestD) { bestD = d2; best = b; }
     }
     return best;
@@ -2473,6 +2477,19 @@ export class GameEngine {
     for (let bi = this.buildings.length - 1; bi >= 0; bi--) {
       const b = this.buildings[bi];
       if (b.kind !== BUILD_KINDS.MINE) continue;
+      // —— #85 遗留③：矿脉枯竭（长跑世界矿井不再永动）——储量耗尽 → 枯竭报废，矿格永不可再采
+      //    概率 1.2%/600tick（均值寿命 ~500 年）——采尽逼矿，文明须扩张觅新脉（经济地理张力）
+      if (this.rng() < 0.012) {
+        this.oreOut.add(b.i);
+        this.ore[b.i] = 0;
+        this.fx('smoke', b.x, b.y, 40, { r: 1.5 });
+        this.destroyBuilding(b.i);
+        const civD = this.civs[b.civ];
+        if (civD?.alive) {
+          this.addEvent('eco', `「${civD.name}」的一处矿脉采掘殆尽——井架拆除，矿工四散另觅新脉`, { colorHex: civD.colorHex, x: b.x, y: b.y });
+        }
+        continue;
+      }
       if (this.buildTierOf(BUILD_KINDS.MINE, this.civs[b.civ]) < 1) continue; // 露天矿无塌方
       if (this.rng() >= 0.03) continue;
       const civ = this.civs[b.civ];
@@ -2577,7 +2594,9 @@ export class GameEngine {
     const rb = RACES[cb.race];
     // —— 种族系统 v2：种族外交底色（兽人难交朋友，人类八面玲珑）——
     const raceDiplo = ((ra?.diplo ?? 0.5) + (rb?.diplo ?? 0.5)) / 2; // 0-1
-    const warChance = Math.max(0.08, Math.min(0.8, 0.2 + ((ca.militarism ?? 30) + (cb.militarism ?? 30)) / 400 + ((ca.gov === 4 || cb.gov === 4) ? 0.1 : 0) - ((ca.gov === 3 || cb.gov === 3) ? 0.12 : 0) - (raceDiplo - 0.5) * 0.3));
+    // —— 中枢人格（civ-brain）：好战中枢推高开战概率（每方 ±0.12；外脑年度决策可直接改写国运） ——
+    const brainWar = (this.brainOf(ca).war - 0.5) * 0.24 + (this.brainOf(cb).war - 0.5) * 0.24;
+    const warChance = Math.max(0.08, Math.min(0.8, 0.2 + ((ca.militarism ?? 30) + (cb.militarism ?? 30)) / 400 + ((ca.gov === 4 || cb.gov === 4) ? 0.1 : 0) - ((ca.gov === 3 || cb.gov === 3) ? 0.12 : 0) - (raceDiplo - 0.5) * 0.3 + brainWar));
     if (this.laws.wars && this.rng() < warChance) {
       // 战争必须有名有实：按社会气质/复仇记忆/实力对比挑选开战理由
       const pick = this.pickCasus(ca, cb);
@@ -5991,7 +6010,9 @@ export class GameEngine {
     const rigGold = rigs * 6 * (this.techModsOf(c.id).rig > 0 ? 1 : 0); // 石油平台：海上黑金（财富巨兽）
     const marketTier = markets > 0 ? this.buildTierOf(BUILD_KINDS.MARKET, c) : 0;
     const marketMul = 1 + 0.3 * marketTier; // 商栈 +30% / 交易所 +60% 集市溢价
-    const mulTotal = wealthBoost * tm.gold * (gov === 3 ? 1.25 : 1) * (1 + im.gold) * industryMul * winterMul * allyTrade * drag * marketMul;
+    // —— 中枢人格（civ-brain）：通商中枢的经济更活（×0.85-×1.15 重商主义） ——
+    const brainTrade = 0.85 + this.brainOf(c).trade * 0.3;
+    const mulTotal = wealthBoost * tm.gold * (gov === 3 ? 1.25 : 1) * (1 + im.gold) * industryMul * winterMul * allyTrade * drag * marketMul * brainTrade;
     const income = Math.max(0, Math.round((markets * 3 + temples * 1 + ports * 2 + mineGold + rigGold + taxBase) * mulTotal));
     // —— 军团军饷：现役军团成员人均 0.12 金/tick 段（军国主义高涨的国家咬牙供养）——
     let upkeepArmy = 0;
@@ -6324,7 +6345,29 @@ export class GameEngine {
         if (em) applyEmTechMods(mods as unknown as Record<string, number>, em);
       }
     }
+    // —— 超限纪元（无限演化）：六道复合加成叠加（缓存前注入——transcend 删缓存后重算自然生效） ——
+    if (c) this.applyInfMods(mods, c);
     if (c) this.techModCache.set(civId, mods);
+    return mods;
+  }
+
+  /** 超限加成注入（techModsOf 后置叠加：六道复合无限增长——无硬上限，长跑世界越玩越强）
+ *  调用点：techModsOf（缓存重建时）/ transcend（删除缓存后重算自然带入） */
+  applyInfMods(mods: TechMods, civ: Civ) {
+    const era = civ.infEra ?? 0;
+    if (era <= 0) return mods;
+    const n = (d: string) => this.infCount(civ, d);
+    mods.dmg += 0.08 * n('war');
+    mods.hp += 0.05 * n('war');
+    mods.bhp += 0.12 * n('build');
+    mods.repair += 0.15 * n('build');
+    mods.repro += 0.04 * n('farm');
+    mods.tax += 0.06 * n('farm');
+    mods.gold += 0.12 * n('trade');
+    mods.col *= Math.pow(0.94, n('sea'));
+    mods.cult += 0.15 * n('faith');
+    mods.stab += 4 * n('faith');
+    mods.know += 0.08 * era; // 任何超越都反哺学术（长跑研究可行性：1.08^era vs 成本 1.55^era，渐缓但永不停滞）
     return mods;
   }
 
@@ -6478,6 +6521,14 @@ export class GameEngine {
       if (!c.research && (c.knowledge ?? 0) < 40 && this.rng() < 0.35) {
         this.fundResearch(c, this.rng() < 0.5 ? 1 : 0); // 确定性 RNG（Math.random 会破坏同种子复现 —— L3 A/B 排障发现）
       }
+      // —— 超限纪元（无限演化）：静态树穷尽的文明将闲置知识投入超越研究（每 120 tick 注入存量的 40%） ——
+      if (this.infEligible(c) && (c.knowledge ?? 0) > 20) {
+        const inject = Math.floor((c.knowledge ?? 0) * 0.4);
+        if (inject > 0) {
+          const spent = this.fundInfResearch(c, inject);
+          c.knowledge = Math.max(0, (c.knowledge ?? 0) - spent);
+        }
+      }
     }
   }
 
@@ -6530,7 +6581,9 @@ export class GameEngine {
       }
       c.stability = Math.max(0, Math.min(100, stab));
       // —— 文化积累：神殿 + 节日 + 科技乘数 + 种族虔诚（精灵的仪式与信仰）——
-      const cultGain = (temples * 0.8 + 0.4 + libraries * 0.3) * (0.7 + (rp?.piety ?? 0.5) * 0.6) * tm2.cult * (gov === 2 ? 1.4 : 1) * (this.wonderOf(c) === BUILD_KINDS.CATHEDRAL ? 1.6 : 1);
+      // —— 中枢人格（civ-brain）：虔信中枢文化积累 ×0.75-×1.35，节日触发也更勤 ——
+      const brFaith = this.brainOf(c).faith;
+      const cultGain = (temples * 0.8 + 0.4 + libraries * 0.3) * (0.7 + (rp?.piety ?? 0.5) * 0.6) * tm2.cult * (gov === 2 ? 1.4 : 1) * (this.wonderOf(c) === BUILD_KINDS.CATHEDRAL ? 1.6 : 1) * (0.75 + brFaith * 0.6);
       c.culture = (c.culture ?? 0) + cultGain;
       // —— 军国主义：战争推高 / 胜利强化 / 和平消退 + 种族好战基线引力（血蹄永不停步）——
       let mil = c.militarism ?? 30;
@@ -6543,7 +6596,7 @@ export class GameEngine {
       const fest = c.festivalCd ?? 0;
       if (fest > 0) {
         c.festivalCd = fest - 1;
-      } else if ((c.culture ?? 0) > 40 && this.rng() < 0.3) {
+      } else if ((c.culture ?? 0) > 40 && this.rng() < 0.2 + this.brainOf(c).faith * 0.2) {
         c.festivalCd = 10;
         c.culture = (c.culture ?? 0) - 20;
         c.stability = Math.min(100, (c.stability ?? 70) + 3);
@@ -7025,7 +7078,9 @@ export class GameEngine {
     const portTier = portCnt > 0 ? this.buildTierOf(BUILD_KINDS.PORT, civ) : 0;
     const portMul = 1 - 0.15 * portTier;
     const lhMul = this.wonderOf(civ) === BUILD_KINDS.LIGHTHOUSE ? 0.6 : 1;
-    const colMul = this.techModsOf(civ.id).col * portMul * lhMul;
+    // —— 中枢人格（civ-brain）：向海中枢殖民脉搏更勤（×0.8-×1.2 扩张航向） ——
+    const seaMul = 1.2 - this.brainOf(civ).sea * 0.4;
+    const colMul = this.techModsOf(civ.id).col * portMul * lhMul * seaMul;
     civ.colonizeCd = this.tickCount + Math.max(220, Math.round((600 + Math.floor(this.rng() * 600)) * colMul));
     // 挑一名国民充当殖民者（不要抽干小国人口）
     const cand = this.units.filter((u) => !u.dead && u.civ === civ.id && !u.boat);
@@ -7519,6 +7574,156 @@ export class GameEngine {
 
   // ---------------- civs sim ----------------
   /** 建造决策：按人口压力/战争/财富/知识加权选拣建筑类别（文明深度核心） */
+  // ---------------- 文明中枢（civ-brain 二笔：六维人格引擎消费） ----------------
+  /** 中枢人格六维缺省值：种族底色现算（好战→war / 勤勉→build / 繁衍→farm / 贪婪→trade / 虔诚→faith；sea 无底色取 0.45） */
+  defaultBrainOf(civ: Civ): CivBrain {
+    const rp = RACES[civ.race];
+    const cl = (v: number) => Math.max(0.05, Math.min(0.95, v));
+    return {
+      war: cl(0.3 + (rp?.aggr ?? 0.5) * 0.4),
+      build: cl(0.3 + (rp?.industry ?? 0.5) * 0.4),
+      farm: cl(0.35 + (rp?.growth ?? 0.5) * 0.35),
+      trade: cl(0.3 + (rp?.greed ?? 0.5) * 0.4),
+      sea: 0.45,
+      faith: cl(0.3 + (rp?.piety ?? 0.5) * 0.4),
+    };
+  }
+
+  /** 取中枢人格（含缺省；civsTick/pickBuildingKind 等热路径直接调用） */
+  brainOf(civ: Civ): CivBrain {
+    return civ.brain ?? this.defaultBrainOf(civ);
+  }
+
+  /** 外脑决策落地（驱动器调用；白名单六维 + 引擎二道闸 clamp 0.05-0.95 + 编年史纪事）
+   *  patch 只含想调整的维度；note 以王国口吻播报进编年史（'brain' 事件） */
+  setCivBrain(civId: number, patch: Partial<Record<'war' | 'build' | 'farm' | 'trade' | 'sea' | 'faith', number>>, note?: string, src?: 'ai') {
+    const civ = this.civs[civId];
+    if (!civ?.alive) return null;
+    const cl = (v: number) => Math.max(0.05, Math.min(0.95, v));
+    const base = civ.brain ?? this.defaultBrainOf(civ);
+    const brain: CivBrain = { ...base };
+    for (const k of ['war', 'build', 'farm', 'trade', 'sea', 'faith'] as const) {
+      const v = patch[k];
+      if (typeof v === 'number' && Number.isFinite(v)) brain[k] = cl(v);
+    }
+    if (note) { brain.note = note.slice(0, 80); brain.noteYear = Math.floor(this.yearF); }
+    if (src) brain.src = src;
+    civ.brain = brain;
+    if (note) {
+      this.addEvent('brain', `「${civ.name}」中枢核心年度决断：${brain.note}`, { colorHex: civ.colorHex, x: this.civCenterX(civ), y: this.civCenterY(civ) });
+      this.toast(`「${civ.name}」中枢决断：${brain.note}`, 'info');
+    }
+    return brain;
+  }
+
+  // ---------------- 超限纪元（无限演化：时代深化 × 中枢人格的深度融合） ----------------
+  /** 六大演化道途：与中枢人格六维一一对应——外脑/AI 人格直接决定文明无限演化方向（融合点①） */
+  static readonly INF_DOMAINS: Record<string, { name: string; dim: 'war' | 'build' | 'farm' | 'trade' | 'sea' | 'faith'; word: string; desc: string }> = {
+    war: { name: '战神之道', dim: 'war', word: '武道', desc: '全军伤害/生命复合跃升，军备阶位上探' },
+    build: { name: '永筑之道', dim: 'build', word: '筑道', desc: '建筑耐久/修复复合跃升，全部建筑阶位上探' },
+    farm: { name: '丰饶之道', dim: 'farm', word: '农道', desc: '繁衍/税基复合跃升，人口天花板不断抬升' },
+    trade: { name: '黄金之道', dim: 'trade', word: '商道', desc: '经济收入复合跃升，国库奔流不息' },
+    sea: { name: '深蓝之道', dim: 'sea', word: '海道', desc: '殖民脉搏不断加快，航船阶位上探' },
+    faith: { name: '圣辉之道', dim: 'faith', word: '圣道', desc: '文化/稳定复合跃升，民心如磐石' },
+  };
+
+  /** 超越研究成本：320 × 1.55^era（无上限；每次超越任何道途附带 know +8% 使长跑研究始终可行） */
+  infCost(civ: Civ): number {
+    return Math.round(320 * Math.pow(1.55, civ.infEra ?? 0));
+  }
+
+  /** 某道途已超越次数（阶位加成/加成计数的单一事实源） */
+  infCount(civ: Civ | undefined, domain: string): number {
+    if (!civ?.infHist) return 0;
+    let n = 0;
+    for (const d of civ.infHist) if (d === domain) n++;
+    return n;
+  }
+
+  /** 科技树已穷尽（静态 50 项全点亮）——超限纪元的入场券 */
+  infEligible(civ: Civ): boolean {
+    return (civ.techs ?? []).filter((k) => TECH_BY_KEY[k]).length >= TECHS.length;
+  }
+
+  /** 超限研究注入（techTick 每 120 tick：静态树穷尽的文明将知识投入超越——与常规研究共存） */
+  fundInfResearch(c: Civ, points: number): number {
+    if (!this.infEligible(c) || points <= 0) return 0;
+    const cost = this.infCost(c);
+    const start = c.infP ?? 0;
+    c.infP = start + points;
+    if (c.infP >= cost) {
+      this.transcend(c);
+      return Math.max(0, cost - start);
+    }
+    return points;
+  }
+
+  /** 超越大典：中枢人格加权选道（融合点①）→ 阶位上探 + 加成复合（融合点②时代深化底座）
+   *  → 人格反塑 0.03（融合点③：文明逐渐成为它所修习的样子——无限反馈分岔，两个文明永不重样） */
+  transcend(civ: Civ) {
+    if (!civ.alive) return;
+    // —— 选道：六维加权 + 深化道途史微惯性（修过的道更易再修——路径依赖）——
+    const br = this.brainOf(civ);
+    const keys = Object.keys(GameEngine.INF_DOMAINS);
+    const w = keys.map((k) => {
+      const d = GameEngine.INF_DOMAINS[k];
+      return br[d.dim] * (1 + this.infCount(civ, k) * 0.15); // 惯性 ×0.15/次
+    });
+    let total = 0;
+    for (const x of w) total += x;
+    let roll = this.rng() * total;
+    let pick = keys[keys.length - 1];
+    for (let i = 0; i < keys.length; i++) { roll -= w[i]; if (roll <= 0) { pick = keys[i]; break; } }
+    const dom = GameEngine.INF_DOMAINS[pick];
+    // —— 记账（存档自动携带：civs 展开序列化）——
+    civ.infEra = (civ.infEra ?? 0) + 1;
+    if (!civ.infHist) civ.infHist = [];
+    civ.infHist.push(pick);
+    civ.infP = 0;
+    this.techModCache.delete(civ.id); // 加成缓存重建
+    // —— 人格反塑（融合点③）：中枢向所修之道漂移 0.03，无限演化塑造文明性格 ——
+    civ.brain = { ...br, [dom.dim]: Math.max(0.05, Math.min(0.95, br[dom.dim] + 0.03)) };
+    // —— 表层播报：编年史 + 全屏提示 + 首都烟花（每 3 次一场大典）——
+    const era = civ.infEra;
+    this.addEvent('ascend', `「${civ.name}」完成第 ${era} 次超越，踏入「${dom.name}」——${dom.desc}，时代的天花板再次被击碎`, { colorHex: civ.colorHex, x: this.civCenterX(civ), y: this.civCenterY(civ) });
+    this.toast(`「${civ.name}」第 ${era} 次超越 · ${dom.name}`, 'good');
+    this.onSound?.('era');
+    this.fireworkSalvo(this.civCenterX(civ), this.civCenterY(civ) - 2, era % 3 === 0 ? 9 : 5);
+    // —— 现役全军随超越强化（与科技回溯同口径：dmg/hp 差额重算）——
+    const nm = this.techModsOf(civ.id);
+    if (nm.dmg !== 1 || nm.hp !== 1) {
+      for (const u of this.units) {
+        if (u.dead || u.civ !== civ.id) continue;
+        const rd = nm.dmg / (u.tDmg ?? 1);
+        const rh = nm.hp / (u.tHp ?? 1);
+        if (rd !== 1) u.dmg = Math.max(1, u.dmg * rd);
+        if (rh !== 1) {
+          const ratio = u.hp / u.maxHp;
+          u.maxHp = Math.max(1, Math.round(u.maxHp * rh));
+          u.hp = Math.min(u.maxHp, Math.max(1, Math.round(u.maxHp * ratio)));
+        }
+        u.tDmg = nm.dmg;
+        u.tHp = nm.hp;
+      }
+    }
+  }
+
+  /** 超限纪元名（面板/徽章：超越 N 阶 · 主修道） */
+  infEraName(civ: Civ): string {
+    const era = civ.infEra ?? 0;
+    if (era <= 0) return '';
+    // 主修道 = 道途史末位；副修 = 次数最多者
+    const hist = civ.infHist ?? [];
+    const main = GameEngine.INF_DOMAINS[hist[hist.length - 1] ?? 'war'];
+    let bestK = ''; let bestN = 0;
+    for (const k of Object.keys(GameEngine.INF_DOMAINS)) {
+      const n = this.infCount(civ, k);
+      if (n > bestN) { bestN = n; bestK = k; }
+    }
+    const sub = bestK && bestK !== hist[hist.length - 1] ? ` · 兼修${GameEngine.INF_DOMAINS[bestK].word}` : '';
+    return `超越 ${era} 阶 · ${main.word}${sub}`;
+  }
+
   pickBuildingKind(civ: Civ): number {
     const counts = this.civBuildCounts.get(civ.id);
     const c = (k: number) => (counts ? counts[k] ?? 0 : 0);
@@ -7531,39 +7736,47 @@ export class GameEngine {
     const buildDir = this.activeDirective(civ.id, 'build');
     const templeDir = this.activeDirective(civ.id, 'temple');
     const cands: { kind: number; w: number }[] = [];
+    // —— 中枢人格权重（civ-brain）：六维直接扭动建筑倾向（0.5 维 ×0.75-×1.45；种族底色缺省即已生效） ——
+    const br = this.brainOf(civ);
+    const wBuild = 0.7 + br.build * 0.75;   // 筑城：宅/城堡
+    const wFarm = 0.6 + br.farm * 0.8;      // 重农：农田/渔场/海带
+    const wTrade = 0.6 + br.trade * 0.8;    // 通商：集市
+    const wSea = 0.5 + br.sea * 0.9;        // 向海：港口/渔场/海带/平台
+    const wFaith = 0.5 + br.faith * 0.9;    // 虔信：神殿
+    const wWar = 0.6 + br.war * 0.8;        // 好战：兵营/箭塔
     // 住宅：人口压力的基本解
-    cands.push({ kind: BUILD_KINDS.HOUSE, w: buildDir ? 30 : 10 });
+    cands.push({ kind: BUILD_KINDS.HOUSE, w: (buildDir ? 30 : 10) * wBuild });
     // 农田：供养扩张（v0.54 粮食经济：一田养四口——按人口比例恳田；粮荒时权重飙到最高）
     const foodStock = civ.food ?? 60;
     const nFed = c(BUILD_KINDS.FARM) + c(BUILD_KINDS.FISHERY);
-    if (nFed < Math.ceil(pop * 0.27)) cands.push({ kind: BUILD_KINDS.FARM, w: foodStock < 30 ? 34 : foodStock < 90 ? 14 : 7 });
+    if (nFed < Math.ceil(pop * 0.27)) cands.push({ kind: BUILD_KINDS.FARM, w: (foodStock < 30 ? 34 : foodStock < 90 ? 14 : 7) * wFarm });
     // 渔场：向海要粮（仅沿海国候选——预检领土采样，避免内陆国浪费建筑档位）
     if (know >= (BUILDING_DEFS[BUILD_KINDS.FISHERY].needKnowledge ?? 6) && c(BUILD_KINDS.FISHERY) < 2 + houses / 7 && this.civHasCoast(civ)) {
-      cands.push({ kind: BUILD_KINDS.FISHERY, w: foodStock < 40 ? 16 : foodStock < 90 ? 8 : 5 });
+      cands.push({ kind: BUILD_KINDS.FISHERY, w: (foodStock < 40 ? 16 : foodStock < 90 ? 8 : 5) * wSea });
     }
     // 兵营：战时军备
-    if (atWar && c(BUILD_KINDS.BARRACKS) < 1 + houses / 10) cands.push({ kind: BUILD_KINDS.BARRACKS, w: 8 });
+    if (atWar && c(BUILD_KINDS.BARRACKS) < 1 + houses / 10) cands.push({ kind: BUILD_KINDS.BARRACKS, w: 8 * wWar });
     // 箭塔：战争防御
-    if (atWar && c(BUILD_KINDS.TOWER) < 1 + houses / 12) cands.push({ kind: BUILD_KINDS.TOWER, w: 5 });
+    if (atWar && c(BUILD_KINDS.TOWER) < 1 + houses / 12) cands.push({ kind: BUILD_KINDS.TOWER, w: 5 * wWar });
     // 集市：财富引擎
-    if (c(BUILD_KINDS.MARKET) < 1 + houses / 12) cands.push({ kind: BUILD_KINDS.MARKET, w: 6 });
+    if (c(BUILD_KINDS.MARKET) < 1 + houses / 12) cands.push({ kind: BUILD_KINDS.MARKET, w: 6 * wTrade });
     // 图书馆：知识引擎
     if (c(BUILD_KINDS.LIBRARY) < 1 + houses / 20) cands.push({ kind: BUILD_KINDS.LIBRARY, w: 4 });
     // 港口：海洋扩张
-    if (know >= (BUILDING_DEFS[BUILD_KINDS.PORT].needKnowledge ?? 0) && c(BUILD_KINDS.PORT) < 1 + houses / 25) cands.push({ kind: BUILD_KINDS.PORT, w: 4 });
+    if (know >= (BUILDING_DEFS[BUILD_KINDS.PORT].needKnowledge ?? 0) && c(BUILD_KINDS.PORT) < 1 + houses / 25) cands.push({ kind: BUILD_KINDS.PORT, w: 4 * wSea });
     // 神殿：治疗庇佑
-    if (know >= (BUILDING_DEFS[BUILD_KINDS.TEMPLE].needKnowledge ?? 0) && c(BUILD_KINDS.TEMPLE) < 1 + houses / 15) cands.push({ kind: BUILD_KINDS.TEMPLE, w: templeDir ? 18 : 3 });
+    if (know >= (BUILDING_DEFS[BUILD_KINDS.TEMPLE].needKnowledge ?? 0) && c(BUILD_KINDS.TEMPLE) < 1 + houses / 15) cands.push({ kind: BUILD_KINDS.TEMPLE, w: (templeDir ? 18 : 3) * wFaith });
     // 城堡：终极防御
-    if (know >= (BUILDING_DEFS[BUILD_KINDS.CASTLE].needKnowledge ?? 0) && c(BUILD_KINDS.CASTLE) < 1 + houses / 25) cands.push({ kind: BUILD_KINDS.CASTLE, w: 6 });
+    if (know >= (BUILDING_DEFS[BUILD_KINDS.CASTLE].needKnowledge ?? 0) && c(BUILD_KINDS.CASTLE) < 1 + houses / 25) cands.push({ kind: BUILD_KINDS.CASTLE, w: 6 * wBuild });
     // —— 时代深化（v0.76）：矿井（矿脉经济）/ 海带田（浅海养殖）/ 石油平台（海上工业）——
     if (this.techModsOf(civ.id).mine > 0 && c(BUILD_KINDS.MINE) < 1 + Math.floor(houses / 8)) {
       cands.push({ kind: BUILD_KINDS.MINE, w: gold < 80 ? 14 : 9 }); // 缺钱的国家更想挖矿
     }
     if (this.techModsOf(civ.id).ocean > 0 && this.civHasCoast(civ) && c(BUILD_KINDS.KELP) < 1 + Math.floor(houses / 8)) {
-      cands.push({ kind: BUILD_KINDS.KELP, w: foodStock < 90 ? 10 : 6 }); // 粮压推高养殖意愿
+      cands.push({ kind: BUILD_KINDS.KELP, w: (foodStock < 90 ? 10 : 6) * wSea * wFarm }); // 粮压推高养殖意愿
     }
     if (this.techModsOf(civ.id).rig > 0 && this.civHasCoast(civ) && c(BUILD_KINDS.RIG) < 1 + Math.floor(houses / 18)) {
-      cands.push({ kind: BUILD_KINDS.RIG, w: 11 }); // 工业时代的财富巨兽
+      cands.push({ kind: BUILD_KINDS.RIG, w: 11 * wSea * wTrade }); // 工业时代的财富巨兽
     }
     // 过滤财富不足的候选
     const afford = cands.filter((x) => gold >= (BUILDING_DEFS[x.kind].cost ?? 0));
@@ -7896,7 +8109,8 @@ export class GameEngine {
     if (this.tickCount % 60 === 0) {
       for (const civ of this.civs) {
         if (!civ.alive || !this.civAtWar(civ.id)) continue;
-        if (this.rng() < 0.5) this.tryFormArmy(civ);
+        // —— 中枢人格（civ-brain）：好战中枢集结更快（0.35-0.65） ——
+        if (this.rng() < 0.35 + this.brainOf(civ).war * 0.3) this.tryFormArmy(civ);
       }
     }
     for (let i = this.armies.length - 1; i >= 0; i--) {
@@ -8488,6 +8702,33 @@ export class GameEngine {
     // —— 林间伏击首击：伏击方先声夺人（士气 +10，一次性）——
     if (a.ambush) { a.morale = Math.min(100, a.morale + 10); a.ambush = false; }
     if (foe.ambush) { foe.morale = Math.min(100, foe.morale + 10); foe.ambush = false; }
+    // —— 骑兵冲锋首击（#85 遗留②）：跨马成员 ≥25% 的军团在会战揭幕瞬间发起冲锋 ——
+    //    冲锋伤害随距离蓄力（远距奔袭冲击更猛：×1.6 × (1 + min(d,12)/12)），直接砸向敌方前排 + 士气震挫
+    {
+      let cavN = 0;
+      for (const mid of a.members) {
+        const mu = this.unitById.get(mid);
+        if (mu && !mu.dead && mu.mount) cavN++;
+      }
+      if (cavN >= Math.max(2, Math.floor(a.members.length * 0.25))) {
+        const dist = Math.hypot(a.x - foe.x, a.y - foe.y);
+        const chargeMul = 1.6 * (1 + Math.min(12, dist) / 12);
+        const dmgEach = (3 + cavN * 0.4) * chargeMul;
+        let struck = 0;
+        for (const mid of foe.members) {
+          if (struck >= Math.min(6, Math.ceil(foe.members.length * 0.4))) break; // 砸向前排四成（至多 6 人）
+          const fu = this.unitById.get(mid);
+          if (!fu || fu.dead) continue;
+          fu.hp -= dmgEach;
+          fu.hurt = 14;
+          if (this.fxPrefs.ambience) this.fx('hit', fu.x, fu.y, 14, { r: 1 });
+          struck++;
+        }
+        foe.morale = Math.max(0, foe.morale - 6);
+        this.fx('dust', foe.x, foe.y, 34, { r: 2 });
+        this.shake = Math.max(this.shake, 5);
+      }
+    }
     a.state = 'battle'; a.battleSince = this.tickCount; a.clashWith = foe.id;
     foe.state = 'battle'; foe.battleSince = this.tickCount; foe.clashWith = a.id;
     a.battleSize0 = a.members.length; // 会战开局兵力基准（伤亡崩溃判定）
@@ -14493,13 +14734,15 @@ export class GameEngine {
   /** 军备等级：科技树直接决定国家武备（0 木石/1 青铜/2 铁/3 钢/4 火器/5 现代/6 未来） */
   armamentOf(civ: Civ): number {
     const t = civ.techs ?? [];
-    if (t.includes('plasma') || t.includes('antimatter') || t.includes('drones') || t.includes('lasers') || t.includes('robotics') || t.includes('orbital')) return 6;
-    if (t.includes('explosives')) return 5;
-    if (t.includes('gunpowder')) return 4;
-    if (t.includes('steel')) return 3;
-    if (t.includes('iron')) return 2;
-    if (t.includes('bronze')) return 1;
-    return 0;
+    let tier = 0;
+    if (t.includes('plasma') || t.includes('antimatter') || t.includes('drones') || t.includes('lasers') || t.includes('robotics') || t.includes('orbital')) tier = 6;
+    else if (t.includes('explosives')) tier = 5;
+    else if (t.includes('gunpowder')) tier = 4;
+    else if (t.includes('steel')) tier = 3;
+    else if (t.includes('iron')) tier = 2;
+    else if (t.includes('bronze')) tier = 1;
+    // —— 超限纪元（无限演化）：战神之道每修一次军备阶位 +1（无上限；视觉循环升华） ——
+    return tier + this.infCount(civ, 'war');
   }
 
   /** 军备工坊（每 240 tick）：国库出钱，按军备等级自动武装无武器国民（可视武器+战力绑定） */
@@ -14511,6 +14754,7 @@ export class GameEngine {
       if (!civ.alive || civ.pop < 6) continue;
       const tier = this.armamentOf(civ);
       if (tier < 1) continue; // 木石时代无武备工业
+      const wTier = Math.min(6, tier); // 超限段复用最高制式武器（伤害由 infMods 复合增长，视觉由阶位光环呈现）
       const gold = civ.gold ?? 0;
       if (gold < 2) continue; // 国库见底无力造械
       // —— 兑现率随军备档位提升（Task 34 去虚务实）：火器时代后军工流水线扩产——
@@ -14523,7 +14767,7 @@ export class GameEngine {
         if (armed >= quota || spent >= budget) break; // 每国每轮产量与预算双封顶（工业时代扩产）
         if (u.dead || u.civ !== civ.id || u.boat) continue;
         if (!u.wep) {
-          const key = WEAPON_BY_TIER[tier];
+          const key = WEAPON_BY_TIER[wTier];
           const def = ITEM_DEFS[key];
           if (def) {
             u.wep = key as ItemKind;
@@ -14534,7 +14778,7 @@ export class GameEngine {
             if (this.rng() < 0.3) this.fx('hammer', u.x, u.y, 12);
           }
         } else if (!u.arm && tier >= 2 && (u.job === 1 || u.job === 2)) {
-          const key = ARMOR_BY_TIER[tier];
+          const key = ARMOR_BY_TIER[Math.min(6, tier)];
           const def = ITEM_DEFS[key];
           if (def) {
             u.arm = key as ItemKind;
@@ -14563,33 +14807,37 @@ export class GameEngine {
 
   // ==================== 时代深化底座（v0.76：科技可观察世界进化的三等级引擎） ====================
 
-  /** 航船档位 0-2：木筏→帆船→蒸汽轮船（殖民船/商船共用形态与航海性能） */
+  /** 航船档位 0-2 + 超限上探：木筏→帆船→蒸汽轮船→超限航代 N（殖民船/商船共用形态与航海性能） */
   navalTierOf(civ: Civ | undefined): number {
     if (!civ || !civ.alive) return 0;
     const t = civ.techs ?? [];
     let tier = 0;
     if (t.includes('sail')) tier = 1;
     if (t.includes('steam')) tier = 2;
-    return tier;
+    // —— 超限纪元（无限演化）：深蓝之道每修一次航船阶位 +1 ——
+    return tier + this.infCount(civ, 'sea');
   }
 
-  /** 航船档位名（面板展示） */
+  /** 航船档位名（面板展示；超限段动态命名） */
   navalTierName(civ: Civ | undefined): string {
-    return ['木筏时代', '帆船时代', '轮船时代'][this.navalTierOf(civ)];
+    const tier = this.navalTierOf(civ);
+    return tier <= 2 ? ['木筏时代', '帆船时代', '轮船时代'][tier] : `超限航代 ${tier - 2}`;
   }
 
-  /** 建筑阶位（泛化）：农田/集市/港口/兵营/箭塔/矿井随科技逐阶升迁（存量自动跟随——效果每期现算） */
+  /** 建筑阶位（泛化）：农田/集市/港口/兵营/箭塔/矿井随科技逐阶升迁（存量自动跟随——效果每期现算）
+   *  超限纪元：永筑之道每修一次全部建筑阶位 +1（无上限——像素叠加层循环升华） */
   buildTierOf(kind: number, civ: Civ | undefined): number {
     if (!civ || !civ.alive) return 0;
     const t = civ.techs ?? [];
-    if (kind === BUILD_KINDS.HOUSE || kind === BUILD_KINDS.CAPITAL) return this.houseTierOf(civ);
-    if (kind === BUILD_KINDS.FARM) return t.includes('crop4') ? 2 : t.includes('irrigation') ? 1 : 0;
-    if (kind === BUILD_KINDS.MARKET) return t.includes('banking') ? 2 : t.includes('currency') ? 1 : 0;
-    if (kind === BUILD_KINDS.PORT) return t.includes('steam') ? 2 : t.includes('masonry') ? 1 : 0;
-    if (kind === BUILD_KINDS.BARRACKS) return t.includes('legion') ? 2 : t.includes('iron') ? 1 : 0;
-    if (kind === BUILD_KINDS.TOWER) return t.includes('steam') ? 2 : t.includes('fortification') ? 1 : 0;
-    if (kind === BUILD_KINDS.MINE) return t.includes('steam') ? 2 : t.includes('mining') ? 1 : 0;
-    return 0;
+    let tier = 0;
+    if (kind === BUILD_KINDS.HOUSE || kind === BUILD_KINDS.CAPITAL) tier = this.houseTierOf(civ);
+    else if (kind === BUILD_KINDS.FARM) tier = t.includes('crop4') ? 2 : t.includes('irrigation') ? 1 : 0;
+    else if (kind === BUILD_KINDS.MARKET) tier = t.includes('banking') ? 2 : t.includes('currency') ? 1 : 0;
+    else if (kind === BUILD_KINDS.PORT) tier = t.includes('steam') ? 2 : t.includes('masonry') ? 1 : 0;
+    else if (kind === BUILD_KINDS.BARRACKS) tier = t.includes('legion') ? 2 : t.includes('iron') ? 1 : 0;
+    else if (kind === BUILD_KINDS.TOWER) tier = t.includes('steam') ? 2 : t.includes('fortification') ? 1 : 0;
+    else if (kind === BUILD_KINDS.MINE) tier = t.includes('steam') ? 2 : t.includes('mining') ? 1 : 0;
+    return tier + this.infCount(civ, 'build');
   }
 
   /** 阶位名（建筑悬停/概览展示） */
@@ -14604,13 +14852,16 @@ export class GameEngine {
       [BUILD_KINDS.MINE]: ['露天矿', '深井矿', '蒸汽矿井'],
     };
     const arr = names[kind];
-    return arr ? (t > 0 ? `${arr[t]}（${t + 1} 阶）` : arr[0]) : '';
+    if (!arr) return '';
+    if (t <= 2) return t > 0 ? `${arr[t]}（${t + 1} 阶）` : arr[0];
+    return `超限${arr[2].slice(0, 2)}院 ${t - 2}（${t + 1} 阶）`; // 超限段：如「超限温室 3」
   }
 
   /** 矿脉场重导出（v0.76 地下开发）：地形+seed 确定性——山地铁金水晶簇状分布 + 浅海珊瑚礁
    *  （读档按 seed 重算与生成时逐位一致；旧档零迁移成本，矿脉天然属于这颗星球） */
   deriveOre() {
     this.ore.fill(0);
+    this.oreOut.clear(); // 生成期清空；读档路径 deriveOre 后由 applySave 重放枯竭表
     const rand = mulberry32((this.seed ^ 0x51ed27) >>> 0);
     const seedOre = (i: number, v: number) => {
       this.ore[i] = v;
@@ -16312,7 +16563,7 @@ export class GameEngine {
           militarism: Math.round(c.militarism ?? 30),
           income: Math.round(c.income ?? 0), expense: Math.round(c.expense ?? 0),
           armament: this.armamentOf(c),
-          armamentName: ['木石时代', '青铜时代', '铁器时代', '钢铁时代', '火器时代', '现代军备', '未来军备'][this.armamentOf(c)],
+          armamentName: (() => { const a = this.armamentOf(c); return a <= 6 ? ['木石时代', '青铜时代', '铁器时代', '钢铁时代', '火器时代', '现代军备', '未来军备'][a] : `超限军备 ${a - 6}`; })(),
           allianceId: (() => { const al = this.allianceOfCiv(c.id); return al ? al.id : -1; })(),
           allianceName: (() => { const al = this.allianceOfCiv(c.id); return al ? al.name : ''; })(),
         };
@@ -17297,12 +17548,22 @@ export class GameEngine {
       militarism: Math.round(c.militarism ?? 30),
       // —— 军备/房屋阶位（科技深度绑定）——
       armament: this.armamentOf(c),
-      armamentName: ['木石时代', '青铜时代', '铁器时代', '钢铁时代', '火器时代', '现代军备', '未来军备'][this.armamentOf(c)],
+      armamentName: (() => { const a = this.armamentOf(c); return a <= 6 ? ['木石时代', '青铜时代', '铁器时代', '钢铁时代', '火器时代', '现代军备', '未来军备'][a] : `超限军备 ${a - 6}`; })(),
       houseTier: this.houseTierOf(c),
       houseTierName: ['茅屋村', '石砌村', '堡垒宅', '哥特庄园'][this.houseTierOf(c)],
       // —— 时代深化（v0.76）：航船时代与旷世奇观 ——
       navalTierName: this.navalTierName(c),
       wonderName: this.wonderOf(c) ? (BUILDING_DEFS[this.wonderOf(c)]?.name ?? '') : '',
+      // —— 文明中枢（civ-brain）：六维人格（含种族底色缺省）+ 最近外脑决策纪要 ——
+      brain: this.brainOf(c),
+      brainSrc: c.brain?.src ?? null,
+      brainNote: c.brain?.note ?? null,
+      brainNoteYear: c.brain?.noteYear ?? null,
+      // —— 超限纪元（无限演化）：超越阶数/道途名/研究进度 ——
+      infEra: c.infEra ?? 0,
+      infName: this.infEraName(c),
+      infProgress: this.infEligible(c) ? Math.min(1, (c.infP ?? 0) / this.infCost(c)) : 0,
+      infEligible: this.infEligible(c),
     };
   }
 
@@ -17998,6 +18259,7 @@ export class GameEngine {
       road: rleEncode(this.road),
       laws: { ...this.laws },
       wildReproScale: this.wildReproScale,
+      oreOut: [...this.oreOut], // #85 遗留③：矿脉枯竭格（读档 deriveOre 后重放）
       items: this.items.map((it) => [it.id, it.kind, it.x, it.y] as [number, string, number, number]),
       itemSeq: this.itemSeq,
       triggers: this.triggers.map(triggerToRow),
@@ -18445,6 +18707,10 @@ export class GameEngine {
     this.nature.initPlates();
     // 时代深化（v0.76）：矿脉场读档按 seed 重导出（与气候场同一哲学——旧档零迁移自愈）
     this.deriveOre();
+    // #85 遗留③：矿脉枯竭表重放（采尽的矿格读档后仍然枯竭——矿脉有储量，不是取之不尽）
+    for (const i of Array.isArray((data as SaveDataV2).oreOut) ? ((data as SaveDataV2).oreOut as number[]) : []) {
+      if (typeof i === 'number' && i >= 0 && i < W * H) { this.ore[i] = 0; this.oreOut.add(i); }
+    }
     // 时代深化（v0.76）：竣工奇观缓存重建（旧档的奇观加成读档即恢复）
     this.rebuildWonderDone();
     const natSave = (data as SaveDataV2).nat;

@@ -7,12 +7,13 @@ import { useGameStore } from '@/store/gameStore';
 import { RACES, BUILDING_DEFS } from '@/lib/game/types';
 import { TECHS, TECH_BY_KEY, TECH_CATS, ERAS, GOV_DEFS } from '@/lib/game/tech';
 import type { TechCat } from '@/lib/game/tech';
+import type { CivBrain } from '@/lib/game/types';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   X, Crown, Users, Landmark, Home, Coins, BookOpen, Swords, Crosshair, FlaskConical,
   Lightbulb, Lock, Check, ChevronRight, Scale, Coins as CoinsIcon, Palette, Shield,
-  TrendingUp, TrendingDown, Sparkles, PartyPopper, Scroll, Castle, TriangleAlert, Sword, Wheat, Ship,
+  TrendingUp, TrendingDown, Sparkles, PartyPopper, Scroll, Castle, TriangleAlert, Sword, Wheat, Ship, Brain,
 } from 'lucide-react';
 
 interface CivInfo {
@@ -73,6 +74,16 @@ interface CivInfo {
   ideas: string[];
   houseTier: number;
   houseTierName: string;
+  // —— 文明中枢（civ-brain 二笔）：六维人格 + 决策纪要 ——
+  brain: CivBrain;
+  brainSrc: 'ai' | null;
+  brainNote: string | null;
+  brainNoteYear: number | null;
+  // —— 超限纪元（无限演化） ——
+  infEra: number;
+  infName: string;
+  infProgress: number;
+  infEligible: boolean;
 }
 
 interface EngineWindow extends Window {
@@ -406,6 +417,8 @@ function SocietyTab({ civ }: { civ: CivInfo }) {
 
 /** 概览页 */
 function OverviewTab({ civ, onJumpCapital }: { civ: CivInfo; onJumpCapital: () => void }) {
+  const civBrainOn = useGameStore((s) => s.civBrainOn);
+  const setCivBrainOn = useGameStore((s) => s.setCivBrainOn);
   const research = civ.research ? TECH_BY_KEY[civ.research] : null;
   const progress = research ? Math.min(1, civ.researchP / Math.max(1, civ.researchNeed)) : 0;
   const st = stabTone(civ.stability);
@@ -496,6 +509,72 @@ function OverviewTab({ civ, onJumpCapital }: { civ: CivInfo; onJumpCapital: () =
         </p>
         <StatBar value={civ.militarism} max={100} tone="bg-red-500" height={5} />
       </div>
+
+      {/* 中枢人格六维（civ-brain：驱动宣战/建军/建筑/经济/殖民/信仰六决策点；外脑可改写国运） */}
+      <div className="flex flex-col gap-1 rounded-sm border-2 border-cyan-900/60 bg-cyan-950/20 px-2 py-1.5">
+        <p className="flex items-center justify-between text-[9px] font-bold text-cyan-300">
+          <span className="flex items-center gap-1"><Brain className="h-3 w-3" aria-hidden />中枢人格</span>
+          <span className="flex items-center gap-1.5">
+            {civ.brainSrc === 'ai' && <span className="rounded-sm border border-cyan-700 bg-cyan-500/10 px-1 py-0.5 text-[8px]">外脑执掌</span>}
+            <button
+              type="button"
+              onClick={() => setCivBrainOn(!civBrainOn)}
+              className={`rounded-sm border px-1.5 py-0.5 text-[8px] font-bold transition-colors ${civBrainOn ? 'border-cyan-500 bg-cyan-500/20 text-cyan-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
+              title="开启后各文明周期性召集中枢外脑（AI）做年度国策决断——六维直接改写这个国家的演化方向"
+            >
+              外脑决策 {civBrainOn ? 'ON' : 'OFF'}
+            </button>
+          </span>
+        </p>
+        {([
+          ['war', '好战', 'bg-red-400'],
+          ['build', '筑城', 'bg-orange-400'],
+          ['farm', '重农', 'bg-lime-400'],
+          ['trade', '通商', 'bg-yellow-400'],
+          ['sea', '向海', 'bg-teal-400'],
+          ['faith', '虔信', 'bg-violet-400'],
+        ] as const).map(([dim, label, tone]) => (
+          <div key={dim} className="flex items-center gap-1.5">
+            <span className="w-7 shrink-0 text-[8px] font-bold text-zinc-500">{label}</span>
+            <div className="h-1.5 flex-1 overflow-hidden border border-zinc-700 bg-zinc-800">
+              <div className={`${tone} transition-[width] duration-500`} style={{ width: `${civ.brain[dim] * 100}%` }} />
+            </div>
+            <span className="w-6 shrink-0 text-right font-mono text-[8px] text-zinc-500">{Math.round(civ.brain[dim] * 100)}</span>
+          </div>
+        ))}
+        {civ.brainNote && (
+          <p className="mt-0.5 border-t border-zinc-800 pt-1 text-[8px] leading-relaxed text-zinc-400" title={civ.brainNoteYear ? `${civ.brainNoteYear} 年决策纪要` : '决策纪要'}>
+            「{civ.brainNote}」{civ.brainNoteYear ? <span className="text-zinc-600">（{civ.brainNoteYear} 年）</span> : null}
+          </p>
+        )}
+      </div>
+
+      {/* 超限纪元（无限演化：科技树尽头的不封顶进化——超越阶数/道途/研究进度） */}
+      {(civ.infEra > 0 || civ.infEligible) && (
+        <div className="flex flex-col gap-1 rounded-sm border-2 border-fuchsia-900/60 bg-fuchsia-950/20 px-2 py-1.5">
+          <p className="flex items-center gap-1 text-[9px] font-bold text-fuchsia-300">
+            <Sparkles className="h-3 w-3" aria-hidden />
+            超限纪元
+            {civ.infEra > 0 && (
+              <span className="rounded-sm border border-fuchsia-700 bg-fuchsia-500/10 px-1.5 py-0.5 text-[8px] font-bold text-fuchsia-200">
+                {civ.infName}
+              </span>
+            )}
+          </p>
+          {civ.infEra === 0 ? (
+            <p className="text-[8px] text-zinc-500">科技树已尽：这个文明正在向时代的天花板发起冲击</p>
+          ) : (
+            <p className="text-[8px] text-zinc-500">演化无上限——每次超越按中枢人格选道，阶位与加成永续上探</p>
+          )}
+          <div className="flex items-center gap-1.5">
+            <span className="w-7 shrink-0 text-[8px] font-bold text-zinc-500">超越</span>
+            <div className="h-1.5 flex-1 overflow-hidden border border-zinc-700 bg-zinc-800">
+              <div className="bg-fuchsia-400 transition-[width] duration-500" style={{ width: `${civ.infProgress * 100}%` }} />
+            </div>
+            <span className="w-10 shrink-0 text-right font-mono text-[8px] text-zinc-500">{Math.round(civ.infProgress * 100)}%</span>
+          </div>
+        </div>
+      )}
 
       {/* 建筑 */}
       {civ.builds.length > 0 && (

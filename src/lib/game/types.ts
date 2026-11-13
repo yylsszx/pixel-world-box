@@ -645,6 +645,34 @@ export interface Civ {
   // ---------------- 涌现社会理念（Infinite Ideas） ----------------
   /** 已采纳的涌现理念 key 列表（上限 3；效果由 engine.ideaModsOf 汇总） */
   ideas?: string[];
+  // ---------------- 文明中枢（civ-brain 二笔：六维人格 + 外脑决策纪要） ----------------
+  /** 中枢人格六维（0.05-0.95；undefined = 尚无中枢，引擎按种族底色现算缺省） */
+  brain?: CivBrain;
+  // ---------------- 超限纪元（无限演化：科技树尽头的不封顶进化） ----------------
+  /** 超越次数（0/undefined = 尚未超越；无上限——每次超越按中枢人格选道，全领域阶位上探） */
+  infEra?: number;
+  /** 当前超越研究进度（知识点；达标即 fire transcend） */
+  infP?: number;
+  /** 演化道途史（领域 key 序列：war/build/farm/trade/sea/faith——阶位加成与人格反塑的单一事实源） */
+  infHist?: string[];
+}
+
+/** 文明中枢人格六维（civ-brain）：war 好战 / build 筑城 / farm 重农 / trade 通商 / sea 向海 / faith 虔信
+ *  来源双通道：种族底色缺省（engine.defaultBrainOf）+ 外脑年度决策（/api/civ-brain personaPatch）
+ *  引擎消费六点：宣战倾向/军团组建/建筑权重/集市经济/殖民航向/文化信仰 */
+export interface CivBrain {
+  war: number;
+  build: number;
+  farm: number;
+  trade: number;
+  sea: number;
+  faith: number;
+  /** 最近一次外脑决策纪要（王国口吻，≤80 字；undefined = 尚未召开中枢） */
+  note?: string;
+  /** 决策纪要年份（编年史对时用） */
+  noteYear?: number;
+  /** 决策来源（'ai' = 外脑；缺省 = 种族底色） */
+  src?: 'ai';
 }
 
 export type BuildKind = number; // 0 none, 1 house, 2 capital, 3 tower, 4 farm, 5 barracks, 6 castle, 7 port, 8 library, 9 market, 10 temple, 11 wall
@@ -1018,7 +1046,11 @@ export type WorldEventKind =
   // —— 海战（舰队遭遇战/拦截/海岸防御） ——
   | 'naval'
   // —— 季节 × 万物（换季宣告/生物节律） ——
-  | 'season';
+  | 'season'
+  // —— 文明中枢（civ-brain：外脑年度国策决断） ——
+  | 'brain'
+  // —— 超限纪元（无限演化：文明突破时代天花板的升华大典） ——
+  | 'ascend';
 
 // ---------------- v40/v41：Agent 法则（机制热插拔引擎的封闭动作枚举） ----------------
 /** 法则动作：Agent 只能拼装这些积木——纯数据描述，无 eval，参数引擎侧硬校验。
@@ -1897,6 +1929,8 @@ export interface SaveDataV2 {
   laws?: WorldLaws;
   /** 野生生物繁殖倍率（0-1；基准 = 最慢文明生物的 repro；旧档缺省 = 1） */
   wildReproScale?: number;
+  /** 矿脉枯竭格索引（#85 遗留③：采尽即枯；读档 deriveOre 后重放；旧档缺省 = 无枯竭） */
+  oreOut?: number[];
   /** 地面物品（[id, kind, x, y] 行式紧凑数组） */
   items?: [number, string, number, number][];
   /** 物品序号 */
