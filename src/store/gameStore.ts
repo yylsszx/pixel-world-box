@@ -104,6 +104,7 @@ const OVERLAY_KEY = 'wb_overlay';
 /** 世界法则持久化（玩家偏好；读档时若存档携带法则则以存档为准并同步 store） */
 const LAWS_KEY = 'wb_laws';
 const WILD_REPRO_KEY = 'wb_wildrepro';
+const ORE_DEPLETION_KEY = 'wb_oredepletion';
 /** 音效开关的持久化键 */
 const SOUND_KEY = 'wb_sound';
 /** 工具放置参数持久化（每工具 count/radius/power/duration） */
@@ -431,6 +432,9 @@ interface GameStore {
   laws: WorldLaws;
   /** 野生生物繁殖倍率（0-1，基准 = 最慢文明生物 repro；用户钦定修复） */
   wildReproScale: number;
+  /** 矿脉枯竭速率档位（0 永不枯竭 / 1 正常 / 2 快速；世界参数随存档走） */
+  oreDepletion: number;
+  setOreDepletion: (v: number) => void;
   setLaw: (key: keyof WorldLaws, value: boolean) => void;
   /** 读档后把存档中的法则同步到 store（内部使用） */
   syncLaws: (laws: WorldLaws) => void;
@@ -625,7 +629,17 @@ const initialWildRepro: number = (() => {
   }
 })();
 
-
+// 矿脉枯竭速率档位初始值（#87）：0 永不枯竭 / 1 正常 / 2 快速（读档时若存档带值则同步覆盖）
+const initialOreDepletion: number = (() => {
+  if (typeof window === 'undefined') return 1;
+  try {
+    const raw = localStorage.getItem(ORE_DEPLETION_KEY);
+    const v = raw == null ? 1 : Number(raw);
+    return Number.isFinite(v) ? Math.max(0, Math.min(2, Math.round(v))) : 1;
+  } catch {
+    return 1;
+  }
+})();
 
 // 工具放置参数初始值：每工具取参数定义默认值 → 再用持久化偏好覆盖（仅限已知工具与合法值）
 const initialToolParams: Record<string, Record<string, number>> = (() => {
@@ -791,6 +805,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   fxPrefs: initialFxPrefs,
   laws: initialLaws,
   wildReproScale: initialWildRepro,
+  oreDepletion: initialOreDepletion,
   overlayMode: initialOverlay,
   saveDialog: 'none',
   // —— 神谕圣装（Task 70）初始值 ——
@@ -1317,6 +1332,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ wildReproScale: clamped });
   },
 
+  // ---------------- 矿脉枯竭速率档位（#87：0 永不 / 1 正常 / 2 快速） ----------------
+  setOreDepletion: (v) => {
+    const clamped = Math.max(0, Math.min(2, Math.round(Number.isFinite(v) ? v : 1)));
+    const eng = _engine;
+    if (eng) eng.oreDepletion = clamped; // 引擎热生效（下一次 mineCollapseTick 即按新速率掷骰）
+    try {
+      localStorage.setItem(ORE_DEPLETION_KEY, String(clamped));
+    } catch {
+      /* 隐私模式忽略 */
+    }
+    set({ oreDepletion: clamped });
+  },
+
   // ---------------- 地图覆盖模式（无/政治/温度/湿度） ----------------
   setOverlayMode: (mode) => {
     const eng = _engine;
@@ -1383,6 +1411,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ selUnit: null, selCiv: null, follow: false, events: eng.worldEvents, saveDialog: 'none', councilFeed: [], councilPending: [] });
       get().syncLaws({ ...eng.laws });
       set({ wildReproScale: eng.wildReproScale }); // 读档/导入带入优先，不写 localStorage（同 syncLaws 语义）
+      set({ oreDepletion: eng.oreDepletion });
       if (r.recovered) quickToast(`已从备份恢复 ${key === 'auto' ? '自动存档' : key === 'legacy' ? '旧版存档' : `槽位 ${parseInt(key.slice(4), 10) + 1}`}（主档损坏，上一份完好存档已救回，${Math.floor(eng.yearF)} 年）`, 'good');
       else quickToast(`已读取 ${key === 'auto' ? '自动存档' : key === 'legacy' ? '旧版存档' : `槽位 ${parseInt(key.slice(4), 10) + 1}`}（${Math.floor(eng.yearF)} 年的世界）`, 'good');
       return true;
@@ -1452,6 +1481,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ selUnit: null, selCiv: null, follow: false, events: eng.worldEvents, saveDialog: 'none', councilFeed: [], councilPending: [] });
       get().syncLaws({ ...eng.laws });
       set({ wildReproScale: eng.wildReproScale }); // 读档/导入带入优先，不写 localStorage（同 syncLaws 语义）
+      set({ oreDepletion: eng.oreDepletion });
       quickToast(`已导入存档（${Math.floor(eng.yearF)} 年的世界），记得保存到槽位`, 'good');
       return true;
     } catch (err) {

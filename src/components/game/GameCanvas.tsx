@@ -192,6 +192,8 @@ export function GameCanvas() {
     engine.laws = { ...store.laws };
     // 野生繁殖倍率（用户钦定修复）：同法则语义 —— 新世界用玩家偏好，读档由 applySave 覆盖
     engine.wildReproScale = store.wildReproScale;
+    // 矿脉枯竭速率档位（#87 世界参数）：0 永不枯竭 / 1 正常 / 2 快速
+    engine.oreDepletion = store.oreDepletion;
     // 地图覆盖模式（政治版图/温度/湿度）：从持久化偏好恢复，regenerate 后由 render 按需重绘
     engine.overlayMode = store.overlayMode;
     engine.overlayDirty = true;

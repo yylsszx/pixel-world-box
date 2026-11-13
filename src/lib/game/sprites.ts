@@ -1543,6 +1543,34 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
         ctx.fillRect(px + 5, py - 1, 1, 4);
         ctx.fillRect(px + 10, py - 1, 1, 4); // 拱架
       }
+      // —— #87 超限形态二笔（tier≥3）：悬浮农业平台——几何结构进化而非仅换色。
+      //    温室上方悬空石板平台（反重力光柱托举）+ 能量尖顶；尖顶数随 tier 递增（1/2/3）——
+      //    每再 +1 阶形态可辨识递进（永筑之道高阶农田 = 空中粮仓）
+      if (tier >= 3) {
+        const aura = INF_AURA[(tier - 3) % INF_AURA.length];
+        const spires = Math.min(3, tier - 2); // 3→1 尖顶 / 4→2 / 5+→3
+        // 悬浮石板（悬空于温室之上，与拱棚拉开 1px 反重力缝隙）
+        ctx.fillStyle = '#5a5f6e';
+        ctx.fillRect(px - 1, py - 6, 18, 2);
+        ctx.fillStyle = '#7d8494';
+        ctx.fillRect(px - 1, py - 6, 18, 1); // 板缘受光
+        ctx.fillStyle = '#3c4050';
+        ctx.fillRect(px - 1, py - 5, 18, 1); // 板底阴影
+        // 反重力光柱（四角托举，两帧呼吸）
+        ctx.fillStyle = aura;
+        ctx.globalAlpha = ((fc >> 4) & 1) === 0 ? 0.7 : 0.35;
+        ctx.fillRect(px, py - 4, 1, 3);
+        ctx.fillRect(px + 15, py - 4, 1, 3);
+        ctx.globalAlpha = 1;
+        // 能量尖顶（板上立锥：底座 + 锥身 + 尖顶光点——阶位越高越多）
+        for (let s = 0; s < spires; s++) {
+          const sx = px + 2 + s * 6;
+          ctx.fillStyle = '#8d93a8';
+          ctx.fillRect(sx, py - 8, 3, 2); // 锥身
+          ctx.fillStyle = aura;
+          ctx.fillRect(sx + 1, py - 9, 1, 1); // 尖顶光点
+        }
+      }
       return;
     }
     case 5: {
@@ -1591,6 +1619,31 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
         ctx.fillRect(px + 6, py - 7, 2, 4); // 军旗杆（居中高扬）
         ctx.fillStyle = rgb(color);
         ctx.fillRect(px + 8, py - 7, 3, 2);
+      }
+      // —— #87 超限形态二笔（tier≥3）：能量要塞化——几何结构进化而非仅换色。
+      //    门塔双堡上方悬浮能量炮塔环（悬浮基座 + 能量炮管），炮塔数随 tier 递增（1/2/3/4）——
+      //    战神/永筑之道高阶兵营 = 悬空武备的军团要塞
+      if (tier >= 3) {
+        const aura = INF_AURA[(tier - 3) % INF_AURA.length];
+        const pylons = Math.min(4, tier - 2); // 3→1 / 4→2 / 5→3 / 6+→4
+        const gap = 16 / (pylons + 1);
+        for (let p = 1; p <= pylons; p++) {
+          const bx = px - 2 + Math.round(p * gap);
+          // 悬浮基座（脱离屋顶的浮空石台 + 底部光尘）
+          ctx.fillStyle = '#5a5f6e';
+          ctx.fillRect(bx - 1, py - 11, 4, 2);
+          ctx.fillStyle = '#7d8494';
+          ctx.fillRect(bx - 1, py - 11, 4, 1);
+          ctx.fillStyle = aura;
+          ctx.globalAlpha = ((fc >> 4) & 1) === 0 ? 0.65 : 0.3;
+          ctx.fillRect(bx, py - 9, 2, 3); // 反重力尘柱
+          ctx.globalAlpha = 1;
+          // 能量炮管（斜指前方的炮身 + 炮口光点）
+          ctx.fillStyle = '#8d93a8';
+          ctx.fillRect(bx, py - 13, 2, 2);
+          ctx.fillStyle = aura;
+          ctx.fillRect(bx + 1, py - 14, 1, 1);
+        }
       }
       return;
     }
@@ -2544,6 +2597,52 @@ export function drawBoat(ctx: CanvasRenderingContext2D, u: Unit, civColor: [numb
     ctx.fillRect(px + 6 * f, oy - 2, 2, 1);
     ctx.fillRect(px + 8 * f, oy - 1 - (pulse ? 1 : 0), 2, 1);
     ctx.globalAlpha = 1;
+  }
+  // —— #87 超限形态二笔（tier≥3）：悬浮能量船——船体形态变化而非仅换色。
+  //    气垫光裙脱两水线 / 楔形能量船艏 / 离子尾焰——与 t1 帆船 / t2 蒸汽铁壳明确区分（深蓝之道高阶航代）
+  if (tier >= 3) {
+    const aura = INF_AURA[(tier - 3) % INF_AURA.length];
+    const wk = Math.floor(frame / 5) % 2;
+    // 气垫光裙（船底反重力场：脱离水面，两帧呼吸）
+    ctx.fillStyle = aura;
+    ctx.globalAlpha = wk ? 0.8 : 0.45;
+    ctx.fillRect(px - 3, oy + 1, 7, 1);
+    ctx.globalAlpha = 1;
+    // 能量壳体（悬浮于水线之上 1px：上浅下深双层，无烟囱无机桨）
+    ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#8b93a8';
+    ctx.fillRect(px - 3, oy - 1, 7, 1);
+    ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#5d6578';
+    ctx.fillRect(px - 3, oy, 7, 1);
+    // 楔形能量船艏（朝向侧尖劈 + 艏尖光点）
+    ctx.fillStyle = '#c7d2e8';
+    ctx.fillRect(px + 4 * f, oy - 1, 2, 1);
+    ctx.fillStyle = aura;
+    ctx.fillRect(px + 6 * f, oy - 1, 1, 1);
+    // 驾驶舱泡（王国色 + 舷窗反光）
+    ctx.fillStyle = civColor ? rgb(civColor) : '#f2ead8';
+    ctx.fillRect(px - 1, oy - 3, 3, 2);
+    ctx.fillStyle = '#f7f9fb';
+    ctx.fillRect(px, oy - 3, 1, 1);
+    // 离子推进尾焰（尾部两帧交替的离子尾迹，替代蒸汽烟囱）
+    ctx.fillStyle = aura;
+    ctx.globalAlpha = wk ? 0.85 : 0.4;
+    ctx.fillRect(px - 5 * f, oy - 1, 2, 1);
+    ctx.globalAlpha = wk ? 0.45 : 0.2;
+    ctx.fillRect(px - 7 * f, oy, 2, 1);
+    ctx.globalAlpha = 1;
+    // 商船满载（货舱能量晶体堆叠）
+    if ((u.caravan ?? 0) > 0) {
+      ctx.fillStyle = aura;
+      ctx.fillRect(px + 1 * f, oy - 3, 1, 1);
+      ctx.fillRect(px + 2 * f, oy - 3, 1, 1);
+      ctx.fillStyle = '#e8f4ff';
+      ctx.fillRect(px + 1 * f, oy - 4, 2, 1);
+    }
+    if (u.hp < u.maxHp * 0.4) {
+      ctx.fillStyle = '#cf3f2e';
+      ctx.fillRect(px - 3, oy - 6, 7, 1);
+    }
+    return;
   }
   // —— 时代深化：航船进化（t0 木筏→小帆 / t1 帆船→主帆加高 / t2 蒸汽轮船→铁壳烟囱）——
   if (tier >= 2) {

@@ -5976,3 +5976,28 @@ Stage Summary:
 **推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
 **版本节奏**: 升位 v0.77-preview（CHANGELOG 四条：无限演化/文明中枢外脑/骑兵冲锋/矿脉枯竭）。
 **评估：D6 长线可玩性质变——「后期不变」的机制级根治：科技树尽头不是终点而是新起点（超越循环无上限），人格→选道→反塑无限反馈环让每个文明走出独一无二的演化树（AI 执掌的子文明尤其如此），阶位/光环/事件三层持续可见变化；civ-brain 从空中路由到六决策点全接线（外脑真治国有实感）；WorldBox 对标再进一步（其无无限演化概念）。**
+
+## 2026-11-13 #87（遗留池打磨轮）：超限形态二笔 + 大道之争 + 枯竭参数化 + 外脑谕令，升位 v0.78-preview
+
+**选题**: #86 worklog 遗留池四项（①超限可视化二笔 ②大道之争 ③矿脉枯竭速率参数化 ④外脑谕令第三通道；⑤⑥按任务书跳过）。
+
+**① 超限可视化二笔（最重要）**: 超限阶位从「仅光环叠加」升级「几何形态进化」——sprites.ts 三处 tier≥3 专属形态层（光环机制原样保留）：
+- 农田 tier≥3：温室上方**悬浮农业平台**（悬空石板 + 四角反重力光柱呼吸 + 能量尖顶）——尖顶数随 tier 递增（3→1/4→2/5+→3，每再 +1 阶形态可辨识递进）。
+- 兵营 tier≥3：门塔双堡上空**悬浮能量炮塔环**（浮空石台基座 + 反重力尘柱 + 斜指能量炮管）——炮塔数 1/2/3/4 随 tier 递增。
+- 航船 tier≥3：**悬浮能量船体**——气垫光裙脱离水线（两帧呼吸）/ 楔形能量船艏 / 驾驶舱泡 / 离子推进尾焰（替代蒸汽烟囱），与 t1 帆船 / t2 蒸汽铁壳明确视觉区分；drawBoat 分支前置 tier≥3 早 return。
+
+**② 大道之争**: `pathDiploMod(a,b)` 道途外交修正——同道途每对共同超越 +0.03（取两边 infCount 较小者）；战神 vs 圣辉/丰饶每次 -0.05（PATH_TENSION 表双向计）；钳 ±0.25；未超越方恒 0。diplomacyMeet 消费：warChance -= mod（异道途宣战概率高于同道途，实测 0.253 > 0.143）+ 首触关系 ±mod×40 + 两超限文明首次紧张接触发「大道之争」'ascend' 编年史（`pathRiftMet` pairKey 去重；复用 ascend 频道 → 零四处 exhaustive Record 改动）。顺带把 warChance 公式抽成公开 `diploWarChance(a,b)`（diplomacyMeet 单一事实源 + 单测可测）。
+
+**③ 矿脉枯竭速率参数化**: 引擎 `oreDepletion` 字段（0 永不 / 1 正常 1.2%/600tick / 2 快速 ×2）——mineCollapseTick 掷骰前置速率闸（`oreDepletion > 0 && rng() < 0.012 * oreDepletion`）；serialize 携带 / applySave `?? 1` 回退（钳 0-2）。全链路照抄 wildReproScale 模式：gameStore（`wb_oredepletion` localStorage + setOreDepletion 热生效 + 读档/导入双路同步）+ GameCanvas 新世界注入 + TopBar 世界法则面板三档按钮组（永不/正常/快速）。
+
+**④ 外脑谕令第三通道**: /api/civ-brain 路由白名单扩 `directive` 可选字段（五枚举：focus-research/focus-growth/seek-peace/prepare-war/expand-sea；提示词第 3 条说明时效与克制；枚举外静默丢弃不报错）→ Driver 透传 → 引擎 `setCivDirective`（二道闸同表拒收 + 'decree' 编年史）→ Civ 挂可选字段 `directive?: { kind; untilTick }`（10 年 = 400 tick 时效，civs 展开序列化自动携带，旧档无字段回退无谕令）。五处轻量限时效果：格物 know×1.1 / 生聚 repro×1.15 / 偃武 warChance-0.1 / 备战集结 +0.15 / 航向 colMul×0.85——`activeCivDirective` 过期自动失效（效果链全回退）。CivPanel 决策纪要区新增谕令徽章（Scroll 图标 + getCivInfo directive/directiveLabel）。
+
+**QA（33/33 新 + 44/44 + 48/48 回归 + tsc/eslint/build 全绿）**: 新脚本 scripts/polish87-test.mjs 33 断言——①tier≥3 参数正确（永筑×2 → 农田/兵营 tier 4；深蓝×1 → 航船 tier 3）+ 农田/兵营/航船 tier 3-5 像素分支 stub ctx 逐档可执行不抛异常 + tier 0 回归；②同道 +0.06 精确 / 战神×2 vs 圣辉×1 = -0.05 / 未超越 0 / 异道宣战概率 > 同道（0.253>0.143）/ 首触「大道之争」事件（战神 vs 圣辉文案）/ 同道首触关系 > 异道（31>26）/ 播报去重；③档 0 必中骰矿井无恙 / 档 2 的 2% 骰命中枯竭（1.2%×2）而档 1 不中 / 存档携带 + 读档恢复 + 旧档缺字段回退 1；④白名单外与非法类型拒收 / 偃武令 -0.1（0.503→0.403）/ 过期自动失效 / 存档往返 + 旧档剥离不炸；⑤600 tick 冒烟无异常（8.68ms/tick——本轮测试世界含两国 + 手工矿井 + 三次 applySave，重于常规冒烟）。回归：infinite-evolution 44/44 + age-deepening 48/48 全绿；tsc 零错误；eslint 九改动文件零告警；`npm run build`（next build）✓ Compiled successfully。
+
+**改动文件**: types.ts（Civ.directive/CivDirectiveKind/SaveData×2 oreDepletion）、engine.ts（oreDepletion 字段+闸+序列化 / pathDiploMod+PATH_TENSION+mainPathOf+pathRiftMet / CIV_DIRECTIVES+setCivDirective+activeCivDirective / diploWarChance 抽取 / 五效果接线 / getCivInfo 谕令字段）、sprites.ts（农田/兵营 tier≥3 形态层 + 航船 tier≥3 船体）、route.ts（directive 白名单+提示词）、CivBrainDriver.tsx（透传）、CivPanel.tsx（谕令徽章）、gameStore.ts（oreDepletion 全链）、GameCanvas.tsx（新世界注入）、TopBar.tsx（三档选择器）、version.ts（v0.78 + CHANGELOG 四条）、scripts/polish87-test.mjs（新，33 断言）。
+
+**遗留（下轮优先池）**: ①大道之争仅作用于首次外交接触（met 集合一次性）——后续关系漂移/宣战重燃未吃道途修正，可扩到 warTick/rel 衰减；②谕令效果 UI 进度（面板只显徽章不显剩余年限——getCivInfo 可补 untilYear）；③rust 工具链窗口（#86 遗留⑤不变）；④「继续旅程」不显示自动档候选（#44 起悬案不变）；⑤超限形态二笔可继续扩（集市/港口/箭塔的 tier≥3 形态层——本轮只做了任务书点名的农田/兵营/航船三类代表）。
+
+**推送**: 11 文件 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**版本节奏**: 升位 v0.78-preview（CHANGELOG 四条：超限形态二笔/大道之争/外脑谕令/枯竭参数化）。
+**评估：D5 手感表现 + D6 长线可玩性双补强——超限超越从「数值 + 光环」补齐「几何形态」最后一层（每 +1 阶肉眼可辨）；大道之争把无限演化接入外交层（同道/异道国运分岔，超限时代的世界政治有了叙事主轴）；外脑谕令让 AI 执掌的文明多一个轻量不失衡的决策维度；枯竭速率参数化补上世界难度旋钮。**

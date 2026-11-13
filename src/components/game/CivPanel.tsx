@@ -79,6 +79,9 @@ interface CivInfo {
   brainSrc: 'ai' | null;
   brainNote: string | null;
   brainNoteYear: number | null;
+  // —— 外脑谕令（civ-brain 第三通道）：当前生效谕令（null = 无）——
+  directive: string | null;
+  directiveLabel: string;
   // —— 超限纪元（无限演化） ——
   infEra: number;
   infName: string;
@@ -545,6 +548,12 @@ function OverviewTab({ civ, onJumpCapital }: { civ: CivInfo; onJumpCapital: () =
         {civ.brainNote && (
           <p className="mt-0.5 border-t border-zinc-800 pt-1 text-[8px] leading-relaxed text-zinc-400" title={civ.brainNoteYear ? `${civ.brainNoteYear} 年决策纪要` : '决策纪要'}>
             「{civ.brainNote}」{civ.brainNoteYear ? <span className="text-zinc-600">（{civ.brainNoteYear} 年）</span> : null}
+          </p>
+        )}
+        {civ.directive && (
+          <p className="mt-0.5 flex items-center gap-1 text-[8px] font-bold text-cyan-300" title="外脑谕令：有限时效（10 年）的轻量国策，到期自动失效">
+            <Scroll className="h-2.5 w-2.5" aria-hidden />
+            谕令：{civ.directiveLabel}
           </p>
         )}
       </div>

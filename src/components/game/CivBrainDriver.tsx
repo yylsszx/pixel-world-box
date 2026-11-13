@@ -5,6 +5,7 @@
 //   · 国情摘要来自 engine.getCivInfo（人口/经济/战争/科技/社会一站式），人格六维来自 engine.brainOf
 //   · POST /api/civ-brain（provider 随请求体传入——各文明可接不同 API 的机制④在面板层配置，此处用共享配置）
 //   · 回传 personaPatch + note → store.applyCivBrain → engine.setCivBrain（clamp 二道闸 + 'brain' 编年史纪事）
+//   · 回传 directive（可选）→ engine.setCivDirective（谕令白名单 + 10 年时效的轻量引擎效果）
 //   · 串行召开（一次一国）：外脑再慢也不并发轰炸；失败静默下轮重试（无 note 不播报）
 import { useEffect, useRef } from 'react';
 import { useGameStore, getEngine } from '@/store/gameStore';
@@ -72,10 +73,12 @@ export function CivBrainDriver() {
           body: JSON.stringify({ provider, civ: brief, persona: eng.brainOf(due) }),
         });
         if (res.ok) {
-          const out = (await res.json()) as { personaPatch?: Record<string, number>; note?: string; error?: string };
+          const out = (await res.json()) as { personaPatch?: Record<string, number>; note?: string; directive?: string; error?: string };
           if (out.personaPatch && Object.keys(out.personaPatch).length > 0) {
             useGameStore.getState().applyCivBrain(due.id, out.personaPatch, out.note || undefined);
           }
+          // 第三通道：国策谕令（路由白名单已过滤；引擎 setCivDirective 二道闸同表拒收 + 10 年时效）
+          if (out.directive) eng.setCivDirective(due.id, out.directive);
         }
       } catch {
         /* 网络瞬断：静默，下轮自愈 */

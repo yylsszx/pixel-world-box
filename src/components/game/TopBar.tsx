@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
-import { Pause, Play, FastForward, ChevronsRight, Check, Undo2, Redo, Biohazard, Gauge, RefreshCw, CircleHelp, Map as MapIcon, Clock, Users, Swords, Flame, Save, FolderOpen, Volume2, VolumeX, Crown, ScrollText, Sailboat, SlidersHorizontal, Hash, Zap, Waves, Sparkles, Layers, Snowflake, Thermometer, Droplets, Flag, TreePine, Scale, Baby, Rabbit, TrendingUp, Ghost, Swords as SwordsIcon, Skull as SkullIcon, Rocket, Terminal, Bone, Heart, Leaf, Camera, Trophy, MountainSnow, CloudRain, Sun, CloudSnow, Flower2, Tornado, GitBranch, Handshake, UsersRound, BrainCircuit, Network, Activity, ImageDown, Music, Gamepad2, History, ChevronDown, House, BookOpen, Orbit, Search, LayoutGrid, Gavel } from 'lucide-react';
+import { Pause, Play, FastForward, ChevronsRight, Check, Undo2, Redo, Biohazard, Gauge, RefreshCw, CircleHelp, Map as MapIcon, Clock, Users, Swords, Flame, Save, FolderOpen, Volume2, VolumeX, Crown, ScrollText, Sailboat, SlidersHorizontal, Hash, Zap, Waves, Sparkles, Layers, Snowflake, Thermometer, Droplets, Flag, TreePine, Scale, Baby, Rabbit, TrendingUp, Ghost, Swords as SwordsIcon, Skull as SkullIcon, Rocket, Terminal, Bone, Heart, Leaf, Camera, Trophy, MountainSnow, CloudRain, Sun, CloudSnow, Flower2, Tornado, GitBranch, Mountain, Handshake, UsersRound, BrainCircuit, Network, Activity, ImageDown, Music, Gamepad2, History, ChevronDown, House, BookOpen, Orbit, Search, LayoutGrid, Gavel } from 'lucide-react';
 import type { OverlayMode, WorldLaws } from '@/lib/game/types';
 import { RACES } from '@/lib/game/types';
 import { ICONS, RACE_DOT } from '@/lib/game/constants';
@@ -414,7 +414,7 @@ export function TopBar() {
   const {
     speed, setSpeed, newWorld, toggleHelp, toggleMinimap, openSaveDialog,
     soundOn, toggleSound, openMobilePanel, overlayMode, setOverlayMode,
-    laws, setLaw, wildReproScale, setWildReproScale, devMode, toggleDevMode, toggleDevPanel, showDev,
+    laws, setLaw, wildReproScale, setWildReproScale, oreDepletion, setOreDepletion, devMode, toggleDevMode, toggleDevPanel, showDev,
     toggleCinema, perfHud, togglePerfHud, showTitle, showSettings, toggleSettings,
     toggleCodex, showCodex, setPaletteOpen,
   } = useGameStore();
@@ -728,6 +728,30 @@ export function TopBar() {
                     aria-label="野生繁殖倍率"
                     className="mt-1.5"
                   />
+                </div>
+              </div>
+              {/* 矿脉枯竭速率（#87 世界参数）：三档选择器 —— 0 永不枯竭 / 1 正常 / 2 快速 */}
+              <div className="flex items-center gap-2.5 rounded-sm border-2 border-zinc-700/80 bg-zinc-800/60 px-2.5 py-2">
+                <Mountain className="h-4 w-4 shrink-0 text-stone-300" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="text-[11px] font-bold text-zinc-200">矿脉枯竭速率</p>
+                    <p className="font-mono text-[10px] font-bold text-stone-300">{oreDepletion === 0 ? '永不' : oreDepletion === 2 ? '快速' : '正常'}</p>
+                  </div>
+                  <p className="text-[9px] leading-tight text-zinc-500">采尽的矿脉永久枯竭；快速档适合逼矿业文明持续扩张</p>
+                  <div className="mt-1.5 flex gap-1" role="group" aria-label="矿脉枯竭速率档位">
+                    {([[0, '永不'], [1, '正常'], [2, '快速']] as [number, string][]).map(([v, label]) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setOreDepletion(v)}
+                        aria-pressed={oreDepletion === v}
+                        className={`flex-1 rounded-sm border px-1.5 py-0.5 text-[10px] font-bold transition-colors ${oreDepletion === v ? 'border-amber-600 bg-amber-500/20 text-amber-200' : 'border-zinc-700 bg-zinc-900/60 text-zinc-400 hover:border-zinc-600'}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
               <p className="mt-1.5 px-1 text-[9px] text-[#75694f]">法则随存档保存；开关立即生效</p>

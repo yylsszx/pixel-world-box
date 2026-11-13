@@ -12,6 +12,9 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const PERSONA_DIMS = ['war', 'build', 'farm', 'trade', 'sea', 'faith'] as const;
+/** 外脑谕令白名单（第三通道：有限时效的轻量引擎效果，引擎端 setCivDirective 二道闸同表拒收） */
+const DIRECTIVES = ['focus-research', 'focus-growth', 'seek-peace', 'prepare-war', 'expand-sea'] as const;
+type CivDirective = (typeof DIRECTIVES)[number];
 const TIMEOUT_MS = 15_000;
 
 /** 组装中枢决策提示词（messages[0] = assistant 系统提示词——与 /api/oracle/agent 协议一致） */
@@ -20,12 +23,13 @@ function buildMessages(civ: unknown, persona: unknown): AgentChatMessage[] {
     '你是像素沙盒世界中一个文明的「中枢核心」——这个文明唯一的超级决策智能体。',
     '你以王国的整体存续与繁荣为唯一目标，基于国情与禀性做出本年度国策决断。',
     '你只输出一个 JSON 对象，禁止任何其它文本、markdown 代码块或解释。格式：',
-    '{"personaPatch":{"war":0.55,"farm":0.7},"note":"一句话决策纪要"}',
+    '{"personaPatch":{"war":0.55,"farm":0.7},"note":"一句话决策纪要","directive":"focus-research"}',
     '规则：',
     '1. personaPatch 每维都是 0-1 数字（war 好战 / build 筑城 / farm 重农 / trade 通商 / sea 向海 / faith 虔信），只需给出想调整的维度，每维相对当前值变动幅度 ≤0.2。',
     '2. note：不超过 40 字的中文决策纪要（以该王国的口吻，如「粮仓将罄，举国恳田，暂休刀兵」）。',
-    `3. 当前人格六维：${JSON.stringify(persona)}`,
-    `4. 本年度国情速报：${JSON.stringify(civ)}`,
+    '3. directive 可选：国策谕令，仅可取 focus-research（格物：知识 +10%/10 年）/ focus-growth（生聚：生育 +15%/10 年）/ seek-peace（偃武：开战概率 -0.1/10 年）/ prepare-war（备战：集结加速/10 年）/ expand-sea（航向：殖民加快/10 年）——效果轻量且会过期，非紧急不必每年颁布，无需则省略该字段。',
+    `4. 当前人格六维：${JSON.stringify(persona)}`,
+    `5. 本年度国情速报：${JSON.stringify(civ)}`,
   ].join('\n');
   return [
     { role: 'assistant', content: sys },
@@ -121,7 +125,10 @@ export async function POST(req: NextRequest) {
     }
     const noteRaw = obj.note;
     const note = typeof noteRaw === 'string' ? noteRaw.slice(0, 80) : '';
-    return NextResponse.json({ personaPatch, note });
+    // —— 谕令白名单（第三通道）：枚举外一律丢弃（不回传不报错——外脑幻觉值静默拒收）——
+    const dirRaw = obj.directive;
+    const directive: CivDirective | undefined = typeof dirRaw === 'string' && (DIRECTIVES as readonly string[]).includes(dirRaw) ? (dirRaw as CivDirective) : undefined;
+    return NextResponse.json({ personaPatch, note, directive });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : '中枢外脑暂时不可达' }, { status: 502 });
   }

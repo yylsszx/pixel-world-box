@@ -1,5 +1,5 @@
 // ============ WorldBox Replica — Simulation Engine ============
-import type { Army, ArmyState, Building, CasusKind, Civ, CivBrain, Cyclone, Directive, DirectiveKind, Effect, EmergentWeapon, FxPrefs, Gene, GroundItem, ItemDef, ItemKind, BloodDecal, CorpseDecal, OverlayMode, RaceDef, RaceId, SaveData, SaveDataV1, SaveDataV2, SoundKind, SpeciesEco, StatsSnapshot, ToastMsg, TriggerCond, TriggerDef, TriggerRow, Unit, WarInfo, WeaponDefense, WeaponDoctrine, WorldEvent, WorldEventKind, WorldLaws, WorldWarState, Alliance, Family } from './types';
+import type { Army, ArmyState, Building, CasusKind, Civ, CivBrain, CivDirectiveKind, Cyclone, Directive, DirectiveKind, Effect, EmergentWeapon, FxPrefs, Gene, GroundItem, ItemDef, ItemKind, BloodDecal, CorpseDecal, OverlayMode, RaceDef, RaceId, SaveData, SaveDataV1, SaveDataV2, SoundKind, SpeciesEco, StatsSnapshot, ToastMsg, TriggerCond, TriggerDef, TriggerRow, Unit, WarInfo, WeaponDefense, WeaponDoctrine, WorldEvent, WorldEventKind, WorldLaws, WorldWarState, Alliance, Family } from './types';
 import { T, R, RACES, TRAITS, CIV_RACES, DEFAULT_LAWS, ITEM_DEFS, describeCond, JOBS, JOB_KEY, BUILDING_DEFS, BUILD_KINDS, CAPTURABLE, SLOT_FIELD, SLOT_ORDER, RARITY_META, BEST_BY_SLOT, CASUS_META, RACE_REL_BASE, ALLIANCE_COLORS, WONDERS } from './types';
 import { EVO_KIND_META, applyEmTechMods, describeVis, inventIdea, inventTech, inventTrait, invalidateVisCache, mutateVis, tupleToVis, visFromGene, visToTuple } from './emergence';
 import type { EmModKey, EmTech, EvoKind, EvoNode, IdeaDef, VisGenome } from './emergence';
@@ -175,6 +175,8 @@ export class GameEngine {
   effects: Effect[] = [];
   rel = new Map<string, number>();
   met = new Set<string>();
+  /** 大道之争首触播报去重（pairKey 集：两超限文明首次异道途接触只播一次；瞬态不入档） */
+  pathRiftMet = new Set<string>();
 
   unitSeq = 1;
   civSeq = 0;
@@ -520,6 +522,8 @@ export class GameEngine {
    *  min(自身 repro, 倍率 × 繁殖基准数 civSlowestRepro()) —— 倍率 1 时野生生物至多以
    *  最慢文明生物的速度繁殖，0 = 野生生物不繁殖；文明种族不受影响。随存档保存。 */
   wildReproScale = 1;
+  /** 矿脉枯竭速率档位（0 永不枯竭 / 1 正常 1.2%每600tick / 2 快速 ×2；世界参数，随存档走，旧档缺省 1） */
+  oreDepletion = 1;
   /** 地面物品（待拾取的宝物） */
   items: GroundItem[] = [];
   /** 物品序号（序列化用） */
@@ -2478,8 +2482,8 @@ export class GameEngine {
       const b = this.buildings[bi];
       if (b.kind !== BUILD_KINDS.MINE) continue;
       // —— #85 遗留③：矿脉枯竭（长跑世界矿井不再永动）——储量耗尽 → 枯竭报废，矿格永不可再采
-      //    概率 1.2%/600tick（均值寿命 ~500 年）——采尽逼矿，文明须扩张觅新脉（经济地理张力）
-      if (this.rng() < 0.012) {
+      //    基准概率 1.2%/600tick（均值寿命 ~500 年）×世界参数 oreDepletion（0 = 永不枯竭）
+      if (this.oreDepletion > 0 && this.rng() < 0.012 * this.oreDepletion) {
         this.oreOut.add(b.i);
         this.ore[b.i] = 0;
         this.fx('smoke', b.x, b.y, 40, { r: 1.5 });
@@ -2594,9 +2598,17 @@ export class GameEngine {
     const rb = RACES[cb.race];
     // —— 种族系统 v2：种族外交底色（兽人难交朋友，人类八面玲珑）——
     const raceDiplo = ((ra?.diplo ?? 0.5) + (rb?.diplo ?? 0.5)) / 2; // 0-1
-    // —— 中枢人格（civ-brain）：好战中枢推高开战概率（每方 ±0.12；外脑年度决策可直接改写国运） ——
-    const brainWar = (this.brainOf(ca).war - 0.5) * 0.24 + (this.brainOf(cb).war - 0.5) * 0.24;
-    const warChance = Math.max(0.08, Math.min(0.8, 0.2 + ((ca.militarism ?? 30) + (cb.militarism ?? 30)) / 400 + ((ca.gov === 4 || cb.gov === 4) ? 0.1 : 0) - ((ca.gov === 3 || cb.gov === 3) ? 0.12 : 0) - (raceDiplo - 0.5) * 0.3 + brainWar));
+    const warChance = this.diploWarChance(a, b, raceDiplo);
+    // —— 大道之争（#87）：道途异同的外交修正——同道相谋降低战意（+0.03/次共同超越），
+    //    战神 vs 圣辉/丰饶天然紧张（-0.05/次）——超限文明的外交格局由演化方向书写
+    const pathMod = this.pathDiploMod(a, b);
+    // —— 大道之争叙事：两个超限文明首次异道途（紧张）接触 → 编年史播报一次（复用 'ascend' 频道）——
+    if (pathMod < -0.02 && !this.pathRiftMet.has(key)) {
+      this.pathRiftMet.add(key);
+      const pa = this.mainPathOf(ca); const pb = this.mainPathOf(cb);
+      const na = pa ? GameEngine.INF_DOMAINS[pa]?.name ?? '' : ''; const nb = pb ? GameEngine.INF_DOMAINS[pb]?.name ?? '' : '';
+      this.addEvent('ascend', `大道之争：「${ca.name}」的${na}与「${cb.name}」的${nb}渐行渐远——两国的超限道途已然分岔`, { colorHex: ca.colorHex, x: this.civCenterX(ca), y: this.civCenterY(ca) });
+    }
     if (this.laws.wars && this.rng() < warChance) {
       // 战争必须有名有实：按社会气质/复仇记忆/实力对比挑选开战理由
       const pick = this.pickCasus(ca, cb);
@@ -2604,8 +2616,24 @@ export class GameEngine {
     } else {
       // —— 种族关系：首次接触的印象由种族底色决定（精灵与兽人初见即怀敌意）——
       const rr = this.raceRelOf(ca.race, cb.race);
-      this.rel.set(key, Math.max(-10, Math.min(45, 20 + rr / 3)));
+      // 道途修正直接入关系（×40：±0.25 修正在关系上 ±10 —— 同道更亲、异道更疏）
+      this.rel.set(key, Math.max(-10, Math.min(45, Math.round(20 + rr / 3 + pathMod * 40))));
     }
+  }
+
+  /** 外交开战概率（diplomacyMeet 单一事实源抽出：军国主义/政体/种族底色/中枢人格/大道之争/偃武令全链） */
+  diploWarChance(a: number, b: number, raceDiplo?: number): number {
+    const ca = this.civs[a];
+    const cb = this.civs[b];
+    if (!ca || !cb) return 0;
+    const rd = raceDiplo ?? ((RACES[ca.race]?.diplo ?? 0.5) + (RACES[cb.race]?.diplo ?? 0.5)) / 2;
+    // —— 中枢人格（civ-brain）：好战中枢推高开战概率（每方 ±0.12；外脑年度决策可直接改写国运） ——
+    const brainWar = (this.brainOf(ca).war - 0.5) * 0.24 + (this.brainOf(cb).war - 0.5) * 0.24;
+    // —— 大道之争（#87）：道途修正直接进开战概率（同道 -mod / 异道 +|mod|） ——
+    const pathMod = this.pathDiploMod(a, b);
+    // —— 外脑谕令（seek-peace 偃武令）：任一方颁偃武令 → 开战概率 -0.1（限时轻量效果） ——
+    const peaceDir = (this.activeCivDirective(a) === 'seek-peace' ? 0.1 : 0) + (this.activeCivDirective(b) === 'seek-peace' ? 0.1 : 0);
+    return Math.max(0.08, Math.min(0.8, 0.2 + ((ca.militarism ?? 30) + (cb.militarism ?? 30)) / 400 + ((ca.gov === 4 || cb.gov === 4) ? 0.1 : 0) - ((ca.gov === 3 || cb.gov === 3) ? 0.12 : 0) - (rd - 0.5) * 0.3 + brainWar - pathMod - peaceDir));
   }
 
   atWar(a: number, b: number): boolean {
@@ -5210,6 +5238,7 @@ export class GameEngine {
       // 增益链：人口令 ×1.8 / 科技繁衍 / 爱之甘霖 ×2.5 / 基因繁衍 / 自然季节
       // 战乱年代生育率 ×0.55（兵荒马乱）；食草动物随植被丰度 ×0.75..1.5（草肥羊壮）
       const boost = (def.isCiv && u.civ >= 0 && this.activeDirective(u.civ, 'populate') ? 1.8 : 1)
+        * (def.isCiv && u.civ >= 0 && this.activeCivDirective(u.civ) === 'focus-growth' ? 1.15 : 1) // 生聚令：10 年内生育 +15%（限时轻量）
         * (def.isCiv && u.civ >= 0 ? this.techModsOf(u.civ).repro * (1 + this.ideaModsOf(u.civ).repro) : 1)
         * (u.fert ? 2.5 : 1)
         * (u.gene?.r ?? 1) // v3：全体单位的基因繁衍乘数（文明种族也在自然选择中演化）
@@ -6043,7 +6072,7 @@ export class GameEngine {
       // —— 时代深化：矿井学术产出（水晶矿脉）+ 巡逻机测绘（flight 后 ×1.08）——
       const arcaneMul = 0.8 + (RACES[c.race]?.arcane ?? 0.5) * 0.45;
       const planeMul = this.techModsOf(c.id).bomber > 0 ? 1.08 : 1;
-      const knowGain = Math.round((eco.libraries * 2 + eco.mineKnow + (c.pop > 20 ? 1 : 0)) * eco.wisdomBoost * eco.tm.know * eco.cultKnow * (eco.gov === 2 ? 1.15 : 1) * (1 + eco.im.know) * arcaneMul * planeMul * (this.nature.season === 3 ? 1.05 : 1));
+      const knowGain = Math.round((eco.libraries * 2 + eco.mineKnow + (c.pop > 20 ? 1 : 0)) * eco.wisdomBoost * eco.tm.know * eco.cultKnow * (eco.gov === 2 ? 1.15 : 1) * (1 + eco.im.know) * arcaneMul * planeMul * (this.nature.season === 3 ? 1.05 : 1) * (this.activeCivDirective(c.id) === 'focus-research' ? 1.1 : 1)); // 格物令：10 年内知识 +10%（限时轻量）
       // 知识优先投入研究（科技研发体系），余量入国库知识存量（解锁建筑）
       const spent = this.fundResearch(c, knowGain);
       c.knowledge = (c.knowledge ?? 0) + (knowGain - spent);
@@ -7080,7 +7109,7 @@ export class GameEngine {
     const lhMul = this.wonderOf(civ) === BUILD_KINDS.LIGHTHOUSE ? 0.6 : 1;
     // —— 中枢人格（civ-brain）：向海中枢殖民脉搏更勤（×0.8-×1.2 扩张航向） ——
     const seaMul = 1.2 - this.brainOf(civ).sea * 0.4;
-    const colMul = this.techModsOf(civ.id).col * portMul * lhMul * seaMul;
+    const colMul = this.techModsOf(civ.id).col * portMul * lhMul * seaMul * (this.activeCivDirective(civ.id) === 'expand-sea' ? 0.85 : 1); // 航向令：10 年内殖民脉搏 ×0.85（限时轻量）
     civ.colonizeCd = this.tickCount + Math.max(220, Math.round((600 + Math.floor(this.rng() * 600)) * colMul));
     // 挑一名国民充当殖民者（不要抽干小国人口）
     const cand = this.units.filter((u) => !u.dead && u.civ === civ.id && !u.boat);
@@ -7616,6 +7645,65 @@ export class GameEngine {
     return brain;
   }
 
+  // ---------------- 外脑谕令（civ-brain 第三通道：白名单枚举 + 限时轻量效果，防失衡） ----------------
+  /** 谕令白名单元数据：10 年时效的轻量引擎效果（效果小且会过期） */
+  static readonly CIV_DIRECTIVES: Record<CivDirectiveKind, { label: string; desc: string; years: number }> = {
+    'focus-research': { label: '格物令', desc: '10 年内知识产出 +10%', years: 10 },
+    'focus-growth': { label: '生聚令', desc: '10 年内国民生育 +15%', years: 10 },
+    'seek-peace': { label: '偃武令', desc: '10 年内外交开战概率 -0.1', years: 10 },
+    'prepare-war': { label: '备战令', desc: '10 年内战时集结加速 +15%', years: 10 },
+    'expand-sea': { label: '航向令', desc: '10 年内殖民脉搏加快 ×0.85', years: 10 },
+  };
+
+  /** 当前生效的谕令 kind（过期自动失效返回 null） */
+  activeCivDirective(civId: number): CivDirectiveKind | null {
+    const d = this.civs[civId]?.directive;
+    if (!d || d.untilTick <= this.tickCount) return null;
+    return d.kind;
+  }
+
+  /** 颁布外脑谕令（/api/civ-brain directive 通道落地；白名单外一律拒收） */
+  setCivDirective(civId: number, kind: unknown): { kind: CivDirectiveKind; untilTick: number } | null {
+    const civ = this.civs[civId];
+    if (!civ?.alive) return null;
+    const meta = GameEngine.CIV_DIRECTIVES[kind as CivDirectiveKind];
+    if (!meta) return null; // 白名单外拒收
+    const d = { kind: kind as CivDirectiveKind, untilTick: this.tickCount + meta.years * YEAR_TICKS };
+    civ.directive = d;
+    this.addEvent('decree', `「${civ.name}」中枢颁下「${meta.label}」：${meta.desc}（${meta.years} 年内）`, { colorHex: civ.colorHex, x: this.civCenterX(civ), y: this.civCenterY(civ) });
+    return d;
+  }
+
+  // ---------------- 大道之争（超限纪元间外交：道途异同影响国与国） ----------------
+  /** 道途紧张表：战神 vs 圣辉/丰饶（好战与和平道途天然相斥） */
+  static readonly PATH_TENSION: Record<string, string[]> = { war: ['faith', 'farm'] };
+
+  /** 道途外交修正：同道途共同超越每次 +0.03；紧张道途对每次 -0.05；未超越双方为 0；钳 ±0.25 */
+  pathDiploMod(a: number, b: number): number {
+    const ca = this.civs[a];
+    const cb = this.civs[b];
+    if (!ca?.infHist?.length || !cb?.infHist?.length) return 0;
+    let mod = 0;
+    for (const k of Object.keys(GameEngine.INF_DOMAINS)) {
+      // 共同修行：同一道途两边都超越过的次数取较小者（每次 +0.03 —— 同道相谋）
+      mod += 0.03 * Math.min(this.infCount(ca, k), this.infCount(cb, k));
+      // 大道之争：紧张道途交叉（战神 vs 圣辉/丰饶，双向计；每次 -0.05）
+      const foes = GameEngine.PATH_TENSION[k];
+      if (!foes) continue;
+      for (const f of foes) {
+        mod -= 0.05 * Math.min(this.infCount(ca, k), this.infCount(cb, f));
+        mod -= 0.05 * Math.min(this.infCount(cb, k), this.infCount(ca, f));
+      }
+    }
+    return Math.max(-0.25, Math.min(0.25, mod));
+  }
+
+  /** 当前主修道途 key（道途史末位；未超越返回 null） */
+  mainPathOf(civ: Civ): string | null {
+    const h = civ.infHist;
+    return h?.length ? h[h.length - 1] : null;
+  }
+
   // ---------------- 超限纪元（无限演化：时代深化 × 中枢人格的深度融合） ----------------
   /** 六大演化道途：与中枢人格六维一一对应——外脑/AI 人格直接决定文明无限演化方向（融合点①） */
   static readonly INF_DOMAINS: Record<string, { name: string; dim: 'war' | 'build' | 'farm' | 'trade' | 'sea' | 'faith'; word: string; desc: string }> = {
@@ -8109,8 +8197,8 @@ export class GameEngine {
     if (this.tickCount % 60 === 0) {
       for (const civ of this.civs) {
         if (!civ.alive || !this.civAtWar(civ.id)) continue;
-        // —— 中枢人格（civ-brain）：好战中枢集结更快（0.35-0.65） ——
-        if (this.rng() < 0.35 + this.brainOf(civ).war * 0.3) this.tryFormArmy(civ);
+        // —— 中枢人格（civ-brain）：好战中枢集结更快（0.35-0.65）+ 备战令限时加速 ——
+        if (this.rng() < 0.35 + this.brainOf(civ).war * 0.3 + (this.activeCivDirective(civ.id) === 'prepare-war' ? 0.15 : 0)) this.tryFormArmy(civ);
       }
     }
     for (let i = this.armies.length - 1; i >= 0; i--) {
@@ -17559,6 +17647,9 @@ export class GameEngine {
       brainSrc: c.brain?.src ?? null,
       brainNote: c.brain?.note ?? null,
       brainNoteYear: c.brain?.noteYear ?? null,
+      // —— 外脑谕令（civ-brain 第三通道）：当前生效谕令（CivPanel 决策纪要区徽章） ——
+      directive: this.activeCivDirective(c.id),
+      directiveLabel: (() => { const k = this.activeCivDirective(c.id); return k ? GameEngine.CIV_DIRECTIVES[k].label : ''; })(),
       // —— 超限纪元（无限演化）：超越阶数/道途名/研究进度 ——
       infEra: c.infEra ?? 0,
       infName: this.infEraName(c),
@@ -18259,7 +18350,8 @@ export class GameEngine {
       road: rleEncode(this.road),
       laws: { ...this.laws },
       wildReproScale: this.wildReproScale,
-      oreOut: [...this.oreOut], // #85 遗留③：矿脉枯竭格（读档 deriveOre 后重放）
+      oreDepletion: this.oreDepletion, // #87：矿脉枯竭速率世界参数（0/1/2 档）
+      oreOut: [...this.oreOut],
       items: this.items.map((it) => [it.id, it.kind, it.x, it.y] as [number, string, number, number]),
       itemSeq: this.itemSeq,
       triggers: this.triggers.map(triggerToRow),
@@ -18531,6 +18623,7 @@ export class GameEngine {
     // 恢复世界法则与地面物品（可选字段：旧存档回退默认法则/空物品）
     this.laws = { ...DEFAULT_LAWS, ...(data.laws ?? {}) };
     this.wildReproScale = Math.max(0, Math.min(1, data.wildReproScale ?? 1)); // 旧档缺省 1（钳到 0-1）
+    this.oreDepletion = Math.max(0, Math.min(2, Math.round(data.oreDepletion ?? 1))); // 旧档缺省 1（0 永不枯竭 / 2 快速）
     this.items = (data.items ?? []).map((row) => ({ id: row[0], kind: row[1] as ItemKind, x: row[2], y: row[3] }));
     this.itemSeq = data.itemSeq ?? (this.items.reduce((m, it) => Math.max(m, it.id), 0) + 1);
     // 恢复事件触发器（可选字段：旧存档无触发器 → 空列表；损坏行抛错拒绝整档）

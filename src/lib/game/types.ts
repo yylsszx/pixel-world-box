@@ -655,7 +655,13 @@ export interface Civ {
   infP?: number;
   /** 演化道途史（领域 key 序列：war/build/farm/trade/sea/faith——阶位加成与人格反塑的单一事实源） */
   infHist?: string[];
+  // ---------------- 外脑谕令（civ-brain 第三通道：轻量限时国策） ----------------
+  /** 当前谕令（undefined = 无谕令；到期自动失效——效果小而会过期，防失衡） */
+  directive?: { kind: CivDirectiveKind; untilTick: number };
 }
+
+/** 外脑谕令白名单（/api/civ-brain 第三通道）：每项对应一个有限时效（10 年）的轻量引擎效果 */
+export type CivDirectiveKind = 'focus-research' | 'focus-growth' | 'seek-peace' | 'prepare-war' | 'expand-sea';
 
 /** 文明中枢人格六维（civ-brain）：war 好战 / build 筑城 / farm 重农 / trade 通商 / sea 向海 / faith 虔信
  *  来源双通道：种族底色缺省（engine.defaultBrainOf）+ 外脑年度决策（/api/civ-brain personaPatch）
@@ -1884,6 +1890,8 @@ export interface SaveDataV1 {
   laws?: WorldLaws;
   /** 野生生物繁殖倍率（0-1；基准 = 最慢文明生物的 repro；旧档缺省 = 1） */
   wildReproScale?: number;
+  /** 矿脉枯竭速率档位（0 = 永不枯竭 / 1 = 正常 / 2 = 快速；旧档缺省 = 1） */
+  oreDepletion?: number;
   /** 地面物品（可选：[id, kind, x, y] 行式紧凑数组；旧存档无物品） */
   items?: [number, string, number, number][];
   /** 物品序号（可选：兼容旧存档） */
@@ -1929,6 +1937,8 @@ export interface SaveDataV2 {
   laws?: WorldLaws;
   /** 野生生物繁殖倍率（0-1；基准 = 最慢文明生物的 repro；旧档缺省 = 1） */
   wildReproScale?: number;
+  /** 矿脉枯竭速率档位（0 = 永不枯竭 / 1 = 正常 1.2%每600tick / 2 = 快速 ×2；旧档缺省 = 1） */
+  oreDepletion?: number;
   /** 矿脉枯竭格索引（#85 遗留③：采尽即枯；读档 deriveOre 后重放；旧档缺省 = 无枯竭） */
   oreOut?: number[];
   /** 地面物品（[id, kind, x, y] 行式紧凑数组） */
