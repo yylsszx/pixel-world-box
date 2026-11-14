@@ -6104,13 +6104,20 @@ Stage Summary:
 
 ---
 
-## 2026-11-14 #93（用户插入轮·修复）：0.5b 本地小模型用不了 + GLM 直连 CORS + localStorage null 崩溃——三连修
-**用户实测报告（iPad 双截图）**: ①「0.5b 小模型根本用不了」；②「其他 api 也会报错」——截图 A：智谱 GLM 浏览器直连 open.bigmodel.cn 失败（CORS 拦截 Failed to fetch）；截图 B：下令创造物种/神器时红条「Cannot convert undefined or null to object——世界仍在运转，请再问一次」。
-**根因分析（三层）**: ①本地 0.5b：onnxruntime-web 默认 numThreads=min(4,核数/2) 多线程 WASM，需 SharedArrayBuffer + COOP/COEP 跨域隔离响应头——GitHub Pages 静态托管与 iPad/WPS 内嵌浏览器均无这些头，多线程初始化即抛（"Cannot convert undefined or null to object" 正是常见表象）；②GLM 预设配置为浏览器直连，但智谱开放平台根本不发送 CORS 头——点预设即掉坑；③防御缺口：localStorage 存档若被写成 "null"（JSON.parse('null') 合法返回 null），readAch/readMetas/loadPermSettings 等后续 Object.entries(null)/属性访问直接炸。
-**修复（五件）**: ①local-provider：管线构造前后双保险 env.backends.onnx.wasm.numThreads=1（单线程牺牲速度换全环境可用）+ max_new_tokens 512→768（旧协议工具 JSON 块 512 token 常截断致解析失败——0.5b「根本用不了」的第二根因）+ 系统提示首条归位 System: 拼接 + translateLocalError 四类底层错误中文转译（下载失败/WASM 不兼容/初始化异常/存储不足）；②routeCallModel 新增 local 分支置顶（⓪ 位）：本地模型恒浏览器推理，即使配了中继也不发（后端本就拒绝 local kind），连通测试返回说明文案而非「未知的 provider.kind：local」；③describeNetworkError：bigmodel.cn 专属文案（智谱必经中继 + 部署指引 + 可替代厂商）、openrouter 次级提示；④OraclePanel：GLM 预设 label 改「智谱GLM·需中继」+ 选中且未配中继时红色警示行（不等失败才提示）+ 本地模型说明补系统浏览器要求；⑤gameStore 新增 safeReadObj（null/非对象回退空对象）统一替换 readAch/readMetas/initialToolParams 三处 + permissions.loadPermSettings 防 null——「Cannot convert undefined or null to object」全路径封死。
-**QA**: 新建 scripts/verify/verify-oracle-fix.ts 13 断言全绿（权限 null 回默认 / messagesToPrompt 拼接 / 四类错误转译 / routeCallModel local 双场景）并挂入 verify:oracle 回归链；全量回归绿（ww 系 61+29、时代 48、演化 44、polish 33、worker 7、verify 链 31+33+14+36+13）；tsc 零错误；next build 全绿。
-**环境注记**: 沙盒再次整体回滚到 #84 时代快照（.secrets 同被抹——证实回滚是全量快照，凭证从会话历史重建 + 双备份重做）；fetch 五连重试后成功，本地无独有提交 reset --hard origin/main 对齐；npm install --ignore-scripts 复装。
-**遗留（下轮优先池）**: ①用户真机复验：GLM 经中继、本地 0.5b 在系统浏览器实测反馈；②中继 oracle-server 原生 FC 面（ToolsService 扩展 tools 参数）；③#88 遗留池续项（斡旋事件/集体投降）；④自定义域名绑定实弹。
-**版本节奏**: 升位 v0.83-preview（CHANGELOG 四条：本地模型修复/GLM 防坑/连通测试/存档防御）。
+## 2026-11-14 #93（用户插入轮·纠偏）：大陆直连性回归 v9——GLM 直连方案 + 直连失败云端兜底，升位 v0.83-preview
+**用户指令（最高优先纠偏）**: 「注意，我要的是naive glm等所有国内AI的api可以在github pages静态部署中稳定使用（国内），别搞那些花里胡哨的，不然根本用不了」——上一会话的 v8 草案（未提交未部署）把浏览器直连通道整体退役、全部收敛到 workers.dev 云端后端；该域名大陆被 DNS 污染，GitHub Pages 入口在大陆等于 AI 全灭，方向性错误。
+
+**开工勘察（先实证后动手）**: ①v8 草案只在工作树、从未提交——HEAD（线上）仍是 v7 直连版，`git checkout HEAD -- .` 整体恢复 v7 基底（agent/types/native-tools/providers/面板连带复位，Gemini 三协议原生 FC 与 verify-native-protocols 36 断言随之回归）；②scripts/cors-probe.sh + cors-sweep.sh 实测十家端点（OPTIONS 预检 + 真实 POST 双验证，Origin 用玩家真实 github.io 域）：DeepSeek/Kimi/千问/硅基流动/魔搭/MiniMax 新端点/火山方舟七家全开；**智谱 open.bigmodel.cn 与 Naive api.naive.ai 为服务端 CORS 白名单制**（只放行 bigmodel 自家域名 / platform.naive.ai，其余 origin 预检无跨域头 / 400 Disallowed CORS origin）——浏览器直连物理不可能，非代码问题；星火 403 / 混元 404 同不可直连；③GLM 出路实证：硅基流动托管 zai-org/GLM-5.3-Flash 等开权重 GLM 全家且 CORS 全开（魔搭 api-inference 亦全开，备用）。
+
+**实现（v9，全部落在 v7 基底上的定向改造）**:
+- **direct-client.ts v9**: 路由重排为「显式中继 → 本站后端 → 浏览器直连（静态托管第一通道）→ 云端后端自动兜底」；新增 directFailCache（60s 失败冷却——agent 多轮不再重撞同一堵 CORS 墙）；directNetworkFail 标志区分网络级失败（才换道）与应用层错误（401/400 原样上浮）；CORS_WHITELIST_HOSTS 白名单厂商点名事实+替代路线（GLM→硅基流动）；原生 FC 直连失败走 nfcUnsupported 干净降级（云端后端讲旧线协议，agent 本回合回退旧协议重问）；builtin 静态托管改走云端后端（Worker 已接服务端默认厂商）而非直接报离线；resolveCloudBackend 重写为根地址契约（修复旧版 relayUrl 覆写时 cloudSync 拼错路径的潜在 bug）+ 新增 normalizeCloudBase。
+- **provider-store.ts**: 新增 'oracle-cloud-backend-v1' 云端后端覆写键（loadCloudBackendOverride/storeCloudBackendOverride，safeGet/safeSet 隐私模式降级）。
+- **OraclePanel.tsx**: 新增「硅基流动·GLM直连」预设（zai-org/GLM-5.3-Flash）与 Naive Flash/Lite 双预设（matchPresetKey 按模型名区分 Naive 双预设高亮）；新增「云端后端（可选覆写）」配置项（大陆 workers.dev 被污染时填自定义域名根治）；大陆直连提示重写为实测表口径（七家直连 + 白名单四家点名 + GLM 替代路线）；内置 Z.ai 提示与路由口径同步（惰性初始化避免 effect 内 setState）。
+- **docs/大陆直连指南.md**: AI 神谕章节重写为 2026-11-14 实测表（七家直连/四家白名单/各平台 Key 入口/GLM 正路=硅基流动）；自定义域名三步走对接「云端后端」字段；FAQ 补 GLM 官方 Key 说明与 60s 冷却机制。
+
+**QA（三层全绿）**: ①tsc 零错误 + eslint 改动文件零新增告警（3 项均为 HEAD 既有 set-state-in-effect）+ next build 全绿（11.7s 编译，5 路由）✓ ②verify:oracle 全链 31+33+14+36 全绿——verify-agent-loop 14 断言即直连通道端到端（Bun 假 OpenAI SSE 服务器：tools 下发/system 转换/流式 tool_calls/role:tool 回传），v9 路由重排零破坏 ✓ ③CORS 实测脚本归档 scripts/cors-probe.sh + cors-sweep.sh（复测可重放）。
+
+**遗留（下轮优先池）**: ①用户真机实测：大陆线路 GitHub Pages 入口选「硅基流动·GLM直连」填 Key 一键直连（本轮核心交付的真机验证）；②云端 Worker 的原生 FC 透传面（tools→{"tc"}——worker.js 尚不支持，云端兜底走旧协议+自动降级已闭环，属增强非必须）；③自定义域名绑定实弹；④魔搭 ModelScope 预设化（需实证其 GLM 模型 ID 与 Key 形态后入面板）。
+**版本节奏**: 升位 v0.83-preview（CHANGELOG 三条：直连性回归/GLM 直连方案/失败兜底与 Naive 预设）。
 **推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
-**评估:D5 用户体验修复——三条用户实测报错全部根治且各带可行动指引：本地模型从「初始化即炸无解释」变为「单线程全环境可跑 + 错误人话」；GLM 从「点预设即掉坑」变为「点选即警示 + 失败有分步指引」；存档 null 从「随机白屏/阻断」变为「静默回默认」。防坑前置（不等失败才教育用户）是本轮设计主旨。**
+**评估:D6 稳定健壮——从「架构师视角的统一收敛」回到「玩家线路的物理现实」：大陆玩家在 GitHub Pages 的 AI 可用性从依赖被污染的 workers.dev 回归为厂商直连（七家实测即插即用），GLM/Naive 两个白名单厂商一个给了开权重直连正路、一个给了准确事实与云端通路——错误信息从「不可用」变为「为什么 + 怎么办」。**

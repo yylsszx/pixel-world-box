@@ -16,6 +16,7 @@ import { runOracleAgentTurn, type AgentTurnResult } from '@/lib/oracle/agent';
 import { runConnectivityTest, validateProviderConfig, runDshSessionTurn, type DshSnapshot } from '@/lib/oracle/direct-client';
 import { executeOracleTool } from '@/lib/oracle/bridge';
 import { loadDshOn, storeDshOn, loadOrCreateSessionId, rotateSessionId } from '@/lib/oracle/session';
+import { loadCloudBackendOverride, storeCloudBackendOverride } from '@/lib/oracle/provider-store';
 import { renderToolCatalog, AGENT_TOOLS } from '@/lib/oracle/tools';
 import { buildSystemPrompt } from '@/lib/oracle/prompt';
 import { buildNativeToolParams } from '@/lib/oracle/native-tools';
@@ -94,9 +95,12 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   { key: 'deepseek', label: 'DeepSeek', config: { kind: 'openai', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' } },
   { key: 'kimi', label: 'Kimi', config: { kind: 'openai', label: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-128k' } },
   { key: 'qwen', label: '通义千问', config: { kind: 'openai', label: '通义千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' } },
-  { key: 'glm', label: '智谱GLM·需中继', config: { kind: 'openai', label: '智谱GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4.6' } },
+  { key: 'glm', label: '智谱GLM官方', config: { kind: 'openai', label: '智谱GLM官方', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4.6' } },
+  { key: 'siliconflow', label: '硅基流动·GLM直连', config: { kind: 'openai', label: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1', model: 'zai-org/GLM-5.3-Flash' } },
   { key: 'openrouter', label: 'OpenRouter', config: { kind: 'openai', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' } },
   { key: 'ollama', label: 'Ollama 本地', config: { kind: 'openai', label: 'Ollama 本地', baseUrl: 'http://localhost:11434/v1', model: 'llama3.1' } },
+  { key: 'naive-flash', label: 'Naive Flash', config: { kind: 'openai', label: 'Naive Flash', baseUrl: 'https://api.naive.ai/v1', model: 'naive-n0.5-flash' } },
+  { key: 'naive-lite', label: 'Naive Lite', config: { kind: 'openai', label: 'Naive Lite', baseUrl: 'https://api.naive.ai/v1', model: 'naive-n0.5-lite' } },
   { key: 'anthropic', label: 'Anthropic', config: { kind: 'anthropic', label: 'Anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5-5' } },
   { key: 'gemini-flash', label: 'Gemini Flash', config: { kind: 'gemini', label: 'Gemini Flash', baseUrl: '', model: 'gemini-3.8-flash' } },
   { key: 'gemini-argon', label: 'Gemini Argon', config: { kind: 'gemini', label: 'Gemini Argon', baseUrl: '', model: 'gemini-4-argon' } },
@@ -136,7 +140,13 @@ function matchPresetKey(p: OracleProviderConfig): string {
     return 'custom';
   }
   for (const pre of PROVIDER_PRESETS) {
-    if (pre.key !== 'custom' && pre.config.kind === 'openai' && p.baseUrl && pre.config.baseUrl === p.baseUrl) return pre.key;
+    if (pre.key === 'custom' || pre.config.kind !== 'openai' || !p.baseUrl || pre.config.baseUrl !== p.baseUrl) continue;
+    // Naive 双预设共用 baseUrl——按模型名区分高亮
+    if (pre.key === 'naive-flash' || pre.key === 'naive-lite') {
+      if (pre.config.model === p.model) return pre.key;
+      continue;
+    }
+    return pre.key;
   }
   return 'custom';
 }
@@ -495,11 +505,11 @@ function Empty({ onPick }: { onPick: (m: 'narrate' | 'analyze' | 'prophesy' | 'c
 
 function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig; onApply: (p: OracleProviderConfig) => void }) {
   const [test, setTest] = useState<{ state: 'idle' | 'testing' | 'ok' | 'fail'; msg?: string }>({ state: 'idle' });
+  // 惰性初始化：挂载时读一次云端后端覆写（避免 effect 内同步 setState 的级联渲染）
+  const [cloudBe, setCloudBe] = useState(() => loadCloudBackendOverride());
   const activeKey = matchPresetKey(provider);
   const isBuiltin = provider.kind === 'builtin';
   const isLocal = provider.kind === 'local';
-  // v0.83 防坑警示：GLM 端点不支持浏览器 CORS——选中且未配中继时给显眼提示（用户实测高频掉坑点）
-  const needsRelayWarn = provider.kind === 'openai' && (provider.baseUrl ?? '').includes('bigmodel.cn') && !provider.relayUrl?.trim();
 
   /** 测试连通：走 routeCallModel 全路由（中继→本站后端→浏览器直连），与真实对话完全同路径 */
   const runTest = useCallback(async () => {
@@ -549,20 +559,12 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
         })}
       </div>
 
-      {/* GLM 无中继警示（v0.83）：预设点选即提示，不等失败 */}
-      {needsRelayWarn && (
-        <p className="rounded-sm border border-red-400/40 bg-red-400/10 px-1.5 py-1 text-[9px] leading-relaxed text-red-300">
-          智谱开放平台不支持浏览器直连（无 CORS 头，必报错）——请在下方「中继后端」填 oracle-server 地址
-          （Sealos 一键部署，见仓库 oracle-server/README.md），否则无法使用；或改选 DeepSeek / Kimi / 通义千问。
-        </p>
-      )}
-
       {/* 端点配置（内置 Z.ai 免密钥，仅温度） */}
       {isBuiltin || isLocal ? (
         <p className="rounded-sm border border-teal-400/30 bg-teal-400/5 px-1.5 py-1 text-[9px] leading-relaxed text-teal-300/80">
           {isLocal
-            ? '本地模型在浏览器端直接运行（transformers.js），无需服务端与密钥；首次使用会下载模型权重（约几百 MB），随后浏览器缓存离线可用。注意：需支持 WebAssembly 的系统浏览器（Safari/Chrome）；WPS/微信等内嵌浏览器可能不兼容，报初始化错误时请换系统浏览器打开。'
-            : '内置 Z.ai 经后端直连，无需密钥；静态托管下需部署中继后端（见下）。'}
+            ? '本地模型在浏览器端直接运行（transformers.js），无需服务端与密钥；首次使用会下载模型权重（约几百 MB），随后浏览器缓存离线可用。'
+            : '内置 Z.ai 经服务端转发（同源后端 / 云端后端 Worker），无需密钥；两者皆不可达时（如大陆线路 workers.dev 被污染）可改用直连厂商（DeepSeek/Kimi/千问/硅基流动）或本地模型。'}
         </p>
       ) : (
         <div className="flex flex-col gap-1.5">
@@ -629,11 +631,32 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
             aria-label="中继后端地址"
           />
           <span className="text-[8px] leading-relaxed text-zinc-600">
-            填入后所有云端请求改经该后端转发（内网网关可填 /api/oracle/agent?XTransformPort=8787）；留空则自动路由：本站后端 → 浏览器直连厂商。
+            填入后所有云端请求改经该后端转发（内网网关可填 /api/oracle/agent?XTransformPort=8787）；留空则自动路由：本站后端 → 浏览器直连厂商 → 云端后端兜底。
           </span>
-          {/* 大陆直连提示（时代深化/v7 原生接入适配）：三家大陆厂商浏览器直连；Anthropic/Gemini 官方支持浏览器 CORS（需可访问国际网络） */}
+          {/* 大陆直连提示（v9 实测 2026-11-14）：七家支持浏览器 CORS 直连；白名单制厂商点名事实与替代路线 */}
           <span className="mt-1 rounded-sm border border-teal-800/60 bg-teal-500/10 px-1.5 py-1 text-[8px] leading-relaxed text-teal-300">
-            大陆直连：DeepSeek / Kimi / 通义千问三家的 API 支持浏览器 CORS——选择对应预设并填入 API Key 即可直连使用，无需中继后端与自定义域名（智谱 GLM 不支持 CORS 不在此列）。Anthropic（claude-sonnet-5-5 等）与 Google Gemini（gemini-3.8-flash / gemini-4-argon）官方端点同样支持浏览器直连与原生函数调用，但需可访问国际网络；大陆线路建议填中继后端转发（需新版 oracle-server）。
+            大陆直连实测（2026-11-14，浏览器预检+真实请求双验证）：DeepSeek / Kimi / 通义千问 / 硅基流动 / 魔搭 / MiniMax / 火山方舟支持浏览器 CORS——选预设填 Key 即直连，无需任何后端与自定义域名。GLM 直连用「硅基流动·GLM直连」预设（zai-org/GLM-5.3-Flash，开权重同款 GLM；模型名可换模型广场任意模型如 Kimi-K2.7 / DeepSeek-V3.2 / Qwen3.5）。智谱 GLM 官方 / Naive 官方 / 讯飞 / 混元为服务端 CORS 白名单制（只放行自家域名，前端无法绕过）——GLM 走硅基流动，Naive 需可达的云端后端。Anthropic / Gemini 官方端点支持直连与原生函数调用，但需可访问国际网络。
+          </span>
+        </label>
+      )}
+
+      {/* 云端后端兜底（v9）：直连失败时自动降级 / CORS 白名单厂商（智谱官方、Naive）与内置 Z.ai 的转发通道 */}
+      {!isLocal && (
+        <label className="flex flex-col gap-0.5">
+          <span className={labelCls}>云端后端（可选覆写）</span>
+          <input
+            value={cloudBe}
+            onChange={(e) => {
+              setCloudBe(e.target.value);
+              storeCloudBackendOverride(e.target.value);
+            }}
+            placeholder="https://pwb-oracle-relay.yeyilin2010.workers.dev（默认）"
+            spellCheck={false}
+            className={inputCls}
+            aria-label="云端后端地址"
+          />
+          <span className="text-[8px] leading-relaxed text-zinc-600">
+            浏览器直连失败时的自动兜底，也是 CORS 白名单厂商（智谱 GLM 官方 / Naive）与内置 Z.ai 的唯一通路。留空 = 官方 workers.dev；大陆线路该域名常被 DNS 污染——绑定自定义域名后在此填入即根治，也可填任何可达的自建中继。
           </span>
         </label>
       )}
@@ -720,7 +743,7 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
       )}
 
       <p className="text-[8px] leading-relaxed text-zinc-600">
-        apiKey 仅存本浏览器 localStorage；云端请求按「中继后端 → 本站后端 → 浏览器直连」路由转发至厂商——不出现在日志与世界存档中。
+        apiKey 仅存本浏览器 localStorage；云端请求按「中继后端 → 本站后端 → 浏览器直连 → 云端后端兜底」路由转发至厂商——不出现在日志与世界存档中。
       </p>
     </div>
   );

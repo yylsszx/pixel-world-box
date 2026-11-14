@@ -1,4 +1,4 @@
-// ============ 神谕 · 浏览器端直连与后端路由层（v7 原生接入适配） ============
+// ============ 神谕 · 浏览器端直连与后端路由层（v9 大陆直连回归） ============
 // 解决「自定义厂商在静态托管下一刀切报神谕离线」的典型误报：
 //   旧逻辑把除 local 外全部厂商（含自定义 openai/anthropic）都硬编码走 /api/oracle/agent，
 //   GitHub Pages 静态托管下 404 → 一律「神谕离线」——而自定义厂商本可由浏览器 corsDirect 直连。
@@ -16,6 +16,16 @@
 // SSE 线协议与 /api/oracle/agent 完全一致：data: {"r"|"t"|"err"} \n\n + data: [DONE]。
 // dsh 持久会话面（M-O4 相三前端接线）：仅中继通道附加 body.dsh（服务端权威历史）——
 //   本站后端（Next 静态白名单路由）与 corsDirect 不识别该面，永不发送；无 dsh 时 body 逐字节不变。
+// v9（用户钦定：「naive glm 等所有国内 AI 的 api 在 GitHub Pages 静态部署中稳定使用（大陆）」）：
+//   v8 草案（未部署）曾把浏览器直连通道整体退役、全部收敛到 workers.dev 云端后端——该域名
+//   大陆线路被 DNS 污染，GitHub Pages 入口在大陆等于 AI 全灭。v9 纠偏：
+//   ① 直连回归为静态托管第一通道。2026-11-14 实测（OPTIONS 预检 + 真实 POST 双验证）：
+//     DeepSeek / Kimi / 通义千问 / 硅基流动（GLM 等开权重全家）/ 魔搭 api-inference /
+//     MiniMax 新端点 / 火山方舟 CORS 全开——浏览器直连稳定可用；
+//   ② 直连网络级失败 → 云端后端自动兜底（用户覆写 > 同源云后端 > 官方 Worker）；
+//   ③ CORS 白名单制厂商（实测：智谱 open.bigmodel.cn / Naive api.naive.ai / 讯飞星火 /
+//     腾讯混元——服务端只放行自家域名 origin，预检即拒）给精确事实与替代路线
+//     （GLM → 硅基流动 zai-org/GLM-5.3-Flash 开权重同款直连）。
 import type { AgentChatMessage, OracleProviderConfig, AgentToolCall } from './types';
 import {
   NativeCallAccumulator,
@@ -40,6 +50,8 @@ export interface ModelCallResult {
   toolCalls?: AgentToolCall[];
   /** 端点不支持 tools 参数（400 且响应体提及 tool/function）——agent 回退旧协议 */
   nfcUnsupported?: boolean;
+  /** 直连网络级失败（CORS 白名单拦截 / 网络不可达）——路由层据此降级云端后端兜底 */
+  directNetworkFail?: boolean;
 }
 
 export interface RouteCallbacks {
@@ -65,7 +77,8 @@ export interface RouteExtras {
   dsh?: { sessionId: string; snapshot?: DshSnapshot };
   /** 原生函数调用工具定义（v5）：openai 兼容端点浏览器直连通道生效；
    *  v7：anthropic（原生 tool_use）/ gemini（原生 functionCall）直连通道同样生效；
-   *  中继/本站后端讲旧线协议（纯文本流），不识别 tools——agent 自动回退旧 JSON 协议 */
+   *  v9：直连网络级失败时路由层返回 nfcUnsupported（云端后端讲旧线协议）——agent 回退旧 JSON 协议；
+   *  中继/本站后端同样不识别 tools——agent 自动回退旧 JSON 协议 */
   nativeTools?: OpenAIToolDef[];
 }
 
@@ -107,23 +120,26 @@ async function describeBadResponse(label: string, res: Response): Promise<string
   return `[${label}] HTTP ${res.status}${text ? `：${text}` : '（空响应体）'}`;
 }
 
-/** 网络级失败（fetch throw）→ 精确可行动文案（直连场景的 CORS/网络不可达区分提示） */
+/** 2026-11-14 实测的服务端 CORS 白名单制端点（预检即拒，只放行厂商自家域名 origin）——
+ *  浏览器直连物理不可能，任何前端代码都无法绕过；按 host 给出精确事实与替代路线。 */
+const CORS_WHITELIST_HOSTS: Record<string, string> = {
+  'open.bigmodel.cn':
+    '智谱 GLM 官方端点为服务端 CORS 白名单制（实测仅放行 bigmodel 自家域名）——GLM 直连请改用「硅基流动」预设（zai-org/GLM-5.3-Flash 等开权重同款 GLM，CORS 实测全开）',
+  'api.naive.ai':
+    'Naive AI 官方端点为服务端 CORS 白名单制（实测仅放行 platform.naive.ai）——静态站无法直连，需可达的云端后端转发',
+  'spark-api-open.xf-yun.com': '讯飞星火端点不支持浏览器直连（预检 403）——需云端后端转发',
+  'api.hunyuan.cloud.tencent.com': '腾讯混元端点不支持浏览器直连（预检 404）——需云端后端转发',
+};
+
+/** 网络级失败（fetch throw）→ 精确可行动文案（白名单厂商点名事实，其余区分 CORS/不可达） */
 function describeNetworkError(label: string, url: string, e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);
   if (externalAborted(e)) return '已中止';
   const host = safeHost(url);
-  // 无 CORS 头的已知端点专属提示（v0.83：用户实测掉坑最多的两家——智谱开放平台不支持浏览器跨域）
-  if (host.includes('bigmodel.cn')) {
-    return `[${label}] 智谱开放平台（open.bigmodel.cn）不发送 CORS 头，浏览器无法直连（${raw}）。` +
-      `智谱 GLM 必须经中继转发：在「厂商接入 → 中继后端」填 oracle-server 地址（Sealos 一键部署，` +
-      `GitHub 仓库 oracle-server/README.md 有步骤），或改选 DeepSeek / Kimi / 通义千问等支持浏览器直连的厂商。`;
-  }
-  if (host.includes('openrouter.ai')) {
-    return `[${label}] 浏览器直连 ${host} 失败（CORS 拦截或网络不可达：${raw}）。` +
-      `OpenRouter 官方端点偶发跨域限制——可填「中继后端」地址转发，或改用 DeepSeek / Kimi 等直连厂商。`;
-  }
+  const known = CORS_WHITELIST_HOSTS[host];
+  if (known) return `[${label}] 浏览器直连 ${host} 被拒：${known}。`;
   return `[${label}] 浏览器直连 ${host || '端点'} 失败（CORS 拦截或网络不可达：${raw}）。` +
-    `可在「厂商接入」填「中继后端」地址（Sealos 部署 oracle-server）转发，或改用支持 CORS 的端点 / 本地模型。`;
+    `可改用实测支持直连的厂商（DeepSeek / Kimi / 通义千问 / 硅基流动），或经「云端后端」转发。`;
 }
 
 function externalAborted(e: unknown): boolean {
@@ -166,6 +182,21 @@ export async function probeSiteBackend(now = Date.now()): Promise<BackendState> 
 export function invalidateBackendProbe(): void {
   probeCache = null;
   sameOriginCloudCache = null;
+  directFailCache.clear();
+}
+
+// ============ 直连失败冷却（60s：本回合与紧邻回合不重撞同一堵 CORS 墙） ============
+
+const directFailCache = new Map<string, number>();
+const DIRECT_FAIL_TTL_MS = 60_000;
+
+function directRecentlyFailed(url: string): boolean {
+  const at = directFailCache.get(url);
+  return typeof at === 'number' && Date.now() - at < DIRECT_FAIL_TTL_MS;
+}
+
+function markDirectFailed(url: string): void {
+  directFailCache.set(url, Date.now());
 }
 
 // ============ 云端后端解析（v0.76：云存档/编年史共用——用户显式中继 > 同源云后端 > 官方中继） ============
@@ -191,15 +222,27 @@ async function probeSameOriginCloud(now = Date.now()): Promise<boolean> {
   return ok;
 }
 
-/** 云端后端解析：云存档/编年史单一事实源。
- *  ① 用户显式中继（provider-store 的 relayUrl，用户配置优先）；
- *  ② 同源云后端（PWB Worker 全功能版：capabilities 探测命中即用当前域名）；
- *  ③ 官方云端中继（workers.dev 部署；大陆线路可能不可达属预期，调用方自行降级本地）。 */
+/** 云端后端地址归一化（v9）：去尾斜杠；完整端点形式（…/api/oracle/agent）剥回根；
+ *  内网网关相对形式（含 XTransformPort 查询串）原样直通（查询串之后不可再拼接路径）。 */
+export function normalizeCloudBase(url: string): string {
+  const raw = url.trim();
+  if (raw.includes('XTransformPort=')) return raw;
+  return raw.replace(/\/+$/, '').replace(/\/api\/oracle\/agent$/, '');
+}
+
+/** 云端后端单一事实源（神谕直连兜底 / 云存档 cloudSync / 编年史 chronicler 共用）。
+ *  返回根地址（无尾斜杠、不含端点路径——调用方按需拼接）。优先级：
+ *  ① 用户覆写（provider-store 'oracle-cloud-backend-v1'——自定义域名 Worker / 自建中继）；
+ *  ② 旧版中继地址（provider.relayUrl 兼容读取，归一化到根）；
+ *  ③ 同源云后端（PWB Worker 全功能版：capabilities 探测命中即当前域名）；
+ *  ④ 官方云端后端（workers.dev；大陆线路常被 DNS 污染——调用方错误路径给可行动指引）。 */
 export async function resolveCloudBackend(): Promise<string> {
   try {
-    const { loadStoredProvider } = await import('./provider-store');
+    const { loadCloudBackendOverride, loadStoredProvider } = await import('./provider-store');
+    const ovr = loadCloudBackendOverride().trim();
+    if (ovr) return normalizeCloudBase(ovr);
     const relay = loadStoredProvider().relayUrl?.trim();
-    if (relay) return normalizeRelayUrl(relay);
+    if (relay) return normalizeCloudBase(relay);
   } catch {
     /* provider-store 不可用（隐私模式等）→ 继续自动路由 */
   }
@@ -567,7 +610,7 @@ async function streamDirectOpenAI(
     return { content: state.content, reasoning: state.reasoning, err: '', toolCalls: toolCalls.length ? toolCalls : undefined };
   } catch (e) {
     if (cb.signal?.aborted || externalAborted(e)) return { content: state.content, reasoning: state.reasoning, err: '已中止' };
-    return { content: '', reasoning: state.reasoning, err: describeNetworkError(label, url, e) };
+    return { content: '', reasoning: state.reasoning, err: describeNetworkError(label, url, e), directNetworkFail: true };
   } finally {
     cleanup();
   }
@@ -712,7 +755,7 @@ async function streamDirectAnthropic(
     return { content: state.content, reasoning: state.reasoning, err: '', toolCalls: toolCalls.length ? toolCalls : undefined };
   } catch (e) {
     if (cb.signal?.aborted || externalAborted(e)) return { content: state.content, reasoning: state.reasoning, err: '已中止' };
-    return { content: '', reasoning: state.reasoning, err: describeNetworkError(label, url, e) };
+    return { content: '', reasoning: state.reasoning, err: describeNetworkError(label, url, e), directNetworkFail: true };
   } finally {
     cleanup();
   }
@@ -916,7 +959,7 @@ async function streamDirectGemini(
     return { content: state.content, reasoning: state.reasoning, err: '', toolCalls: calls.length ? calls : undefined };
   } catch (e) {
     if (cb.signal?.aborted || externalAborted(e)) return { content: state.content, reasoning: state.reasoning, err: '已中止' };
-    return { content: '', reasoning: state.reasoning, err: describeNetworkError(label, url, e) };
+    return { content: '', reasoning: state.reasoning, err: describeNetworkError(label, url, e), directNetworkFail: true };
   } finally {
     cleanup();
   }
@@ -924,18 +967,41 @@ async function streamDirectGemini(
 
 // ============ 路由决策入口 ============
 
-/** builtin（内置 Z.ai）专用：后端不在时的准确文案（唯一允许「离线」字样的场景） */
+/** builtin（内置 Z.ai）专用：服务端与云端后端皆不可达时的准确文案（唯一允许「离线」字样的场景） */
 const BUILTIN_OFFLINE_MSG =
-  '神谕离线：此部署为纯静态托管，内置 Z.ai 需要服务端。替代路径：厂商接入中改用自定义厂商（浏览器直连）、' +
-  '本地模型（浏览器推理），或部署 oracle-server 中继后端后填入「中继后端」地址。';
+  '神谕离线：内置 Z.ai 需要服务端（同源后端 / 云端后端 Worker）。替代路径：厂商接入改用支持浏览器直连的厂商' +
+  '（DeepSeek / Kimi / 通义千问 / 硅基流动·GLM 等），或本地模型（浏览器推理），或配置可达的「云端后端」地址。';
+
+/** 云端后端不可达时的可行动指引（大陆线路 workers.dev DNS 污染是实测常态） */
+const CLOUD_UNREACHABLE_HINT =
+  '（云端后端不可达：大陆线路对 workers.dev 域名常被 DNS 污染——可在「厂商接入 → 云端后端」' +
+  '填入自定义域名或自建中继地址；或改用实测支持浏览器直连的厂商预设：DeepSeek / Kimi / 通义千问 / 硅基流动）';
+
+/** 经云端后端兜底调用（直连网络级失败 / builtin 静态托管）。错误附大陆线路指引。 */
+async function callViaCloud(
+  provider: OracleProviderConfig,
+  messages: AgentChatMessage[],
+  deep: boolean,
+  cb: RouteCallbacks,
+): Promise<ModelCallResult> {
+  const cloud = await resolveCloudBackend();
+  const ep = cloud.includes('XTransformPort=') ? cloud : `${cloud}/api/oracle/agent`;
+  const r = await callViaBackend(ep, provider, messages, deep, cb, '云端后端');
+  if (r.err && (r.err.includes('请求失败') || r.err.includes('Failed to fetch'))) {
+    return { ...r, err: `${r.err}${CLOUD_UNREACHABLE_HINT}` };
+  }
+  return r;
+}
 
 /**
  * 统一路由入口：按 provider 配置选择最优通道。永不 throw——错误折进 err。
  * - local：不走此层（agent.ts 先行分流）。
- * - builtin：中继（若配）→ 本站后端（若在）→ 准确「离线」文案。
- * - openai/anthropic/gemini：中继（若配）→ 本站后端（若在；gemini 例外恒直连——后端白名单不含）→ 浏览器直连 → 精确错误（绝不误报离线）。
- * - extras.nativeTools（v5/v7）：openai/anthropic/gemini 直连通道生效——原生函数调用工具定义下发；
- *   中继/本站后端讲旧线协议，静默忽略。
+ * - builtin：中继（若配）→ 本站后端（若在）→ 云端后端 Worker（服务端默认厂商）→ 准确「离线」文案。
+ * - openai/anthropic/gemini：中继（若配）→ 本站后端（若在；gemini 例外恒直连——后端白名单不含）→
+ *   浏览器直连（静态托管第一通道；60s 失败冷却）→ 云端后端自动兜底（v9）——
+ *   直连网络级失败（CORS 白名单 / 不可达）才换道；应用层错误（401/400/429…）原样上浮不换道。
+ * - extras.nativeTools（v5/v7/v9）：仅直连通道生效；直连网络级失败时云端后端讲旧线协议
+ *   （不识别 tools）→ 返回 nfcUnsupported，agent 本回合回退旧协议重问。
  * - extras.dsh：dsh 持久会话面（M-O4 相三）——仅中继通道附加 body.dsh.sessionId；
  *   本站后端/corsDirect 不识别该面，静默忽略 extras（发方职责：仅在中继场景传入）。
  */
@@ -946,17 +1012,7 @@ export async function routeCallModel(
   cb: RouteCallbacks = {},
   extras?: RouteExtras,
 ): Promise<ModelCallResult> {
-  // ⓪ 本地模型恒浏览器端推理（v0.83）：不经中继/后端/直连任何网络通道——
-  //    即使配了中继地址也不发（后端会拒绝 local kind；本地推理本就无需网络）
-  if (provider.kind === 'local') {
-    return {
-      content: '',
-      reasoning: '',
-      err: `本地模型不经网络调用，无法做连通测试——直接下令即可（首次下令会下载约 300-500MB 模型权重，之后浏览器缓存离线可用；需支持 WebAssembly 的系统浏览器，WPS/微信等内嵌浏览器可能不兼容）`,
-    };
-  }
-
-  // ① 显式中继后端（Sealos oracle-server）——用户显式配置，失败不静默换道（错误原样上浮）
+  // ① 显式中继后端（oracle-server）——用户显式配置，失败不静默换道（错误原样上浮）
   const relay = provider.relayUrl?.trim();
   if (relay) {
     const ep = normalizeRelayUrl(relay);
@@ -975,18 +1031,52 @@ export async function routeCallModel(
   if (provider.kind !== 'gemini') {
     const backend = await probeSiteBackend();
     if (backend === 'up') {
-      return callViaBackend('/api/oracle/agent', provider, messages, deep, cb, '本站后端');
+      return callViaBackend('/api/oracle/agent', provider, messages, deep, cb, '本站后端', extras?.dsh);
     }
   }
 
-  // ③ 静态托管 / 后端不可达
-  if (provider.kind === 'builtin') {
-    return { content: '', reasoning: '', err: BUILTIN_OFFLINE_MSG };
+  // ③ 浏览器直连（静态托管 / 后端不可达时的第一通道）。builtin 例外（需服务端）→ ④
+  if (provider.kind !== 'builtin') {
+    if (provider.kind !== 'openai' && provider.kind !== 'anthropic' && provider.kind !== 'gemini') {
+      return { content: '', reasoning: '', err: `未知的 provider.kind：${String(provider.kind)}` };
+    }
+    const directUrl =
+      provider.kind === 'openai'
+        ? normalizeOpenAIUrl(provider.baseUrl ?? '')
+        : provider.kind === 'anthropic'
+          ? normalizeAnthropicUrl(provider.baseUrl ?? '')
+          : normalizeGeminiUrl(provider.baseUrl, provider.model ?? '');
+    let direct: ModelCallResult | null = null;
+    if (!directRecentlyFailed(directUrl)) {
+      direct =
+        provider.kind === 'openai'
+          ? await streamDirectOpenAI(provider, messages, deep, cb, extras?.nativeTools)
+          : provider.kind === 'anthropic'
+            ? await streamDirectAnthropic(provider, messages, deep, cb, extras?.nativeTools)
+            : await streamDirectGemini(provider, messages, deep, cb, extras?.nativeTools);
+      if (!direct.directNetworkFail) return direct; // 成功 / 应用层错误（401/400…）——原样上浮，不换道
+      markDirectFailed(directUrl);
+    }
+    // 直连网络级失败（CORS 白名单 / 不可达）或失败冷却中 → ④ 云端后端兜底
+    if (extras?.nativeTools?.length) {
+      // 云端后端讲旧线协议（不识别 tools）→ 标记回退：agent 本回合换旧协议重问
+      // （直连冷却期内不再重撞，重问将直达云端后端）
+      return {
+        content: direct?.content ?? '',
+        reasoning: direct?.reasoning ?? '',
+        err: direct?.err ?? `[${provider.label || '直连'}] 浏览器直连失败（60s 失败冷却中，已跳过）`,
+        nfcUnsupported: true,
+      };
+    }
+    const cloud = await callViaCloud(provider, messages, deep, cb);
+    if (!cloud.err) return cloud;
+    return { ...cloud, err: `${direct?.err ? `${direct.err}；` : ''}${cloud.err}` };
   }
-  if (provider.kind === 'openai') return streamDirectOpenAI(provider, messages, deep, cb, extras?.nativeTools);
-  if (provider.kind === 'anthropic') return streamDirectAnthropic(provider, messages, deep, cb, extras?.nativeTools);
-  if (provider.kind === 'gemini') return streamDirectGemini(provider, messages, deep, cb, extras?.nativeTools);
-  return { content: '', reasoning: '', err: `未知的 provider.kind：${String(provider.kind)}` };
+
+  // ④ builtin：无直连面 → 云端后端 Worker（官方/覆写，已接服务端默认厂商）
+  const cloud = await callViaCloud(provider, messages, deep, cb);
+  if (!cloud.err) return cloud;
+  return { ...cloud, err: `${BUILTIN_OFFLINE_MSG}（云端后端：${cloud.err}）` };
 }
 
 // ============ 连通性测试（面板「测试连通」共用此单一代码路径） ============

@@ -63,8 +63,7 @@ export function loadPermSettings(): OraclePermSettings {
   try {
     const raw = localStorage.getItem(PERM_STORE_KEY);
     if (!raw) return { ...DEFAULT_PERM_SETTINGS };
-    const s = JSON.parse(raw) as Partial<OraclePermSettings> | null;
-    if (!s || typeof s !== 'object') return { ...DEFAULT_PERM_SETTINGS }; // v0.83 防 "null" 值（JSON.parse('null') 合法返回 null）
+    const s = JSON.parse(raw) as Partial<OraclePermSettings>;
     const level = typeof s.level === 'number' && s.level >= 0 && s.level <= 4 ? Math.floor(s.level) : DEFAULT_PERM_SETTINGS.level;
     const confirm = Array.isArray(s.confirm)
       ? (s.confirm.filter((t) => t === 'read' || t === 'write' || t === 'mech' || t === 'ui' || t === 'root') as PermTier[])

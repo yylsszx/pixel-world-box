@@ -30,3 +30,36 @@ export function loadStoredProvider(): OracleProviderConfig {
   }
   return DEFAULT_PROVIDER;
 }
+
+// ============ 云端后端覆写（v9：直连失败兜底与 CORS 白名单厂商的转发地址，全局配置） ============
+
+export const CLOUD_BACKEND_KEY = 'oracle-cloud-backend-v1';
+
+/** localStorage 安全读（隐私模式/非浏览器环境降级为空） */
+function safeGet(key: string): string {
+  try {
+    const v = globalThis.localStorage?.getItem(key);
+    if (v !== null && v !== undefined) return v;
+  } catch {
+    /* 读取失败 → 空 */
+  }
+  return '';
+}
+
+function safeSet(key: string, v: string): void {
+  try {
+    globalThis.localStorage?.setItem(key, v);
+  } catch {
+    /* 写入失败（配额/隐私模式）→ 静默 */
+  }
+}
+
+/** 云端后端覆写读取（空串 = 未覆写，自动路由：同源优先 → 官方 workers.dev Worker） */
+export function loadCloudBackendOverride(): string {
+  return safeGet(CLOUD_BACKEND_KEY).trim();
+}
+
+/** 云端后端覆写写入（空串清除覆写） */
+export function storeCloudBackendOverride(url: string): void {
+  safeSet(CLOUD_BACKEND_KEY, url);
+}

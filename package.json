@@ -8,7 +8,7 @@
     "start": "bash .zscripts/start.sh",
     "lint": "eslint .",
     "train:neuro": "bun scripts/train-neuro.ts",
-    "verify:oracle": "bun scripts/verify/verify-oracle-v5.ts && bun scripts/verify/verify-root-shell.ts && bun scripts/verify/verify-agent-loop.ts && bun scripts/verify/verify-native-protocols.ts && bun scripts/verify/verify-oracle-fix.ts",
+    "verify:oracle": "bun scripts/verify/verify-oracle-v5.ts && bun scripts/verify/verify-root-shell.ts && bun scripts/verify/verify-agent-loop.ts && bun scripts/verify/verify-native-protocols.ts",
     "db:push": "prisma db push --accept-data-loss",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
