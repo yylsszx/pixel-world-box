@@ -254,6 +254,8 @@ export class GameEngine {
   worldWar: WorldWarState = GameEngine.IDLE_WORLD_WAR();
   /** 停战协议表：pairKey → 休战截止 tick（期间不重启战端；到期自动重燃） */
   wwTruce = new Map<string, number>();
+  /** 力竭斡旋防抖：本轮大战中已受过斡旋（无论成败）的 civId（引擎态不序列化；大战启停/新世界/读档清空——最坏情况读档后重斡一次，无害） */
+  wwMediated = new Set<number>();
   /** 阵营对撞播报标记（本轮大战内首次「两个联盟的参战国互相开战」叙事；-1 = 未播） */
   wwClashAnnounced = -1;
   /** 核弹发射全局冷却 tick（两次核打击至少间隔 15 年，防核弹洗地） */
@@ -907,6 +909,7 @@ export class GameEngine {
     // 终极世界大战重置（新世界无战火）
     this.worldWar = GameEngine.IDLE_WORLD_WAR();
     this.wwTruce.clear();
+    this.wwMediated.clear();
     this.wwLastNukeTick = -600;
     this.wwLastAntiTick = -1200;
     this.wwFrenzyAnnounced = -1;
@@ -9932,15 +9935,15 @@ export class GameEngine {
 
   /** 停战（统一入口：纪事 + 战败耻辱记忆 + 战争创伤残留 + 未竟战争旨意提前结算）。
    *  postRel：战后关系（25=常态；10=冷和平；5=心怀怨咀；40=神谕和解） */
-  makePeace(a: number, b: number, text: string, postRel = 25) {
+  makePeace(a: number, b: number, text: string, postRel = 25, opts?: { white?: boolean }) {
     const key = pairKey(a, b);
     // —— 签约宽慰（#35）：停战如释重负——双方民心小幅振作（战争阴霾散去的一刻）
     for (const id of [a, b]) {
       const cv = this.civs[id];
       if (cv?.alive) cv.stability = Math.min(100, (cv.stability ?? 70) + 2);
     }
-    // —— 动态战线停战结算：高强度占领成既成事实（割让），低强度归还 ——
-    const fr = this.settleFront(a, b);
+    // —— 动态战线停战结算：高强度占领成既成事实（割让），低强度归还（白色和约跳过——斡旋调停不以国土为代价） ——
+    const fr = opts?.white ? { ceded: 0, tiles: [] as number[] } : this.settleFront(a, b);
     if (fr.ceded > 0) {
       const taker = this.civs[a]?.alive ? this.civs[a] : this.civs[b];
       if (taker) this.addEvent('occupy', `停战协议承认既成事实：${fr.ceded} 格战占领土正式易帜`, { colorHex: taker.colorHex });
@@ -10785,6 +10788,45 @@ export class GameEngine {
   }
 
   /**
+   * 力竭斡旋（#95）：力竭国退出前的最后一线生机——中立富国或天降神谕介入调停。
+   * 斡旋者：中立富国（非参战国、人口 ≥ 力竭国当前 3 倍且 ≥60、每轮取最富者）；无适格者时 20% 概率天降神谕。
+   * 成功（富国 50% / 神谕 35%）：全线白色停战——不割地（makePeace white 跳过 settleFront）、
+   *   无联盟凝聚力损失、该国留在战争中休战 15 年（wwTruce 到期战端重燃，大战继续）。
+   * 失败：照常力竭退出（仅补播斡旋失败事件）。
+   * 防抖：本轮大战每国仅一次斡旋机会（wwMediated）——再力竭时无人再劝。
+   */
+  wwMediate(civ: Civ): boolean {
+    const ww = this.worldWar;
+    if (ww.phase !== 'running' || this.wwMediated.has(civ.id)) return false;
+    const mediator = this.civs
+      .filter((c) => c.alive && c.pop > 0 && c.id !== civ.id && !ww.belligerents.includes(c.id) && c.pop >= 60 && c.pop >= civ.pop * 3)
+      .sort((a, b) => b.pop - a.pop)[0];
+    const oracleMed = !mediator && this.rng() < 0.2;
+    if (!mediator && !oracleMed) return false;
+    this.wwMediated.add(civ.id);
+    const who = mediator ? `中立富国「${mediator.name}」` : '一道天降神谕';
+    const meta = { colorHex: mediator ? mediator.colorHex : '#ffd700', x: civ.capital >= 0 ? this.tileX(civ.capital) : undefined, y: civ.capital >= 0 ? this.tileY(civ.capital) : undefined };
+    if (this.rng() >= (mediator ? 0.5 : 0.35)) {
+      this.addEvent('worldwar', `${who}出面斡旋「${civ.name}」的乞和——调停失败，战神不肯合眼`, meta);
+      return false; // 斡旋失败：照常力竭退出
+    }
+    // —— 斡旋成功：全线白色停战（不割地、无凝聚力代价、留在战争中） ——
+    const others = this.wwAliveBelligerents().filter((c) => c.id !== civ.id);
+    for (const foe of others) {
+      const key = pairKey(civ.id, foe.id);
+      if (this.atWar(civ.id, foe.id)) {
+        this.makePeace(civ.id, foe.id, `${who}斡旋成功：「${civ.name}」与「${foe.name}」白色停战——寸土不失，罢兵休养`, 12, { white: true });
+      }
+      // 未交战的对也补停战表（否则重燃循环立刻开新战线——调停停火必须覆盖全部参战对）
+      if (!this.wwTruce.has(key)) this.wwTruce.set(key, this.tickCount + GameEngine.WW_TRUCE_TICKS);
+    }
+    this.addEvent('peace', `${who}斡旋成功——力竭的「${civ.name}」获得喘息：全线白色停战 15 年，寸土未失`, meta);
+    this.toast(`${who.slice(0, 20)}…斡旋停火`, 'peace');
+    this.statsTick();
+    return true;
+  }
+
+  /**
    * 动态参战：力竭退出世界大战（残存为国，非灭亡）。
    * 判据（满足其一）：人口跌破入伍基线 28% 或（王都沦陷且人口跌破 45%）；
    * 终局狂热（存活 ≤3）不退——不死不休的终局气质保留。
@@ -10796,6 +10838,8 @@ export class GameEngine {
     const base = ww.pop0[civ.id] ?? civ.pop;
     const devastated = civ.pop < Math.max(8, base * 0.28) || (civ.capital < 0 && civ.pop < Math.max(8, base * 0.45));
     if (!devastated) return false;
+    // —— 力竭斡旋（#95）：中立富国/天降神谕的最后一线生机——调停成功则白色停战留在战争中，不退 ——
+    if (this.wwMediate(civ)) return true;
     ww.belligerents = ww.belligerents.filter((b) => b !== civ.id);
     (ww.capitulated ??= []).push({ id: civ.id, name: civ.name, colorHex: civ.colorHex, tick: this.tickCount, year: Math.floor(this.yearF) });
     (ww.wwCd ??= {})[civ.id] = this.tickCount + 900; // 22.5 年内不可再被卷入（退战的休养生息期）
@@ -10851,6 +10895,7 @@ export class GameEngine {
       endText: '',
     };
     this.wwTruce.clear();
+    this.wwMediated.clear();
     // —— 联盟阵营化：盟友不互相宣战（阵营对峙取代全员互殴）；无联盟才退回全员互战 ——
     let n = 0;
     let blocKept = 0;
@@ -10915,6 +10960,7 @@ export class GameEngine {
       this.addEvent('worldwar', `终极世界大战终局：「${firstAl.name}」的同盟笑到了最后——阵营协作击败了所有孤军`, { colorHex: firstAl.colorHex });
       this.toast(`大战结束——「${firstAl.name}」阵营胜利`, 'good');
       this.wwTruce.clear();
+      this.wwMediated.clear();
       ww.wwCd = {}; // 动态参战防抖表随终战清零（新一轮大战重新开始）
       for (const m of firstAl.members) {
         const mc = this.civs[m];
@@ -11158,6 +11204,7 @@ export class GameEngine {
       this.toast('终极世界大战结束——所有参战国同归于尽', 'danger');
     }
     this.wwTruce.clear();
+    this.wwMediated.clear();
     ww.wwCd = {}; // 动态参战防抖表随终战清零（新一轮大战重新开始）
     this.shake = Math.max(this.shake, 8);
     this.statsTick();
@@ -11189,6 +11236,7 @@ export class GameEngine {
     if (this.worldWar.phase !== 'running') return 0;
     const alive = this.wwAliveBelligerents();
     this.wwTruce.clear();
+    this.wwMediated.clear();
     let n = 0;
     for (let i = 0; i < alive.length; i++) {
       for (let j = i + 1; j < alive.length; j++) {
@@ -19123,6 +19171,7 @@ export class GameEngine {
       this.worldWar = GameEngine.IDLE_WORLD_WAR();
     }
     this.wwTruce.clear();
+    this.wwMediated.clear();
     const truceSave = (data as SaveDataV2).wwTruce;
     if (Array.isArray(truceSave)) {
       for (const [k, v] of truceSave) {

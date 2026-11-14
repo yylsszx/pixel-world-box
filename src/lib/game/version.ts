@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.84-preview';
+export const GAME_VERSION = 'v0.85-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.85-preview',
+    date: '2026-11-14',
+    items: [
+      '力竭退出的斡旋事件：世界大战中打得山穷水色的国家在退出前，可能得到中立富国（人口达其 3 倍以上的局外强国）或天降神谕的调停——调停成功则全线「白色停战」15 年：寸土不失、联盟凝聚力无损、留在战争中喘息；调停失败则照常割地求和。每国每轮大战只有一次被斡旋的机会',
+      '白色和约机制：斡旋达成的停战不割让占领土（区别于战败割地的常规停战）——调停不以国土为代价',
+    ],
+  },
   {
     ver: 'v0.84-preview',
     date: '2026-11-14',
