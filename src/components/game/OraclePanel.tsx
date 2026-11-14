@@ -510,6 +510,13 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
   const activeKey = matchPresetKey(provider);
   const isBuiltin = provider.kind === 'builtin';
   const isLocal = provider.kind === 'local';
+  // v0.84 防坑警示（承接并行线 needsRelayWarn 思路，口径更新）：CORS 白名单厂商
+  // 选中且既无中继也无云端后端覆写时给显眼提示（用户实测高频掉坑点——不等失败才教育）
+  const needsCloudWarn =
+    provider.kind === 'openai' &&
+    /bigmodel\.cn|api\.naive\.ai|spark-api-open\.xf-yun|api\.hunyuan\.cloud\.tencent/.test(provider.baseUrl ?? '') &&
+    !provider.relayUrl?.trim() &&
+    !cloudBe.trim();
 
   /** 测试连通：走 routeCallModel 全路由（中继→本站后端→浏览器直连），与真实对话完全同路径 */
   const runTest = useCallback(async () => {
@@ -559,11 +566,18 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
         })}
       </div>
 
+      {/* CORS 白名单厂商无后端警示（v0.84）：预设点选即提示，不等失败 */}
+      {needsCloudWarn && (
+        <p className="rounded-sm border border-red-400/40 bg-red-400/10 px-1.5 py-1 text-[9px] leading-relaxed text-red-300">
+          该厂商官方端点为服务端 CORS 白名单制（实测 2026-11-14，只放行其自家域名），浏览器直连必被拒——这不是配置问题。GLM 请改用「硅基流动·GLM直连」预设（同款开权重 GLM，直连可用）；确需官方端点请在下方「中继后端」或「云端后端」填可达地址转发。
+        </p>
+      )}
+
       {/* 端点配置（内置 Z.ai 免密钥，仅温度） */}
       {isBuiltin || isLocal ? (
         <p className="rounded-sm border border-teal-400/30 bg-teal-400/5 px-1.5 py-1 text-[9px] leading-relaxed text-teal-300/80">
           {isLocal
-            ? '本地模型在浏览器端直接运行（transformers.js），无需服务端与密钥；首次使用会下载模型权重（约几百 MB），随后浏览器缓存离线可用。'
+            ? '本地模型在浏览器端直接运行（transformers.js），无需服务端与密钥；首次使用会下载模型权重（约几百 MB），随后浏览器缓存离线可用。注意：需支持 WebAssembly 的系统浏览器（Safari/Chrome）；WPS/微信等内嵌浏览器可能不兼容，报初始化错误时请换系统浏览器打开。'
             : '内置 Z.ai 经服务端转发（同源后端 / 云端后端 Worker），无需密钥；两者皆不可达时（如大陆线路 workers.dev 被污染）可改用直连厂商（DeepSeek/Kimi/千问/硅基流动）或本地模型。'}
         </p>
       ) : (

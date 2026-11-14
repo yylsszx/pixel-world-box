@@ -1012,6 +1012,16 @@ export async function routeCallModel(
   cb: RouteCallbacks = {},
   extras?: RouteExtras,
 ): Promise<ModelCallResult> {
+  // ⓪ 本地模型恒浏览器端推理（v0.83 并行线修复，v0.84 合并保留）：不经中继/后端/直连任何
+  //    网络通道——即使配了中继地址也不发（后端会拒绝 local kind；本地推理本就无需网络）
+  if (provider.kind === 'local') {
+    return {
+      content: '',
+      reasoning: '',
+      err: `本地模型不经网络调用，无法做连通测试——直接下令即可（首次下令会下载约 300-500MB 模型权重，之后浏览器缓存离线可用；需支持 WebAssembly 的系统浏览器，WPS/微信等内嵌浏览器可能不兼容）`,
+    };
+  }
+
   // ① 显式中继后端（oracle-server）——用户显式配置，失败不静默换道（错误原样上浮）
   const relay = provider.relayUrl?.trim();
   if (relay) {

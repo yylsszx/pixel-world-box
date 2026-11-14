@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.83-preview';
+export const GAME_VERSION = 'v0.84-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -12,12 +12,22 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    ver: 'v0.84-preview',
+    date: '2026-11-14',
+    items: [
+      '大陆直连性回归（神谕 v9）：GitHub Pages 静态入口下 AI 神谕第一通道恢复为浏览器直连厂商——实测（2026-11-14 预检+真实请求双验证）DeepSeek / Kimi / 通义千问 / 硅基流动 / 魔搭 / MiniMax / 火山方舟七家 CORS 全开，选预设填 Key 即用，不依赖中继与自定义域名；直连网络级失败自动降级云端后端兜底（同端点 60s 失败冷却不重撞同一堵墙），双通道错误合并呈报',
+      'GLM 大陆直连方案：「硅基流动·GLM直连」预设上线（默认 zai-org/GLM-5.3-Flash 开权重同款 GLM；模型名可换模型广场任意模型：Kimi-K2.7 / DeepSeek-V3.2 / Qwen3.5 等）——GLM 从「必经中继」变为「直连即用」；智谱官方 / Naive / 星火 / 混元为服务端 CORS 白名单制（实测只放行自家域名），预设选中即红色警示并给出替代路线',
+      '「云端后端（可选覆写）」配置项上线（大陆线路 workers.dev 被污染时填自定义域名根治）+ Naive Flash / Naive Lite 预设接入（官方端点为白名单制，需可达云端后端）+ 本地模型与存档 null 修复、连通测试说明文案（并行线 #93 成果合并保留）',
+    ],
+  },
+  {
     ver: 'v0.83-preview',
     date: '2026-11-14',
     items: [
-      '大陆直连性回归（v9）：GitHub Pages 静态入口下 AI 神谕第一通道恢复为浏览器直连厂商——实测（2026-11-14 预检+真实请求双验证）DeepSeek / Kimi / 通义千问 / 硅基流动 / 魔搭 / MiniMax / 火山方舟七家 CORS 全开，选预设填 Key 即用，不依赖任何中继与自定义域名',
-      'GLM 大陆直连方案：「硅基流动·GLM直连」预设上线（默认 zai-org/GLM-5.3-Flash 开权重同款 GLM，模型名可换模型广场任意模型）；智谱官方端点为服务端 CORS 白名单制（只放行自家域名，浏览器无法绕过）——实测事实与替代路线已写进面板与大陆直连指南',
-      '直连失败自动兜底：网络级失败（CORS 白名单 / 不可达）自动降级云端后端（官方 Worker / 可覆写自定义域名，新增「云端后端」配置项），双通道错误合并呈报；同端点 60s 失败冷却不再重撞；Naive Flash / Naive Lite 预设接入（官方端点为白名单制，需可达云端后端）',
+      '本地小模型（Qwen-0.5B 等）修复：推理引擎恒以单线程 WebAssembly 运行——GitHub Pages / iPad / WPS 内嵌浏览器等无跨域隔离头的环境不再初始化报错；生成空间扩容至 768 token（旧协议工具调用 JSON 不再被截断）；下载失败 / WebAssembly 不兼容 / 存储不足等底层报错全部转译为可读的中文引导',
+      '智谱 GLM 防坑：预设标注「需中继」并在选中且未配中继时即时红色警示（智谱开放平台不支持浏览器直连，必报 CORS 错）；直连失败文案升级为分步指引（部署 oracle-server 中继或改用 DeepSeek/Kimi/通义千问）',
+      '本地模型连通测试不再误报「未知的 provider.kind」——本地模型不走网络，直接下令即用（首次自动下载约 300-500MB 权重）',
+      '存档防御加固：成就进度 / 存档槽信息 / 工具参数 / 权限设置等 localStorage 存档若损坏为 null，自动回退默认值——彻底杜绝「Cannot convert undefined or null to object」崩溃',
     ],
   },
   {
