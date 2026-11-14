@@ -6088,3 +6088,16 @@ Stage Summary:
 **版本节奏**: 升位 v0.81-preview（CHANGELOG 四条：三协议原生接入/Gemini 双预设/Claude 5 代适配/全通道覆盖）。
 **推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
 **评估:D3 差异化优势 + 神谕可用性双扩——Root Agent 的五档权限与 72 工具从「仅 OpenAI 兼容端点」扩到「三大协议全家」（OpenAI tool_calls / Claude tool_use / Gemini functionCall），全球主流 AI 厂商均可直连驱动全权限 Agent；研究先行兑现：Claude 5 代 temperature 400 陷阱与 Gemini 安全拦截语义均来自官方文档实研而非试错。**
+
+---
+
+## 2026-11-14 #92（功能轮·自动链）：阵营对撞的战争加成——世界大战角力场的数值兑现（#88 遗留池①）
+**背景**: #88 交付的阵营对撞只有叙事播报没有数值（遗留池①）。本轮补上：两大联盟的参战国全面交战后，双方获得克制的战争加成；失效边界与大战生命周期完全同步。
+**设计（派生态优先，自审零隐性 bug）**: 新增 `wwClashSides(): [Alliance, Alliance] | null`——前置闸「大战进行中 + 对撞已播报（wwClashAnnounced === startTick）」；优先返回仍在交战的跨阵营对（与播报判定同构），战火暂熄时回退「仍有存活参战成员的任意两联盟」；**零新增序列化字段**（存档新旧档天然一致，旧档兼容零成本）。失效路径全走已有状态：大战结束（phase/startTick 变）→ 前置闸拦；任一阵营全员退出 → byId<2 拦；阵营解体 → allianceOfCiv 查无 → 该侧无成员。`wwClashBoost(civId)` 三重闸：对撞在场 + 该国属两侧联盟 + 该国在参战名单（无阵营孤军/未参战国均不享受）。
+**数值（克制档三件套）**: ① wwWeaponsTick 武器频率 ×1.25（与终局狂热 ×2 叠乘，最高 ×2.5，各武器概率上限远未触顶）；② tryFormArmy 军团上限 +1（扩军动员）；③ 战时紧急征召 levy 名额 +2。对撞播报文案同步补「双方军工全速运转，扩军动员与火力倾泻同步升级」。
+**QA**: 新建 scripts/ww-clash-test.mjs 29 断言全绿——三态（进入：播报即双方全员加成 / 持续：跨阵营停战暂熄仍维持 / 失效：①乙阵营全员退出 ②甲阵营解体 ③大战终局）+ 互斥边界（未播报无加成、结盟未交战无加成、无阵营孤军 E 无加成、未参战国即使有阵营也无加成）+ 存档兼容（worldWar 无新字段、新引擎冷启动即 false）。回归全量绿：polish87 33 + infinite-evolution 44 + age-deepening 48 + ww-dynamic 61 + worker-assets 7 + verify:oracle 全链（31/33/14/36）；tsc 零错误；next build 全绿。
+**环境注记**: 沙盒回收后 node_modules 灭失；sharp@0.32.6（@xenova/transformers 嵌套依赖）node-gyp 编译失败 → `npm install --ignore-scripts` 绕过（sharp 仅为浏览器侧可选图像依赖，测试/构建链路不需要），934 包 32s 装毕。凭证已由用户重新下发并双备份（~/.git-credentials + /home/z/my-project/.secrets/pwb-git-credentials，均 600）。本轮基底 = 远端 c1d7afb（v0.81-preview，含 #89-#91 用户插入轮成果），本地无独有提交，快进对齐后开工。
+**遗留（下轮优先池）**: ①#88 遗留池续项——力竭退出的斡旋事件（中立富国/神谕调停）；②阵营间集体投降（盟主退战全盟跟随）；③超限可视化二笔扩展至集市/港口/箭塔；④用户真机实测三入口反馈（#84）；⑤中继 oracle-server 原生 FC 面。
+**版本节奏**: 升位 v0.82-preview（CHANGELOG 两条：对撞加成三件套/加成归属边界）。
+**推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**评估:D6 稳定健壮——阵营对撞从「编年史一句话」升格为「有进有出有边界的战争状态机」：派生态设计让失效路径全部寄生在既有生命周期上，无新增存档字段即无兼容债；三态三失效五互斥共 29 断言把设计坑提前钉死。**

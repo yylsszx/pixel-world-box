@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.81-preview';
+export const GAME_VERSION = 'v0.82-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.82-preview',
+    date: '2026-11-14',
+    items: [
+      '阵营对撞的战争加成：两大联盟的参战国全面交战后，对撞双方进入战时军工全速运转状态——武器部署频率提升 25%（与终局狂热叠加）、军团上限 +1、战时紧急征召名额 +2；对撞任一阵营全员退出大战或阵营解体、大战落幕时加成即刻失效',
+      '加成只属于对撞阵营的参战国：无阵营的孤军与未参战的中立国均不享受——世界大战的角力场只认两大军事集团的旗号',
+    ],
+  },
   {
     ver: 'v0.81-preview',
     date: '2026-11-14',

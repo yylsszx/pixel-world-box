@@ -8045,7 +8045,7 @@ export class GameEngine {
     WBB.touchMeta(); // Stage 3：军团编入 army 列收口
     if (!civ.alive || civ.pop < 10) return null;
     if (this.tickCount < (civ.armyCd ?? 0)) return null;
-    const armyCap = Math.max(1, Math.round(((this.activeDirective(civ.id, 'legion') ? Math.max(3, this.activeDirective(civ.id, 'legion')!.param) : 2) + this.techModsOf(civ.id).armyMax + (this.govOf(civ.id) === 4 ? 1 : 0)) * (0.75 + (RACES[civ.race]?.aggr ?? 0.5) * 0.5)));
+    const armyCap = Math.max(1, Math.round(((this.activeDirective(civ.id, 'legion') ? Math.max(3, this.activeDirective(civ.id, 'legion')!.param) : 2) + this.techModsOf(civ.id).armyMax + (this.govOf(civ.id) === 4 ? 1 : 0) + (this.wwClashBoost(civ.id) ? 1 : 0)) * (0.75 + (RACES[civ.race]?.aggr ?? 0.5) * 0.5))); // 对撞阵营扩军动员 +1
     if (this.armies.filter((a) => a.civ === civ.id).length >= armyCap) return null;
     // 目标敌国：指定或取交战中最近且尚有建筑者
     let enemyId = targetCiv ?? -1;
@@ -8072,9 +8072,11 @@ export class GameEngine {
     }
     // —— 战时紧急征召（levy）：兵源不足时征募集结点附近的平民执戈 ——
     if (near.length < GameEngine.ARMY_MIN && this.civAtWar(civ.id)) {
+      // —— 阵营对撞扩军动员（v0.81 warSurge）：对撞阵营的参战国征召名额 +2（克制档）——
+      const levyCap = GameEngine.ARMY_MIN + 4 + (this.wwClashBoost(civ.id) ? 2 : 0);
       const levy: Unit[] = [];
       for (const u of this.units) {
-        if (levy.length >= GameEngine.ARMY_MIN + 4) break;
+        if (levy.length >= levyCap) break;
         if (u.dead || u.civ !== civ.id || u.boat || u.army != null) continue;
         const job = u.job ?? 0;
         if (job !== 0) continue;
@@ -10984,11 +10986,51 @@ export class GameEngine {
       }
       if (clashA && clashB) {
         this.wwClashAnnounced = ww.startTick;
-        this.addEvent('worldwar', `阵营对撞——「${clashA.name}」与「${clashB.name}」的军队在世界大战的战场上迎头相撞，大战成了两大军事集团的角力场`, { colorHex: clashA.colorHex });
+        this.addEvent('worldwar', `阵营对撞——「${clashA.name}」与「${clashB.name}」的军队在世界大战的战场上迎头相撞，大战成了两大军事集团的角力场——双方军工全速运转，扩军动员与火力倾泻同步升级`, { colorHex: clashA.colorHex });
       }
     }
     // —— 现代武器部署（工业时代军备的国家倾泻火力；重算名单——含刚卷入者/剔除刚退出者）——
     this.wwWeaponsTick(this.wwAliveBelligerents());
+  }
+
+  /** 阵营对撞的当前两侧（v0.81 warSurge 派生态，零序列化字段）
+   *  前置：大战进行中 + 对撞已播报（wwClashAnnounced === startTick）。
+   *  优先返回「仍在交战」的跨阵营对（与播报判定同构）；战火暂熄时回退
+   *  「仍有存活参战成员的任意两联盟」——加成维持到任一阵营全员退出大战。
+   *  大战结束（phase/startTick 变）或阵营解体（allianceOfCiv 查无）→ 自动返回 null。 */
+  wwClashSides(): [Alliance, Alliance] | null {
+    const ww = this.worldWar;
+    if (ww.phase !== 'running' || this.wwClashAnnounced !== ww.startTick) return null;
+    const alive = this.wwAliveBelligerents();
+    if (alive.length < 2) return null;
+    const byId = new Map<number, Alliance>();
+    for (const c of alive) {
+      const al = this.allianceOfCiv(c.id);
+      if (al) byId.set(al.id, al);
+    }
+    if (byId.size < 2) return null; // 只剩单一阵营（或无阵营）→ 对撞已不存在
+    // 优先取仍在交战的跨阵营对
+    for (let i = 0; i < alive.length; i++) {
+      const alI = this.allianceOfCiv(alive[i].id);
+      if (!alI) continue;
+      for (let j = i + 1; j < alive.length; j++) {
+        if (!this.atWar(alive[i].id, alive[j].id)) continue;
+        const alJ = this.allianceOfCiv(alive[j].id);
+        if (alJ && alJ.id !== alI.id) return [alI, alJ];
+      }
+    }
+    // 回退：两阵营均在场（战火暂熄但角力未散）——取成员序在前者，保证确定性
+    const arr = [...byId.values()];
+    return [arr[0], arr[1]];
+  }
+
+  /** 阵营对撞战争加成（克制档）：交战两大阵营的参战国 —— 武器部署频率 ×1.25（wwWeaponsTick）
+   *  + 军团上限 +1 + 紧急征召名额 +2（tryFormArmy）。非参战国/无阵营者不享受。 */
+  wwClashBoost(civId: number): boolean {
+    const sides = this.wwClashSides();
+    if (!sides) return false;
+    const al = this.allianceOfCiv(civId);
+    return !!al && (al.id === sides[0].id || al.id === sides[1].id) && this.worldWar.belligerents.includes(civId);
   }
 
   /** 大战期间的武器部署：现代（火炮/空袭/导弹/核） + 未来（激光/蜂群/轨道/等离子/反物质）
@@ -11001,8 +11043,9 @@ export class GameEngine {
       this.addEvent('worldwar', `终局狂热——仅存的三强倾尽武库，反物质武器解禁，毁灭不再有禁忌`, { colorHex: '#ff4d4d' });
       this.toast('终局狂热：反物质武器解禁', 'danger');
     }
-    const rate = frenzy ? 2 : 1;
     for (const c of alive) {
+      // —— 阵营对撞加成（v0.81 warSurge）：对撞阵营成员武器频率 ×1.25（与终局狂热 ×2 叠乘）——
+      const rate = (frenzy ? 2 : 1) * (this.wwClashBoost(c.id) ? 1.25 : 1);
       const tm = this.techModsOf(c.id);
       if (tm.arty <= 0 && tm.bomber <= 0 && tm.nukeCap <= 0 && tm.laser <= 0 && tm.drone <= 0 && tm.orbital <= 0 && tm.plasma <= 0 && tm.antiMatter <= 0) continue;
       const foes = alive.filter((o) => o.id !== c.id);
