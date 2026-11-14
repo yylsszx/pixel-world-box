@@ -4314,6 +4314,18 @@ Stage Summary:
 - 【架构备忘】①canvas 间 drawImage 的符号 blit op 协议定型：{o:'drawImage', a:[坐标 f64hex], s:[srcTag string, alpha 数值]}——blit 事实/参数可对账而像素合成留宿主域（M-U4/M-U7d 边界裁定的自然延伸）；②Set/Map 插入序跨语言：TS Set/Map 迭代序=插入序 ↔ C# 宿主侧插入序 List 快照（HashSet/Dictionary 迭代序不可用）；③monkey patch 探测协议：实例覆盖 prototype 方法（engine.redrawOverlay = wrapper）——真实现内部调用点命中计数，触发语义以 meta 布尔对账；④dump 时序纪律升级：输入面字段必须在被调函数执行前快照（renderMinimap 内 redrawOverlay 复位 overlayDirty 是活例——Task 122 dump 协议缺陷的时序变体）；⑤def.isCiv 单一注册表分体等价第五例：RDef 扩字段 + static ctor 回填静态表 + RdefHost 注入动态条（蓝本 spread 继承语义），与前四例（casusText/techMods/plateCx/raceVis）同构。
 - 【遗留风险与下阶段建议】①WbMinimap.cs/RDef.isCiv 回填/Test22 未经 dotnet 编译验证（沙箱无 Unity）——风险面小（新依赖仅 WbCivSim.RacesIsCiv 同源镜像；static ctor 在字段初始化器后执行 C# 规范保证）；②M-U 渲染域余段 = Unity 工程整合（宿主消费 WbDrawList 命令流的真实渲染器装配——blit 符号 op 需宿主侧 RenderTexture 合成）+ 引擎侧 invalidateVisCache 余 4 调用点（speciation L11512/11599/11699 + ctor L891）——建议下轮 Unity 工程整合评估或按用户优先级切主线二；③M-U3h 文明余域（商队结算/殖民建城/船 bail 稀疏路径宿主侧）仍待盘点；④主线二（deepseek harness fork 领域版：profile+领域插件+按意图检索叙事化，源码零改功能完整）窗口持续开放——渲染链全通后是切换窗口；⑤网络劣化持续四轮（curl --http1.1 + API 诊断 + staging 直推兜底链为标准流程）；⑥QA 冒烟连续四轮缺席——下轮主线轻时恢复；⑦并行 cron 踩踏风险持续（本轮零目击），写入集中快速完成纪律保持。
 
+## 2026-11-15 #96（功能轮·心跳接管 R3 未竟任务）：阵营间集体投降——盟主退战全盟跟随（#92 遗留池②）
+**背景**: #92 交付的力竭退出只有个体退战 + 凝聚力代价；R3 于 2026-11-14 23:45 触发但沙盒回滚零产出，本轮心跳接管复链完成。与 wwEnlist 的 bloc 连带卷入互为镜像：一人卷入全盟参战 ↔ 盟主退战全盟跟随。
+**设计（零序列化字段）**: wwCapitulate 重构——抽出 wwExitCore(civ, tier)（除名/入账/全线罢兵/清停战残留/凝聚力档位/播报），wwCapitulate = 判据 + 斡旋前置 + 分支。集体分支：退战者是盟主 → 收集仍参战的存活成员（followers），盟主本体先以 collectiveLeader 档退出，随后每个跟随者独立过 wwMediate 斡旋前置（wwMediated 各自防抖——#95 机制对跟随者原样生效）：斡旋成功者白色停战留守战线，失败者以 follower 档随盟主退战。跟随不设力竭判据（阵营共进退）。凝聚力三分档：collectiveLeader -8（有组织的协同退战，比叛逃体面）/ follower 0（忠诚跟随不是背叛）/ individual -12（盟主再 -6，个体路径原语义不变）。总播报一条（随行 N 国 + 留守 M 国）。空集体边界：成员已全部灭亡/退出时集体分支空跑不炸。全盟退出后 alive ≤1 由 worldWarTick 既有终局闸自然收束（列强力竭分支）。
+**QA**: 新建 scripts/ww-collective-test.mjs 38 断言全绿——集体投降主路径（三邦齐退 + capitulated 账本 + wwCd 休养期 + 联盟不解体 + 凝聚力 -8）/ 成员单独退战不连带（-12 档）/ 斡旋三段式（盟主斡旋成功留守不触发集体 → 防抖拦二次斡旋真退出 → 跟随者独立斡旋成功留守）/ 空集体边界（-8 档不炸）/ 终局联动（名单耗尽 → 列强力竭收束）/ 存档兼容（无新字段、新引擎冷启动）。全量回归绿：ww-mediate 28 + ww-clash 29 + ww-dynamic 61 + age-deepening 48 + infinite-evolution 44 + polish87 33 + worker-assets 7 + verify:oracle 全链（31+33+14+36+13）；tsc 零错误；next build 全绿。
+**环境注记（沙盒第 N 次全量回滚实录）**: 本轮开工时沙盒已回滚到 2026-11-13 22:51 快照——cron-state.md 回 round 0、凭证双备份全灭、仓库回到 6948b5f 旧克隆、node_modules 灭失。R3 于 23:45 触发但在回滚环境中零产出（远端 main 未动）。心跳 00:05 触发后：凭证从会话历史重建双备份 → core.fileMode false + reset --hard origin/main 对齐 82e2b76（v0.85）→ npm install --ignore-scripts 复装（929 包 22s）→ 开工。教训：远端 origin/main 是唯一可靠真相源；cron-state/worklog/凭证均视为易失物，每轮重建。
+**遗留（下轮优先池）**: ①超限可视化二笔扩展至集市/港口/箭塔（#87 遗留续项）；②用户真机实测：GLM 硅基流动直连 / 本地 0.5b 系统浏览器 / 斡旋与集体投降实战观感（#94/#95/#96 连续三轮世界大战功能的玩家验证）；③中继 oracle-server 原生 FC 面；④自定义域名绑定实弹；⑤斡旋事件的联盟级变体（中立富国为整条阵营斡旋——低优先，先看玩家反馈）。
+**版本节奏**: 升位 v0.86-preview（CHANGELOG 两条：集体投降/斡旋留守联动）。
+**推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**评估:D6 稳定健壮——大战的退出机制从「个体离散事件」补全为「有组织撤退的阵营行为」：wwExitCore 的抽出让三条退出路径（个体/集体盟主/跟随者）共享同一套入账与罢兵逻辑，斡旋防抖天然对跟随者生效（每国每轮大战一次）；凝聚力分档让「体面撤退」与「擅自叛逃」在数值上有了区分，阵营系统的叙事自洽性再进一步。**
+
+---
+
 ## 2026-11-14 #95（功能轮）：力竭退出的斡旋事件——中立富国与天降神谕的最后一线生机（#92 遗留池①）
 **背景**: #88/#92 交付的力竭退出只有「割地乞和」一种结局。本轮补上设计意图中的斡旋层：退出前可能有人来劝。
 **设计（零序列化字段）**: 新增 `wwMediate(civ)`——在 wwCapitulate 力竭判据成立后、执行退出前置入。斡旋者资格：中立富国（非参战国、pop ≥ 60 且 ≥ 力竭国当前 3 倍，取最富者）；无适格者时 20% 概率天降神谕。成功（富国 50% / 神谕 35%）：makePeace(white) 全线白色停战（新增 makePeace 第 5 参 opts.white 跳过 settleFront——不割地）+ 未交战对补 wwTruce（防重燃循环立刻开新战线）+ 无联盟凝聚力损失 + 该国留在战争中休战 15 年（到期战端重燃，大战继续）；失败：补播「调停失败」事件后照常退出。防抖：引擎态 `wwMediated` Set（每国每轮大战仅一次斡旋机会，成败均记账），在全部 6 处 wwTruce.clear() 站点（新世界/开战/三种终局/读档）随行清空——最坏情况读档后重斡一次，无害。存档零新增字段（wwMediated 不入 serialize）。

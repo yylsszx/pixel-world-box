@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.85-preview';
+export const GAME_VERSION = 'v0.86-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.86-preview',
+    date: '2026-11-15',
+    items: [
+      '阵营间集体投降：世界大战中盟主力竭退战时，全盟成员邦国相随退战（与阵营共进退的卷入互为镜像）——每位跟随者保有各自的斡旋机会，被中立富国或天降神谕拉一把的可以留守战线；有组织的集体投降比个体擅自退战更体面（凝聚力 -8 vs -12），忠诚跟随者不受罚',
+      '盟主斡旋成功则留守，不触发集体投降——斡旋仍是大战退出潮的最后一道闸门；全盟退出后大战按既有终局规则自然收束',
+    ],
+  },
   {
     ver: 'v0.85-preview',
     date: '2026-11-14',

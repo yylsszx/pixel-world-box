@@ -10831,6 +10831,9 @@ export class GameEngine {
    * 判据（满足其一）：人口跌破入伍基线 28% 或（王都沦陷且人口跌破 45%）；
    * 终局狂热（存活 ≤3）不退——不死不休的终局气质保留。
    * 退出动作：除名 + makePeace 全线罢兵 + 清该国的停战表残留（防过期重燃）+ 联盟凝聚力受挫。
+   * 集体投降（#96）：盟主力竭退出 → 全盟跟随（与 wwEnlist 的 bloc 连带卷入互为镜像）——
+   *   每位跟随者先过独立斡旋（wwMediated 各自防抖），斡旋成功者白色停战留守、失败者随盟主退战；
+   *   跟随不设力竭判据（阵营共进退）；凝聚力分档：集体盟主 -8 / 个体 -12（盟主再 -6）/ 忠诚跟随 0。
    */
   wwCapitulate(civ: Civ): boolean {
     const ww = this.worldWar;
@@ -10840,6 +10843,37 @@ export class GameEngine {
     if (!devastated) return false;
     // —— 力竭斡旋（#95）：中立富国/天降神谕的最后一线生机——调停成功则白色停战留在战争中，不退 ——
     if (this.wwMediate(civ)) return true;
+    // —— 集体投降（#96）：盟主带头退战 → 全盟跟随 ——
+    const al = this.allianceOfCiv(civ.id);
+    if (al && al.leader === civ.id) {
+      const followers = al.members.filter((m) => m !== civ.id && ww.belligerents.includes(m) && this.civs[m]?.alive && this.civs[m].pop > 0);
+      this.wwExitCore(civ, 'collectiveLeader');
+      let stayed = 0;
+      for (const m of followers) {
+        const mc = this.civs[m];
+        if (!mc?.alive || mc.pop <= 0 || !ww.belligerents.includes(m)) continue; // 战况瞬变：可能已灭亡或已被别途除名
+        if (this.wwMediate(mc)) { stayed++; continue; } // 跟随者各自的斡旋机会——被拉一把则留守
+        this.wwExitCore(mc, 'follower');
+      }
+      if (followers.length > 0) {
+        const followN = followers.length - stayed;
+        this.addEvent('worldwar', `「${al.name}」集体投降——盟主「${civ.name}」力竭退战后，${followN > 0 ? `${followN} 个成员邦国相随退战` : '无成员随行'}${stayed > 0 ? `，${stayed} 国经斡旋留守战线` : ''}`, { colorHex: al.colorHex });
+        this.toast(`「${al.name}」集体投降`, 'peace');
+      }
+      this.statsTick();
+      return true;
+    }
+    this.wwExitCore(civ, 'individual');
+    return true;
+  }
+
+  /**
+   * 个体退出核心（#96 抽出）：除名 + 入账 + 全线罢兵 + 清停战残留 + 凝聚力档位 + 播报。
+   * 凝聚力档位：collectiveLeader -8（有组织的协同退战，比个体叛逃体面）；follower 0（忠诚跟随不是背叛）；
+   * individual -12（擅自退战伤阵营信誉），若恰为盟主再 -6（带头跑路更伤）。
+   */
+  wwExitCore(civ: Civ, tier: 'individual' | 'collectiveLeader' | 'follower') {
+    const ww = this.worldWar;
     ww.belligerents = ww.belligerents.filter((b) => b !== civ.id);
     (ww.capitulated ??= []).push({ id: civ.id, name: civ.name, colorHex: civ.colorHex, tick: this.tickCount, year: Math.floor(this.yearF) });
     (ww.wwCd ??= {})[civ.id] = this.tickCount + 900; // 22.5 年内不可再被卷入（退战的休养生息期）
@@ -10854,16 +10888,19 @@ export class GameEngine {
       const dash = key.indexOf('-');
       if (+key.slice(0, dash) === civ.id || +key.slice(dash + 1) === civ.id) this.wwTruce.delete(key);
     }
-    // 联盟连带：盟友退战 → 凝聚力受挫（阵营信誉受损）
+    // 联盟凝聚力档位（#96）：集体/跟随/个体三分
     const al = this.allianceOfCiv(civ.id);
     if (al) {
-      al.cohesion = Math.max(0, al.cohesion - 12);
-      if (al.leader === civ.id) al.cohesion = Math.max(0, al.cohesion - 6); // 盟主带头退战更伤阵营
+      if (tier === 'individual') {
+        al.cohesion = Math.max(0, al.cohesion - 12);
+        if (al.leader === civ.id) al.cohesion = Math.max(0, al.cohesion - 6); // 盟主带头退战更伤阵营
+      } else if (tier === 'collectiveLeader') {
+        al.cohesion = Math.max(0, al.cohesion - 8); // 有组织的集体投降——耻辱但有始有终
+      } // follower：忠诚跟随不扣凝聚力
     }
     this.addEvent('worldwar', `「${civ.name}」力竭退出世界大战——残山剩水，苟全于乱世`, { colorHex: civ.colorHex, x: civ.capital >= 0 ? this.tileX(civ.capital) : undefined, y: civ.capital >= 0 ? this.tileY(civ.capital) : undefined });
     this.toast(`「${civ.name}」退出大战`, 'peace');
     this.statsTick();
-    return true;
   }
 
   /** 引燃终极世界大战 */
