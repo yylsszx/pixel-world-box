@@ -6101,3 +6101,16 @@ Stage Summary:
 **版本节奏**: 升位 v0.82-preview（CHANGELOG 两条：对撞加成三件套/加成归属边界）。
 **推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
 **评估:D6 稳定健壮——阵营对撞从「编年史一句话」升格为「有进有出有边界的战争状态机」：派生态设计让失效路径全部寄生在既有生命周期上，无新增存档字段即无兼容债；三态三失效五互斥共 29 断言把设计坑提前钉死。**
+
+---
+
+## 2026-11-14 #93（用户插入轮·修复）：0.5b 本地小模型用不了 + GLM 直连 CORS + localStorage null 崩溃——三连修
+**用户实测报告（iPad 双截图）**: ①「0.5b 小模型根本用不了」；②「其他 api 也会报错」——截图 A：智谱 GLM 浏览器直连 open.bigmodel.cn 失败（CORS 拦截 Failed to fetch）；截图 B：下令创造物种/神器时红条「Cannot convert undefined or null to object——世界仍在运转，请再问一次」。
+**根因分析（三层）**: ①本地 0.5b：onnxruntime-web 默认 numThreads=min(4,核数/2) 多线程 WASM，需 SharedArrayBuffer + COOP/COEP 跨域隔离响应头——GitHub Pages 静态托管与 iPad/WPS 内嵌浏览器均无这些头，多线程初始化即抛（"Cannot convert undefined or null to object" 正是常见表象）；②GLM 预设配置为浏览器直连，但智谱开放平台根本不发送 CORS 头——点预设即掉坑；③防御缺口：localStorage 存档若被写成 "null"（JSON.parse('null') 合法返回 null），readAch/readMetas/loadPermSettings 等后续 Object.entries(null)/属性访问直接炸。
+**修复（五件）**: ①local-provider：管线构造前后双保险 env.backends.onnx.wasm.numThreads=1（单线程牺牲速度换全环境可用）+ max_new_tokens 512→768（旧协议工具 JSON 块 512 token 常截断致解析失败——0.5b「根本用不了」的第二根因）+ 系统提示首条归位 System: 拼接 + translateLocalError 四类底层错误中文转译（下载失败/WASM 不兼容/初始化异常/存储不足）；②routeCallModel 新增 local 分支置顶（⓪ 位）：本地模型恒浏览器推理，即使配了中继也不发（后端本就拒绝 local kind），连通测试返回说明文案而非「未知的 provider.kind：local」；③describeNetworkError：bigmodel.cn 专属文案（智谱必经中继 + 部署指引 + 可替代厂商）、openrouter 次级提示；④OraclePanel：GLM 预设 label 改「智谱GLM·需中继」+ 选中且未配中继时红色警示行（不等失败才提示）+ 本地模型说明补系统浏览器要求；⑤gameStore 新增 safeReadObj（null/非对象回退空对象）统一替换 readAch/readMetas/initialToolParams 三处 + permissions.loadPermSettings 防 null——「Cannot convert undefined or null to object」全路径封死。
+**QA**: 新建 scripts/verify/verify-oracle-fix.ts 13 断言全绿（权限 null 回默认 / messagesToPrompt 拼接 / 四类错误转译 / routeCallModel local 双场景）并挂入 verify:oracle 回归链；全量回归绿（ww 系 61+29、时代 48、演化 44、polish 33、worker 7、verify 链 31+33+14+36+13）；tsc 零错误；next build 全绿。
+**环境注记**: 沙盒再次整体回滚到 #84 时代快照（.secrets 同被抹——证实回滚是全量快照，凭证从会话历史重建 + 双备份重做）；fetch 五连重试后成功，本地无独有提交 reset --hard origin/main 对齐；npm install --ignore-scripts 复装。
+**遗留（下轮优先池）**: ①用户真机复验：GLM 经中继、本地 0.5b 在系统浏览器实测反馈；②中继 oracle-server 原生 FC 面（ToolsService 扩展 tools 参数）；③#88 遗留池续项（斡旋事件/集体投降）；④自定义域名绑定实弹。
+**版本节奏**: 升位 v0.83-preview（CHANGELOG 四条：本地模型修复/GLM 防坑/连通测试/存档防御）。
+**推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**评估:D5 用户体验修复——三条用户实测报错全部根治且各带可行动指引：本地模型从「初始化即炸无解释」变为「单线程全环境可跑 + 错误人话」；GLM 从「点预设即掉坑」变为「点选即警示 + 失败有分步指引」；存档 null 从「随机白屏/阻断」变为「静默回默认」。防坑前置（不等失败才教育用户）是本轮设计主旨。**

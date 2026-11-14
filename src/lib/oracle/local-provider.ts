@@ -25,7 +25,16 @@ async function getLocalPipeline(
   modelId: string,
   opts: { forceCpu?: boolean },
 ): Promise<Awaited<ReturnType<typeof import('@xenova/transformers').pipeline>>> {
-  const { pipeline } = await loadTransformers();
+  const { pipeline, env } = await loadTransformers();
+  // —— 单线程 WASM 兜底（v0.83）：onnxruntime-web 多线程依赖 SharedArrayBuffer，
+  //    需要 COOP/COEP 跨域隔离响应头——GitHub Pages 等静态托管与 iOS/WPS 内嵌浏览器
+  //    均不带这些头，多线程初始化直接抛错（Cannot convert undefined or null to object 等）。
+  //    恒设 numThreads=1：0.5B 量化模型单线程亦可在移动端接受，可用性优先于速度。
+  try {
+    env.backends.onnx.wasm.numThreads = 1;
+  } catch {
+    /* onnx backend 访问失败不阻塞（极旧版本 transformers 无此结构） */
+  }
   const key = `${modelId}:${opts.forceCpu ? 'cpu' : 'auto'}`;
   if (pipelineCache.has(key)) return pipelineCache.get(key)!;
 
@@ -36,14 +45,33 @@ async function getLocalPipeline(
 }
 
 /** 把 OpenAI 风格消息历史压成单段提示文本（本地 1B 模型不支持复杂 chat template，做简单拼接） */
-function messagesToPrompt(messages: { role: string; content: string }[]): string {
+export function messagesToPrompt(messages: { role: string; content: string }[]): string {
   const lines: string[] = [];
   for (const m of messages) {
-    const role = m.role === 'assistant' ? 'Assistant' : m.role === 'user' ? 'User' : 'System';
+    const role = m.role === 'assistant' && lines.length === 0 ? 'System' : m.role === 'assistant' ? 'Assistant' : m.role === 'user' ? 'User' : 'System';
     lines.push(`${role}: ${m.content}`);
   }
   lines.push('Assistant:');
   return lines.join('\n');
+}
+
+/** 把 transformers.js / onnxruntime 的底层报错转译成可行动的中文引导（v0.83） */
+export function translateLocalError(modelId: string, e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  const head = `[本地模型 ${modelId}]`;
+  if (/Failed to fetch|NetworkError|network/i.test(raw)) {
+    return `${head} 模型权重下载失败（${raw}）——模型托管在 Hugging Face CDN，首次使用需约 300-500MB 下载量与稳定国际网络；下载完成后浏览器缓存、离线可用。可稍后重试，或改用云厂商接入 / 中继后端。`;
+  }
+  if (/WebAssembly|wasm|compile/i.test(raw)) {
+    return `${head} WebAssembly 环境初始化失败（${raw}）——当前浏览器（尤其 WPS/微信等内嵌浏览器）可能不支持所需的 WASM 特性。请改用系统浏览器（Safari/Chrome）打开，或改用云厂商接入。`;
+  }
+  if (/Cannot convert undefined or null to object|Cannot read propert/i.test(raw)) {
+    return `${head} 推理引擎初始化异常（${raw}）——多为运行环境缺少 WebAssembly 多线程支持所致，请改用系统浏览器（Safari/Chrome）打开本页重试。`;
+  }
+  if (/IndexedDB|quota|storage/i.test(raw)) {
+    return `${head} 浏览器存储不可用（${raw}）——模型缓存需要 IndexedDB，隐私/无痕模式或存储配额不足时无法使用本地模型。`;
+  }
+  return `${head} ${raw}`;
 }
 
 /** 在浏览器端调用本地模型；服务端返回错误 stub */
@@ -58,6 +86,11 @@ export async function callLocalModel(
   // transformers.js 从 Hugging Face CDN 下载模型；如需完全离线，可把模型文件放入 public/models/<name>
   // 并把 model 字段设为相对路径（如 '/models/qwen2.5-0.5b-instruct'）
   env.allowLocalModels = false;
+  try {
+    env.backends.onnx.wasm.numThreads = 1; // 提前设置（管线构造前）——多线程环境必炸兜底
+  } catch {
+    /* 极旧版本无此结构 */
+  }
 
   const modelId = provider.model ?? 'XENova/qwen2.5-0.5b-instruct';
   const content: string[] = [];
@@ -66,10 +99,12 @@ export async function callLocalModel(
 
   try {
     const pipe = await getLocalPipeline(modelId, { forceCpu: provider.forceCpu });
+    if (signal?.aborted) return { content: '', reasoning: '', err: '已中止' };
     const prompt = messagesToPrompt(messages);
 
     const output = await (pipe as any)(prompt, {
-      max_new_tokens: 512,
+      // 768：旧协议一个工具调用 JSON 块常超 512 token，截断即坏块解析失败（v0.83 上调）
+      max_new_tokens: 768,
       temperature: typeof provider.temperature === 'number' ? provider.temperature : 0.7,
       do_sample: typeof provider.temperature === 'number' ? provider.temperature > 0 : true,
       top_p: 0.9,
@@ -82,7 +117,7 @@ export async function callLocalModel(
       if (text) content.push(text);
     }
   } catch (e) {
-    err = e instanceof Error ? e.message : String(e);
+    err = translateLocalError(modelId, e);
   }
 
   return { content: content.join(''), reasoning, err };

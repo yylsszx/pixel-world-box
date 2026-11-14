@@ -112,6 +112,16 @@ function describeNetworkError(label: string, url: string, e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);
   if (externalAborted(e)) return '已中止';
   const host = safeHost(url);
+  // 无 CORS 头的已知端点专属提示（v0.83：用户实测掉坑最多的两家——智谱开放平台不支持浏览器跨域）
+  if (host.includes('bigmodel.cn')) {
+    return `[${label}] 智谱开放平台（open.bigmodel.cn）不发送 CORS 头，浏览器无法直连（${raw}）。` +
+      `智谱 GLM 必须经中继转发：在「厂商接入 → 中继后端」填 oracle-server 地址（Sealos 一键部署，` +
+      `GitHub 仓库 oracle-server/README.md 有步骤），或改选 DeepSeek / Kimi / 通义千问等支持浏览器直连的厂商。`;
+  }
+  if (host.includes('openrouter.ai')) {
+    return `[${label}] 浏览器直连 ${host} 失败（CORS 拦截或网络不可达：${raw}）。` +
+      `OpenRouter 官方端点偶发跨域限制——可填「中继后端」地址转发，或改用 DeepSeek / Kimi 等直连厂商。`;
+  }
   return `[${label}] 浏览器直连 ${host || '端点'} 失败（CORS 拦截或网络不可达：${raw}）。` +
     `可在「厂商接入」填「中继后端」地址（Sealos 部署 oracle-server）转发，或改用支持 CORS 的端点 / 本地模型。`;
 }
@@ -936,6 +946,16 @@ export async function routeCallModel(
   cb: RouteCallbacks = {},
   extras?: RouteExtras,
 ): Promise<ModelCallResult> {
+  // ⓪ 本地模型恒浏览器端推理（v0.83）：不经中继/后端/直连任何网络通道——
+  //    即使配了中继地址也不发（后端会拒绝 local kind；本地推理本就无需网络）
+  if (provider.kind === 'local') {
+    return {
+      content: '',
+      reasoning: '',
+      err: `本地模型不经网络调用，无法做连通测试——直接下令即可（首次下令会下载约 300-500MB 模型权重，之后浏览器缓存离线可用；需支持 WebAssembly 的系统浏览器，WPS/微信等内嵌浏览器可能不兼容）`,
+    };
+  }
+
   // ① 显式中继后端（Sealos oracle-server）——用户显式配置，失败不静默换道（错误原样上浮）
   const relay = provider.relayUrl?.trim();
   if (relay) {

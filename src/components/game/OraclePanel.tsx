@@ -94,7 +94,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   { key: 'deepseek', label: 'DeepSeek', config: { kind: 'openai', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' } },
   { key: 'kimi', label: 'Kimi', config: { kind: 'openai', label: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-128k' } },
   { key: 'qwen', label: '通义千问', config: { kind: 'openai', label: '通义千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' } },
-  { key: 'glm', label: '智谱GLM', config: { kind: 'openai', label: '智谱GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4.6' } },
+  { key: 'glm', label: '智谱GLM·需中继', config: { kind: 'openai', label: '智谱GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4.6' } },
   { key: 'openrouter', label: 'OpenRouter', config: { kind: 'openai', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' } },
   { key: 'ollama', label: 'Ollama 本地', config: { kind: 'openai', label: 'Ollama 本地', baseUrl: 'http://localhost:11434/v1', model: 'llama3.1' } },
   { key: 'anthropic', label: 'Anthropic', config: { kind: 'anthropic', label: 'Anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5-5' } },
@@ -498,6 +498,8 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
   const activeKey = matchPresetKey(provider);
   const isBuiltin = provider.kind === 'builtin';
   const isLocal = provider.kind === 'local';
+  // v0.83 防坑警示：GLM 端点不支持浏览器 CORS——选中且未配中继时给显眼提示（用户实测高频掉坑点）
+  const needsRelayWarn = provider.kind === 'openai' && (provider.baseUrl ?? '').includes('bigmodel.cn') && !provider.relayUrl?.trim();
 
   /** 测试连通：走 routeCallModel 全路由（中继→本站后端→浏览器直连），与真实对话完全同路径 */
   const runTest = useCallback(async () => {
@@ -547,11 +549,19 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
         })}
       </div>
 
+      {/* GLM 无中继警示（v0.83）：预设点选即提示，不等失败 */}
+      {needsRelayWarn && (
+        <p className="rounded-sm border border-red-400/40 bg-red-400/10 px-1.5 py-1 text-[9px] leading-relaxed text-red-300">
+          智谱开放平台不支持浏览器直连（无 CORS 头，必报错）——请在下方「中继后端」填 oracle-server 地址
+          （Sealos 一键部署，见仓库 oracle-server/README.md），否则无法使用；或改选 DeepSeek / Kimi / 通义千问。
+        </p>
+      )}
+
       {/* 端点配置（内置 Z.ai 免密钥，仅温度） */}
       {isBuiltin || isLocal ? (
         <p className="rounded-sm border border-teal-400/30 bg-teal-400/5 px-1.5 py-1 text-[9px] leading-relaxed text-teal-300/80">
           {isLocal
-            ? '本地模型在浏览器端直接运行（transformers.js），无需服务端与密钥；首次使用会下载模型权重（约几百 MB），随后浏览器缓存离线可用。'
+            ? '本地模型在浏览器端直接运行（transformers.js），无需服务端与密钥；首次使用会下载模型权重（约几百 MB），随后浏览器缓存离线可用。注意：需支持 WebAssembly 的系统浏览器（Safari/Chrome）；WPS/微信等内嵌浏览器可能不兼容，报初始化错误时请换系统浏览器打开。'
             : '内置 Z.ai 经后端直连，无需密钥；静态托管下需部署中继后端（见下）。'}
         </p>
       ) : (

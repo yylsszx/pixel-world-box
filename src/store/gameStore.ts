@@ -138,13 +138,20 @@ export function superPreviewR(id: string, params: Record<string, number> | undef
   return typeof sup.r === 'function' ? sup.r(params ?? {}) : sup.r;
 }
 
-/** 从 localStorage 恢复成就元进度（损坏/缺失 → 空对象） */
-function readAch(): Record<string, number> {
+/** localStorage 安全 JSON 对象读取（v0.83 防空加固）：值缺失/损坏/为 null/非对象（如存过 "null"）一律回退空对象
+ *  ——此前 JSON.parse('null') 合法返回 null，后续 Object.entries(null) 抛「Cannot convert undefined or null to object」 */
+function safeReadObj(key: string): Record<string, unknown> {
   try {
-    return JSON.parse(localStorage.getItem(ACH_KEY) ?? '{}') as Record<string, number>;
+    const v = JSON.parse(localStorage.getItem(key) ?? '{}');
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
   } catch {
     return {};
   }
+}
+
+/** 从 localStorage 恢复成就元进度（损坏/缺失/null → 空对象） */
+function readAch(): Record<string, number> {
+  return safeReadObj(ACH_KEY) as Record<string, number>;
 }
 function writeAch(a: Record<string, number>) {
   try {
@@ -155,11 +162,7 @@ function writeAch(a: Record<string, number>) {
 }
 
 function readMetas(): Partial<Record<SlotKey, SaveSlotMeta>> {
-  try {
-    return JSON.parse(localStorage.getItem(META_KEY) ?? '{}') as Partial<Record<SlotKey, SaveSlotMeta>>;
-  } catch {
-    return {};
-  }
+  return safeReadObj(META_KEY) as Partial<Record<SlotKey, SaveSlotMeta>>;
 }
 function writeMetas(m: Partial<Record<SlotKey, SaveSlotMeta>>) {
   safePersistMeta(m); // 安全层：写后校验 + 备份回退；meta 仅展示层，失败静默
@@ -663,7 +666,7 @@ const initialToolParams: Record<string, Record<string, number>> = (() => {
   for (const t of TOOLS) if (t.params?.length) out[t.id] = defaultParams(t.params);
   if (typeof window === 'undefined') return out;
   try {
-    const raw = JSON.parse(localStorage.getItem(TOOL_PARAMS_KEY) ?? '{}') as Record<string, Record<string, number>>;
+    const raw = safeReadObj(TOOL_PARAMS_KEY) as Record<string, Record<string, number>>;
     for (const t of TOOLS) {
       const saved = raw[t.id];
       if (!t.params || !saved || typeof saved !== 'object') continue;

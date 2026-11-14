@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.82-preview';
+export const GAME_VERSION = 'v0.83-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.83-preview',
+    date: '2026-11-14',
+    items: [
+      '本地小模型（Qwen-0.5B 等）修复：推理引擎恒以单线程 WebAssembly 运行——GitHub Pages / iPad / WPS 内嵌浏览器等无跨域隔离头的环境不再初始化报错；生成空间扩容至 768 token（旧协议工具调用 JSON 不再被截断）；下载失败 / WebAssembly 不兼容 / 存储不足等底层报错全部转译为可读的中文引导',
+      '智谱 GLM 防坑：预设标注「需中继」并在选中且未配中继时即时红色警示（智谱开放平台不支持浏览器直连，必报 CORS 错）；直连失败文案升级为分步指引（部署 oracle-server 中继或改用 DeepSeek/Kimi/通义千问）',
+      '本地模型连通测试不再误报「未知的 provider.kind」——本地模型不走网络，直接下令即用（首次自动下载约 300-500MB 权重）',
+      '存档防御加固：成就进度 / 存档槽信息 / 工具参数 / 权限设置等 localStorage 存档若损坏为 null，自动回退默认值——彻底杜绝「Cannot convert undefined or null to object」崩溃',
+    ],
+  },
   {
     ver: 'v0.82-preview',
     date: '2026-11-14',
