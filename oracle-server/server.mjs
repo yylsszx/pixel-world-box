@@ -249,6 +249,16 @@ async function streamOpenAI(body, send, signal) {
   if (!gotAny) send({ err: `[${label}] 流式响应为空` });
 }
 
+/** Claude 5 代起（dateless 新命名，如 claude-opus-5-5）拒绝 temperature 参数——主代号 ≥5 不下发 */
+function anthropicTempRejected(model) {
+  const s = model.replace(/-\d{8}$/, '');
+  let m = /-(?:opus|sonnet|haiku)-(\d+)(?:-\d+)?$/.exec(s);
+  if (m) return parseInt(m[1], 10) >= 5;
+  m = /^claude-(\d+)/.exec(s);
+  if (m) return parseInt(m[1], 10) >= 5;
+  return false;
+}
+
 async function streamAnthropic(body, send, signal) {
   const { provider } = body;
   const label = provider.label || provider.model || 'anthropic';
@@ -261,7 +271,9 @@ async function streamAnthropic(body, send, signal) {
     system,
     messages,
   };
-  if (typeof provider.temperature === 'number') payload.temperature = provider.temperature;
+  if (typeof provider.temperature === 'number' && !anthropicTempRejected(provider.model ?? '')) {
+    payload.temperature = provider.temperature;
+  }
 
   const res = await fetch(url, {
     method: 'POST',
@@ -276,6 +288,97 @@ async function streamAnthropic(body, send, signal) {
   if (!res.ok) throw new Error(await describeBadResponse(label, res));
   if (!res.body) throw new Error(`[${label}] 响应无流式体`);
   await pumpAnthropicLines(res.body, label, send);
+}
+
+// ============ gemini：Google Gemini 原生 generateContent（v7 原生接入适配，中继纯文本流） ============
+
+/** baseUrl 归一化（Gemini，与前端直连同构）：留空→官方端点；完整方法端点→原样；版本根→拼 models/{model}:streamGenerateContent */
+function normalizeGeminiUrl(baseUrl, model) {
+  const base = (baseUrl?.trim() || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
+  if (base.includes(':streamGenerateContent')) return base.includes('alt=sse') ? base : `${base}?alt=sse`;
+  if (base.includes(':generateContent')) {
+    return `${base.replace(/:generateContent$/, ':streamGenerateContent')}?alt=sse`;
+  }
+  const m = encodeURIComponent(model);
+  if (/\/v\d+(?:beta\d?)?$/.test(base)) return `${base}/models/${m}:streamGenerateContent?alt=sse`;
+  if (base.endsWith('/models')) return `${base}/${m}:streamGenerateContent?alt=sse`;
+  return `${base}/v1beta/models/${m}:streamGenerateContent?alt=sse`;
+}
+
+/** messages[0]（assistant 系统提示）→ systemInstruction；user→user / assistant→model 文本 parts */
+function toGeminiTextPayload(messages) {
+  const system = messages[0]?.role === 'assistant' ? messages[0].content : '';
+  const rest = messages[0]?.role === 'assistant' ? messages.slice(1) : messages.slice();
+  const contents = [];
+  for (const m of rest) {
+    const role = m.role === 'user' ? 'user' : 'model';
+    const last = contents[contents.length - 1];
+    if (last && last.role === role) last.parts.push({ text: m.content });
+    else contents.push({ role, parts: [{ text: m.content }] });
+  }
+  if (contents.length === 0) throw new Error('[gemini] 除系统提示词外至少需要一条消息');
+  return { systemInstruction: { parts: [{ text: system }] }, contents };
+}
+
+/** 逐行泵取 Gemini SSE（alt=sse）：candidates[0].content.parts——text→t / thought:true→r */
+async function pumpGeminiLines(upstream, label, send) {
+  const reader = upstream.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let gotAny = false;
+  let blockReason = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      try {
+        const rec = JSON.parse(payload);
+        if (!rec || typeof rec !== 'object') continue;
+        if (rec.promptFeedback && typeof rec.promptFeedback.blockReason === 'string' && rec.promptFeedback.blockReason) {
+          blockReason = rec.promptFeedback.blockReason;
+        }
+        const first = Array.isArray(rec.candidates) ? rec.candidates[0] : null;
+        const parts = first && first.content && Array.isArray(first.content.parts) ? first.content.parts : [];
+        for (const p of parts) {
+          if (p && typeof p.text === 'string' && p.text) {
+            gotAny = true;
+            if (p.thought === true) send({ r: p.text });
+            else send({ t: p.text });
+          }
+        }
+      } catch {
+        // 忽略无法解析的行
+      }
+    }
+  }
+  if (!gotAny && blockReason) throw new Error(`[${label}] 内容被安全策略拦截（${blockReason}）`);
+  return gotAny;
+}
+
+async function streamGemini(body, send, signal) {
+  const { provider } = body;
+  const label = provider.label || provider.model || 'gemini';
+  const model = provider.model?.trim() || '';
+  const url = normalizeGeminiUrl(provider.baseUrl, model);
+  const { systemInstruction, contents } = toGeminiTextPayload(body.messages);
+  const payload = { contents };
+  if (systemInstruction.parts[0]?.text) payload.systemInstruction = systemInstruction;
+  if (typeof provider.temperature === 'number') payload.generationConfig = { temperature: provider.temperature };
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (provider.apiKey?.trim()) headers['x-goog-api-key'] = provider.apiKey.trim();
+  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload), signal });
+  if (!res.ok) throw new Error(await describeBadResponse(label, res));
+  if (!res.body) throw new Error(`[${label}] 响应无流式体`);
+  const gotAny = await pumpGeminiLines(res.body, label, send);
+  if (!gotAny) send({ err: `[${label}] 流式响应为空` });
 }
 
 // —— builtin：可选增强（镜像内安装 z-ai-web-dev-sdk 时自动启用） ——
@@ -320,10 +423,15 @@ async function streamBuiltin(body, send) {
 
 // ============ 请求校验（与 route.ts 同规则） ============
 
-const KINDS = new Set(['builtin', 'openai', 'anthropic']);
+const KINDS = new Set(['builtin', 'openai', 'anthropic', 'gemini']);
 
 function validateProvider(p) {
   const label = p.label || p.model || p.kind;
+  // v7 gemini：baseUrl 可空（默认官方端点）、apiKey 可空（代理可无）；model 必填
+  if (p.kind === 'gemini') {
+    if (!p.model?.trim()) return `[${label}] 缺少 model`;
+    return null;
+  }
   if (p.kind === 'openai' || p.kind === 'anthropic') {
     if (!p.baseUrl?.trim()) return `[${label}] 缺少 baseUrl`;
     if (!p.apiKey?.trim()) return `[${label}] 缺少 apiKey`;
@@ -338,7 +446,7 @@ function parseAndValidate(body) {
     return { error: 'local 厂商由浏览器端推理，不经后端转发' };
   }
   if (!provider || typeof provider !== 'object' || !KINDS.has(provider.kind)) {
-    return { error: 'provider.kind 必须是 builtin / openai / anthropic' };
+    return { error: 'provider.kind 必须是 builtin / openai / anthropic / gemini' };
   }
   const providerErr = validateProvider(provider);
   if (providerErr) return { error: providerErr };
@@ -814,6 +922,7 @@ const server = http.createServer(async (req, res) => {
         try {
           if (v.provider.kind === 'builtin') await streamBuiltin({ ...v }, send);
           else if (v.provider.kind === 'anthropic') await streamAnthropic({ ...v }, send, signal);
+          else if (v.provider.kind === 'gemini') await streamGemini({ ...v }, send, signal);
           else await streamOpenAI({ ...v }, send, signal);
         } finally {
           cleanup();

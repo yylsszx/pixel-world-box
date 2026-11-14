@@ -496,17 +496,17 @@ export async function runOracleAgentTurn(
     useGameStore.getState().pushOracleAudit(e);
   };
 
-  // ── 协议判定：原生 FC 仅在 openai 兼容 + 无中继 + 非本站后端（直连）时启用 ──
+  // ── 协议判定（v7 三协议）：原生 FC 在 openai / anthropic / gemini 直连（无中继）时启用 ──
   const legacySystemPrompt = history[0]?.content ?? '';
-  let native =
-    !!options.nativeTools &&
-    (options.nativeTools.length > 0) &&
-    provider.kind === 'openai' &&
-    !provider.relayUrl?.trim();
-  if (native) {
+  const nativeCapable =
+    provider.kind === 'openai' || provider.kind === 'anthropic' || provider.kind === 'gemini';
+  let native = !!options.nativeTools && (options.nativeTools.length > 0) && nativeCapable && !provider.relayUrl?.trim();
+  if (native && provider.kind !== 'gemini') {
+    // gemini 恒走浏览器直连（本站后端白名单不含 gemini）——后端在否不拦原生；
+    // openai/anthropic：本站后端在则走后端旧线协议（纯文本流），不开原生
     try {
       const backend = await probeSiteBackend();
-      if (backend === 'up') native = false; // 本站后端讲旧线协议（纯文本流）
+      if (backend === 'up') native = false;
     } catch {
       native = false;
     }

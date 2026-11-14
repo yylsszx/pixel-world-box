@@ -1,6 +1,6 @@
 // ============ 文明中枢核心 · 外脑 API（【机制④】每文明可接不同 API） ============
 // POST { provider: OracleProviderConfig, civ: 国情摘要, persona: 当前人格 } → { personaPatch, note }
-// · 各文明可接不同 API：provider 随请求体传入（openai 兼容端点 / anthropic / builtin 均合法）
+// · 各文明可接不同 API：provider 随请求体传入（openai 兼容端点 / anthropic / gemini（v7）/ builtin 均合法）
 // · 非流式语义：内部复用 providers 流式通道收全量文本，再提取 JSON 一次性返回
 // · 白名单校验：personaPatch 仅接受 war/build/farm/trade/sea/faith 六维数字（引擎端还会 clamp 0.05-0.95）
 // · 超时保护：15s——外脑再慢也不能拖垮客户端请求
@@ -96,13 +96,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '请求体不是合法 JSON' }, { status: 400 });
   }
   const provider = body.provider as AgentRequestBody['provider'] | undefined;
-  if (!provider || typeof provider !== 'object' || !['builtin', 'openai', 'anthropic'].includes(String((provider as { kind?: unknown }).kind))) {
-    return NextResponse.json({ error: 'provider.kind 必须是 builtin / openai / anthropic' }, { status: 400 });
+  if (!provider || typeof provider !== 'object' || !['builtin', 'openai', 'anthropic', 'gemini'].includes(String((provider as { kind?: unknown }).kind))) {
+    return NextResponse.json({ error: 'provider.kind 必须是 builtin / openai / anthropic / gemini' }, { status: 400 });
   }
   if ((provider as { kind: string }).kind !== 'builtin') {
     const p = provider as { baseUrl?: string; model?: string; label?: string };
     const label = p.label || p.model || '外脑';
-    if (!p.baseUrl?.trim()) return NextResponse.json({ error: `[${label}] 缺少 baseUrl` }, { status: 400 });
+    // v7 gemini：baseUrl 可留空（默认官方端点 generativelanguage.googleapis.com）
+    if ((provider as { kind: string }).kind !== 'gemini' && !p.baseUrl?.trim()) {
+      return NextResponse.json({ error: `[${label}] 缺少 baseUrl` }, { status: 400 });
+    }
     if ((provider as { kind: string }).kind === 'anthropic' && !(provider as { apiKey?: string }).apiKey?.trim()) {
       return NextResponse.json({ error: `[${label}] 缺少 apiKey` }, { status: 400 });
     }

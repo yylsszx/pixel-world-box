@@ -13,7 +13,7 @@ export function loadStoredProvider(): OracleProviderConfig {
     const raw = globalThis.localStorage?.getItem(PROVIDER_STORE_KEY);
     if (!raw) return DEFAULT_PROVIDER;
     const p = JSON.parse(raw) as OracleProviderConfig;
-    if (p && (p.kind === 'builtin' || p.kind === 'openai' || p.kind === 'anthropic' || p.kind === 'local')) {
+    if (p && (p.kind === 'builtin' || p.kind === 'openai' || p.kind === 'anthropic' || p.kind === 'gemini' || p.kind === 'local')) {
       return {
         kind: p.kind as ProviderKind,
         label: p.label,

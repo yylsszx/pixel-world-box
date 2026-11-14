@@ -6067,3 +6067,24 @@ Stage Summary:
 **遗留（下轮优先池）**: 沿袭 #89 尾部——①用户真机实测三入口反馈（#84 遗留）；②中继后端 oracle-server 的原生 FC 面（ToolsService 扩展 tools 参数让中继路径也走结构化调用）；③自定义域名绑定实弹；④#88 世界大战遗留池（阵营对撞战争加成/斡旋调停/阵营集体投降/超限可视化二笔扩展）。
 **推送**: 本条 worklog 随快照同推（sync-github.sh）。
 **评估:D6 稳定健壮——交付链路自愈闭环升级：凭证从「每轮靠任务书粘贴复活」变为「沙箱持久区备份一行命令秒级自愈」，根因（沙箱回收抹 ~）与断链痛点双消除；#89 全权限 Root Agent 成功抵达玩家。**
+
+---
+
+## 2026-11-14 #91（用户插入轮）：神谕原生接入适配 v7——Anthropic tool use + Gemini function calling 三协议全家
+**用户指令**: 「现在加入naive AI原生接入适配，网络搜索文档进行研究后再做」——先网络研究厂商官方 API 文档，再落地原生协议适配。#89 遗留痛点：原生 FC 只覆盖 OpenAI 兼容直连（Anthropic 直连仍是纯文本旧协议、Gemini 完全没接入）。
+
+**研究先行（官方文档实研，非凭记忆）**: ①Anthropic Messages API tool use——tools[{name,description,input_schema}] + tool_use/tool_result 内容块 + 流式 content_block_start→input_json_delta(partial_json 分片)→content_block_stop 累积契约 + anthropic-dangerous-direct-browser-access 官方浏览器 CORS 放行头；当前模型 claude-opus-5-5/claude-sonnet-5-5（dateless 命名，**5 代起设 temperature 即 400**——重要适配点）；②Google Gemini generateContent——tools[{type:'function',functionDeclarations}] + functionCall/functionResponse parts（args 直接是对象无需字符串解析）+ :streamGenerateContent?alt=sse 流式 + x-goog-api-key 认证 + systemInstruction 顶层 + promptFeedback.blockReason 安全拦截；当前模型 gemini-3.8-flash（主流）/gemini-4-argon（旗舰）/gemini-3.1-pro。
+
+**实现（单一编译源，三家分发）**:
+- **native-tools.ts**: toAnthropicTools（parameters→input_schema 改键）/toGeminiTools（单包 functionDeclarations）双编译器；AnthropicToolAccumulator（input_json_delta 按 index 归位累积 + 容错修复）；parseAnthropicToolBlocks（非流式 content 块）；collectGeminiParts（text/thought/functionCall 三色分拣 + 合成 id `g:<name>#<n>`）；parseToolArgsJson 抽为三协议共用容错解析。
+- **direct-client.ts（v7）**: Anthropic 直连升级原生 tool use（toAnthropicNativeMessages：assistant.tool_calls→tool_use 块/input 对象、role:tool→user tool_result 块/ok:false→is_error、连续同角色合并保 tool_result 紧随 tool_use；temperature 守卫 anthropicTempRejected 按主代号≥5 停发）；全新 Gemini 原生通道（normalizeGeminiUrl 四形态归一化、toGeminiMessages（systemInstruction/functionCall/functionResponse、id 反解）、流式 alt=sse 泵 + 非流式 JSON 兜底、x-goog-api-key）；两通道均支持 nfcUnsupported 降级（400 提及 tool/function → agent 回退旧协议）。
+- **路由**: gemini 恒走浏览器直连/中继（本站后端白名单 src/app/api/oracle 铁律勿改不含 gemini）；openai/anthropic 后端在时仍走后端旧协议（原生门同步适配）；agent.ts 原生门扩三 kind；providers.ts（本站）/oracle-server（中继）双后端补 Gemini 流（大陆线路 Gemini 走中继的通路）+ Claude 5 代 temperature 守卫同步；civ-brain 白名单补 gemini（外脑通道）；OraclePanel 预设更新（Anthropic→claude-sonnet-5-5、新增 Gemini Flash/Argon 双预设）+ 表单 placeholder 家族化 + 大陆直连提示补国际厂商说明。
+- **铁律全守**: src/app/api/oracle/* 零改动；旧存档零影响（kind 白名单向后兼容）。
+
+**QA（114 断言 + 实机全绿）**: ①新 scripts/verify/verify-native-protocols.ts 36 断言——单测 14（工具编译/累积器双块并行/非流式/容错/校验器）+ Anthropic 端到端 11（Bun.serve 假 Claude SSE 服务器：input_schema 下发/tool_choice/temperature 守卫/messages[0]→system/input_json_delta 累积出 toolCalls/tool_use 回传/tool_result 对应/旧协议回归）+ Gemini 端到端 11（假 Gemini SSE 服务器：URL 归一化/x-goog-api-key/functionDeclarations/systemInstruction/functionCall 直出对象/functionResponse 回传/promptFeedback 安全拦截/nfcUnsupported 降级）✓；②回归 verify:oracle 链 31+33+14+36 全绿（新脚本已入链）✓；③tsc 零错误 + eslint 改动文件零告警 + next build 全绿 ✓；④agent-browser 实机：Gemini Flash/Argon 预设按钮出现、一键填充（kind=gemini/model/baseUrl 留空+官方 placeholder）、Anthropic 预设 claude-sonnet-5-5、提示文案更新、无页面错误 ✓。
+- **沙箱回滚应对（本轮开工第一课）**: 本地基底又被回滚到 #84 时代快照（.secrets 备份同被抹——证明回滚是全量快照回滚，唯一可靠凭证源是任务书文本本身）；按 #85 铁律先 fetch 比对确认本地无独有内容后 reset --hard origin/main 对齐快照线，凭证从任务书自愈 + 重建备份。
+
+**遗留（下轮优先池）**: ①用户真机实测三入口反馈（#84 遗留）——本轮新增 Gemini/Anthropic 直连真值反馈尤佳；②中继 oracle-server 的原生 FC 面（服务端 ToolsService 扩展 tools 参数——本轮中继 gemini 走纯文本旧协议）；③Gemini functionResponse 的 call_id 精确配对（经典 API 按名字回传，同名并行调用有歧义——新版 Interactions API 支持 call_id，待普及后跟进）；④自定义域名绑定实弹。
+**版本节奏**: 升位 v0.81-preview（CHANGELOG 四条：三协议原生接入/Gemini 双预设/Claude 5 代适配/全通道覆盖）。
+**推送**: 代码 + worklog 本条 → push-web.sh（结果见下轮复核）。
+**评估:D3 差异化优势 + 神谕可用性双扩——Root Agent 的五档权限与 72 工具从「仅 OpenAI 兼容端点」扩到「三大协议全家」（OpenAI tool_calls / Claude tool_use / Gemini functionCall），全球主流 AI 厂商均可直连驱动全权限 Agent；研究先行兑现：Claude 5 代 temperature 400 陷阱与 Gemini 安全拦截语义均来自官方文档实研而非试错。**

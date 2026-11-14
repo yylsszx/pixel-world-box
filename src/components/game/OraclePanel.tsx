@@ -97,7 +97,9 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   { key: 'glm', label: '智谱GLM', config: { kind: 'openai', label: '智谱GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4.6' } },
   { key: 'openrouter', label: 'OpenRouter', config: { kind: 'openai', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' } },
   { key: 'ollama', label: 'Ollama 本地', config: { kind: 'openai', label: 'Ollama 本地', baseUrl: 'http://localhost:11434/v1', model: 'llama3.1' } },
-  { key: 'anthropic', label: 'Anthropic', config: { kind: 'anthropic', label: 'Anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-20250514' } },
+  { key: 'anthropic', label: 'Anthropic', config: { kind: 'anthropic', label: 'Anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5-5' } },
+  { key: 'gemini-flash', label: 'Gemini Flash', config: { kind: 'gemini', label: 'Gemini Flash', baseUrl: '', model: 'gemini-3.8-flash' } },
+  { key: 'gemini-argon', label: 'Gemini Argon', config: { kind: 'gemini', label: 'Gemini Argon', baseUrl: '', model: 'gemini-4-argon' } },
   { key: 'custom', label: '自定义', config: { kind: 'openai', label: '自定义（OpenAI 兼容）', baseUrl: '', model: '' } },
   { key: 'local-qwen05b', label: '本地 Qwen-0.5B', config: { kind: 'local', label: '本地 Qwen-0.5B', model: 'XENova/qwen2.5-0.5b-instruct', temperature: 0.7 } },
 ];
@@ -111,7 +113,7 @@ function loadProvider(): OracleProviderConfig {
     const raw = localStorage.getItem(PROVIDER_STORE_KEY);
     if (!raw) return DEFAULT_PROVIDER;
     const p = JSON.parse(raw) as OracleProviderConfig;
-    if (p && (p.kind === 'builtin' || p.kind === 'openai' || p.kind === 'anthropic' || p.kind === 'local')) {
+    if (p && (p.kind === 'builtin' || p.kind === 'openai' || p.kind === 'anthropic' || p.kind === 'gemini' || p.kind === 'local')) {
       return { kind: p.kind as ProviderKind, label: p.label, baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.model, temperature: p.temperature, forceCpu: p.forceCpu, relayUrl: p.relayUrl };
     }
   } catch {
@@ -124,6 +126,9 @@ function loadProvider(): OracleProviderConfig {
 function matchPresetKey(p: OracleProviderConfig): string {
   if (p.kind === 'builtin') return 'builtin';
   if (p.kind === 'anthropic') return 'anthropic';
+  if (p.kind === 'gemini') {
+    return p.model?.includes('argon') ? 'gemini-argon' : p.model?.trim() ? 'gemini-flash' : 'custom';
+  }
   if (p.kind === 'local') {
     for (const pre of PROVIDER_PRESETS) {
       if (pre.key !== 'custom' && pre.config.kind === 'local' && pre.config.model === p.model) return pre.key;
@@ -556,7 +561,13 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
             <input
               value={provider.baseUrl ?? ''}
               onChange={(e) => onApply({ ...provider, baseUrl: e.target.value })}
-              placeholder="https://api.example.com/v1"
+              placeholder={
+                provider.kind === 'gemini'
+                  ? 'https://generativelanguage.googleapis.com（可留空）'
+                  : provider.kind === 'anthropic'
+                    ? 'https://api.anthropic.com'
+                    : 'https://api.example.com/v1'
+              }
               spellCheck={false}
               className={inputCls}
               aria-label="API Base URL"
@@ -567,7 +578,13 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
             <input
               value={provider.model ?? ''}
               onChange={(e) => onApply({ ...provider, model: e.target.value })}
-              placeholder="model-name"
+              placeholder={
+                provider.kind === 'gemini'
+                  ? 'gemini-3.8-flash / gemini-4-argon / gemini-3.1-pro'
+                  : provider.kind === 'anthropic'
+                    ? 'claude-sonnet-5-5 / claude-opus-5-5'
+                    : 'model-name'
+              }
               spellCheck={false}
               className={inputCls}
               aria-label="模型名"
@@ -579,7 +596,7 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
               type="password"
               value={provider.apiKey ?? ''}
               onChange={(e) => onApply({ ...provider, apiKey: e.target.value })}
-              placeholder="sk-…"
+              placeholder={provider.kind === 'gemini' ? 'AIza…（Google AI Studio 申请）' : 'sk-…'}
               spellCheck={false}
               autoComplete="off"
               className={inputCls}
@@ -604,9 +621,9 @@ function ProviderConfig({ provider, onApply }: { provider: OracleProviderConfig;
           <span className="text-[8px] leading-relaxed text-zinc-600">
             填入后所有云端请求改经该后端转发（内网网关可填 /api/oracle/agent?XTransformPort=8787）；留空则自动路由：本站后端 → 浏览器直连厂商。
           </span>
-          {/* 大陆直连提示（时代深化）：无需中继的三家大陆厂商——填 Key 即浏览器直连 */}
+          {/* 大陆直连提示（时代深化/v7 原生接入适配）：三家大陆厂商浏览器直连；Anthropic/Gemini 官方支持浏览器 CORS（需可访问国际网络） */}
           <span className="mt-1 rounded-sm border border-teal-800/60 bg-teal-500/10 px-1.5 py-1 text-[8px] leading-relaxed text-teal-300">
-            大陆直连：DeepSeek / Kimi / 通义千问三家的 API 支持浏览器 CORS——选择对应预设并填入 API Key 即可直连使用，无需中继后端与自定义域名（智谱 GLM 不支持 CORS 不在此列）。
+            大陆直连：DeepSeek / Kimi / 通义千问三家的 API 支持浏览器 CORS——选择对应预设并填入 API Key 即可直连使用，无需中继后端与自定义域名（智谱 GLM 不支持 CORS 不在此列）。Anthropic（claude-sonnet-5-5 等）与 Google Gemini（gemini-3.8-flash / gemini-4-argon）官方端点同样支持浏览器直连与原生函数调用，但需可访问国际网络；大陆线路建议填中继后端转发（需新版 oracle-server）。
           </span>
         </label>
       )}
@@ -1325,11 +1342,14 @@ function OracleBody() {
               400, // 超级演化轮：取消轮数限制（400 = 事实上无限；agent 内置同签名失败/无进展双守卫防失控）
               deep,
               {
-                // v5 Root Agent：权限闸门 + 原生函数调用（openai 兼容直连时下发结构化 tools，
-                // 中继/本站后端/anthropic/local 自动回退旧 JSON 协议）
+                // v5 Root Agent：权限闸门 + 原生函数调用（v7 三协议：openai tool_calls /
+                // anthropic tool_use / gemini functionCall 直连时下发结构化 tools，
+                // 中继/本站后端/local 自动回退旧 JSON 协议）
                 perms: perm,
                 nativeTools:
-                  provider.kind === 'openai' && !provider.relayUrl?.trim() && !dshOn
+                  (provider.kind === 'openai' || provider.kind === 'anthropic' || provider.kind === 'gemini') &&
+                  !provider.relayUrl?.trim() &&
+                  !dshOn
                     ? buildNativeToolParams(PERM_LEVELS[perm.level].tiers)
                     : undefined,
                 systemPromptNative: buildSystemPrompt(renderToolCatalog(), { native: true, perm }),

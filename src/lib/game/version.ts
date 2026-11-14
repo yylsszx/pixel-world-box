@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.80-preview';
+export const GAME_VERSION = 'v0.81-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.81-preview',
+    date: '2026-11-14',
+    items: [
+      '神谕原生接入适配·三协议全家：Anthropic（Claude）直连升级原生 tool use——工具定义以 input_schema 下发、调用以 tool_use 内容块返回、流式参数逐片累积；Google Gemini 全新接入——functionDeclarations 声明工具、functionCall/functionResponse 往返对话，官方端点浏览器直连（填 AI Studio Key 即用）',
+      'Gemini 预设一键接入：Gemini Flash（gemini-3.8-flash）/ Gemini Argon（gemini-4-argon）双预设，Base URL 可留空自动直达官方端点；Anthropic 预设同步至 claude-sonnet-5-5',
+      'Claude 5 代机型适配：claude-opus-5-5 / claude-sonnet-5-5 等新命名机型自动停发 temperature（该代机型设温度即报错）——旧机型不受影响',
+      '全通道覆盖：Root Agent 的五档权限与 72 工具在三协议下同等生效（权限过滤后的工具目录按各家协议编译下发）；Gemini 亦支持中继后端转发（需更新版 oracle-server）与文明外脑通道',
+    ],
+  },
   {
     ver: 'v0.80-preview',
     date: '2026-11-14',

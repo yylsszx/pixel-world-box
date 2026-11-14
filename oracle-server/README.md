@@ -3,7 +3,7 @@
 PWB（pixel-world-box）神谕的**云端厂商统一 SSE 网关 + dsh 运行时容器**。前端为 GitHub Pages 静态产物（无服务端），
 本服务承担五件事：
 
-1. **中继转发**：openai / anthropic / builtin（可选）厂商请求经本服务转发——静态托管下接入
+1. **中继转发**：openai / anthropic / gemini（v7 原生接入适配）/ builtin（可选）厂商请求经本服务转发——静态托管下接入
    无 CORS 头厂商端点的唯一通路（前端「厂商接入 → 中继后端」填本服务地址）。
 2. **健康检查**：`GET /healthz`——Sealos 探针与前端 R1 冷启动探测共用，报 dsh 运行时 + 持久化状态。
 3. **协议对齐**：与游戏仓库 `src/app/api/oracle/agent/route.ts` 线协议逐字段一致

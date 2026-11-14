@@ -1,4 +1,4 @@
-// ============ 神谕 · 浏览器端直连与后端路由层（v6 API 接入适配） ============
+// ============ 神谕 · 浏览器端直连与后端路由层（v7 原生接入适配） ============
 // 解决「自定义厂商在静态托管下一刀切报神谕离线」的典型误报：
 //   旧逻辑把除 local 外全部厂商（含自定义 openai/anthropic）都硬编码走 /api/oracle/agent，
 //   GitHub Pages 静态托管下 404 → 一律「神谕离线」——而自定义厂商本可由浏览器 corsDirect 直连。
@@ -8,11 +8,25 @@
 //   ③ 静态托管（探测 404）或后端不可达 → 浏览器直连厂商端点（CORS 允许的端点可通）；
 //   ④ 直连网络级失败 → 精确可行动错误文案（绝不误报「离线」）。
 // builtin（内置 Z.ai）必须经后端（SDK 密钥在服务端）：后端不在时才报「离线」，并给出替代路径。
+// v7 原生接入适配（三协议全家，浏览器直连通道）：
+//   · anthropic 直连升级原生 tool use（tools + tool_use/tool_result 内容块 + 流式 input_json_delta）；
+//   · 全新 gemini 原生通道（generateContent：functionDeclarations + functionCall/functionResponse +
+//     :streamGenerateContent?alt=sse 流式；x-goog-api-key 认证；官方端点支持浏览器 CORS）；
+//   · gemini 恒走直连/中继：本站后端白名单（src/app/api/oracle 铁律勿改）不含 gemini。
 // SSE 线协议与 /api/oracle/agent 完全一致：data: {"r"|"t"|"err"} \n\n + data: [DONE]。
 // dsh 持久会话面（M-O4 相三前端接线）：仅中继通道附加 body.dsh（服务端权威历史）——
 //   本站后端（Next 静态白名单路由）与 corsDirect 不识别该面，永不发送；无 dsh 时 body 逐字节不变。
 import type { AgentChatMessage, OracleProviderConfig, AgentToolCall } from './types';
-import { NativeCallAccumulator, parseNonStreamToolCalls, type OpenAIToolDef } from './native-tools';
+import {
+  NativeCallAccumulator,
+  parseNonStreamToolCalls,
+  toAnthropicTools,
+  toGeminiTools,
+  AnthropicToolAccumulator,
+  parseAnthropicToolBlocks,
+  collectGeminiParts,
+  type OpenAIToolDef,
+} from './native-tools';
 
 export type { OpenAIToolDef } from './native-tools';
 
@@ -49,7 +63,8 @@ export interface DshSnapshot {
 export interface RouteExtras {
   /** dsh 持久会话面：仅中继通道生效——body.dsh={sessionId[,snapshot]}，历史由 oracle-server 事件日志权威投影 */
   dsh?: { sessionId: string; snapshot?: DshSnapshot };
-  /** 原生函数调用工具定义（v5）：仅 openai 兼容端点浏览器直连通道生效；
+  /** 原生函数调用工具定义（v5）：openai 兼容端点浏览器直连通道生效；
+   *  v7：anthropic（原生 tool_use）/ gemini（原生 functionCall）直连通道同样生效；
    *  中继/本站后端讲旧线协议（纯文本流），不识别 tools——agent 自动回退旧 JSON 协议 */
   nativeTools?: OpenAIToolDef[];
 }
@@ -367,12 +382,13 @@ async function pumpDirectOpenAI(
   }
 }
 
-/** 泵取 Anthropic SSE（thinking → r / text → t；error → 抛错；message_stop → 收泵） */
+/** 泵取 Anthropic SSE（thinking → r / text → t；v7：content_block_start/stop + input_json_delta → tool_use 累积；error → 抛错；message_stop → 收泵） */
 async function pumpDirectAnthropic(
   upstream: ReadableStream<Uint8Array>,
   label: string,
   cb: RouteCallbacks,
   state: { content: string; reasoning: string },
+  ata?: AnthropicToolAccumulator,
 ): Promise<void> {
   const reader = upstream.getReader();
   const decoder = new TextDecoder();
@@ -401,7 +417,10 @@ async function pumpDirectAnthropic(
       }
       if (!rec) continue;
       const type = typeof rec.type === 'string' ? rec.type : '';
-      if (type === 'content_block_delta') {
+      const idx = typeof rec.index === 'number' ? rec.index : 0;
+      if (type === 'content_block_start') {
+        ata?.blockStart(idx, rec.content_block); // tool_use 块开槽（text/thinking 块忽略）
+      } else if (type === 'content_block_delta') {
         const d = jsonRec(rec.delta) ?? {};
         const thinking = typeof d.thinking === 'string' ? d.thinking : '';
         const text = typeof d.text === 'string' ? d.text : '';
@@ -415,6 +434,10 @@ async function pumpDirectAnthropic(
           state.content += text;
           cb.onDelta?.({ text });
         }
+        // v7 原生 tool use：input_json_delta 分片累积（partial_json 逐块拼接）
+        if (ata && typeof d.partial_json === 'string' && d.partial_json) ata.blockDelta(idx, d.partial_json);
+      } else if (type === 'content_block_stop') {
+        ata?.blockStop(idx);
       } else if (type === 'error') {
         const errRec = jsonRec(rec.error);
         const msg = errRec && typeof errRec.message === 'string' ? errRec.message : '上游错误';
@@ -540,18 +563,78 @@ async function streamDirectOpenAI(
   }
 }
 
-/** 浏览器直连 Anthropic messages API */
+/** Claude 5 代起（dateless 新命名，如 claude-opus-5-5）拒绝 temperature 参数（设了即 400）——
+ *  探测主代号 ≥5 则不下发；旧命名（claude-3-7-sonnet-20250219 等）剥日期后缀再判。 */
+function anthropicTempRejected(model: string): boolean {
+  const s = model.replace(/-\d{8}$/, ''); // 剥日期后缀（claude-3-7-sonnet-20250219 → claude-3-7-sonnet）
+  let m = /-(?:opus|sonnet|haiku)-(\d+)(?:-\d+)?$/.exec(s);
+  if (m) return parseInt(m[1], 10) >= 5; // claude-sonnet-4-5（可设）/ claude-opus-5-5（拒绝）
+  m = /^claude-(\d+)/.exec(s);
+  if (m) return parseInt(m[1], 10) >= 5; // claude-3-7-sonnet（可设）
+  return false;
+}
+
+/** v7 原生转换：AgentChatMessage → Anthropic 原生消息（tool_use/tool_result 内容块）。
+ *  · messages[0]（assistant 系统提示）→ system 顶层字段；
+ *  · assistant.tool_calls → assistant 内容块数组（text? + tool_use× N，input 直接是对象）；
+ *  · role:'tool' → user 消息 tool_result 块（tool_use_id 对应；ok:false → is_error）；
+ *  · 连续同角色合并（tool_result 必须紧随 tool_use，多条 tool 消息并入同一 user 消息）。 */
+function toAnthropicNativeMessages(messages: AgentChatMessage[]): {
+  system: string;
+  messages: { role: 'user' | 'assistant'; content: unknown }[];
+} {
+  const system = messages[0]?.role === 'assistant' && !messages[0].tool_calls ? messages[0].content : '';
+  const rest = system ? messages.slice(1) : messages.slice();
+  const merged: { role: 'user' | 'assistant'; content: unknown[] }[] = [];
+  const pushBlocks = (role: 'user' | 'assistant', blocks: unknown[]) => {
+    if (blocks.length === 0) return;
+    const last = merged[merged.length - 1];
+    if (last && last.role === role) last.content.push(...blocks);
+    else merged.push({ role, content: [...blocks] });
+  };
+  for (const m of rest) {
+    if (m.role === 'tool') {
+      let isError = false;
+      try {
+        isError = (JSON.parse(m.content) as { ok?: unknown }).ok === false;
+      } catch {
+        /* 非 JSON 回执不标记 is_error */
+      }
+      pushBlocks('user', [
+        isError
+          ? { type: 'tool_result', tool_use_id: m.tool_call_id ?? '', content: m.content, is_error: true }
+          : { type: 'tool_result', tool_use_id: m.tool_call_id ?? '', content: m.content },
+      ]);
+    } else if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+      const blocks: unknown[] = [];
+      if (m.content) blocks.push({ type: 'text', text: m.content });
+      for (const c of m.tool_calls) blocks.push({ type: 'tool_use', id: c.id, name: c.name, input: c.args ?? {} });
+      pushBlocks('assistant', blocks);
+    } else if (m.role === 'user') {
+      pushBlocks('user', [{ type: 'text', text: m.content }]);
+    } else {
+      pushBlocks('assistant', [{ type: 'text', text: m.content }]);
+    }
+  }
+  if (merged.length === 0) throw new Error('[anthropic] 除系统提示词外至少需要一条消息');
+  if (merged[0].role === 'assistant') merged.unshift({ role: 'user', content: [{ type: 'text', text: '（开始）' }] }); // 首条必须 user
+  return { system, messages: merged };
+}
+
+/** 浏览器直连 Anthropic messages API（v7：原生 tool use——tools/tool_use/tool_result + 流式 input_json_delta） */
 async function streamDirectAnthropic(
   provider: OracleProviderConfig,
   messages: AgentChatMessage[],
   deep: boolean,
   cb: RouteCallbacks,
+  nativeTools?: OpenAIToolDef[],
 ): Promise<ModelCallResult> {
   const label = provider.label || provider.model || 'anthropic';
   const url = normalizeAnthropicUrl(provider.baseUrl ?? '');
-  let body: { system: string; messages: { role: 'user' | 'assistant'; content: string }[] };
+  const native = !!nativeTools && nativeTools.length > 0;
+  let body: { system: string; messages: { role: 'user' | 'assistant'; content: unknown }[] };
   try {
-    body = toAnthropicPayload(messages);
+    body = native ? toAnthropicNativeMessages(messages) : toAnthropicPayload(messages);
   } catch (e) {
     return { content: '', reasoning: '', err: e instanceof Error ? e.message : String(e) };
   }
@@ -562,7 +645,14 @@ async function streamDirectAnthropic(
     system: body.system,
     messages: body.messages,
   };
-  if (typeof provider.temperature === 'number') payload.temperature = provider.temperature;
+  if (native) {
+    payload.tools = toAnthropicTools(nativeTools!);
+    payload.tool_choice = { type: 'auto' };
+  }
+  // Claude 5 代起拒绝 temperature（设了即 400）——探测主代号 ≥5 不下发
+  if (typeof provider.temperature === 'number' && !anthropicTempRejected(provider.model ?? '')) {
+    payload.temperature = provider.temperature;
+  }
   void deep;
 
   const { signal, cleanup } = linkedAbort(cb.signal);
@@ -580,10 +670,240 @@ async function streamDirectAnthropic(
       body: JSON.stringify(payload),
       signal,
     });
-    if (!res.ok) return { content: '', reasoning: '', err: await describeBadResponse(label, res) };
+    if (!res.ok) {
+      const bad = await describeBadResponse(label, res);
+      // 端点不认 tools 参数（代理网关等）→ 标记回退旧协议
+      if (native && res.status === 400 && /tool|function|input_schema/i.test(bad)) {
+        return { content: '', reasoning: '', err: bad, nfcUnsupported: true };
+      }
+      return { content: '', reasoning: '', err: bad };
+    }
     if (!res.body) return { content: '', reasoning: '', err: `[${label}] 响应无流式体` };
-    await pumpDirectAnthropic(res.body, label, cb, state);
-    return { content: state.content, reasoning: state.reasoning, err: '' };
+    // 非流式兜底：完整 JSON 回包（部分网关忽略 stream:true）——content 块分拣
+    const ctype = res.headers.get('content-type') ?? '';
+    if (ctype.includes('application/json')) {
+      const full = jsonRec(await res.json());
+      const contentArr = Array.isArray(full?.content) ? full.content : [];
+      const textParts = contentArr
+        .filter((b) => b && typeof b === 'object' && (b as Record<string, unknown>).type === 'text')
+        .map((b) => String((b as Record<string, unknown>).text ?? ''));
+      const content = textParts.join('');
+      if (content) {
+        state.content += content;
+        cb.onDelta?.({ text: content });
+      }
+      const toolCalls = parseAnthropicToolBlocks(contentArr);
+      if (!content && toolCalls.length === 0) return { content: '', reasoning: '', err: `[${label}] 响应为空` };
+      return { content: state.content, reasoning: state.reasoning, err: '', toolCalls: toolCalls.length ? toolCalls : undefined };
+    }
+    const ata = native ? new AnthropicToolAccumulator() : undefined;
+    await pumpDirectAnthropic(res.body, label, cb, state, ata);
+    const toolCalls = ata?.finalize() ?? [];
+    return { content: state.content, reasoning: state.reasoning, err: '', toolCalls: toolCalls.length ? toolCalls : undefined };
+  } catch (e) {
+    if (cb.signal?.aborted || externalAborted(e)) return { content: state.content, reasoning: state.reasoning, err: '已中止' };
+    return { content: '', reasoning: state.reasoning, err: describeNetworkError(label, url, e) };
+  } finally {
+    cleanup();
+  }
+}
+
+// ============ v7 通道 C·Gemini：Google 原生 generateContent（浏览器直连） ============
+
+const GEMINI_DEFAULT_BASE = 'https://generativelanguage.googleapis.com';
+
+/** baseUrl 归一化（Gemini）：留空→官方端点；已是完整方法端点→原样补 alt=sse；
+ *  版本根（/v1beta、/v1beta1、/v1）→ 拼 models/{model}:streamGenerateContent；其余根→默认 v1beta。 */
+function normalizeGeminiUrl(baseUrl: string | undefined, model: string): string {
+  const base = (baseUrl?.trim() || GEMINI_DEFAULT_BASE).replace(/\/+$/, '');
+  if (base.includes(':streamGenerateContent')) return base.includes('alt=sse') ? base : `${base}?alt=sse`;
+  if (base.includes(':generateContent')) {
+    const u = base.replace(/:generateContent$/, ':streamGenerateContent');
+    return `${u}?alt=sse`;
+  }
+  const m = encodeURIComponent(model);
+  if (/\/v\d+(?:beta\d?)?$/.test(base)) return `${base}/models/${m}:streamGenerateContent?alt=sse`;
+  if (base.endsWith('/models')) return `${base}/${m}:streamGenerateContent?alt=sse`;
+  return `${base}/v1beta/models/${m}:streamGenerateContent?alt=sse`;
+}
+
+/** gemini 合成调用 id `g:<name>#<n>` → 反解工具名（functionResponse 按名字回传） */
+function geminiNameFromId(id: string): string {
+  let s = id;
+  if (s.startsWith('g:')) s = s.slice(2);
+  const hash = s.indexOf('#');
+  return hash >= 0 ? s.slice(0, hash) : s;
+}
+
+/** v7 原生转换：AgentChatMessage → Gemini generateContent 请求体。
+ *  · messages[0]（assistant 系统提示）→ systemInstruction；
+ *  · assistant.tool_calls → model 消息（text? + functionCall× N——args 直接是对象）；
+ *  · role:'tool' → user 消息 functionResponse 块（name 反解自合成 id；response 为回执对象）；
+ *  · 连续同角色 parts 合并（Gemini 宽容但合并更稳）。 */
+function toGeminiMessages(messages: AgentChatMessage[]): {
+  systemInstruction: { parts: { text: string }[] };
+  contents: { role: 'user' | 'model'; parts: Record<string, unknown>[] }[];
+} {
+  const system = messages[0]?.role === 'assistant' && !messages[0].tool_calls ? messages[0].content : '';
+  const rest = system ? messages.slice(1) : messages.slice();
+  const contents: { role: 'user' | 'model'; parts: Record<string, unknown>[] }[] = [];
+  const push = (role: 'user' | 'model', parts: Record<string, unknown>[]) => {
+    if (parts.length === 0) return;
+    const last = contents[contents.length - 1];
+    if (last && last.role === role) last.parts.push(...parts);
+    else contents.push({ role, parts: [...parts] });
+  };
+  for (const m of rest) {
+    if (m.role === 'tool') {
+      let resp: Record<string, unknown>;
+      try {
+        const j: unknown = JSON.parse(m.content);
+        resp = j !== null && typeof j === 'object' && !Array.isArray(j) ? (j as Record<string, unknown>) : { result: m.content };
+      } catch {
+        resp = { result: m.content };
+      }
+      push('user', [{ functionResponse: { name: geminiNameFromId(m.tool_call_id ?? ''), response: resp } }]);
+    } else if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+      const parts: Record<string, unknown>[] = [];
+      if (m.content) parts.push({ text: m.content });
+      for (const c of m.tool_calls) parts.push({ functionCall: { name: c.name, args: c.args ?? {} } });
+      push('model', parts);
+    } else if (m.role === 'user') {
+      push('user', [{ text: m.content }]);
+    } else {
+      push('model', [{ text: m.content }]);
+    }
+  }
+  if (contents.length === 0) throw new Error('[gemini] 除系统提示词外至少需要一条消息');
+  return { systemInstruction: { parts: [{ text: system }] }, contents };
+}
+
+/** 泵取 Gemini SSE（alt=sse）：每个 data: 块是一个 GenerateContentResponse——
+ *  candidates[0].content.parts 三色分拣（text→正文 / thought:true→思考流 / functionCall→工具调用）；
+ *  promptFeedback.blockReason → 安全拦截；finishReason 记录（SAFETY 且零产出时报错）。 */
+async function pumpDirectGemini(
+  upstream: ReadableStream<Uint8Array>,
+  cb: RouteCallbacks,
+  state: { content: string; reasoning: string },
+  calls: { id: string; name: string; args: Record<string, unknown> }[],
+): Promise<{ finishReason: string; blockReason: string }> {
+  const reader = upstream.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let finishReason = '';
+  let blockReason = '';
+  for (;;) {
+    if (cb.signal?.aborted) {
+      void reader.cancel();
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      let rec: Record<string, unknown> | null;
+      try {
+        rec = jsonRec(JSON.parse(payload));
+      } catch {
+        continue;
+      }
+      if (!rec) continue;
+      const pf = jsonRec(rec.promptFeedback);
+      if (pf && typeof pf.blockReason === 'string' && pf.blockReason) blockReason = pf.blockReason;
+      const cands = Array.isArray(rec.candidates) ? rec.candidates : [];
+      const first = jsonRec(cands[0]);
+      if (!first) continue;
+      if (typeof first.finishReason === 'string' && first.finishReason) finishReason = first.finishReason;
+      const content = jsonRec(first.content);
+      const parts = collectGeminiParts(content?.parts);
+      if (parts.text) {
+        state.content += parts.text;
+        cb.onDelta?.({ text: parts.text });
+      }
+      if (parts.thought) {
+        state.reasoning += parts.thought;
+        cb.onDelta?.({ reason: parts.thought });
+      }
+      if (parts.calls.length > 0) calls.push(...parts.calls);
+    }
+  }
+  return { finishReason, blockReason };
+}
+
+/** 浏览器直连 Gemini generateContent（v7 原生协议：functionDeclarations + functionCall/functionResponse）。
+ *  官方端点支持浏览器 CORS（x-goog-api-key 认证）；支持流式（?alt=sse）与非流式 JSON 双形态。 */
+async function streamDirectGemini(
+  provider: OracleProviderConfig,
+  messages: AgentChatMessage[],
+  deep: boolean,
+  cb: RouteCallbacks,
+  nativeTools?: OpenAIToolDef[],
+): Promise<ModelCallResult> {
+  const label = provider.label || provider.model || 'gemini';
+  const model = provider.model?.trim() || '';
+  const url = normalizeGeminiUrl(provider.baseUrl, model);
+  const native = !!nativeTools && nativeTools.length > 0;
+  let body: { systemInstruction: { parts: { text: string }[] }; contents: { role: 'user' | 'model'; parts: Record<string, unknown>[] }[] };
+  try {
+    body = toGeminiMessages(messages);
+  } catch (e) {
+    return { content: '', reasoning: '', err: e instanceof Error ? e.message : String(e) };
+  }
+  const payload: Record<string, unknown> = { contents: body.contents };
+  if (body.systemInstruction.parts[0]?.text) payload.systemInstruction = body.systemInstruction;
+  if (native) payload.tools = toGeminiTools(nativeTools!); // AUTO 是默认 mode，无需 toolConfig
+  if (typeof provider.temperature === 'number') payload.generationConfig = { temperature: provider.temperature };
+  void deep; // Gemini 3+ 思考模型自适应，thought parts 由解析侧统一处理
+
+  const { signal, cleanup } = linkedAbort(cb.signal);
+  const state = { content: '', reasoning: '' };
+  const calls: { id: string; name: string; args: Record<string, unknown> }[] = [];
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (provider.apiKey?.trim()) headers['x-goog-api-key'] = provider.apiKey.trim();
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload), signal });
+    if (!res.ok) {
+      const bad = await describeBadResponse(label, res);
+      // 端点不认 functionDeclarations（旧代理等）→ 标记回退旧协议
+      if (native && res.status === 400 && /tool|function/i.test(bad)) {
+        return { content: '', reasoning: '', err: bad, nfcUnsupported: true };
+      }
+      return { content: '', reasoning: '', err: bad };
+    }
+    if (!res.body) return { content: '', reasoning: '', err: `[${label}] 响应无流式体` };
+    const ctype = res.headers.get('content-type') ?? '';
+    let blockReason = '';
+    if (ctype.includes('application/json')) {
+      // 非流式兜底：generateContent 完整 JSON 回包
+      const full = jsonRec(await res.json());
+      const pf = jsonRec(full?.promptFeedback);
+      if (pf && typeof pf.blockReason === 'string') blockReason = pf.blockReason;
+      const cands = Array.isArray(full?.candidates) ? full.candidates : [];
+      const first = jsonRec(cands[0]);
+      const contentRec = jsonRec(first?.content);
+      const parts = collectGeminiParts(contentRec?.parts);
+      state.content += parts.text;
+      state.reasoning += parts.thought;
+      calls.push(...parts.calls);
+      if (parts.text) cb.onDelta?.({ text: parts.text });
+      if (parts.thought) cb.onDelta?.({ reason: parts.thought });
+    } else {
+      const fin = await pumpDirectGemini(res.body, cb, state, calls);
+      blockReason = fin.blockReason;
+    }
+    if (!state.content && !state.reasoning && calls.length === 0) {
+      const why = blockReason
+        ? `内容被安全策略拦截（${blockReason}）——可调整指令或换模型`
+        : `[${label}] 流式响应为空`;
+      return { content: '', reasoning: '', err: why };
+    }
+    return { content: state.content, reasoning: state.reasoning, err: '', toolCalls: calls.length ? calls : undefined };
   } catch (e) {
     if (cb.signal?.aborted || externalAborted(e)) return { content: state.content, reasoning: state.reasoning, err: '已中止' };
     return { content: '', reasoning: state.reasoning, err: describeNetworkError(label, url, e) };
@@ -603,8 +923,8 @@ const BUILTIN_OFFLINE_MSG =
  * 统一路由入口：按 provider 配置选择最优通道。永不 throw——错误折进 err。
  * - local：不走此层（agent.ts 先行分流）。
  * - builtin：中继（若配）→ 本站后端（若在）→ 准确「离线」文案。
- * - openai/anthropic：中继（若配）→ 本站后端（若在）→ 浏览器直连 → 精确错误（绝不误报离线）。
- * - extras.nativeTools（v5）：仅 openai 直连通道生效——原生函数调用工具定义下发；
+ * - openai/anthropic/gemini：中继（若配）→ 本站后端（若在；gemini 例外恒直连——后端白名单不含）→ 浏览器直连 → 精确错误（绝不误报离线）。
+ * - extras.nativeTools（v5/v7）：openai/anthropic/gemini 直连通道生效——原生函数调用工具定义下发；
  *   中继/本站后端讲旧线协议，静默忽略。
  * - extras.dsh：dsh 持久会话面（M-O4 相三）——仅中继通道附加 body.dsh.sessionId；
  *   本站后端/corsDirect 不识别该面，静默忽略 extras（发方职责：仅在中继场景传入）。
@@ -630,10 +950,13 @@ export async function routeCallModel(
     return r;
   }
 
-  // ② 本站后端（next dev / 同源 node 部署）
-  const backend = await probeSiteBackend();
-  if (backend === 'up') {
-    return callViaBackend('/api/oracle/agent', provider, messages, deep, cb, '本站后端');
+  // ② 本站后端（next dev / 同源 node 部署）——gemini 例外：本站路由白名单（铁律勿改）
+  //   不含 gemini，后端在也不走，恒降级到浏览器直连（官方端点支持 CORS）
+  if (provider.kind !== 'gemini') {
+    const backend = await probeSiteBackend();
+    if (backend === 'up') {
+      return callViaBackend('/api/oracle/agent', provider, messages, deep, cb, '本站后端');
+    }
   }
 
   // ③ 静态托管 / 后端不可达
@@ -641,7 +964,8 @@ export async function routeCallModel(
     return { content: '', reasoning: '', err: BUILTIN_OFFLINE_MSG };
   }
   if (provider.kind === 'openai') return streamDirectOpenAI(provider, messages, deep, cb, extras?.nativeTools);
-  if (provider.kind === 'anthropic') return streamDirectAnthropic(provider, messages, deep, cb);
+  if (provider.kind === 'anthropic') return streamDirectAnthropic(provider, messages, deep, cb, extras?.nativeTools);
+  if (provider.kind === 'gemini') return streamDirectGemini(provider, messages, deep, cb, extras?.nativeTools);
   return { content: '', reasoning: '', err: `未知的 provider.kind：${String(provider.kind)}` };
 }
 
@@ -712,6 +1036,12 @@ export function validateProviderConfig(p: OracleProviderConfig): string | null {
     return p.model?.trim() ? null : '本地模型需要模型标识符（如 XENova/qwen2.5-0.5b-instruct）';
   }
   const label = p.label || p.kind;
+  // v7 Gemini：baseUrl 可留空（默认官方端点 generativelanguage.googleapis.com）；
+  // Key 留空仅代理端点可跑——官方端点无 Key 会在直连时报 403（错误文案含补救指引）
+  if (p.kind === 'gemini') {
+    if (!p.model?.trim()) return `[${label}] 缺少模型名（如 gemini-3.8-flash）`;
+    return null;
+  }
   if (!p.baseUrl?.trim()) return `[${label}] 缺少 Base URL——请补全下方「厂商接入」端点配置`;
   const b = p.baseUrl.trim();
   if (!/^https?:\/\//i.test(b) && !b.includes('XTransformPort=')) {

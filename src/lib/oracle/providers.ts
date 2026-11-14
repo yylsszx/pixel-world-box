@@ -1,6 +1,6 @@
 // ============ 神谕 Agent 后端 · 多厂商统一流式抽象 ============
-// streamAgentChat：把 builtin（z-ai-web-dev-sdk）/ openai（OpenAI 兼容）/ anthropic（Claude）
-// 三种厂商统一收敛为内部 SSE 事件流（与 /api/oracle 协议一致）：
+// streamAgentChat：把 builtin（z-ai-web-dev-sdk）/ openai（OpenAI 兼容）/ anthropic（Claude）/
+// gemini（Google Gemini 原生 generateContent，v7）四种厂商统一收敛为内部 SSE 事件流（与 /api/oracle 协议一致）：
 //   data: {"r":"..."}   思考流 token（reasoning）
 //   data: {"t":"..."}   正文 token
 //   data: {"err":"..."} 错误
@@ -303,6 +303,16 @@ function toAnthropicPayload(
   return { system, messages: merged };
 }
 
+/** Claude 5 代起（dateless 新命名，如 claude-opus-5-5）拒绝 temperature 参数——主代号 ≥5 不下发 */
+function anthropicTempRejected(model: string): boolean {
+  const s = model.replace(/-\d{8}$/, ''); // 剥日期后缀
+  let m = /-(?:opus|sonnet|haiku)-(\d+)(?:-\d+)?$/.exec(s);
+  if (m) return parseInt(m[1], 10) >= 5;
+  m = /^claude-(\d+)/.exec(s);
+  if (m) return parseInt(m[1], 10) >= 5;
+  return false;
+}
+
 async function streamAnthropic(body: AgentRequestBody): Promise<ReadableStream<Uint8Array>> {
   const { provider } = body;
   const label = provider.label || provider.model || 'anthropic';
@@ -315,7 +325,9 @@ async function streamAnthropic(body: AgentRequestBody): Promise<ReadableStream<U
     system,
     messages,
   };
-  if (typeof provider.temperature === 'number') payload.temperature = provider.temperature;
+  if (typeof provider.temperature === 'number' && !anthropicTempRejected(provider.model ?? '')) {
+    payload.temperature = provider.temperature;
+  }
 
   const { signal, timer } = makeAbort();
   let res: Response;
@@ -353,6 +365,128 @@ async function streamAnthropic(body: AgentRequestBody): Promise<ReadableStream<U
   });
 }
 
+// ============ gemini：Google Gemini 原生 generateContent（v7 原生接入适配，服务端纯文本流） ============
+
+/** baseUrl 归一化（Gemini，与服务端直连同构）：留空→官方端点；已是完整方法端点→原样；
+ *  版本根→拼 models/{model}:streamGenerateContent；其余根→默认 v1beta。 */
+function normalizeGeminiUrl(baseUrl: string | undefined, model: string): string {
+  const base = (baseUrl?.trim() || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
+  if (base.includes(':streamGenerateContent')) return base.includes('alt=sse') ? base : `${base}?alt=sse`;
+  if (base.includes(':generateContent')) {
+    return `${base.replace(/:generateContent$/, ':streamGenerateContent')}?alt=sse`;
+  }
+  const m = encodeURIComponent(model);
+  if (/\/v\d+(?:beta\d?)?$/.test(base)) return `${base}/models/${m}:streamGenerateContent?alt=sse`;
+  if (base.endsWith('/models')) return `${base}/${m}:streamGenerateContent?alt=sse`;
+  return `${base}/v1beta/models/${m}:streamGenerateContent?alt=sse`;
+}
+
+/** 协议转换（Gemini，服务端纯文本线）：messages[0]（assistant 系统提示）→ systemInstruction；
+ *  user→user / assistant→model 文本 parts（服务端通道讲旧线协议，工具消息不会出现）。 */
+function toGeminiTextPayload(messages: AgentChatMessage[]): {
+  systemInstruction: { parts: { text: string }[] };
+  contents: { role: 'user' | 'model'; parts: { text: string }[] }[];
+} {
+  const system = messages[0]?.role === 'assistant' ? messages[0].content : '';
+  const rest = messages[0]?.role === 'assistant' ? messages.slice(1) : messages.slice();
+  const contents: { role: 'user' | 'model'; parts: { text: string }[] }[] = [];
+  for (const m of rest) {
+    const role: 'user' | 'model' = m.role === 'user' ? 'user' : 'model'; // tool 消息不上此道，防御归一
+    const last = contents[contents.length - 1];
+    if (last && last.role === role) last.parts.push({ text: m.content });
+    else contents.push({ role, parts: [{ text: m.content }] });
+  }
+  if (contents.length === 0) throw new Error('[gemini] 除系统提示词外至少需要一条消息');
+  return { systemInstruction: { parts: [{ text: system }] }, contents };
+}
+
+/** 逐行泵取 Gemini SSE（alt=sse）：candidates[0].content.parts——text→t / thought:true→r。
+ *  返回是否收到过任何 token；promptFeedback.blockReason 零产出时抛安全拦截错。 */
+async function pumpGeminiLines(upstream: ReadableStream<Uint8Array>, label: string, send: (obj: unknown) => void): Promise<boolean> {
+  const reader = upstream.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let gotAny = false;
+  let blockReason = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      try {
+        const rec = jsonRec(JSON.parse(payload));
+        if (!rec) continue;
+        const pf = jsonRec(rec.promptFeedback);
+        if (pf && typeof pf.blockReason === 'string' && pf.blockReason) blockReason = pf.blockReason;
+        const cands = Array.isArray(rec.candidates) ? rec.candidates : [];
+        const first = jsonRec(cands[0]);
+        const content = jsonRec(first?.content);
+        if (Array.isArray(content?.parts)) {
+          for (const raw of content.parts) {
+            if (!raw || typeof raw !== 'object') continue;
+            const p = raw as Record<string, unknown>;
+            if (typeof p.text === 'string' && p.text) {
+              gotAny = true;
+              if (p.thought === true) send({ r: p.text });
+              else send({ t: p.text });
+            }
+          }
+        }
+      } catch {
+        // 忽略无法解析的行
+      }
+    }
+  }
+  if (!gotAny && blockReason) throw new Error(`[${label}] 内容被安全策略拦截（${blockReason}）`);
+  return gotAny;
+}
+
+async function streamGemini(body: AgentRequestBody): Promise<ReadableStream<Uint8Array>> {
+  const { provider } = body;
+  const label = provider.label || provider.model || 'gemini';
+  const model = provider.model?.trim() || '';
+  const url = normalizeGeminiUrl(provider.baseUrl, model);
+  const { systemInstruction, contents } = toGeminiTextPayload(body.messages);
+  const payload: Record<string, unknown> = { contents };
+  if (systemInstruction.parts[0]?.text) payload.systemInstruction = systemInstruction;
+  if (typeof provider.temperature === 'number') payload.generationConfig = { temperature: provider.temperature };
+
+  const { signal, timer } = makeAbort();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (provider.apiKey?.trim()) headers['x-goog-api-key'] = provider.apiKey.trim();
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload), signal });
+  } catch (e) {
+    clearTimeout(timer);
+    throw new Error(`[${label}] 请求失败：${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (!res.ok) {
+    const msg = await describeBadResponse(label, res);
+    clearTimeout(timer);
+    throw new Error(msg);
+  }
+  if (!res.body) {
+    clearTimeout(timer);
+    throw new Error(`[${label}] 响应无流式体`);
+  }
+  const upstream = res.body;
+  return makeSSEStream(async (send) => {
+    try {
+      const gotAny = await pumpGeminiLines(upstream, label, send);
+      if (!gotAny) send({ err: `[${label}] 流式响应为空` });
+    } finally {
+      clearTimeout(timer); // 超时覆盖整个流式读取过程
+    }
+  });
+}
+
 // ============ 统一入口 ============
 
 export async function streamAgentChat(body: AgentRequestBody): Promise<ReadableStream<Uint8Array>> {
@@ -363,6 +497,8 @@ export async function streamAgentChat(body: AgentRequestBody): Promise<ReadableS
       return streamOpenAI(body);
     case 'anthropic':
       return streamAnthropic(body);
+    case 'gemini':
+      return streamGemini(body);
     default:
       throw new Error(`未知的 provider.kind：${String(body.provider.kind)}`);
   }
