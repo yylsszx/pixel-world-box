@@ -158,6 +158,22 @@ function personScene(name, opt, civColor = CIV0, t = 1000) {
   sprScene(name, 'drawPerson', (ctx) => SP.drawPerson(ctx, u, civColor, t));
   scen[scen.length - 1].in = { u: dumpU(u), raceVis: dumpVis(u), civColor: civColor ? civColor.map((c) => c) : null, t };
 }
+// #100 巨人场景：巨人专属分支废除后，render 层以 1.45× 外层缩放绘同一标准光栅
+// （锚定脚底 (px, py+3)，与侏儒 0.72× 同机制）—— 黄金录制同构包裹，保巨人视觉覆盖
+function giantScene(name, opt, civColor = CIV0, t = 1000) {
+  const u = mkU(opt);
+  sprScene(name, 'drawPerson', (ctx) => {
+    const px = (u.dpx ?? u.rx ?? u.x) * 2;
+    const py = (u.dpy ?? u.ry ?? u.y) * 2;
+    ctx.save();
+    ctx.translate(px, py + 3);
+    ctx.scale(1.45, 1.45);
+    ctx.translate(-px, -(py + 3));
+    SP.drawPerson(ctx, u, civColor, t);
+    ctx.restore();
+  });
+  scen[scen.length - 1].in = { u: dumpU(u), raceVis: dumpVis(u), civColor: civColor ? civColor.map((c) => c) : null, t, giant: 1 };
+}
 function personFineScene(name, opt, civColor = CIV0, t = 1000, crown = false) {
   const u = mkU(opt);
   sprScene(name, 'drawPersonFine', (ctx) => SP.drawPersonFine(ctx, u, civColor, t, crown));
@@ -223,12 +239,12 @@ mtnScene('MT06_nosnow_elevcold', 40, 150, 0.5); // 双门不过 → 无雪
 personScene('P01_human_civ', { civ: 0 });                       // 静止基态（t=1000 breath0）
 personScene('P02_human_civ_flip', { civ: 0, flip: 1 });
 personScene('P03_human_nociv', {});                             // 无王国默认衣
-personScene('P04_giant', { civ: 0, trait: 'giant' });           // 巨人整身放大
-personScene('P05_giant_musket', { civ: 0, trait: 'giant', wep: 'musket' });
-personScene('P06_giant_musket_atk', { civ: 0, trait: 'giant', wep: 'musket', atk: 5 }); // 枪口焰
-personScene('P07_giant_laser', { civ: 0, trait: 'giant', wep: 'laser_rifle' });         // 能量槽 t>>3 偶
-personScene('P08_giant_laser_atk', { civ: 0, trait: 'giant', wep: 'laser_rifle', atk: 5 }); // 青束尖
-personScene('P09_giant_sword_atk', { civ: 0, trait: 'giant', wep: 'sword3', atk: 5 });  // 举剑
+giantScene('P04_giant', { civ: 0, trait: 'giant' });           // 巨人 1.45× 外层缩放（#100 新机制）
+giantScene('P05_giant_musket', { civ: 0, trait: 'giant', wep: 'musket' });
+giantScene('P06_giant_musket_atk', { civ: 0, trait: 'giant', wep: 'musket', atk: 5 }); // 枪口焰
+giantScene('P07_giant_laser', { civ: 0, trait: 'giant', wep: 'laser_rifle' });         // 能量槽 t>>3 偶
+giantScene('P08_giant_laser_atk', { civ: 0, trait: 'giant', wep: 'laser_rifle', atk: 5 }); // 青束尖
+giantScene('P09_giant_sword_atk', { civ: 0, trait: 'giant', wep: 'sword3', atk: 5 });  // 举剑
 personScene('P10_goblin', { civ: 0, race: 20 });                // 哥布林矮一号+大耳
 personScene('P11_zombie', { civ: 0, race: 5 });                 // 僵尸前伸臂+腐发
 personScene('P12_elf', { civ: 0, race: 1 });                    // 尖耳
@@ -375,21 +391,38 @@ function styleOf(s, i) { return s.ops[i] && s.ops[i].s ? s.ops[i].s[0] : null; }
   ok(nRect(findS('MT02_rock')) === 9, 'MT02 岩纹 9（45%5==0 同样触发岩纹，与基态等量）');
   ok(nRect(findS('MT04_snow_elev')) === 12, 'MT04 海拔雪线 12（9+3）');
   ok(nRect(findS('MT06_nosnow_elevcold')) === 9, 'MT06 双门不过无雪 9');
-  // 人形：P01 真值 9 rect（阴影/腮2/躯干/腮2/发/肤/瞳）；裤色 rgb(34,55,84)=mix(mix(蓝,[30,30,30],.25),[20,18,14],.55)
+  // 人形（#100 文明七杰 8×10 网格重制）：基态 32 rect = 阴影1 + 网格27（描边/发/肤/瞳/衣/裤/臂游程）+ 腿2 + 靴2
+  // （种族计数 = 探针 scripts/probe-person-counts.mjs 实测；旧 6px 体 9 rect 时代断言全数退役）
   const p1 = findS('P01_human_civ');
   ok(styleOf(p1, 0) === 'rgba(0,0,0,0.28)', 'P01 阴影 rgba(0,0,0,0.28)');
-  ok(styleOf(p1, 1) === 'rgb(34,55,84)', `P01 裤色 got ${styleOf(p1, 1)}`);
-  ok(nRect(p1) === 9, `P01 基态 9 rect got ${nRect(p1)}`);
+  ok(styleOf(p1, 1) === '#1a1613', `P01 网格描边 #1a1613 @op1 got ${styleOf(p1, 1)}`);
+  ok(styleOf(p1, 3) === '#5b3a1e', `P01 人类褐发 #5b3a1e @op3 got ${styleOf(p1, 3)}`);
+  ok(nRect(p1) === 32, `P01 基态 32 rect got ${nRect(p1)}`);
+  ok(nRect(findS('P02_human_civ_flip')) === 32, `P02 翻转同 32（镜像网格）got ${nRect(findS('P02_human_civ_flip'))}`);
+  // 七杰种族（哥布林/僵尸共用底座但特征件各异）
+  ok(nRect(findS('P10_goblin')) === 34, `P10 哥布林大耳 34 got ${nRect(findS('P10_goblin'))}`);
+  ok(nRect(findS('P11_zombie')) === 33, `P11 僵尸前伸臂 33 got ${nRect(findS('P11_zombie'))}`);
+  ok(nRect(findS('P12_elf')) === 34, `P12 精灵尖耳 34 got ${nRect(findS('P12_elf'))}`);
+  ok(nRect(findS('P13_dwarf')) === 36, `P13 矮人宽体+帽+颌须2+胸须 36 got ${nRect(findS('P13_dwarf'))}`);
+  ok(nRect(findS('P14_orc')) === 34, `P14 兽人獠牙 34 got ${nRect(findS('P14_orc'))}`);
+  ok(nRect(findS('P15_bandit')) === 33, `P15 强盗兜帽 33 got ${nRect(findS('P15_bandit'))}`);
+  ok(findS('P13_dwarf').ops.some((o) => o.s && o.s[0] === '#c96a15'), 'P13 矮人须 #c96a15');
+  ok(findS('P14_orc').ops.some((o) => o.s && o.s[0] === '#f2ead8'), 'P14 獠牙 #f2ead8');
+  ok(findS('P15_bandit').ops.some((o) => o.s && o.s[0] === '#3a342c'), 'P15 兜帽 #3a342c');
+  // 巨人 = 标准光栅 + 1.45× 外层缩放（#100：135 行专属巨躯分支废除，与侏儒 0.72× 同机制）
   const p4 = findS('P04_giant');
-  ok(styleOf(p4, 0) === 'rgba(0,0,0,0.3)', 'P04 巨人阴影 0.3');
-  ok(nRect(findS('P13_dwarf')) === nRect(findS('P01_human_civ')) + 2, `P13 矮人+盔须 2 rect（铜盔/须各 1）`);
+  ok(p4.ops.some((o) => o.o === 'scale'), 'P04 巨人外层 scale 变换在场');
+  const p4f = p4.ops.find((o) => o.o === 'fillRect');
+  ok(!!p4f && p4f.s[0] === 'rgba(0,0,0,0.28)', `P04 巨人标准阴影 0.28（专属分支废除）got ${p4f && p4f.s[0]}`);
+  ok(nRect(p4) === nRect(p1), `P04 巨人 rect 与凡人同图（${nRect(p4)}）`);
   const p16 = findS('P16_lizard_tailup');
-  ok(nRect(p16) === 13, `P16 蜥蜴摆尾 13 rect got ${nRect(p16)}`);
-  ok(styleOf(p16, p16.ops.length - 1) === '#2c5e24', 'P16 摆尾 #2c5e24 收尾');
+  ok(nRect(p16) === 35, `P16 蜥蜴吻+摆尾 35 rect got ${nRect(p16)}`);
+  ok(p16.ops.some((o) => o.s && o.s[0] === 'rgb(79,158,58)'), 'P16 吻/尾(蜥蜴肤) rgb(79,158,58)');
+  ok(styleOf(p16, p16.ops.length - 1) === '#3a2c1c', `P16 默认革靴 #3a2c1c 收尾 got ${styleOf(p16, p16.ops.length - 1)}`);
   const p17 = findS('P17_elder');
   ok(p17.ops.some((o) => o.s && o.s[0] === '#c9c5bd'), 'P17 长者灰发 #c9c5bd');
   const p33 = findS('P33_vis_full');
-  ok(nRect(p33) === 16, `P33 涌现全标记 16 rect got ${nRect(p33)}`);
+  ok(nRect(p33) === 38, `P33 涌现全标记 38 rect（ears2+horns2+冠+纹=+6）got ${nRect(p33)}`);
   ok(p33.ops.some((o) => o.s && o.s[0] === '#7df9ff'), 'P33 荧光瞳 #7df9ff');
   ok(p33.ops.some((o) => o.s && o.s[0] === '#e9e5c9'), 'P33 角色移 shiftColor(#e8dcc8,-0.08)');
   ok(p33.ops.some((o) => o.s && o.s[0] === '#e19368'), 'P33 头冠色移 shiftColor(#cf3f2e,+0.1)');

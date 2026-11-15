@@ -2066,7 +2066,8 @@ function drawUnitSprite(engine: GameEngine, u: Unit, wc: CanvasRenderingContext2
   }
   // —— 深度打磨：统一脚下软阴影（陆行单位半透明椭圆，水生/飞行除外） ——
   // 昼夜开启时升级为方向阴影：随太阳方位偏移拉伸（晨昏长影/正午短影/夜晚月影淡）
-  if (!def.aquatic && !def.flying && u.trait !== 'giant') {
+  // #100：巨人专属分支废除，软阴影门槛同步放开（巨人与凡人同走双影口径）
+  if (!def.aquatic && !def.flying) {
     const px = u.dpx ?? (u.rx ?? u.x) * 2;
     const py = u.dpy ?? (u.ry ?? u.y) * 2;
     if (engine.fxPrefs.dayNight) {
@@ -2111,6 +2112,20 @@ function drawUnitSprite(engine: GameEngine, u: Unit, wc: CanvasRenderingContext2
     wc.save();
     wc.translate(px, py + 3);
     wc.scale(0.72, 0.72);
+    wc.translate(-px, -(py + 3));
+    drawUnitBody(engine, u, def, wc);
+    wc.restore();
+    return;
+  }
+  // —— #100 巨型特质：整身 1.45× 放大（锚定脚底，与侏儒同机制）——
+  // 旧「巨人专属巨躯分支」（135 行 6px 比例重制体）废除：巨人与凡人共用 #100 新身形光栅，
+  // 缓存 key 的 giant 位保留为安全超集（光栅同图，仅外层缩放不同）；精绘档同步放行（tryDrawFine）。
+  if (u.trait === 'giant' && def.sprite === 'person' && !def.aquatic) {
+    const px = u.dpx ?? (u.rx ?? u.x) * 2;
+    const py = u.dpy ?? (u.ry ?? u.y) * 2;
+    wc.save();
+    wc.translate(px, py + 3);
+    wc.scale(1.45, 1.45);
     wc.translate(-px, -(py + 3));
     drawUnitBody(engine, u, def, wc);
     wc.restore();
@@ -2201,8 +2216,8 @@ function tryDrawFine(engine: GameEngine, u: Unit, def: (typeof RACES)[number], w
   const tx = Math.round(px * 2) - fx;
   const ty = Math.round(py * 2) - fy;
   if (def.sprite === 'person') {
-    if (u.trait === 'giant') return false; // 巨人走 ×2 专属巨躯
     const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
+    // #100：巨人在精绘档同样放行（外层 1.45× 缩放与凡人同机制——旧拒收门槛废除）
     wc.save();
     wc.scale(0.5, 0.5);
     wc.translate(tx, ty);
@@ -2269,10 +2284,10 @@ const SPRITE_PHASE: Record<string, (fc: number, u: Unit) => number> = {
 
 /** 光栅画布（精灵格·动物）：28 宽 × 18 高，锚点 (14,16) —— 覆盖 x±14、y-16..+1，容得下全部可缓存物种 */
 const SPRC_W = 28, SPRC_H = 18, SPRC_AX = 14, SPRC_AY = 16;
-/** 光栅画布（精灵格·人形 #99）：20 宽 × 16 高，锚点 (10,10) —— 覆盖 x−10..+9、y−10..+5。
- *  容得下常规/睡姿/巨躯/骑兵全分支（骑枪尖 +5f、冲锋扬尘 −6f、马背徽标 jY−8、
- *  巨人底影 gy+3、法师星闪 headTop−2 实测均留一格裕量） */
-const PPC_W = 20, PPC_H = 16, PPC_AX = 10, PPC_AY = 10;
+/** 光栅画布（精灵格·人形 #99 / #100 加高）：20 宽 × 18 高，锚点 (10,12) —— 覆盖 x−10..+9、y−12..+5。
+ *  #100 新身形总高 10px（头顶描边 y−7）+ 职业徽标 y−8−lift(≤2) + 血条 y−9 → 顶行 y−10；
+ *  骑枪尖 +5f、冲锋扬尘 −6f、马背徽标 jY−8、巨人外层缩放同格均留裕量 */
+const PPC_W = 20, PPC_H = 18, PPC_AX = 10, PPC_AY = 12;
 const SPRITE_CACHE_MAX = 16384; // LRU 上限（#99b：2252 单位实测键数破 6144 颠簸 → 提至 16k ≈ 21MB；
 //  更极端的多样性世界由 personGate 断路器兜底回退直绘，性能下界 = M1 前直绘）
 
@@ -2549,21 +2564,21 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
   }
   // —— #93/#99 缓存档：动物与人形一次 drawImage（未命中或不可缓存 → dispatchUnitSprite 真实现直绘） ——
   if (blitCachedSprite(engine, u, def, wc, fc)) {
-    // 国冠/涌现色点画在缓存精灵之外（直绘随动效，不进光栅不冻结）
-    if (king && def.sprite === 'person') drawCrown(wc, px, py - 4);
+    // 国冠/涌现色点画在缓存精灵之外（blit 后补，不进光栅不冻结）
+    if (king && def.sprite === 'person') drawCrown(wc, px, py - 8);
     if (def.dynTint) {
       wc.fillStyle = u.hurt > 0 ? '#ff6b5e' : def.dynTint;
-      wc.fillRect(px, py - 4, 1, 1);
+      wc.fillRect(px, py - 8, 1, 1);
     }
     return;
   }
   dispatchUnitSprite(engine, u, def, wc, fc);
-  // P0-A：全绘档国王金冠（人形头顶；×2 精灵头顶 = 发际线上一行）
-  if (king && def.sprite === 'person') drawCrown(wc, px, py - 4);
+  // P0-A：全绘档国王金冠（人形头顶；#100 新身形头顶描边 y−7 → 冠基 y−8）
+  if (king && def.sprite === 'person') drawCrown(wc, px, py - 8);
   // 涌现物种标记：动态种化诞生的新物种头顶 1px 突变色点（一眼辨识演化后裔）
   if (def.dynTint) {
     wc.fillStyle = u.hurt > 0 ? '#ff6b5e' : def.dynTint;
-    wc.fillRect(px, py - 4, 1, 1);
+    wc.fillRect(px, py - 8, 1, 1);
   }
 }
 

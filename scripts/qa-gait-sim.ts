@@ -1,5 +1,7 @@
-// QA（确定性）：全绘档人形四相步态 —— mock ctx 重放 drawPerson 生产代码
-// 断言：①行进 16 帧周期恰 4 个不同姿态 ②周期 16（t 与 t+16 帧完全一致）③站立稳定 ④三族系（人/僵尸/哥布林）全走四相
+// QA（确定性）：全绘档人形 2 帧步态 —— mock ctx 重放 drawPerson 生产代码
+// 断言：①行进 8 帧周期恰 2 个不同姿态 ②周期 8（t 与 t+8 帧完全一致）③站立稳定 ④三族系（人/僵尸/哥布林）全走两相
+// #100 对齐：#98 起方案裁定人形步态为 2 帧（step=(t>>2)&1）——旧「四相步态」断言随 6px 体退役；
+//            步幅证据随 8×10 新身形更新（后蹬 px−1 / 前跨 px+2）。
 // 注意：导入路径禁带 .ts 后缀——next build 全量类型检查会因 allowImportingTsExtensions 未开而失败（#77 CI 教训）
 import { drawPerson } from '../src/lib/game/sprites';
 import { R } from '../src/lib/game/types';
@@ -42,23 +44,23 @@ function check(name: string, ok: boolean, detail = '') {
 for (const [raceName, raceId] of [['human', R.HUMAN], ['zombie', R.ZOMBIE], ['goblin', R.GOBLIN]] as [string, number][]) {
   const u = mkUnit(raceId, true);
   const states: string[] = [];
-  for (let t = 1000; t < 1016; t += 4) states.push(frameSet(u, t));
+  for (let t = 1000; t < 1008; t += 4) states.push(frameSet(u, t));
   const uniq = new Set(states);
-  check(raceName + ': 行进四相状态数=4', uniq.size === 4, 'got ' + uniq.size);
-  check(raceName + ': 周期16（t1000≡t1016）', states[0] === frameSet(u, 1016));
+  check(raceName + ': 行进两相状态数=2', uniq.size === 2, 'got ' + uniq.size);
+  check(raceName + ': 周期8（t1000≡t1008）', states[0] === frameSet(u, 1008));
   const idleU = mkUnit(raceId, false);
   check(raceName + ': 站立稳定（1000≡1032 同呼吸相）', frameSet(idleU, 1000) === frameSet(idleU, 1032));
   check(raceName + ': 站立与行进姿态不同', frameSet(idleU, 1000) !== states[0]);
 }
 
-// 步幅错位证据：四相里至少两态含 x=px-2 / px+1 的跨步腿位（px=128 → 126/129 在集合中）
+// 步幅错位证据：两相里含 x=px-1（后蹬）/ px+2（前跨）的跨步腿位（px=128 → 127/130 在集合中）
 {
   const u = mkUnit(0, true);
-  const all = new Set();
-  for (let t = 1000; t < 1016; t += 4) frameSet(u, t).split('|').forEach((s) => all.add(s.split(',')[0]));
+  const all = new Set<string>();
+  for (let t = 1000; t < 1008; t += 4) frameSet(u, t).split('|').forEach((s) => all.add(s.split(',')[0]));
   const xs = [...all].map(Number);
-  const hasStride = xs.includes(126) && xs.includes(129);
-  check('步幅错位（126 后蹬与 129 前跨）', hasStride, 'xs=' + xs.sort((a, b) => a - b).join(','));
+  const hasStride = xs.includes(127) && xs.includes(130);
+  check('步幅错位（127 后蹬与 130 前跨）', hasStride, 'xs=' + xs.sort((a, b) => a - b).join(','));
 }
 
 console.log(fail === 0 ? 'ALL GREEN' : 'FAILURES=' + fail);

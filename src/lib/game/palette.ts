@@ -52,6 +52,19 @@ export const PAL = {
   antler: '#8a6a42',
   rump: '#f2ead8', // 白臀斑/白尾
 
+  // —— 人形族（#100 文明七杰）：发/须/兜帽/钢帽/靴 —— 发色原值收编（零改色），
+  // 眼色复用既有命名（红瞳=PAL.hurtDeep / 金瞳=PAL.gold / 墨瞳=PAL.inkDeep）
+  hairBrown: '#5b3a1e', // 人类褐发
+  hairBlond: '#e8d5a0', // 精灵金发
+  hairAuburn: '#b5651d', // 矮人赤褐发（须同源）
+  hairMoss: '#2c5e24', // 蜥蜴头冠/哥布林苔绿发
+  hairGrey: '#c9c5bd', // 长者霜发（年逾 78% 寿限）
+  beard: '#c96a15', // 矮人浓须（受击时改 hurtLight）
+  hood: '#3a342c', // 强盗兜帽（同 ink 色值，语义独立命名）
+  steelCap: '#c0c6cc', // 矮人钢帽
+  tusk: '#f2ead8', // 兽人獠牙（同 rump 色值，语义独立命名）
+  boot: '#3a2c1c', // 人形默认革靴
+
   // —— 眼睛 ——
   eyeLight: '#f7f9fb',
   eyeAmber: '#ffd93d',
@@ -79,6 +92,9 @@ export const PAL = {
 } as const;
 
 export type PaletteKey = keyof typeof PAL;
+
+/** 染疫绿的 rgb 元组形态（值 = PAL.infected #b8e2b4——人形衣布/肤色混合用，#100） */
+export const INFECTED_RGB: readonly [number, number, number] = [184, 226, 180];
 
 /** 地形 12 色命名收编（索引语义 = T 枚举；引擎/烘焙仍走 TERRAIN_RGB 数组，此处供人读与 Unity 镜像） */
 export const TERR_COLOR: Record<string, [number, number, number]> = {
