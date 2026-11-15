@@ -6214,7 +6214,8 @@ Stage Summary:
 ③ **森林地被去方块**（a）：森林底色从整格深绿改为「草底 + 2×2 子像素块树冠荫斑块」（荫块密度 58%）——远看仍是森林、近看是草与荫，树道具（drawTree）继续承担森林识别主体。
 ④ **群系交界重做**（d）：废除旧 tile 级棋盘混色（整格发糊），改为挑一个异色软地邻侧、近边 3px 依深度概率交错混邻色（商业像素游戏缝合线语言）；雪相关过渡由 ①② 独立承担避免双重处理。
 全部确定性哈希（variant+格号+子像素坐标派生），同格重绘逐字节一致（防闪烁铁律）。
-**QA**: tsc 零错误 ✓；新单测 polish100-test.mjs 10 断言全绿（雪缘露地 10px/参差带 3-13/雪舌 12px 不入格心/森林绿通道极差 60/雪原内部 64 满亮/双格重绘一致）✓；全量回归 polish87 33 + infinite-evolution 44 + age-deepening 48 + ww-dynamic 61 + ww-clash 29 + ww-collective 38 + ww-mediate 28 + polish97 20 + worker-assets 7 全绿 ✓；next build 全绿（5 路由）✓；agent-browser 实机截图 + VLM 盲测见推送后补记。
+**QA**: tsc 零错误 ✓；新单测 polish100-test.mjs 10 断言全绿（雪缘露地 10px/参差带 3-13/雪舌 12px 不入格心/森林绿通道极差 60/雪原内部 64 满亮/双格重绘一致）✓；全量回归 polish87 33 + infinite-evolution 44 + age-deepening 48 + ww-dynamic 61 + ww-clash 29 + ww-collective 38 + ww-mediate 28 + polish97 20 + worker-assets 7 全绿 ✓；next build 全绿（5 路由）✓；agent-browser 实机截图 + VLM 盲测（glm-4.5v）✓：雪草交界近观「锯齿状有机边界，带双向渗透（雪舌楔入 + 草地缺口）和中间混杂带」；森林地被「草绿底色 + 疏密不一的树冠点斑驳质感，交界有机过渡，基本没有大绿方块生硬感，典型的 WorldBox 风格」；远景盲测诚实反馈差距——群系过渡中等偏生硬、瓦片多层纹理/水波光层次仍不及现在的 WorldBox（排入阶段一后续轮）。踩坑：屏幕中心被教程面板遮挡致首张裁剪落空（先点「跳过教程」再用截图像素扫描定位雪草过渡带）；FPS 实测 39@563 单位为本会话无头软件渲染环境值（flushDirty dirty=0 不在帧路径，零稳态回归）。
+
 **环境事故**: 第 6 次沙盒回滚吞掉首轮在制品（engine.ts 两笔编辑 + 测试）；npx tsc 误装野包 tsc@2.0.3（node_modules 灭失后 npx 落到 npm registry）——一律用 node node_modules/typescript/bin/tsc。
 **遗留（下轮优先池）**: ①amber-pixel64 精灵管线：parquet → caption 筛选（草簇/花/雪堆/碎石）→ 裁剪重采样 8-16px → palette 量化 → stampGrid 网格化（阶段二·植被点缀用）；②瓦片级「聚簇特征」dot 细节与新有机边缘的视觉复核（VLM 盲测远观/近观两档）；③qa-gait-sim 存量失败（#99 遗留②）。
 **版本节奏**: 升位 v0.89-preview（按 #99 预告「#100 升 v0.89」）。
