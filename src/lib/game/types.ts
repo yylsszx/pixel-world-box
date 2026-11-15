@@ -323,6 +323,29 @@ export const JOBS: JobDef[] = [
 export type JobId = number; // index into JOBS
 export const JOB_KEY: Record<string, number> = Object.fromEntries(JOBS.map((j, i) => [j.key, i]));
 
+// ---------------- 坐骑（#102：多样坐骑——战马/座狼/驼鹿/沙漠驼按群系配发） ----------------
+/** Unit.mount：0 = 无坐骑；1-4 = MOUNTS 下标 + 1（旧档 mount=1 无缝兼容为战马） */
+export interface MountDef {
+  key: string;
+  name: string;
+  /** 速度乘数（出生时计入属性） */
+  speedMul: number;
+  /** 冲锋伤害乘数 */
+  dmgMul: number;
+  /** 体色（渲染层取色：体/受光/暗部三阶） */
+  body: string;
+  bodyLit: string;
+  dark: string;
+}
+
+export const MOUNTS: MountDef[] = [
+  { key: 'horse', name: '战马', speedMul: 1.45, dmgMul: 1.2, body: '#7a4a26', bodyLit: '#8a5a32', dark: '#4a2c18' },
+  { key: 'wolf', name: '座狼', speedMul: 1.55, dmgMul: 1.28, body: '#8d93a8', bodyLit: '#aab3c2', dark: '#4a5060' },
+  { key: 'elk', name: '驼鹿', speedMul: 1.4, dmgMul: 1.15, body: '#5c4023', bodyLit: '#6e4f2c', dark: '#3a2812' },
+  { key: 'camel', name: '沙漠驼', speedMul: 1.35, dmgMul: 1.1, body: '#c9a86a', bodyLit: '#dcbd85', dark: '#8a6a3c' },
+];
+export const MOUNT_KEY: Record<string, number> = Object.fromEntries(MOUNTS.map((m, i) => [m.key, i]));
+
 // ---------------- 房屋类别（Building Categories） ----------------
 export interface BuildingDef {
   key: string;
@@ -373,8 +396,8 @@ export const BUILD_KINDS = {
 export const WONDERS = new Set<number>([BUILD_KINDS.PYRAMID, BUILD_KINDS.LIGHTHOUSE, BUILD_KINDS.CATHEDRAL]);
 /** 攻城营械（战争期间临时部署：和平时自毁） */
 export const SIEGE_ENGINES = new Set<number>([BUILD_KINDS.RAM, BUILD_KINDS.CATAPULT]);
-/** 可升级建筑（科技解锁后阶位提升：存量自动跟随） */
-export const TIERABLE = new Set<number>([BUILD_KINDS.FARM, BUILD_KINDS.MARKET, BUILD_KINDS.PORT, BUILD_KINDS.BARRACKS, BUILD_KINDS.TOWER, BUILD_KINDS.MINE]);
+/** 可升级建筑（科技解锁后阶位提升：存量自动跟随）—— #102 补入图书馆/神殿/渔场/城堡 */
+export const TIERABLE = new Set<number>([BUILD_KINDS.FARM, BUILD_KINDS.MARKET, BUILD_KINDS.PORT, BUILD_KINDS.BARRACKS, BUILD_KINDS.TOWER, BUILD_KINDS.MINE, BUILD_KINDS.LIBRARY, BUILD_KINDS.TEMPLE, BUILD_KINDS.FISHERY, BUILD_KINDS.CASTLE]);
 /** 可被占领（易帜而非摧毁）的建筑 */
 export const CAPTURABLE = new Set<number>([BUILD_KINDS.HOUSE, BUILD_KINDS.FARM, BUILD_KINDS.MARKET, BUILD_KINDS.BARRACKS, BUILD_KINDS.PORT, BUILD_KINDS.FISHERY]);
 

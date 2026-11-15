@@ -1160,21 +1160,22 @@ export class NatureSystem {
     }
   }
 
-  /** 世界生成期的自然河网：挑湿润高地源头刻 8-13 条河（用生成期气候场 moistMap 判湿润） */
+  /** 世界生成期的自然河网：挑湿润高地源头刻 10-17 条河（用生成期气候场 moistMap 判湿润）
+   *  #102：源头放宽到湿润丘陵（不止高山）→ 更多支流机会；汇流由 carveRiver/mergeRiverFlow 合并增宽 */
   seedRivers() {
     const eng = this.eng;
-    const n = 8 + Math.floor(this.rng() * 6);
+    const n = 10 + Math.floor(this.rng() * 8);
     let carved = 0;
-    for (let tr = 0; tr < n * 16 && carved < n; tr++) {
+    for (let tr = 0; tr < n * 22 && carved < n; tr++) {
       const x = 6 + Math.floor(this.rng() * (W - 12));
       const y = 6 + Math.floor(this.rng() * (H - 12));
       const i = y * W + x;
       const t = eng.terrain[i];
       if (t !== T.MOUNTAIN && t !== T.HILL) continue;
-      if (eng.moistMap && eng.moistMap[i] < 115) continue; // 干旱山地不成河（115/255 ≈ 0.45）
+      if (eng.moistMap && eng.moistMap[i] < 108) continue; // 干旱山地不成河（108/255 ≈ 0.42，略放宽 → 支流更密）
       if (eng.carveRiver(x + 0.5, y + 0.5, 0)) carved++;
     }
-    if (carved > 0) eng.addEvent('river', `这个年轻的世界有了自己的河网——${carved} 条大河从山地奔向海洋`, {});
+    if (carved > 0) eng.addEvent('river', `这个年轻的世界有了自己的河网——${carved} 条大小河道从山地奔向海洋，支流在山谷间汇成干流`, {});
   }
 
   // ---------------- 快照 ----------------

@@ -2,7 +2,7 @@
 import type { Army, Effect, Unit } from './types';
 import { ITEM_DEFS } from './items';
 import { T, R, RACES } from './types';
-import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawHydra, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster, drawChicken, drawPig, drawRabbit, drawFox, drawFish, drawCrab, drawTurtle, drawShark, drawHorse, drawEagle, drawPlane } from './sprites';
+import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawHydra, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster, drawPersonFine, drawQuadFine, drawChicken, drawPig, drawRabbit, drawFox, drawFish, drawCrab, drawTurtle, drawShark, drawHorse, drawEagle, drawPlane } from './sprites';
 import { visCacheFor } from './emergence';
 import { BUILDING_DEFS, BUILD_KINDS } from './types';
 import { GameEngine } from './engine';
@@ -248,6 +248,31 @@ function drawRiverFlow(engine: GameEngine, wc: CanvasRenderingContext2D, x0: num
       }
     }
   }
+}
+
+/** #102 默认视图国界线：不切政治图层也能看见国家轮廓（领土与个体活动联动的第一步）
+ *  沿「与异主邻接」的边各画 1px 王国色界线；懒重建缓存确保常态帧零扫描成本 */
+function drawTerritoryBorders(engine: GameEngine, g: CanvasRenderingContext2D, x0: number, x1: number, y0: number, y1: number) {
+  if (engine.overlayMode === 'political' || engine.overlayMode === 'alliance') return;
+  engine.ensureBorders();
+  if (engine.borderTiles.size === 0) return;
+  const o = engine.owner;
+  g.globalAlpha = 0.62;
+  for (const [i, cid] of engine.borderTiles) {
+    const x = i % 256;
+    const y = (i / 256) | 0;
+    if (x < x0 - 1 || x > x1 + 1 || y < y0 - 1 || y > y1 + 1) continue;
+    const civ = engine.civs[cid];
+    if (!civ || !civ.alive) continue;
+    g.fillStyle = civ.colorHex;
+    const px = x * 2;
+    const py = y * 2;
+    if (x > 0 && o[i - 1] !== cid) g.fillRect(px, py, 1, 2);
+    if (x < 255 && o[i + 1] !== cid) g.fillRect(px + 1, py, 1, 2);
+    if (y > 0 && o[i - 256] !== cid) g.fillRect(px, py, 2, 1);
+    if (y < 159 && o[i + 256] !== cid) g.fillRect(px, py + 1, 2, 1);
+  }
+  g.globalAlpha = 1;
 }
 
 /** 环境氛围粒子：海岸浪花 · 极地飘雪 · 沙漠扬尘 · 岩浆气泡 · 深海微澜
@@ -1307,7 +1332,8 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
     (engine.fxPrefs.ambience && fxTier) ||
     (engine.fxPrefs.riverFlow && engine.riverTiles.size > 0 && fxTier) ||
     (engine.fxPrefs.dayNight && engine.laws.atmosphere && fxTier) ||
-    engine.wet.size > 0;
+    engine.wet.size > 0 ||
+    engine.borderTiles.size > 0; // #102 国界线（懒缓存，常态帧零扫描；静态结构不随速度档停绘）
   if (groundUsed) g.clearRect(0, 0, 512, 320);
   // 环境氛围粒子（浪花/飘雪/扬尘/岩浆气泡/深海微澜）【性能 v75：≥8× 停绘 —— 高速下内眼不可追】
   if (engine.fxPrefs.ambience && engine.speed < 8) {
@@ -1318,6 +1344,9 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
   if (engine.fxPrefs.riverFlow && engine.riverTiles.size > 0 && engine.speed < 8) {
     drawRiverFlow(engine, g, x0, x1, y0, y1);
   }
+
+  // #102 默认视图国界线（王国色描边：领土存在感 → 个体活动与版图联动可感知）
+  drawTerritoryBorders(engine, g, x0, x1, y0, y1);
 
   // 云影（太阳方位驱动的地面暗斑：画在内容之下 —— 阴影落在地上而非物上）【性能 v75：≥8× 停绘】
   if (engine.fxPrefs.dayNight && engine.laws.atmosphere && engine.speed < 8) {
@@ -1349,14 +1378,6 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
     if (b.x < x0 - 2 || b.x > x1 + 2 || b.y < y0 - 3 || b.y > y1 + 3) continue;
     const civ = engine.civs[b.civ];
     if (!civ || !civ.alive) continue;
-    // —— #102 半单位艺术层：建筑 ×0.5（比例对标 WB 房 21×17px ≈ 2.6×2.1 格）——
-    //    锚定格心 (b.x*4+2, b.y*4+2)，内部坐标零改动（影子/烟/裂纹随同缩放）
-    const bcx = b.x * 4 + 2;
-    const bcy = b.y * 4 + 2;
-    wc.save();
-    wc.translate(bcx, bcy);
-    wc.scale(0.5, 0.5);
-    wc.translate(-bcx, -bcy);
     // —— 建筑投影：太阳方位驱动（晨昏长影/正午短影 —— 村落有了体积感） ——
     if (sun) {
       const sox = Math.round(sun.sx * sun.len * 3);
@@ -1394,7 +1415,6 @@ export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: nu
         if (heavy) wc.fillRect(b.x * 4 + 6, b.y * 4 - 2, 2, 2);
       }
     }
-    wc.restore();
   }
 
   // —— 动态层 B（×2 精灵坐标系）：单位/特效/天气/光影 ——
@@ -2016,12 +2036,12 @@ function drawArmyBanner(engine: GameEngine, a: Army, wc: CanvasRenderingContext2
     wc.strokeRect(px - 3.5, py - 10.5, 8, 13);
   }
 
-  // 旗杆（深色 1px；#102 半单位后人形缩小 → 旗杆从 8px 收到 6px）
+  // 旗杆（深色 1px）
   wc.fillStyle = '#241c12';
-  wc.fillRect(px, py - 6, 1, 6);
+  wc.fillRect(px, py - 8, 1, 8);
   // 杆顶金珠
   wc.fillStyle = '#e8c14a';
-  wc.fillRect(px, py - 7, 1, 1);
+  wc.fillRect(px, py - 9, 1, 1);
 
   // 三角旗面：4 帧波形飘动（国色 2 列 + 旗尖列）
   const wave = Math.floor(fc / 7) % 4;
@@ -2030,22 +2050,22 @@ function drawArmyBanner(engine: GameEngine, a: Army, wc: CanvasRenderingContext2
   const wob1 = wave === 1 ? 1 : 0;
   const wob2 = wave === 2 ? 1 : wave === 3 ? 1 : 0;
   wc.fillStyle = flagCol;
-  wc.fillRect(px + 1, py - 6, 2, 3); // 旗面根部
-  wc.fillRect(px + 3, py - 6 + wob1, 1, 2); // 中段
+  wc.fillRect(px + 1, py - 8, 2, 3); // 旗面根部
+  wc.fillRect(px + 3, py - 8 + wob1, 1, 2); // 中段
   wc.fillStyle = tipCol;
-  wc.fillRect(px + 4, py - 6 + wob1 + wob2, 1, 1); // 旗尖
+  wc.fillRect(px + 4, py - 8 + wob1 + wob2, 1, 1); // 旗尖
   // 集结态：白旗尖闪烁（集结信号）
   if (a.state === 'rally' && fc % 16 < 8) {
     wc.fillStyle = '#ffffff';
-    wc.fillRect(px + 4, py - 7, 1, 1);
+    wc.fillRect(px + 4, py - 9, 1, 1);
   }
 
   // 士气条：旗下 3px 宽微型条（绿→黄→红）
   const m = Math.max(0, Math.min(1, a.morale / 100));
   wc.fillStyle = 'rgba(12,10,8,0.8)';
-  wc.fillRect(px - 1, py + 1.5, 4, 0.5);
+  wc.fillRect(px - 1, py + 2, 5, 1);
   wc.fillStyle = m > 0.5 ? '#5fc65b' : m > 0.3 ? '#ffd93d' : '#cf3f2e';
-  wc.fillRect(px - 1, py + 1.5, Math.max(1, Math.round(4 * m)), 0.5);
+  wc.fillRect(px - 1, py + 2, Math.max(1, Math.round(5 * m)), 1);
 
   // 指挥圈（高倍率下显示编队范围感）
   if (zoom >= 8) {
@@ -2060,29 +2080,17 @@ function drawArmyBanner(engine: GameEngine, a: Army, wc: CanvasRenderingContext2
 }
 
 function drawUnitSprite(engine: GameEngine, u: Unit, wc: CanvasRenderingContext2D) {
-  const px = u.dpx ?? (u.rx ?? u.x) * 2;
-  const py = u.dpy ?? (u.ry ?? u.y) * 2;
-  // 殖民船优先：航海中的单位画船而非本体（#102 半单位：船/货车同走 ×0.5 艺术层）
+  // 殖民船优先：航海中的单位画船而非本体
   if (u.boat) {
     const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-    wc.save();
-    wc.translate(px, py);
-    wc.scale(0.5, 0.5);
-    wc.translate(-px, -py);
     drawBoat(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount, civ && civ.alive ? engine.navalTierOf(civ) : 0);
-    wc.restore();
     return;
   }
   const def = RACES[u.race];
   // 深度打磨：贸易商队 — 满载行商画驮马货车（王国尖旗 + 货物堆）
   if ((u.caravan ?? 0) > 0) {
     const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-    wc.save();
-    wc.translate(px, py);
-    wc.scale(0.5, 0.5);
-    wc.translate(-px, -py);
     drawCaravan(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount);
-    wc.restore();
     return;
   }
   // —— 深度打磨：统一脚下软阴影（陆行单位半透明椭圆，水生/飞行除外） ——
@@ -2097,12 +2105,12 @@ function drawUnitSprite(engine: GameEngine, u: Unit, wc: CanvasRenderingContext2
       const sox = Math.round(s.sx * s.len * 2);
       const soy = Math.round(s.sy * s.len);
       wc.fillStyle = sunUnitShadowStyle;
-      wc.fillRect(px - 1.5 + sox, py + 1.5 + soy, 3, 0.5);
+      wc.fillRect(px - 1 + sox, py + 2 + soy, 3, 1);
       // 晨昏长影：向影子方向再延一像素（拉出影长的层次）
-      if (s.len > 1.7) wc.fillRect(px - 1.5 + sox * 2, py + 1.5 + soy, 2, 0.5);
+      if (s.len > 1.7) wc.fillRect(px - 1 + sox * 2, py + 2 + soy, 2, 1);
     } else {
       wc.fillStyle = 'rgba(12,9,6,0.22)';
-      wc.fillRect(px - 1.5, py + 1.5, 3, 0.5);
+      wc.fillRect(px - 1, py + 2, 3, 1);
     }
   }
   // —— Task 48-B3：幼年体型 —— 新生儿/幼兽个头小，随年龄渐长到成体（锚定脚底）
@@ -2115,8 +2123,10 @@ function drawUnitSprite(engine: GameEngine, u: Unit, wc: CanvasRenderingContext2
       jk = 0.78 + (u.age / (def.maxAge * 0.14)) * 0.22;
     }
     if (jk < 0.995) {
+      const px = u.dpx ?? (u.rx ?? u.x) * 2;
+      const py = u.dpy ?? (u.ry ?? u.y) * 2;
       wc.save();
-      wc.translate(px, py + 1.5);
+      wc.translate(px, py + 3);
       wc.scale(jk, jk);
       wc.translate(-px, -(py + 3));
       drawUnitBody(engine, u, def, wc);
@@ -2126,8 +2136,10 @@ function drawUnitSprite(engine: GameEngine, u: Unit, wc: CanvasRenderingContext2
   }
   // —— 深度打磨：侏儒特质 — 身形整体缩小 28%（锚定脚底，步伐频率不变） ——
   if (u.trait === 'tiny' && !def.aquatic) {
+    const px = u.dpx ?? (u.rx ?? u.x) * 2;
+    const py = u.dpy ?? (u.ry ?? u.y) * 2;
     wc.save();
-    wc.translate(px, py + 1.5);
+    wc.translate(px, py + 3);
     wc.scale(0.72, 0.72);
     wc.translate(-px, -(py + 3));
     drawUnitBody(engine, u, def, wc);
@@ -2138,8 +2150,10 @@ function drawUnitSprite(engine: GameEngine, u: Unit, wc: CanvasRenderingContext2
   // 旧「巨人专属巨躯分支」（135 行 6px 比例重制体）废除：巨人与凡人共用 #100 新身形光栅，
   // 缓存 key 的 giant 位保留为安全超集（光栅同图，仅外层缩放不同）；精绘档同步放行（tryDrawFine）。
   if (u.trait === 'giant' && def.sprite === 'person' && !def.aquatic) {
+    const px = u.dpx ?? (u.rx ?? u.x) * 2;
+    const py = u.dpy ?? (u.ry ?? u.y) * 2;
     wc.save();
-    wc.translate(px, py + 1.5);
+    wc.translate(px, py + 3);
     wc.scale(1.45, 1.45);
     wc.translate(-px, -(py + 3));
     drawUnitBody(engine, u, def, wc);
@@ -2150,8 +2164,10 @@ function drawUnitSprite(engine: GameEngine, u: Unit, wc: CanvasRenderingContext2
   const hu = u.hurt;
   if (hu > 14 && !def.aquatic) {
     const k = (hu - 14) / 10; // 0..1 衰减曲线
+    const px = u.dpx ?? (u.rx ?? u.x) * 2;
+    const py = u.dpy ?? (u.ry ?? u.y) * 2;
     wc.save();
-    wc.translate(px, py + 1.5); // 锚定脚底
+    wc.translate(px, py + 3); // 锚定脚底
     wc.scale(1 + 0.22 * k, 1 - 0.26 * k);
     wc.translate(-px, -(py + 3));
     drawUnitBody(engine, u, def, wc);
@@ -2197,6 +2213,11 @@ const ANIMAL_LOD: Record<string, [string, string, number, number]> = {
   shark: ['#5a6a78', '#2e3a46', 4, 2],
 };
 
+/** P0-A：精绘四足档位表（zoom≥8 走 ×4 精细像素精灵 drawQuadFine） */
+const QUAD_FINE: Record<string, 'wolf' | 'snowwolf' | 'sheep' | 'bear' | 'deer'> = {
+  wolf: 'wolf', snowwolf: 'snowwolf', sheep: 'sheep', bear: 'bear', deer: 'deer',
+};
+
 /** P2：水生精灵水面门控（离水不画；crab 凭 beach 特质可上滩） */
 function onWaterTile(engine: GameEngine, u: Unit, beachOk: boolean): boolean {
   const t = engine.terrain[(u.y | 0) * 256 + (u.x | 0)];
@@ -2204,6 +2225,9 @@ function onWaterTile(engine: GameEngine, u: Unit, beachOk: boolean): boolean {
   return beachOk && t === T.SAND;
 }
 
+/** P0-A：精绘档分发（zoom≥8）：人形 → drawPersonFine / 四足 → drawQuadFine。
+ *  ×4 精细像素 = 0.25 tile = 1 用户像素：层 B(2px/tile) 内 scale(0.5) 回到 4px/tile
+ *  精细网格，脚底 (fx,fy) 锚定到插值位置（吸附 1 用户像素 → 设备像素恒整，零 AA 糊边） */
 // —— 时代深化（v0.76）：军备等级帧缓存 —— 每帧每文明至多算一次（制式武备视觉的渲染层底座）——
 let _armFrame = -1;
 const _armCache = new Map<number, number>();
@@ -2215,10 +2239,30 @@ function armLvOf(engine: GameEngine, civId: number): number {
   return lv;
 }
 
-/** #102：zoom≥8 旧精绘档（drawPersonFine/drawQuadFine ×0.5 双密度旧比例）整体废除 ——
- *  半单位网格精灵（1 艺术 px = 0.5 用户单位 = 1 烘焙设备 px）全 zoom 段同源，
- *  跨 zoom 8 风格跳变消灭（#101 遗留②清偿）。drawUnitBody 不再分支，统一走缓存/直绘艺术层。 */
-function tryDrawFine(_engine: GameEngine, _u: Unit, _def: (typeof RACES)[number], _wc: CanvasRenderingContext2D, _px: number, _py: number, _king: boolean): boolean {
+function tryDrawFine(engine: GameEngine, u: Unit, def: (typeof RACES)[number], wc: CanvasRenderingContext2D, px: number, py: number, king: boolean): boolean {
+  const fx = Math.round(u.rx ?? u.x);
+  const fy = Math.round(u.ry ?? u.y) + 1;
+  const tx = Math.round(px * 2) - fx;
+  const ty = Math.round(py * 2) - fy;
+  if (def.sprite === 'person') {
+    const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
+    // #100：巨人在精绘档同样放行（外层 1.45× 缩放与凡人同机制——旧拒收门槛废除）
+    wc.save();
+    wc.scale(0.5, 0.5);
+    wc.translate(tx, ty);
+    drawPersonFine(wc, u, civ && civ.alive ? civ.color : null, engine.frameCount, king, armLvOf(engine, u.civ));
+    wc.restore();
+    return true;
+  }
+  const quad = QUAD_FINE[def.sprite];
+  if (quad && !def.vis) {
+    wc.save();
+    wc.scale(0.5, 0.5);
+    wc.translate(tx, ty);
+    drawQuadFine(wc, u, quad, engine.frameCount, king);
+    wc.restore();
+    return true;
+  }
   return false;
 }
 
@@ -2267,14 +2311,13 @@ const SPRITE_PHASE: Record<string, (fc: number, u: Unit) => number> = {
   skeleton: (fc) => ((fc >> 2) & 1) | (fc % 14 < 7 ? 2 : 0), // 步态 + 眼火闪烁
 };
 
-/** 光栅画布（精灵格·动物，#102 半单位艺术 px）：24 宽 × 20 高，锚点 (12,16) —— 覆盖 x−12..+11、y−16..+3
- *  （熊 16 宽 + 尾/鹿角外扩；五兽重制后最大网格 16×9 + 腿 2 行 + 耳/角） */
-const SPRC_W = 24, SPRC_H = 20, SPRC_AX = 12, SPRC_AY = 16;
-/** 光栅画布（精灵格·人形 #102 半单位）：30 宽 × 26 高，锚点 (15,18) —— 覆盖 x−15..+14、y−18..+7。
- *  新身形总高 14 艺术 px（头顶描边 y−12）+ 职业徽标 y−13−lift(≤3) + 血条 y−15 → 顶行 y−16 需裕量；
- *  骑枪尖 +9f、冲锋扬尘 −10f、马背骑手头顶 y−14、盾 −6/+5、披风 −7 均留裕量。 */
-const PPC_W = 30, PPC_H = 26, PPC_AX = 15, PPC_AY = 18;
-const SPRITE_CACHE_MAX = 8192; // LRU 上限（#102：半单位光栅 30×26 ≈ 3.1KB/条，8192 帽 ≈ 25MB 与 #99 同量级；
+/** 光栅画布（精灵格·动物）：28 宽 × 18 高，锚点 (14,16) —— 覆盖 x±14、y-16..+1，容得下全部可缓存物种 */
+const SPRC_W = 28, SPRC_H = 18, SPRC_AX = 14, SPRC_AY = 16;
+/** 光栅画布（精灵格·人形 #99 / #100 加高）：20 宽 × 18 高，锚点 (10,12) —— 覆盖 x−10..+9、y−12..+5。
+ *  #100 新身形总高 10px（头顶描边 y−7）+ 职业徽标 y−8−lift(≤2) + 血条 y−9 → 顶行 y−10；
+ *  骑枪尖 +5f、冲锋扬尘 −6f、马背徽标 jY−8、巨人外层缩放同格均留裕量 */
+const PPC_W = 20, PPC_H = 18, PPC_AX = 10, PPC_AY = 12;
+const SPRITE_CACHE_MAX = 16384; // LRU 上限（#99b：2252 单位实测键数破 6144 颠簸 → 提至 16k ≈ 21MB；
 //  更极端的多样性世界由 personGate 断路器兜底回退直绘，性能下界 = M1 前直绘）
 
 interface SpriteRaster {
@@ -2494,12 +2537,9 @@ function dispatchUnitSprite(engine: GameEngine, u: Unit, def: (typeof RACES)[num
   }
 }
 
-/** 单位本体分发（#102 半单位艺术层后 LOD 两档：zoom<2.5 色点 / ≥2.5 全精灵（动物+人形均走缓存 blit））
- *  —— 旧「zoom≥8 ×4 精绘档」废除（半单位精灵全 zoom 段同源，跨档跳变消灭）；
- *  —— 旧「2.5–5.6 中档」降级档早已废除（#98 动物双色块 / #99 人形迷你形）。
- *  #102 半单位艺术层：本函数全部绘制统一 ×0.5 缩放 —— 1 艺术 px = 0.5 用户单位 = 1 烘焙设备 px
- *  = 1/8 地形格（docs 方案 1.1A 官方实测：WorldBox 每格 8 艺术 px、人形 13 px ≈ 1.6 格高）。
- *  旧式未重制精灵立即获得正确比例；#102 重制网格精灵获得双倍密度；色点档尺寸随包装自动减半。 */
+/** 单位本体分发（#93/#99 质感地基后 LOD 三档：zoom<2.5 色点 / 2.5–8 全精灵（动物+人形均走缓存 blit） / ≥8 ×4 精绘）
+ *  —— 旧「2.5–5.6 中档」降级档全废除（#98 动物双色块 / #99 人形迷你形）：默认视野 zoom 4.5 从此是完整像素精灵
+ *  （色点档下限维持 2.5 而非方案的 1.5：1 帧格 = 8 设备 px，<2.5 缩小到亚像素会闪烁摩尔纹） */
 function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], wc: CanvasRenderingContext2D) {
   const zoom = engine.cam.zoom;
   const fc = engine.frameCount;
@@ -2514,20 +2554,16 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
     return;
   }
 
-  // —— #102 半单位艺术层包装（性能：save/translate/scale/restore ×4 每单位 ≈ 百 ns 级）——
-  wc.save();
-  wc.translate(px, py);
-  wc.scale(0.5, 0.5);
-  wc.translate(-px, -py);
+  // —— P0-A 精绘档（zoom≥8）：×4 精细像素精灵 ——
+  if (zoom >= 8 && tryDrawFine(engine, u, def, wc, px, py, king)) return;
 
-  // —— P0-A 色点档（zoom<2.5）：单 rect 国色/族色（超大视野性能保底；×0.5 后色点减半） ——
+  // —— P0-A 色点档（zoom<2.5）：单 rect 国色/族色（超大视野性能保底） ——
   if (zoom < 2.5) {
     if (def.sprite === 'person') {
       const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
       wc.fillStyle = civ && civ.alive ? civ.colorHex : u.hurt > 0 ? '#ff6b5e' : '#9a8460';
       wc.fillRect(px - 1, py - 2, 2, 2);
       if (king) { wc.fillStyle = '#e6ba6c'; wc.fillRect(px - 1, py - 3, 2, 1); }
-      wc.restore();
       return;
     }
     if (!def.vis) {
@@ -2535,7 +2571,6 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
       if (lod) {
         wc.fillStyle = u.hurt > 0 ? '#ff6b5e' : lod[0];
         wc.fillRect(px - (lod[2] >> 1), py - lod[3], lod[2], lod[3]);
-        wc.restore();
         return;
       }
     }
@@ -2549,34 +2584,31 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
     const vc = visCacheFor(u.race, def.vis, def.sprite);
     if (mShape && vc) {
       drawEmergentMonster(wc, u, vc, mShape, fc);
-      wc.restore();
       return;
     }
     if (vc) {
       drawEmergentCreature(wc, u, vc, fc);
-      wc.restore();
       return;
     }
   }
   // —— #93/#99 缓存档：动物与人形一次 drawImage（未命中或不可缓存 → dispatchUnitSprite 真实现直绘） ——
   if (blitCachedSprite(engine, u, def, wc, fc)) {
-    // 国冠/涌现色点画在缓存精灵之外（blit 后补，不进 key 不冻结）—— 艺术px 锚位：头顶描边行 y−12
-    if (king && def.sprite === 'person') drawCrown(wc, px, py - 14);
+    // 国冠/涌现色点画在缓存精灵之外（blit 后补，不进光栅不冻结）
+    if (king && def.sprite === 'person') drawCrown(wc, px, py - 8);
     if (def.dynTint) {
       wc.fillStyle = u.hurt > 0 ? '#ff6b5e' : def.dynTint;
-      wc.fillRect(px, py - 14, 1, 1);
+      wc.fillRect(px, py - 8, 1, 1);
     }
-    wc.restore();
     return;
   }
   dispatchUnitSprite(engine, u, def, wc, fc);
-  // 全绘档国王金冠 + 涌现色点（艺术px 锚位 y−14：14px 身形头顶之上）
-  if (king && def.sprite === 'person') drawCrown(wc, px, py - 14);
+  // P0-A：全绘档国王金冠（人形头顶；#100 新身形头顶描边 y−7 → 冠基 y−8）
+  if (king && def.sprite === 'person') drawCrown(wc, px, py - 8);
+  // 涌现物种标记：动态种化诞生的新物种头顶 1px 突变色点（一眼辨识演化后裔）
   if (def.dynTint) {
     wc.fillStyle = u.hurt > 0 ? '#ff6b5e' : def.dynTint;
-    wc.fillRect(px, py - 14, 1, 1);
+    wc.fillRect(px, py - 8, 1, 1);
   }
-  wc.restore();
 }
 
 /** P0-B：特效粒子「首帧一次性」发射标记（fx() 每次 new 对象 → WeakSet 随特效 GC，零泄漏） */

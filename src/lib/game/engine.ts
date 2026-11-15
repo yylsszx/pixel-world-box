@@ -1,6 +1,6 @@
 // ============ WorldBox Replica — Simulation Engine ============
 import type { Army, ArmyState, Building, CasusKind, Civ, CivBrain, CivDirectiveKind, Cyclone, Directive, DirectiveKind, Effect, EmergentWeapon, FxPrefs, Gene, GroundItem, ItemDef, ItemKind, BloodDecal, CorpseDecal, OverlayMode, RaceDef, RaceId, SaveData, SaveDataV1, SaveDataV2, SoundKind, SpeciesEco, StatsSnapshot, ToastMsg, TriggerCond, TriggerDef, TriggerRow, Unit, WarInfo, WeaponDefense, WeaponDoctrine, WorldEvent, WorldEventKind, WorldLaws, WorldWarState, Alliance, Family } from './types';
-import { T, R, RACES, TRAITS, CIV_RACES, DEFAULT_LAWS, ITEM_DEFS, describeCond, JOBS, JOB_KEY, BUILDING_DEFS, BUILD_KINDS, CAPTURABLE, SLOT_FIELD, SLOT_ORDER, RARITY_META, BEST_BY_SLOT, CASUS_META, RACE_REL_BASE, ALLIANCE_COLORS, WONDERS } from './types';
+import { T, R, RACES, TRAITS, CIV_RACES, DEFAULT_LAWS, ITEM_DEFS, describeCond, JOBS, JOB_KEY, BUILDING_DEFS, BUILD_KINDS, CAPTURABLE, SLOT_FIELD, SLOT_ORDER, RARITY_META, BEST_BY_SLOT, CASUS_META, RACE_REL_BASE, ALLIANCE_COLORS, WONDERS, MOUNTS } from './types';
 import { EVO_KIND_META, applyEmTechMods, describeVis, inventIdea, inventTech, inventTrait, invalidateVisCache, mutateVis, tupleToVis, visFromGene, visToTuple } from './emergence';
 import type { EmModKey, EmTech, EvoKind, EvoNode, IdeaDef, VisGenome } from './emergence';
 import {
@@ -279,6 +279,40 @@ export class GameEngine {
   riverDir = new Uint8Array(W * H);
   /** 河道 tile 索引集合（与 riverDir 同步，渲染时快速迭代） */
   riverTiles = new Set<number>();
+
+  // ---------------- #102 领土可视化（默认视图国界线） ----------------
+  /** 领土版本号：owner 任一变更时 +1（渲染层据此懒重建国界缓存） */
+  territoryVersion = 0;
+  /** 国界缓存版本（-1 = 未初始化，与 territoryVersion 不一致时重扫） */
+  private borderVersion = -1;
+  /** 国界 tile → 领主 civId（与四邻异主的边界格；渲染层每帧迭代此小集合画面界线） */
+  borderTiles = new Map<number, number>();
+
+  /** owner 变更后调用：标记国界缓存过期 */
+  touchTerritory() {
+    this.territoryVersion++;
+  }
+
+  /** 懒重建国界缓存（渲染帧消费：版本不一致才全量重扫 40k 格，正常帧零成本） */
+  ensureBorders() {
+    if (this.borderVersion === this.territoryVersion) return;
+    this.borderVersion = this.territoryVersion;
+    this.borderTiles.clear();
+    for (let y = 0; y < H; y++) {
+      const row = y * W;
+      for (let x = 0; x < W; x++) {
+        const i = row + x;
+        const o = this.owner[i];
+        if (o < 0) continue;
+        // 四邻任一异主（含无主）→ 边界格
+        if (
+          (x > 0 && this.owner[i - 1] !== o) || (x < W - 1 && this.owner[i + 1] !== o) ||
+          (y > 0 && this.owner[i - W] !== o) || (y < H - 1 && this.owner[i + W] !== o)
+        ) this.borderTiles.set(i, o);
+      }
+    }
+  }
+
 
   // ---------------- 深度打磨：水深/道路/贸易 ----------------
   /** 水深分级场：WATER → 0 浅礁/1 近岸/2 开阔；DEEP → 3 陆架/4 深渊（渲染取色分层） */
@@ -1059,6 +1093,7 @@ export class GameEngine {
     if ((isWater(t) || t === T.LAVA) && this.owner[i] >= 0) {
       this.owner[i] = -1;
       this.markDirty(i);
+      this.touchTerritory();
     }
     if ((isWater(t) || t === T.LAVA) && this.building[i] > 0) {
       this.destroyBuilding(i);
@@ -1442,12 +1477,15 @@ export class GameEngine {
       parity: this.unitSeq % 2,
       dead: false,
     };
-    // —— 骑兵（时代深化）：驯马科技后战士 30% 概率跨马从军（速度×1.45 冲锋伤害×1.2 已计入属性；
+    // —— 骑兵（时代深化）：驯马科技后战士 30% 概率跨骑从军（速度/冲锋伤害按坐骑种类计入属性；
     //    Rust 批内核零感知——mount 只是形态标记，属性在出生时算定）——
+    //    #102 多样坐骑：雪原→座狼、密林→驼鹿、沙漠→沙漠驼、其余→战马（各国军容随疆域风土而异）
     if (def.isCiv && civ >= 0 && (tm?.cav ?? 0) > 0 && job === JOB_KEY.warrior && this.rng() < 0.3) {
-      u.mount = 1;
-      u.speed *= 1.45;
-      u.dmg *= 1.2;
+      const mk = this.pickMountKind(x, y, this.rng());
+      const md = MOUNTS[mk];
+      u.mount = mk + 1;
+      u.speed *= md.speedMul;
+      u.dmg *= md.dmgMul;
     }
     this.units.push(u);
     WBB.touchRow(this.units.length - 1); // Stage 3+：新行 meta 列行级增量灌入
@@ -1855,6 +1893,7 @@ export class GameEngine {
     const civ = this.civs[civId];
     if (!civ || !civ.alive) return;
     this.owner[i] = civId;
+    this.touchTerritory();
     // 占领层同步清除（转正/割让/新占都走主权移交，不留虚界残影）
     if (this.occCiv[i] !== -1) { this.occCiv[i] = -1; this.occStr[i] = 0; this.occSet.delete(i); }
     civ.tiles.push(i);
@@ -2817,6 +2856,7 @@ export class GameEngine {
         this.markDirty(i);
       }
     }
+    this.touchTerritory();
     civ.tiles = [];
     civ.frontier = [];
     for (const b of [...this.buildings]) {
@@ -2862,6 +2902,7 @@ export class GameEngine {
       }
     }
     keep.tiles.push(...newTiles);
+    if (newTiles.length > 0) this.touchTerritory();
     gone.tiles = [];
     gone.frontier = [];
     for (const bd of this.buildings) {
@@ -5528,6 +5569,7 @@ export class GameEngine {
           this.owner[i] = toCiv;
           this.civs[toCiv].tiles.push(i);
           this.markDirty(i);
+          this.touchTerritory();
         }
         // 建筑易帜或焚毁
         if (this.building[i] > 0) {
@@ -7082,6 +7124,7 @@ export class GameEngine {
         this.owner[i] = rebel.id;
         rebel.tiles.push(i);
         this.markDirty(i);
+        this.touchTerritory();
       } else {
         keep.push(i);
       }
@@ -7551,6 +7594,19 @@ export class GameEngine {
     if (def.coldBlood && this.nature.season === 3) step *= 0.6;
     // 深度打磨：道路行军加成 — 土路上的军队/商队/平民提速 45%（路网价值）
     if (this.road[idx(Math.floor(u.x), Math.floor(u.y))] > 0) step *= 1.45;
+    // —— #102 领土纪律：深入他国疆土步履迟疑 —— 和平邻邦微滞（×0.92），交战国腹地非战斗单位严重减速（×0.7）
+    //    （个体行为与领土版图从此联动：国界不再只是背景色，而是真实的行为约束）
+    if (u.civ >= 0) {
+      const o = this.owner[idx(Math.floor(u.x), Math.floor(u.y))];
+      if (o >= 0 && o !== u.civ) {
+        const job = u.job ?? 0;
+        if (this.atWar(u.civ, o)) {
+          if (job !== 2 && job !== 3) step *= 0.7; // 战时敌境：平民/农民/商人寸步难行，军队照常推进
+        } else {
+          step *= 0.92; // 和平过境：文书盘查的微滞
+        }
+      }
+    }
     const nx = u.x + (dx / d) * step;
     const ny = u.y + (dy / d) * step;
     if (dx !== 0) u.flip = dx < 0;
@@ -7615,6 +7671,17 @@ export class GameEngine {
       u.tx = Math.max(1, Math.min(W - 2, u.x + (this.rng() * 2 - 1) * 6));
       u.ty = Math.max(1, Math.min(H - 2, u.y + (this.rng() * 2 - 1) * 6));
     }
+  }
+
+  /** #102 群系配坐骑：雪原/冻土→座狼、密林→驼鹿、沙海→沙漠驼、其余→战马 */
+  pickMountKind(x: number, y: number, r: number): number {
+    const cx = Math.max(0, Math.min(W - 1, Math.floor(x)));
+    const cy = Math.max(0, Math.min(H - 1, Math.floor(y)));
+    const t = this.terrain[cy * W + cx];
+    if (t === T.SNOW) return 1; // 座狼（雪原猎手）
+    if (t === T.FOREST) return r < 0.55 ? 2 : 0; // 驼鹿为主（林海巨兽）
+    if (t === T.SAND) return 3; // 沙漠驼（沙海之舟）
+    return 0; // 战马
   }
 
   // ---------------- civs sim ----------------
@@ -7951,9 +8018,11 @@ export class GameEngine {
           if (job === 0 || job === 1 || job === 5) { this.setJob(u, 2); n++; }
         }
       }
-      // territory expansion — 2 tiles per civ every 5 ticks（无人不扩张：无民何以为国）；扩张令期间加速 3 倍
+      // territory expansion —— #102：扩张速率 ∝ 人口（大国拓野快、小国慢——版图与国力同步）
+      // 无人不扩张（无民何以为国）；扩张令期间加速 3 倍
       const expandBoost = this.activeDirective(civ.id, 'expand') ? 3 : 1;
-      if (this.laws.cityGrowth && civ.pop > 0) for (let k = 0; k < 2 * expandBoost; k++) {
+      const claims = (1 + Math.min(3, Math.floor(civ.pop / 15))) * expandBoost; // 1-4 基速 × 令旨倍率
+      if (this.laws.cityGrowth && civ.pop > 0) for (let k = 0; k < claims; k++) {
         if (civ.frontier.length === 0) break;
         const fi = Math.floor(this.rng() * civ.frontier.length);
         const i = civ.frontier[fi];
@@ -15220,6 +15289,11 @@ export class GameEngine {
     else if (kind === BUILD_KINDS.BARRACKS) tier = t.includes('legion') ? 2 : t.includes('iron') ? 1 : 0;
     else if (kind === BUILD_KINDS.TOWER) tier = t.includes('steam') ? 2 : t.includes('fortification') ? 1 : 0;
     else if (kind === BUILD_KINDS.MINE) tier = t.includes('steam') ? 2 : t.includes('mining') ? 1 : 0;
+    // —— #102 建筑进化补全：图书馆/神殿/渔场/城堡四类接通科技升迁链 ——
+    else if (kind === BUILD_KINDS.LIBRARY) tier = t.includes('printing') ? 2 : t.includes('writing') ? 1 : 0;
+    else if (kind === BUILD_KINDS.TEMPLE) tier = t.includes('gothic') ? 2 : t.includes('theology') ? 1 : 0;
+    else if (kind === BUILD_KINDS.FISHERY) tier = t.includes('steam') ? 2 : t.includes('oceanfaring') ? 1 : 0;
+    else if (kind === BUILD_KINDS.CASTLE) tier = t.includes('machinery') ? 2 : t.includes('fortification') ? 1 : 0;
     return tier + this.infCount(civ, 'build');
   }
 
@@ -15233,6 +15307,10 @@ export class GameEngine {
       [BUILD_KINDS.BARRACKS]: ['木营', '要塞营', '军团要塞'],
       [BUILD_KINDS.TOWER]: ['箭塔', '城防塔', '棱堡'],
       [BUILD_KINDS.MINE]: ['露天矿', '深井矿', '蒸汽矿井'],
+      [BUILD_KINDS.LIBRARY]: ['书阁', '藏书楼', '印书馆'],
+      [BUILD_KINDS.TEMPLE]: ['神龛殿', '经院神殿', '哥特大圣殿'],
+      [BUILD_KINDS.FISHERY]: ['渔栈', '远洋渔场', '蒸汽罐头厂'],
+      [BUILD_KINDS.CASTLE]: ['城堡', '棱堡城堡', '炮垒要塞'],
     };
     const arr = names[kind];
     if (!arr) return '';
@@ -15348,48 +15426,60 @@ export class GameEngine {
       this.onSound?.('heal');
       return true;
     }
-    // 沿下降方向蜿蜒行走（加权随机选路 → 自然弯曲的河道）
-    // widthOverride：自然河 genesis 传 0（单宽涓流）；缺省用笔刷宽度
-    const width = widthOverride != null ? widthOverride : Math.max(0, Math.floor((this.brush - 1) / 2)); // 笔刷 1-2 → 1 宽；3-4 → 2 宽；5+ → 3 宽
+    // —— #102 河流重制：坡度引导 + 动量蜿蜒 + 流量累积增宽 + 汇流合并 ——
+    // widthOverride：自然河 genesis 传 0（按流量自适应宽度：源头涓流 → 下游大河）；缺省用笔刷宽度（玩家开凿）
+    const fixedWidth = widthOverride != null && widthOverride > 0 ? widthOverride : null;
+    const widthOfFlow = () => (fixedWidth != null ? fixedWidth : flow < 2.2 ? 0 : flow < 5 ? 1 : flow < 10 ? 2 : 3);
+    let flow = 1.2; // 源头流量（沿途纳雨汇流单调递增 → 河道越下游越宽）
     const visited = new Uint8Array(N);
     let cx = sx, cy = sy;
     let carved = 0;
     let reached = false;
-    for (let steps = 0; steps < 400; steps++) {
+    let pdx = 0, pdy = 0; // 上一步走向（动量项 → 长弯而非碎步抖动）
+    for (let steps = 0; steps < 480; steps++) {
       const i = idx(cx, cy);
       if (visited[i]) break; // 防绕圈
       visited[i] = 1;
-      if (dist[i] === 0) { reached = true; break; } // 已抵达大海
-      // 下一格：所有下降方向邻居按「下降越快权重越高」加权随机（蜿蜒感）
-      // （先选路再刻河：dist 场不受刻蚀影响，且能把流向写进河道格）
+      if (this.riverTiles.has(i)) {
+        // 汇入既有河道（支流合流）：把累积流量沿下游传递 → 干流越汇越宽
+        this.mergeRiverFlow(i, flow);
+        reached = true;
+        break;
+      }
+      if (dist[i] === 0) { reached = true; break; } // 已抵达大海/湖
+      // 下一格评分 = 距水下降 ×2.2 + 海拔下降 ×0.10 + 同向动量 +1.1 + 随机扰动
+      // （海拔项让河真正顺山谷走；动量项制造绵长河曲；扰动防止死板直线）
       const curD = dist[i];
-      const cands: number[] = [];
-      const wts: number[] = [];
+      const curH = this.heightMap[i];
+      let best = -1, bestScore = -Infinity, bdx = 0, bdy = 0;
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           if (dx === 0 && dy === 0) continue;
           const xx = cx + dx, yy = cy + dy;
           if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
           const j = idx(xx, yy);
-          if (dist[j] < 0 || dist[j] >= curD) continue;
-          cands.push(j);
-          wts.push(1 / (1 + (curD - dist[j]) * 0.5)); // 快速下降权重高，但慢绕也有机会 → 蜿蜒
+          if (dist[j] < 0 || dist[j] >= curD) continue; // 只往「更近水」的方向走
+          let s = (curD - dist[j]) * 2.2 + (curH - this.heightMap[j]) * 0.10;
+          if (dx === pdx && dy === pdy) s += 1.1; // 动量：维持走向形成长弯
+          s += this.rng() * 0.9; // 扰动：每条河形态各异
+          if (s > bestScore) { bestScore = s; best = j; bdx = dx; bdy = dy; }
         }
       }
-      if (cands.length === 0) {
+      if (best < 0) {
         // 无下降方向的洼地 → 河到此处积水成湖
-        this.carveLake(cx, cy, Math.max(2, width + 1));
+        this.carveLake(cx, cy, Math.max(2, widthOfFlow() + 1));
         break;
       }
-      let total = 0;
-      for (const w of wts) total += w;
-      let r = this.rng() * total;
-      let pick = cands[0];
-      for (let k = 0; k < cands.length; k++) { r -= wts[k]; if (r <= 0) { pick = cands[k]; break; } }
+      const pick = best;
       const nx = pick % W;
       const ny = (pick / W) | 0;
+      pdx = bdx; pdy = bdy;
+      // 沿途纳雨：湿润流域汇流更快（流量→宽度单调增长）
+      const mIn = this.moistMap ? this.moistMap[pick] / 255 : 0.5;
+      flow += 0.025 + mIn * 0.05;
       const dirCode = encodeRiverDir(nx - cx, ny - cy); // 水流方向 = 行进方向
-      // 刻河道（圆形，绕开山脉），并记录流向（驱动水流动画）
+      // 刻河道（圆形，绕开山脉），并记录流向（驱动水流动画）——宽度随流量增长
+      const width = widthOfFlow();
       for (let dy = -width; dy <= width; dy++) {
         for (let dx = -width; dx <= width; dx++) {
           if (dx * dx + dy * dy > width * width + 0.5) continue;
@@ -15429,13 +15519,48 @@ export class GameEngine {
     return false;
   }
 
+  /** #102 汇流增宽：支流入干流后，把累积流量沿下游河段传递并重刻更宽的河床 */
+  mergeRiverFlow(start: number, addFlow: number) {
+    // 汇入点下游按「原宽度 + 汇入流量档」取宽：小支流只略增，大支流把干流刷宽一档
+    const w = addFlow < 3 ? 1 : addFlow < 8 ? 2 : 3;
+    let i = start;
+    let widened = 0;
+    for (let steps = 0; steps < 420; steps++) {
+      const d = this.riverDir[i];
+      if (d <= 0) break; // 流出河口/断档 → 结束
+      const [ddx, ddy] = RIVER_DIRS[d - 1];
+      const x = (i % W) + ddx;
+      const y = ((i / W) | 0) + ddy;
+      if (x < 0 || y < 0 || x >= W || y >= H) break;
+      const j = idx(x, y);
+      // 重刻更宽河床（幂等：已是水则只补流向；绕山）
+      for (let dy2 = -w; dy2 <= w; dy2++) {
+        for (let dx2 = -w; dx2 <= w; dx2++) {
+          if (dx2 * dx2 + dy2 * dy2 > w * w + 0.5) continue;
+          const xx = x + dx2, yy = y + dy2;
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+          const k = idx(xx, yy);
+          if (this.terrain[k] === T.MOUNTAIN) continue;
+          if (this.terrain[k] !== T.WATER) { this.setTerrain(k, T.WATER); widened++; }
+          if (this.riverDir[k] === 0) this.riverDir[k] = d;
+          this.riverTiles.add(k);
+        }
+      }
+      if (this.terrain[j] !== T.WATER || !this.riverTiles.has(j)) break; // 走出河网 → 结束
+      i = j;
+    }
+    if (widened > 0) this.markDirty(start);
+  }
+
   /** 就地挖一个圆湖（内流湖 / 山间火山口湖），外圈绿洲 */
   carveLake(cx: number, cy: number, r: number) {
     for (let dy = -r - 1; dy <= r + 1; dy++) {
       for (let dx = -r - 1; dx <= r + 1; dx++) {
         const xx = cx + dx, yy = cy + dy;
         if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
-        const d = Math.hypot(dx, dy);
+        // #102 岸线犬牙：哈希抖动半径（-0.4~+0.4）→ 湖缘不再是一个正圆
+        const jit = ((((xx * 73856093) ^ (yy * 19349663)) >>> 0) % 3) * 0.4 - 0.4;
+        const d = Math.hypot(dx, dy) - jit;
         if (d <= r) {
           // 山区点选 → 火山口湖：允许淹没山体
           this.setTerrain(idx(xx, yy), T.WATER);
@@ -17797,7 +17922,7 @@ export class GameEngine {
       if (x > pmaxX) pmaxX = x;
       if (y < pminY) pminY = y;
       if (y > pmaxY) pmaxY = y;
-      propsCtx.clearRect(x * 4 - 2, y * 4 - 5, 9, 11); // #102 树 12×14 艺术 px（冠顶 y−10 → 盒顶 −5 用户）
+      propsCtx.clearRect(x * 4 - 2, y * 4 - 3, 9, 10);
       const tt = this.terrain[i];
       if (tt === T.FOREST) {
         // import lazily to avoid cycle at module load
