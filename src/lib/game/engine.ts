@@ -17399,25 +17399,19 @@ export class GameEngine {
       let r = base[0] + v + tint[0];
       let g = base[1] + v + tint[1];
       let b = base[2] + v + tint[2];
-      // —— 群系边缘融合：软土地形与相邻异色地形做抖动棋盘混合（消除油漆桶硬边界） ——
-      if (SOFT_TERRAIN[t]) {
-        const x = i % W;
-        const y = (i / W) | 0;
-        let nb = -1;
-        if (x > 0 && this.terrain[i - 1] !== t && SOFT_TERRAIN[this.terrain[i - 1]]) nb = this.terrain[i - 1];
-        else if (x < W - 1 && this.terrain[i + 1] !== t && SOFT_TERRAIN[this.terrain[i + 1]]) nb = this.terrain[i + 1];
-        else if (y > 0 && this.terrain[i - W] !== t && SOFT_TERRAIN[this.terrain[i - W]]) nb = this.terrain[i - W];
-        else if (y < H - 1 && this.terrain[i + W] !== t && SOFT_TERRAIN[this.terrain[i + W]]) nb = this.terrain[i + W];
-        if (nb >= 0 && ((this.variant[i] + x + y) & 1) === 0) {
-          // 硬群系过渡（沙↔草、雪↔草）：中间色 50/50 混出更宽的渐变带；其余软地形维持 32% 轻融
-          const hardPair = (t === T.GRASS && (nb === T.SAND || nb === T.SNOW))
-            || (t === T.SAND && nb === T.GRASS) || (t === T.SNOW && nb === T.GRASS);
-          const a = hardPair ? 0.5 : 0.32;
-          const bc = TERRAIN_RGB[nb];
-          r = r * (1 - a) + bc[0] * a;
-          g = g * (1 - a) + bc[1] * a;
-          b = b * (1 - a) + bc[2] * a;
-        }
+      // —— 群系边缘融合（#100 去方块化重做）：旧版 tile 级棋盘混色整格发糊；
+      // 新版只挑出一个异色软地邻侧，在 8×8 子像素循环里做 3px 有机抖动过渡
+      // （交错像素 = 商业像素游戏的群系缝合线，WorldBox 同款语言）。雪相关
+      // 过渡由下方雪被有机遮罩独立承担，此处跳过，避免双重处理。
+      let nbSoftColor: [number, number, number] | null = null;
+      let nbSoftSide = 0; // 1=L 2=R 3=T 4=B
+      if (SOFT_TERRAIN[t] && t !== T.SNOW) {
+        let nb = -1, side = 0;
+        if (tx > 0 && this.terrain[i - 1] !== t && SOFT_TERRAIN[this.terrain[i - 1]] && this.terrain[i - 1] !== T.SNOW) { nb = this.terrain[i - 1]; side = 1; }
+        else if (tx < W - 1 && this.terrain[i + 1] !== t && SOFT_TERRAIN[this.terrain[i + 1]] && this.terrain[i + 1] !== T.SNOW) { nb = this.terrain[i + 1]; side = 2; }
+        else if (ty > 0 && this.terrain[i - W] !== t && SOFT_TERRAIN[this.terrain[i - W]] && this.terrain[i - W] !== T.SNOW) { nb = this.terrain[i - W]; side = 3; }
+        else if (ty < H - 1 && this.terrain[i + W] !== t && SOFT_TERRAIN[this.terrain[i + W]] && this.terrain[i + W] !== T.SNOW) { nb = this.terrain[i + W]; side = 4; }
+        if (nb >= 0) { nbSoftColor = TERRAIN_RGB[nb]; nbSoftSide = side; }
       }
       // —— 坡向明暗（hillshade）：西北邻高 → 本格背光压暗；东南邻高 → 本格受光提亮（烘焙零稳态开销） ——
       if (t === T.HILL || t === T.MOUNTAIN) {
@@ -17468,6 +17462,32 @@ export class GameEngine {
       const by = ty * 8;
       const r0 = r | 0, g0 = g | 0, b0 = b | 0;
       const hsh = (this.variant[i] * 2654435761 + i * 97) >>> 0;
+      // —— #100 去方块化：雪被/森林的邻接分析（一次算好，子像素循环内查表） ——
+      // 裸地：会从雪被下露出来的地面群系（雪同类 = 雪/冰/山体雪冠，视为连续雪原）
+      const bareLand = (tt: number) => tt === T.GRASS || tt === T.FOREST || tt === T.SAND || tt === T.HILL || tt === T.SWAMP || tt === T.BURNT;
+      const tL = tx > 0 ? this.terrain[i - 1] : -1;
+      const tR = tx < W - 1 ? this.terrain[i + 1] : -1;
+      const tT = ty > 0 ? this.terrain[i - W] : -1;
+      const tB = ty < H - 1 ? this.terrain[i + W] : -1;
+      const tTL = tx > 0 && ty > 0 ? this.terrain[i - W - 1] : -1;
+      const tTR = tx < W - 1 && ty > 0 ? this.terrain[i - W + 1] : -1;
+      const tBL = tx > 0 && ty < H - 1 ? this.terrain[i + W - 1] : -1;
+      const tBR = tx < W - 1 && ty < H - 1 ? this.terrain[i + W + 1] : -1;
+      const snowHere = t === T.SNOW;
+      // 雪被边缘：本格是雪、某侧是裸地 → 该侧雪被参差收边（露出邻侧地色）
+      const snowEdge = snowHere && (bareLand(tL) || bareLand(tR) || bareLand(tT) || bareLand(tB)
+        || bareLand(tTL) || bareLand(tTR) || bareLand(tBL) || bareLand(tBR));
+      // 雪缘楔入：本格是裸地/森林、某正侧是雪 → 雪被向本格不规则伸入 2-3px
+      const bleedL = !snowHere && bareLand(t) && tL === T.SNOW;
+      const bleedR = !snowHere && bareLand(t) && tR === T.SNOW;
+      const bleedT = !snowHere && bareLand(t) && tT === T.SNOW;
+      const bleedB = !snowHere && bareLand(t) && tB === T.SNOW;
+      const snowBleed = bleedL || bleedR || bleedT || bleedB;
+      // 森林去方块：森林地面 = 草底 + 2×2 块状树冠荫（有机斑块，拒整格深绿方块）
+      const forestFloor = t === T.FOREST;
+      const fgR = TERRAIN_RGB[T.GRASS][0] + v + tint[0], fgG = TERRAIN_RGB[T.GRASS][1] + v + tint[1], fgB = TERRAIN_RGB[T.GRASS][2] + v + tint[2];
+      // 雪被色（雪舌楔入裸地时使用：邻格的雪被颜色，非本格底色）
+      const snR = TERRAIN_RGB[T.SNOW][0] + v + tint[0] | 0, snG = TERRAIN_RGB[T.SNOW][1] + v + tint[1] | 0, snB = TERRAIN_RGB[T.SNOW][2] + v + tint[2] | 0;
       // 8×8 平涂底色：大片平涂保留「干净」基调；草地/森林/沙地叠加确定性哈希 2 值细噪点
       // （~15% 密度、±2 亮度，按子像素位置哈希 → 同格重绘结果一致）—— 低幅大地肌理
       const fineNoise = t === T.GRASS || t === T.FOREST || t === T.SAND;
@@ -17475,9 +17495,57 @@ export class GameEngine {
         let off = ((by + sy) * WBW + bx) * 4;
         for (let sx = 0; sx < 8; sx++, off += 4) {
           let pr = r0, pg = g0, pb = b0;
+          // (a) 森林地被：草底 + 树冠荫斑块（2×2 子像素块，密度 58% → 远看仍是森林、近看是草与荫）
+          if (forestFloor) {
+            const pn = ((hsh ^ Math.imul(((sy >> 1) << 3) | (sx >> 1), 2246822519)) >>> 10) % 100;
+            if (pn < 58) { pr = r0; pg = g0; pb = b0; } else { pr = fgR | 0; pg = fgG | 0; pb = fgB | 0; }
+          }
           if (fineNoise) {
             const nz = ((hsh ^ Math.imul((sy << 3) | sx, 2246822519)) >>> 10) % 20;
             if (nz < 3) { const d = (nz & 1) === 0 ? 2 : -2; pr += d; pg += d; pb += d; }
+          }
+          // (b) 雪被有机遮罩：深度场（到裸地侧的子像素距离，含斜角圆角）+ 哈希扰动 → 参差雪缘
+          if (snowEdge) {
+            let depth = 99;
+            let gr = 104, gg = 152, gb = 60; // 兜底草色
+            if (bareLand(tL)) { const d = sx + 1; if (d < depth) { depth = d; const c = TERRAIN_RGB[tL]; gr = c[0]; gg = c[1]; gb = c[2]; } }
+            if (bareLand(tR)) { const d = 8 - sx; if (d < depth) { depth = d; const c = TERRAIN_RGB[tR]; gr = c[0]; gg = c[1]; gb = c[2]; } }
+            if (bareLand(tT)) { const d = sy + 1; if (d < depth) { depth = d; const c = TERRAIN_RGB[tT]; gr = c[0]; gg = c[1]; gb = c[2]; } }
+            if (bareLand(tB)) { const d = 8 - sy; if (d < depth) { depth = d; const c = TERRAIN_RGB[tB]; gr = c[0]; gg = c[1]; gb = c[2]; } }
+            // 斜角裸地：对角距离加权 → 角部自然圆润（雪被不吃直角）
+            if (bareLand(tTL)) { const d = (sx + sy + 2) * 0.75; if (d < depth) { depth = d; const c = TERRAIN_RGB[tTL]; gr = c[0]; gg = c[1]; gb = c[2]; } }
+            if (bareLand(tTR)) { const d = ((7 - sx) + sy + 2) * 0.75; if (d < depth) { depth = d; const c = TERRAIN_RGB[tTR]; gr = c[0]; gg = c[1]; gb = c[2]; } }
+            if (bareLand(tBL)) { const d = (sx + (7 - sy) + 2) * 0.75; if (d < depth) { depth = d; const c = TERRAIN_RGB[tBL]; gr = c[0]; gg = c[1]; gb = c[2]; } }
+            if (bareLand(tBR)) { const d = ((7 - sx) + (7 - sy) + 2) * 0.75; if (d < depth) { depth = d; const c = TERRAIN_RGB[tBR]; gr = c[0]; gg = c[1]; gb = c[2]; } }
+            const nz2 = ((hsh ^ Math.imul((sy << 3) | sx, 374761393)) >>> 10) % 100 / 100;
+            const cov = depth + nz2 * 4.4 - 2.2; // 覆盖度：≤0 全露地 / 0~2 参差过渡 / >2 满雪
+            const grv = gr + v, ggv = gg + v, gbv = gb + v;
+            if (cov < 0.6) { pr = grv | 0; pg = ggv | 0; pb = gbv | 0; }
+            else if (cov < 2.2) { pr = (pr + grv) >> 1; pg = (pg + ggv) >> 1; pb = (pb + gbv) >> 1; }
+          }
+          // (c) 雪缘楔入：邻格雪被向本格裸地伸出 2-3px 参差雪舌
+          if (snowBleed) {
+            let depth = 99;
+            if (bleedL) depth = Math.min(depth, sx);
+            if (bleedR) depth = Math.min(depth, 7 - sx);
+            if (bleedT) depth = Math.min(depth, sy);
+            if (bleedB) depth = Math.min(depth, 7 - sy);
+            const nz3 = ((hsh ^ Math.imul((sy << 3) | sx, 668265263)) >>> 10) % 100 / 100;
+            const cov = 2.6 - depth + nz3 * 2.4 - 1.2; // ≥1.6 满雪舌 / 0.4~1.6 半透雪
+            if (cov >= 1.6) { pr = snR; pg = snG; pb = snB; }
+            else if (cov > 0.4) { pr = (pr + snR) >> 1; pg = (pg + snG) >> 1; pb = (pb + snB) >> 1; }
+          }
+          // (d) 软地形有机过渡：邻侧异色软地 → 近边 3px 依深度概率交错混入邻色
+          if (nbSoftColor) {
+            const d = nbSoftSide === 1 ? sx : nbSoftSide === 2 ? 7 - sx : nbSoftSide === 3 ? sy : 7 - sy;
+            if (d < 3) {
+              const nz4 = ((hsh ^ Math.imul((sy << 3) | sx, 2654435761)) >>> 10) % 100 / 100;
+              if (nz4 < (3 - d) / 3 * 0.85) {
+                pr = (pr + nbSoftColor[0] + v) >> 1;
+                pg = (pg + nbSoftColor[1] + v) >> 1;
+                pb = (pb + nbSoftColor[2] + v) >> 1;
+              }
+            }
           }
           data[off] = pr;
           data[off + 1] = pg;

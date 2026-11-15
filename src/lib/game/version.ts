@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.88-preview';
+export const GAME_VERSION = 'v0.89-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.89-preview',
+    date: '2026-11-15',
+    items: [
+      '地形覆盖物去方块化（WorldBox 对标第一笔）：雪被不再是整格白方块——贴草地/沙地一侧的雪缘变为参差收边，角部自然圆润，雪下会露出真实地色',
+      '雪缘楔入：雪原边界向草地伸出 2-3 像素的不规则雪舌，雪草交界从直线变成有机过渡带',
+      '森林地面去方块：整格深绿方块改为草底 + 树冠荫斑块混合，森林读作「草地上长着树」而非「一块绿色地毯」',
+      '群系交界升级：草地/沙地/丘陵/沼泽等软地形交界从棋盘格混色升级为 3 像素有机抖动过渡（商业像素游戏的群系缝合线语言）',
+    ],
+  },
   {
     ver: 'v0.88-preview',
     date: '2026-11-15',
