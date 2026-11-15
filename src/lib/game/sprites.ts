@@ -2,6 +2,7 @@
 import type { Building, Effect, GroundItem, ItemKind, Unit } from './types';
 import { T, R, RACES, JOBS, MOUNTS } from './types';
 import { shiftColor, shiftRgb, visCacheFor, type VisCache } from './emergence';
+import { blitSprite } from './spriteRuntime';
 import { PAL, INFECTED_RGB } from './palette';
 
 const rgb = (c: [number, number, number]) => `rgb(${c[0]},${c[1]},${c[2]})`;
@@ -392,6 +393,85 @@ function paintBootsFine(ctx: CanvasRenderingContext2D, u: Unit, fx: number, dy: 
  * 强盗兜帽、僵尸前伸双臂、蜥蜴人吻部与摆尾、哥布林大耳）/ 呼吸起伏 / 挥击姿势。
  * 适用种族：人类/精灵/矮人/兽人/强盗/僵尸/蜥蜴人/哥布林。
  */
+
+// ============ #104 开源素材贴图层（Dawnlike CC-BY 4.0 + Kenney CC0）============
+// fast path 原则 = atlas 未就绪/特殊姿态（睡/骑乘/乘船/巨人）→ 返回 false 完整回落
+// 远端程序化精绘（#98~#103 半单位重制）作为兜底与涌现物种通道保留 —— 双路线并存。
+// 坐标约定：与各宿主函数同坐标系（人形/动物 = 用户单位 px；建筑/树 = 4px/格内部坐标，
+// render 层 scale(0.5) 包裹由 blit scale:2 补偿）。精灵光栅缓存自动继承贴图输出
+// （atlasEpoch 纪元闸保证就绪后缓存整体失效，见 render.ts）。
+
+/** 职业 → Dawnlike Player 帧表（peasant/farmer/warrior/archer/builder/merchant/miner/noble/king） */
+const JOB_SPRITES: Record<number, string> = {
+  0: 'p_peasant', 1: 'p_farmer', 2: 'p_warrior', 3: 'p_archer',
+  4: 'p_builder', 5: 'p_merchant', 6: 'p_miner', 7: 'p_noble', 8: 'p_king',
+};
+
+/** 动物物种 sprite 键 → atlas 帧名 */
+const UNIT_SPRITE_ATLAS: Record<string, string> = {
+  sheep: 'q_sheep', wolf: 'q_wolf', snowwolf: 'q_snowwolf', bear: 'q_bear',
+  deer: 'q_deer', camel: 'q_camel', pig: 'f_pig', rabbit: 'q_rabbit',
+  fox: 'q_fox', chicken: 'f_chicken', penguin: 'a_penguin', snake: 'r_snake',
+  fish: 'a_fish', crab: 'a_crab', turtle: 'a_turtle', shark: 'a_shark',
+  skeleton: 'u_skeleton', horse: 'q_horse',
+};
+
+/** 人形单位帧选择：国王/僵尸/种族优先，其余按职业换装（WorldBox「换装即换帧」） */
+function blitPersonFrame(
+  wc: CanvasRenderingContext2D, u: Unit, civColor: [number, number, number] | null,
+  px: number, py: number, step: number,
+): boolean {
+  let name: string;
+  if (u.king) name = 'p_king';
+  else if (u.race === R.ZOMBIE) name = 'u_zombie';
+  else if (u.race === R.BANDIT) name = 'p_bandit';
+  else if (u.race === R.MAGE) name = 'p_mage';
+  else if (u.race === R.GOBLIN) name = 'p_goblin';
+  else if (u.race === R.DWARF) name = 'p_dwarf';
+  else if (u.race === R.ORC) name = 'p_orc';
+  else if (u.race === R.LIZARD) name = 'p_lizard';
+  else if (u.race === R.ELF) name = 'p_elf';
+  else name = JOB_SPRITES[u.job ?? 0] ?? 'p_peasant';
+  return blitSprite(wc, name, px, py, {
+    frame: step, flip: u.flip,
+    tint: name === 'p_king' ? null : civColor, // 国王金冠华袍不染（染色吞王冠）
+    hurt: u.hurt > 0, shadow: true,
+  });
+}
+
+/** 建筑贴图（Kenney RTS Medieval）：kind → 三档 tier 换装；render 层 ×0.5 由 scale 2 补偿 */
+const BUILDING_SPRITE_ATLAS: Record<number, string[]> = {
+  1: ['b_house', 'b_house_g', 'b_barn'],
+  2: ['b_capital', 'b_castle', 'b_castle'],
+  3: ['b_tower', 'b_tower', 'b_barracks'],
+  4: ['f_row', 'f_wheat0', 'f_wheat1'],
+  5: ['b_barracks', 'b_barracks', 'b_barracks'],
+  6: ['b_castle', 'b_castle', 'b_castle'],
+  8: ['b_library', 'b_library', 'b_library'],
+  9: ['b_market', 'b_market', 'b_market'],
+  10: ['b_temple', 'b_temple', 'b_temple'],
+  12: ['b_house_g', 'b_house_g', 'b_house_g'],
+  18: ['b_mine', 'b_mine', 'b_mine'],
+};
+
+function blitBuildingAtlas(wc: CanvasRenderingContext2D, b: Building, tier: number): boolean {
+  const list = BUILDING_SPRITE_ATLAS[b.kind];
+  if (!list) return false;
+  const name = list[Math.min(2, Math.max(0, tier))];
+  // 内部 4px/格坐标（外层 scale 0.5 → 屏幕 2px/格）：32 内部px = 16 用户px ≈ WB 房 2×2 格
+  return blitSprite(wc, name, b.x * 4 + 2, b.y * 4 + 10, { scale: 2 });
+}
+
+/** 树贴图：variant 群落 × season 季相（冬秃/夏松保留程序化枝干形态） */
+function blitTreeAtlas(wc: CanvasRenderingContext2D, x: number, y: number, variant: number, season: number): boolean {
+  if (season === 3) return false;
+  const names = season === 2
+    ? ['t_autumn', 't_autumn2', 't_oak2', 't_autumn']
+    : ['t_oak', 't_oak2', 't_pine', 't_oak3', 't_pine3', 't_bush'];
+  const name = names[variant % names.length];
+  return blitSprite(wc, name, x * 4 + 2, y * 4 + 2 + 7, { scale: 2 });
+}
+
 export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [number, number, number] | null, t = 0, armLv = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
@@ -408,6 +488,10 @@ export function drawPerson(ctx: CanvasRenderingContext2D, u: Unit, civColor: [nu
   const bob = isMoving && step === 1 ? 1 : 0;
   const breath = !isMoving && ((t >> 4) & 1) === 1 ? 1 : 0;
   const y = py - bob - breath;
+  // —— #104 贴图 fast path：Dawnlike 职业帧 + 王国色染色；特殊姿态回落程序化精绘 ——
+  if (!u.sleep && !u.mount && !u.boat && u.trait !== 'giant') {
+    if (blitPersonFrame(ctx, u, civColor, px, py, step)) return;
+  }
 
   // 衣布配色：蜥蜴人/哥布林无王国时着本族衣；文明单位披王国色
   let cloth: [number, number, number];
@@ -1049,6 +1133,7 @@ function paintJobBadge(ctx: CanvasRenderingContext2D, u: Unit, px: number, jY: n
 export function drawHorse(ctx: CanvasRenderingContext2D, u: Unit, t = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'q_horse', px, py, { frame: ((t >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const f = u.flip ? -1 : 1;
   const isMoving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
   const step = isMoving ? ((t >> 2) & 1) : 0;
@@ -1417,6 +1502,7 @@ const PERSON_GRID_WIDE_M = mirrorGrid(PERSON_GRID_WIDE);
 export function drawSheep(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'q_sheep', px, py, { frame: ((fc >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const hurt = u.hurt > 0;
   const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
   const step = moving ? (fc >> 3) & 1 : 0;
@@ -1444,6 +1530,7 @@ export function drawSheep(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
 export function drawWolf(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'q_wolf', px, py, { frame: ((fc >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const hurt = u.hurt > 0;
   const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
   const step = moving ? (fc >> 3) & 1 : 0;
@@ -1471,6 +1558,7 @@ export function drawWolf(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
 export function drawSnowWolf(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'q_snowwolf', px, py, { frame: ((fc >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const hurt = u.hurt > 0;
   const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
   const step = moving ? (fc >> 3) & 1 : 0;
@@ -1496,6 +1584,7 @@ export function drawSnowWolf(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
 export function drawBear(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'q_bear', px, py, { frame: ((fc >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const hurt = u.hurt > 0;
   const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
   const step = moving ? (fc >> 3) & 1 : 0;
@@ -1558,7 +1647,9 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
   const sway = ((fc >> 4) & 1) === 0 ? 0 : 1; // 16 帧一换的麦浪相位
   const px = b.x * 4 - 4;
   const py = b.y * 4 - 8;
-  // —— 超限纪元（无限演化可视化）：阶位 > 2 = 超限建筑——顶空悬浮光环（色环随阶位无限循环 + 呼吸）——
+  // —— #104 贴图 fast path（Kenney RTS Medieval 建筑，scale2 对冲 render 层 ×0.5）——
+  if (tier <= 2 && blitBuildingAtlas(ctx, b, tier)) return;
+    // —— 超限纪元（无限演化可视化）：阶位 > 2 = 超限建筑——顶空悬浮光环（色环随阶位无限循环 + 呼吸）——
   if (tier > 2) {
     const aura = INF_AURA[(tier - 3) % INF_AURA.length];
     const pulse = ((fc >> 4) & 1) === 0;
@@ -2794,6 +2885,7 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
 export function drawDeer(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'q_deer', px, py, { frame: ((fc >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const hurt = u.hurt > 0;
   const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
   const step = moving ? (fc >> 3) & 1 : 0;
@@ -2818,6 +2910,7 @@ export function drawDeer(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
 export function drawPenguin(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'a_penguin', px, py, { frame: ((frame >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   // 蹒跚步态：身体每 6 帧上下 1px
   const bob = Math.floor(frame / 6) % 2 === 0 ? 0 : 1;
   const y = py - bob;
@@ -2838,6 +2931,7 @@ export function drawPenguin(ctx: CanvasRenderingContext2D, u: Unit, frame: numbe
 export function drawCamel(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'q_camel', px, py, { frame: ((frame >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const f = u.flip ? -1 : 1;
   // 行走起伏：每 8 帧身体下沉 1px
   const bob = Math.floor(frame / 8) % 2 === 0 ? 0 : 1;
@@ -2896,6 +2990,7 @@ export function drawScorpion(ctx: CanvasRenderingContext2D, u: Unit, frame: numb
 export function drawSnake(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'r_snake', px, py, { frame: ((frame >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const f = u.flip ? -1 : 1;
   // 蛇行相位：身体各节随帧交替升降 → S 形波动的滑行感
   const ph = Math.floor(frame / 5) % 4; // 0..3 循环
@@ -3160,6 +3255,7 @@ export function drawCaravan(ctx: CanvasRenderingContext2D, u: Unit, civColor: [n
 export function drawSkeleton(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'u_skeleton', px, py, { frame: ((frame >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const f = u.flip ? -1 : 1;
   const isMoving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
   const step = isMoving ? ((frame >> 2) & 1) : 0;
@@ -4250,6 +4346,8 @@ export function drawTree(ctx: CanvasRenderingContext2D, x: number, y: number, va
   // 三层圆冠 + 1px 描边 + 受光高光 + 双像素树干 + 根影；四季四貌 + 变体种群。
   const cx = x * 4 + 2; // 格中心（用户单位）
   const cy = y * 4 + 2;
+  // —— #104 贴图 fast path（Dawnlike/Kenney 树精灵，scale2 对冲 render 层 ×0.5）——
+  if (blitTreeAtlas(ctx, x, y, variant, season)) return;
   const dark = variant % 3 === 0;
   // 根部阴影（所有季节共有 —— 树"站"在地上）
   ctx.fillStyle = 'rgba(0,0,0,0.22)';
@@ -5347,6 +5445,7 @@ export function drawQuadFine(ctx: CanvasRenderingContext2D, u: Unit, kind: 'wolf
 export function drawChicken(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'f_chicken', px, py, { frame: ((frame >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const f = u.flip ? -1 : 1;
   const hurt = u.hurt > 0;
   const body = hurt ? '#ff6b5e' : u.infected ? '#b8e2b4' : '#f6f1e4';
@@ -5380,6 +5479,7 @@ export function drawChicken(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
 export function drawPig(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'f_pig', px, py, { frame: ((frame >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const f = u.flip ? -1 : 1;
   const hurt = u.hurt > 0;
   const body = hurt ? '#ff6b5e' : u.infected ? '#b8e2b4' : '#e8a8a0';
@@ -5415,6 +5515,7 @@ export function drawPig(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
 export function drawRabbit(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'q_rabbit', px, py, { frame: ((frame >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const f = u.flip ? -1 : 1;
   const hurt = u.hurt > 0;
   const body = hurt ? '#ff6b5e' : u.infected ? '#b8e2b4' : '#b8b0a4';
@@ -5450,6 +5551,7 @@ export function drawRabbit(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
 export function drawFox(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'q_fox', px, py, { frame: ((frame >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const f = u.flip ? -1 : 1;
   const hurt = u.hurt > 0;
   const body = hurt ? '#ff6b5e' : u.infected ? '#b8e2b4' : '#d97b3c';
@@ -5486,6 +5588,7 @@ export function drawFox(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
 export function drawFish(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'a_fish', px, py, { frame: ((frame >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const f = u.flip ? -1 : 1;
   const hurt = u.hurt > 0;
   const jp = (frame + u.id * 13) % 260;
@@ -5516,6 +5619,7 @@ export function drawFish(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
 export function drawCrab(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'a_crab', px, py, { frame: ((frame >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const hurt = u.hurt > 0;
   const body = hurt ? '#ff6b5e' : u.infected ? '#b8e2b4' : '#d94a3a';
   // 步足 ×3（暗红；两侧交替 —— 横行步态）
@@ -5544,6 +5648,7 @@ export function drawCrab(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
 export function drawTurtle(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'a_turtle', px, py, { frame: ((frame >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const f = u.flip ? -1 : 1;
   const hurt = u.hurt > 0;
   const shell = hurt ? '#ff6b5e' : u.infected ? '#b8e2b4' : '#4a7a3a';
@@ -5576,6 +5681,7 @@ export function drawTurtle(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
 export function drawShark(ctx: CanvasRenderingContext2D, u: Unit, frame = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  if (blitSprite(ctx, 'a_shark', px, py, { frame: ((frame >> 3) & 1), flip: u.flip, shadow: true, hurt: u.hurt > 0 })) return;
   const hurt = u.hurt > 0;
   const fin = hurt ? '#ff6b5e' : '#5a6a78';
   // 背鳍（露出水面的三角：鳍柱 + 后坡）

@@ -2,6 +2,7 @@
 import type { Army, Effect, Unit } from './types';
 import { ITEM_DEFS } from './items';
 import { T, R, RACES } from './types';
+import { ensureAtlas, atlasEpoch } from './spriteRuntime';
 import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawHydra, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster, drawChicken, drawPig, drawRabbit, drawFox, drawFish, drawCrab, drawTurtle, drawShark, drawHorse, drawEagle, drawPlane } from './sprites';
 import { visCacheFor } from './emergence';
 import { BUILDING_DEFS, BUILD_KINDS } from './types';
@@ -1255,6 +1256,7 @@ function drawBolts(engine: GameEngine, wc: CanvasRenderingContext2D, x0: number,
 }
 
 export function render(engine: GameEngine, ctx: CanvasRenderingContext2D, cw: number, ch: number) {
+  ensureAtlas(); // #104 开源素材 atlas 单次异步加载（就绪前程序化精绘兜底）
   engine.flushDirty();
   engine.flushProps();
 
@@ -2313,6 +2315,7 @@ interface SpriteRaster {
 }
 
 const spriteCache = new Map<string, SpriteRaster>();
+let spriteCacheEpochGate = 0; // #104 atlas 纪元闸（初始 0：atlas 未就绪期允许缓存程序化版本作为降级档）
 
 /** 缓存仪表（PerfHud 直读）：条目数 / 命中 / 未命中 */
 export const spriteCacheStats = { entries: 0, hits: 0, misses: 0 };
@@ -2421,6 +2424,13 @@ function blitCachedSprite(engine: GameEngine, u: Unit, def: (typeof RACES)[numbe
     key = `${sprite}|${phaseFn(fc, u)}|${moving ? 1 : 0}|${u.flip ? 1 : 0}|${u.hurt > 0 ? 1 : 0}|${u.infected ? 1 : 0}`
       + (sprite === 'skeleton' ? `|${u.wep ?? '-'}|${(u.atk ?? 0) > 0 ? 1 : 0}` : '');
     cw = SPRC_W; ch = SPRC_H; cax = SPRC_AX; cay = SPRC_AY;
+  }
+  // #104 atlas 纪元闸：atlas 就绪（epoch 自增）即全缓存失效——否则未就绪期光栅的
+  // 程序化版本会被相位稳定的 key 永久锁定（人形静止 2 相位在数十秒内全部完成光栅，
+  // 此后永远命中旧版；动物因相位更多而自愈——实锤 bug 修复）
+  if (spriteCacheEpochGate !== atlasEpoch.n) {
+    spriteCacheEpochGate = atlasEpoch.n;
+    if (atlasEpoch.n > 0) spriteCache.clear();
   }
   let e = spriteCache.get(key);
   const hit = !!e;
