@@ -80,7 +80,7 @@ export class NatureSystem {
   seasonOffset = 0;
 
   // ---- 计数与纪事 ----
-  counters = { quakes: 0, quakesBig: 0, eruptions: 0, uplifts: 0, erosions: 0, cyclones: 0, tsunamis: 0, floods: 0, blizzards: 0, droughts: 0 };
+  counters = { quakes: 0, quakesBig: 0, eruptions: 0, uplifts: 0, erosions: 0, cyclones: 0, tsunamis: 0, floods: 0, blizzards: 0, droughts: 0, sprouts: 0, regrows: 0, desertified: 0 };
   recentQuakes: { x: number; y: number; m: number; year: number }[] = [];
 
   constructor(eng: GameEngine, seed: number) {
@@ -123,7 +123,7 @@ export class NatureSystem {
     this.storms = [];
     this.stormSeq = 1;
     this.plateEpoch = 0;
-    this.counters = { quakes: 0, quakesBig: 0, eruptions: 0, uplifts: 0, erosions: 0, cyclones: 0, tsunamis: 0, floods: 0, blizzards: 0, droughts: 0 };
+    this.counters = { quakes: 0, quakesBig: 0, eruptions: 0, uplifts: 0, erosions: 0, cyclones: 0, tsunamis: 0, floods: 0, blizzards: 0, droughts: 0, sprouts: 0, regrows: 0, desertified: 0 };
     this.recentQuakes = [];
   }
 
@@ -888,6 +888,63 @@ export class NatureSystem {
     // 余震：残留应力小幅释放
     if (m >= 6 && eng.rng() < 0.4) {
       for (const j of zapped) if (eng.rng() < 0.3) this.stress[j] = ep('nature.quakeStress') * 0.4 * eng.rng();
+    }
+  }
+
+  // ---------------- 植被演替（#101：植被不再是死的摆设；每 600 tick ≈ 15 年） ----------------
+  /** 三条活性机制：①森林演替扩张（湿润草地邻林成林，季节调制）②焦土缓慢复苏
+   *  ③荒漠边缘龟进（干热草地贴沙退化）。全部采样式扫描（随机抽格判定）——
+   *  O(采样数) 而非 O(全图)，与 geologyTick 同 cadence 错峰（41 相位）。 */
+  vegetationTick() {
+    const eng = this.eng;
+    // 季节演替系数：春 1.7（万物生长）/ 夏 1.1 / 秋 0.7 / 冬 0.15（近乎休眠）
+    const seasonMul = this.season === 0 ? 1.7 : this.season === 1 ? 1.1 : this.season === 2 ? 0.7 : 0.15;
+    const regrow = this.regrowMul();
+    // ① 森林演替：随机采样 96 格 —— 湿润（moist≥138）+ 邻林 ≥2 的草地逐渐成林
+    for (let k = 0; k < 96; k++) {
+      const i = Math.floor(eng.rng() * W * H);
+      if (i < 0 || i >= W * H) continue;
+      if (eng.terrain[i] !== T.GRASS) continue;
+      if (eng.building[i] > 0 || eng.road[i] > 0 || eng.radiate[i] > 0) continue;
+      if (eng.moistMap[i] < 138) continue;
+      const x = i % W, y = (i / W) | 0;
+      let forest = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+        if (eng.terrain[yy * W + xx] === T.FOREST) forest++;
+      }
+      if (forest < 2) continue;
+      // 郁闭负反馈：四周全是林时减半（防整片大陆被森林吞没）；荒斑期(植被复苏压制)同步放缓
+      const p = ep('nature.sproutP') * seasonMul * (forest >= 7 ? 0.45 : 1) * regrow;
+      if (eng.rng() < p) { eng.setTerrain(i, T.FOREST); this.counters.sprouts++; }
+    }
+    // ② 焦土复苏：随机采样 48 格 —— 火灾疤痕随年代缓慢返青（此前只有降雨神迹能救）
+    for (let k = 0; k < 48; k++) {
+      const i = Math.floor(eng.rng() * W * H);
+      if (i < 0 || i >= W * H) continue;
+      if (eng.terrain[i] !== T.BURNT) continue;
+      if (eng.building[i] > 0 || eng.road[i] > 0) continue;
+      if (eng.rng() < ep('nature.regrowP') * regrow) { eng.setTerrain(i, T.GRASS); this.counters.regrows++; }
+    }
+    // ③ 荒漠龟进：随机采样 48 格 —— 干热（moist<75 且 temp>168）+ 贴沙 ≥3 的草地缓慢沙化
+    for (let k = 0; k < 48; k++) {
+      const i = Math.floor(eng.rng() * W * H);
+      if (i < 0 || i >= W * H) continue;
+      if (eng.terrain[i] !== T.GRASS) continue;
+      if (eng.building[i] > 0 || eng.road[i] > 0) continue;
+      if (eng.moistMap[i] >= 75 || eng.tempMap[i] <= 168) continue;
+      const x = i % W, y = (i / W) | 0;
+      let sand = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+        if (eng.terrain[yy * W + xx] === T.SAND) sand++;
+      }
+      if (sand < 3) continue;
+      if (eng.rng() < ep('nature.desertifyP')) { eng.setTerrain(i, T.SAND); this.counters.desertified++; }
     }
   }
 

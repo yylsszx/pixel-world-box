@@ -8,6 +8,7 @@ export interface WorldGenResult {
   variant: Uint8Array<ArrayBuffer>; // per-tile color variation hash 0..255
   temp: Uint8Array<ArrayBuffer>; // 0-255 气温场（纬度 + 噪声，地图覆盖模式用）
   moist: Uint8Array<ArrayBuffer>; // 0-255 湿度场（fBm，地图覆盖模式用）
+  heights: Uint8Array<ArrayBuffer>; // 0-255 海拔场（fBm 连续值，子像素起伏明暗渲染用；同 seed 确定性复现，不入存档）
   spawnAnimals: { race: number; x: number; y: number }[];
 }
 
@@ -51,6 +52,7 @@ export function generateWorld(seed: number, params?: WorldGenParams): WorldGenRe
   const variant = new Uint8Array(W * H);
   const temp = new Uint8Array(W * H);
   const moist = new Uint8Array(W * H);
+  const heights = new Uint8Array(W * H);
   // 模板参数（缺省值 = 既往经典世界，完全向后兼容）
   const seaBias = params?.seaBias ?? 0;
   const tempBias = params?.tempBias ?? 0;
@@ -84,6 +86,8 @@ export function generateWorld(seed: number, params?: WorldGenParams): WorldGenRe
         else if (tempF > 0.82 && moistF < 0.42) t = T.SAND;
       }
       terrain[i] = t;
+      // 海拔场量化存储（#101 子像素起伏明暗用；连续 fBm → 256 级，tile 内可双线性插值）
+      heights[i] = Math.max(0, Math.min(255, Math.round(h * 255)));
       // 气候场量化存储（覆盖层渲染用；同 seed 确定性复现 → 读档时直接重算，不入存档）
       temp[i] = Math.max(0, Math.min(255, Math.round((tempF + 0.08) * 165)));
       moist[i] = Math.max(0, Math.min(255, Math.round(moistF * 255)));
@@ -256,7 +260,7 @@ export function generateWorld(seed: number, params?: WorldGenParams): WorldGenRe
   for (let i = 0; i < terrain.length; i += 7) if (terrain[i] >= T.SAND) land++;
   if (land < 400) return generateWorld(seed + 1337, params);
 
-  return { terrain, variant, temp, moist, spawnAnimals };
+  return { terrain, variant, temp, moist, heights, spawnAnimals };
 }
 
 export const raceName = (r: number) => RACES[r]?.name ?? '?';

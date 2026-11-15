@@ -4036,42 +4036,104 @@ export function drawTree(ctx: CanvasRenderingContext2D, x: number, y: number, va
 /** P2 雪帽协调：可选 elev(0-255)/cold(0-1) —— 有 elev 时雪帽= elev>170 || (cold>0.6 && elev>150)；
  *  无参调用（engine 旧调用侧）保持 variant>150 哈希原逻辑，调用侧稍后由主线程接线 */
 export function drawMountainProp(ctx: CanvasRenderingContext2D, x: number, y: number, variant: number, elev?: number, cold?: number) {
-  // —— 超细粒度山峰（4px/格基准）：梯形峰体 + 东南受光 + 西北背光 + 雪线 ——
+  // —— #101 山体三形态（4px/格基准）：尖峰 / 双峰 / 宽峦 —— variant 确定性选形，
+  // 打破「同一 sprite 无限拼贴」的贴图感；共享东南受光 + 西北背光 + 有机雪线的光影语言。
   const px = x * 4;
   const py = y * 4;
-  // 底部岩壁
+  const hs = (variant * 2654435761) >>> 0;
+  const shape = variant % 3;
+  // 底部岩壁（共通）
   ctx.fillStyle = '#575757';
   ctx.fillRect(px - 1, py + 1, 6, 3);
-  // 峰体主体
-  ctx.fillStyle = '#7d7d82';
-  ctx.fillRect(px, py - 1, 4, 4);
-  // 峰顶（窄台）
-  ctx.fillStyle = '#8d8d8d';
-  ctx.fillRect(px + 1, py - 2, 2, 2);
-  // 东南受光面
-  ctx.fillStyle = '#a5a5a9';
-  ctx.fillRect(px + 2, py, 2, 4);
-  ctx.fillRect(px + 3, py - 1, 1, 1);
-  // 西北背光裂隙
-  ctx.fillStyle = '#44444a';
-  ctx.fillRect(px, py + 1, 1, 3);
-  ctx.fillRect(px + 1, py + 2, 1, 2);
-  // 岩纹（variant 确定性）
+  if (shape === 0) {
+    // —— 尖峰：梯形峰体 + 窄台 ——
+    ctx.fillStyle = '#7d7d82';
+    ctx.fillRect(px, py - 1, 4, 4);
+    ctx.fillStyle = '#8d8d8d';
+    ctx.fillRect(px + 1, py - 2, 2, 2);
+    ctx.fillStyle = '#a5a5a9';
+    ctx.fillRect(px + 2, py, 2, 4);
+    ctx.fillRect(px + 3, py - 1, 1, 1);
+    ctx.fillStyle = '#44444a';
+    ctx.fillRect(px, py + 1, 1, 3);
+    ctx.fillRect(px + 1, py + 2, 1, 2);
+  } else if (shape === 1) {
+    // —— 双峰：主峰左 + 副峰右低 ——
+    ctx.fillStyle = '#7d7d82';
+    ctx.fillRect(px, py - 1, 3, 4);
+    ctx.fillStyle = '#8a8a8f';
+    ctx.fillRect(px + 3, py, 2, 3);
+    ctx.fillStyle = '#8d8d8d';
+    ctx.fillRect(px, py - 2, 2, 1);
+    ctx.fillStyle = '#a5a5a9';
+    ctx.fillRect(px + 1, py + 1, 2, 2);
+    ctx.fillRect(px + 4, py + 1, 1, 2);
+    ctx.fillStyle = '#44444a';
+    ctx.fillRect(px, py, 1, 3);
+    ctx.fillRect(px + 2, py + 3, 1, 1);
+  } else {
+    // —— 宽峦：低矮山塬 + 破碎台地 ——
+    ctx.fillStyle = '#78787d';
+    ctx.fillRect(px - 1, py, 6, 3);
+    ctx.fillStyle = '#8d8d8d';
+    ctx.fillRect(px, py - 1, 4, 1);
+    ctx.fillStyle = '#a5a5a9';
+    ctx.fillRect(px + 2, py, 3, 2);
+    ctx.fillStyle = '#44444a';
+    ctx.fillRect(px - 1, py + 2, 1, 2);
+    ctx.fillRect(px + 2, py + 2, 1, 2);
+  }
+  // 岩纹（variant 确定性，形态各异的裂点）
   if (variant % 5 === 0) {
     ctx.fillStyle = 'rgba(30,30,34,0.6)';
     ctx.fillRect(px + 2, py + 3, 1, 1);
     ctx.fillRect(px - 1, py + 2, 1, 1);
+  } else if (variant % 5 === 2) {
+    ctx.fillStyle = 'rgba(30,30,34,0.5)';
+    ctx.fillRect(px + (shape === 2 ? 4 : 1), py + 1, 1, 2);
   }
-  // 雪线（P2：elev/cold 有值走海拔+寒冷度判定；否则保持 variant 哈希原逻辑）
+  // 雪线（海拔+寒冷度判定；无参调用保持 variant 哈希原逻辑）
   const snowy = elev !== undefined
     ? elev > 170 || (cold !== undefined && cold > 0.6 && elev > 150)
     : variant > 150;
   if (snowy) {
+    // 有机雪冠：形态各自的帽形 + variant 确定性垂雪（雪舌沿峰体不规则下延）
     ctx.fillStyle = '#f7f9fb';
-    ctx.fillRect(px + 1, py - 2, 2, 1);
-    ctx.fillRect(px, py - 1, 1, 1);
-    ctx.fillStyle = '#dce8f0';
-    ctx.fillRect(px + 1, py - 1, 2, 1);
+    if (shape === 0) {
+      ctx.fillRect(px + 1, py - 2, 2, 1);
+      ctx.fillRect(px, py - 1, 1, 1);
+      ctx.fillStyle = '#dce8f0';
+      ctx.fillRect(px + 1, py - 1, 2, 1);
+    } else if (shape === 1) {
+      // 双峰各自戴帽：主峰高帽 + 副峰矮帽 —— 雪线随峰顶起伏
+      ctx.fillRect(px, py - 2, 2, 1);
+      ctx.fillRect(px + 3, py - 1, 2, 1);
+      ctx.fillStyle = '#dce8f0';
+      ctx.fillRect(px, py - 1, 2, 1);
+      ctx.fillRect(px + 3, py, 1, 1);
+    } else {
+      // 宽峦：破碎台地雪被（断续横带，非整片白）
+      ctx.fillRect(px, py - 1, 2, 1);
+      ctx.fillRect(px + 3, py - 1, 2, 1);
+      ctx.fillStyle = '#e9f1f6';
+      ctx.fillRect(px, py, 1, 1);
+      ctx.fillRect(px + 4, py, 1, 1);
+    }
+    // 垂雪雪舌：向阳面短、背阳面长 —— 雪线不再是平直一条线
+    ctx.fillStyle = '#f7f9fb';
+    if (hs & 1) { ctx.fillRect(px + 1, py, 1, 1 + ((hs & 2) ? 1 : 0)); }
+    if (hs & 4) { ctx.fillStyle = '#e9f1f6'; ctx.fillRect(px + 3, py, 1, 1); }
+    if (hs % 7 === 0) { ctx.fillStyle = '#f7f9fb'; ctx.fillRect(px, py, 1, 2); } // 西侧长垂雪
+    if (shape === 1 && hs % 3 === 0) { ctx.fillStyle = '#f7f9fb'; ctx.fillRect(px + 4, py + 1, 1, 1); } // 副峰雪舌
+    // 雪檐阴影：帽沿正下 1px 淡蓝影 —— 雪冠有体积而非贴纸
+    ctx.fillStyle = 'rgba(120,140,160,0.45)';
+    ctx.fillRect(px + 1, (py + 1 + ((hs & 1) ? 1 + ((hs & 2) ? 1 : 0) : 0)), 2, 1);
+    // 极寒（极地/火山冬）：雪线整体下压 —— 峰体半埋雪中
+    if (cold !== undefined && cold > 0.85) {
+      ctx.fillStyle = '#eef4f8';
+      ctx.fillRect(px, py + 1, 5, 1);
+      ctx.fillRect(px + 1, py + 2, 3, 1);
+    }
   }
 }
 

@@ -43,6 +43,9 @@ const REG: ParamMeta[] = [
   { path: 'nature.quakeStress', group: '自然引擎', label: '地震应力阈', desc: '板块边界单格应力释放阈值（26=自然地震带节奏；调低=地震频发）', min: 10, max: 60, step: 1, value: 26 },
   { path: 'nature.stormRate', group: '自然引擎', label: '风暴孕育率', desc: '气旋/冰暴生成概率的全局乘数', min: 0, max: 3, step: 0.1, value: 1 },
   { path: 'nature.erosionRate', group: '自然引擎', label: '侵蚀速率', desc: '深时引擎水力侵蚀强度乘数（山脉被河流刻穿的速度）', min: 0, max: 5, step: 0.1, value: 1 },
+  { path: 'nature.sproutP', group: '自然引擎', label: '森林演替率', desc: '湿润草地邻林成林的概率基准（春×1.7/冬×0.15 季节调制后生效）', min: 0, max: 1, step: 0.01, value: 0.05 },
+  { path: 'nature.regrowP', group: '自然引擎', label: '焦土返青率', desc: '火灾疤痕每批采样中返青成草地的概率', min: 0, max: 1, step: 0.01, value: 0.06 },
+  { path: 'nature.desertifyP', group: '自然引擎', label: '荒漠龟进率', desc: '干热草地贴沙边缘沙化的概率（极慢的自然节奏）', min: 0, max: 1, step: 0.01, value: 0.02 },
 ];
 
 /** path → meta 索引（热路径 O(1)） */

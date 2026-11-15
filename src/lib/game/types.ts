@@ -1578,7 +1578,7 @@ export interface NatureSnapshot {
   /** 活跃风暴列表（气旋/冰暴） */
   storms: { id: number; name: string; kind: 'cyclone' | 'blizzard'; strength: number; x: number; y: number; landed: boolean }[];
   /** 地质计数：地震/强震/喷发/造山/侵蚀/气旋/海啸/洪水/暴雪/干旱 */
-  counters: { quakes: number; quakesBig: number; eruptions: number; uplifts: number; erosions: number; cyclones: number; tsunamis: number; floods: number; blizzards: number; droughts: number };
+  counters: { quakes: number; quakesBig: number; eruptions: number; uplifts: number; erosions: number; cyclones: number; tsunamis: number; floods: number; blizzards: number; droughts: number; sprouts: number; regrows: number; desertified: number };
   /** 近期震中（ Richter 级/位置/年份，最近 6 次） */
   recentQuakes: { x: number; y: number; m: number; year: number }[];
   /** 板块漂移向量（渲染箭头用） */

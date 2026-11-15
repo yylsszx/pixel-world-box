@@ -10,7 +10,7 @@ import {
   WATER_TIER_RGB, DEEP_TIER_RGB, SOFT_TERRAIN,
 } from './constants';
 import { generateWorld, type WorldGenParams } from './worldgen';
-import { mulberry32, hash2 } from './noise';
+import { mulberry32, hash2, fbm } from './noise';
 import { civName, unitName, roman, armyNameByJobs, battleFieldName } from './names';
 import { TECHS, TECH_BY_KEY, GOV_DEFS, modsOfTechs, NEUTRAL_MODS, TECH_CATS } from './tech';
 import type { TechMods } from './tech';
@@ -714,6 +714,8 @@ export class GameEngine {
   /** 气候场（生成时量化，读档时按 seed 重算——不入存档） */
   tempMap: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
   moistMap: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
+  /** 海拔场（#101 子像素起伏明暗；同 seed 确定性重算，不入存档） */
+  heightMap: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
   /** 矿脉场（v0.76 地下开发：0 无 / 1 铁 / 2 金 / 3 水晶 / 4 珊瑚——
    *  由地形+seed 确定性重导出（与气候场同一哲学，刻意不入存档，旧档读档自愈） */
   ore: Uint8Array<ArrayBuffer> = new Uint8Array(W * H);
@@ -828,8 +830,7 @@ export class GameEngine {
     this.variant = gen.variant;
     this.tempMap = gen.temp;
     this.moistMap = gen.moist;
-    this.overlayDirty = true;
-    this.owner = new Int16Array(W * H).fill(-1);
+    this.heightMap = gen.heights;
     this.building = new Uint8Array(W * H);
     this.fire = new Uint8Array(W * H);
     this.radiate = new Uint8Array(W * H);
@@ -3214,6 +3215,8 @@ export class GameEngine {
     if (this.tickCount % 240 === 21) this.nature.tectonicTick();
     // —— 自然引擎：地质演变（每 600 tick：造山/侵蚀/沉积/火山喷发/裂谷）——
     if (this.tickCount % 600 === 31) this.nature.geologyTick();
+    // —— 自然引擎：植被演替（#101：每 600 tick 森林扩张/焦土返青/荒漠龟进，与地质错峰）——
+    if (this.tickCount % 600 === 41) this.nature.vegetationTick();
     // —— 深时引擎：洋流环流（每 120 tick：风应力+科氏 Jacobi 流函数 → 西向强化暖流）——
     if (this.tickCount % 120 === 15) this.worldsim.oceanTick();
     // —— 天使光环（引擎级通道：和平野生单位被 rust 批内核接管不经 updateUnit，
@@ -17394,11 +17397,20 @@ export class GameEngine {
         base = TERRAIN_RGB[t] ?? TERRAIN_RGB[0];
       }
       const v = (this.variant[i] % 13) - 6;
+      // —— #101 去千篇一律：大尺度斑块场（fBm 2 阶）调制软地形色调 —— 草原/森林/沙地
+      // 不再是全图均一亮度，而是有明有暗的「草甸与荒斑」大拼图；同 seed 确定性，重烘逐字节一致
+      let patch = 0.5;
+      if (t === T.GRASS || t === T.FOREST || t === T.SAND || t === T.SWAMP || t === T.SNOW) {
+        patch = fbm(tx / 16, ty / 16, this.seed + 4242, 2);
+      }
+      // 花甸场：独立低频噪声，>0.62 的区域野花成片盛放（其余区域稀散）—— 打破均匀撒花
+      const meadow = t === T.GRASS ? fbm(tx / 22 + 31, ty / 22 + 7, this.seed + 888, 2) : 0;
+      const vTone = Math.round((patch - 0.5) * 9);
       // 季节/灰烬调色（自然引擎：春青/秋金/冬霜 + 火山冬压暗；深时引擎：冰川覆被）
       const tint = nat.tint(t, (i / W) | 0, i);
-      let r = base[0] + v + tint[0];
-      let g = base[1] + v + tint[1];
-      let b = base[2] + v + tint[2];
+      let r = base[0] + v + vTone + tint[0];
+      let g = base[1] + v + vTone + tint[1];
+      let b = base[2] + v + vTone + tint[2];
       // —— 群系边缘融合（#100 去方块化重做）：旧版 tile 级棋盘混色整格发糊；
       // 新版只挑出一个异色软地邻侧，在 8×8 子像素循环里做 3px 有机抖动过渡
       // （交错像素 = 商业像素游戏的群系缝合线，WorldBox 同款语言）。雪相关
@@ -17413,17 +17425,19 @@ export class GameEngine {
         else if (ty < H - 1 && this.terrain[i + W] !== t && SOFT_TERRAIN[this.terrain[i + W]] && this.terrain[i + W] !== T.SNOW) { nb = this.terrain[i + W]; side = 4; }
         if (nb >= 0) { nbSoftColor = TERRAIN_RGB[nb]; nbSoftSide = side; }
       }
-      // —— 坡向明暗（hillshade）：西北邻高 → 本格背光压暗；东南邻高 → 本格受光提亮（烘焙零稳态开销） ——
-      if (t === T.HILL || t === T.MOUNTAIN) {
-        const hx = i % W;
-        const hy = (i / W) | 0;
-        const elev = (j: number) => { const tt = this.terrain[j]; return tt === T.MOUNTAIN ? 2 : tt === T.HILL ? 1 : 0; };
-        let slope = 0;
-        if (hx > 0 && hy > 0) slope += elev(i - W - 1); // 西北邻高出 → 遮光
-        if (hx < W - 1 && hy < H - 1) slope -= elev(i + W + 1); // 东南邻高出 → 本格朝光
-        if (slope > 0) { const k = Math.min(0.16, slope * 0.08); r *= 1 - k; g *= 1 - k; b *= 1 - k; }
-        else if (slope < 0) { const k = Math.min(0.12, -slope * 0.06); r += 30 * k; g += 30 * k; b += 26 * k; }
-      }
+      // —— #101 子像素起伏明暗（取代旧 tile 级 hillshade）：海拔场四角点 + 每子像素
+      // 双线性插值 → 坡向受光（光源西北）+ 脊线提亮 —— 大地从「平涂色块」变「有起伏的雕塑」。
+      // 水面不参与（波光由环境层承担）；山/丘强、平地弱。烘焙零稳态开销，同格重绘确定性。
+      // 系数标定：heights 量化到 0-255 后山体带内 tile 间高差仅 ~3-10（全幅 0.46→1.0 海拔只
+      // 占 86 级），需放大一个量级才能出可见光影；±20 钳制兜住山脚↔平原的大跳变（崖壁感）。
+      const isWaterT = t === T.WATER || t === T.DEEP;
+      const reliefK = isWaterT ? 0 : t === T.MOUNTAIN ? 3.2 : t === T.HILL ? 1.8 : t === T.SNOW ? 1.2 : 0.7;
+      const ridgeK = isWaterT ? 0 : t === T.MOUNTAIN ? 0.5 : t === T.HILL ? 0.35 : 0.15;
+      const h00 = this.heightMap[i];
+      const h10 = tx < W - 1 ? this.heightMap[i + 1] : h00;
+      const h01 = ty < H - 1 ? this.heightMap[i + W] : h00;
+      const h11 = tx < W - 1 && ty < H - 1 ? this.heightMap[i + W + 1] : tx < W - 1 ? h10 : ty < H - 1 ? h01 : h00;
+      const hC = (h00 + h10 + h01 + h11) * 0.25;
       // —— 道路：向夥实土路色混合（疆域脉络一眼可读） ——
       if (this.road[i] > 0) {
         r = r * 0.5 + 178 * 0.5;
@@ -17483,6 +17497,12 @@ export class GameEngine {
       const bleedT = !snowHere && bareLand(t) && tT === T.SNOW;
       const bleedB = !snowHere && bareLand(t) && tB === T.SNOW;
       const snowBleed = bleedL || bleedR || bleedT || bleedB;
+      // #101 雪-岩过渡：雪格贴山岩 → 岩色尖突穿透雪被（悬崖根部的碎石浮出雪面）
+      const rockL = snowHere && tL === T.MOUNTAIN;
+      const rockR = snowHere && tR === T.MOUNTAIN;
+      const rockT = snowHere && tT === T.MOUNTAIN;
+      const rockB = snowHere && tB === T.MOUNTAIN;
+      const snowRock = rockL || rockR || rockT || rockB;
       // 森林去方块：森林地面 = 草底 + 2×2 块状树冠荫（有机斑块，拒整格深绿方块）
       const forestFloor = t === T.FOREST;
       const fgR = TERRAIN_RGB[T.GRASS][0] + v + tint[0], fgG = TERRAIN_RGB[T.GRASS][1] + v + tint[1], fgB = TERRAIN_RGB[T.GRASS][2] + v + tint[2];
@@ -17547,6 +17567,36 @@ export class GameEngine {
               }
             }
           }
+          // (e) #101 子像素起伏明暗：双线性海拔 → ①方向光（主光西北 + 次光东北弱补，
+          //     斜向坡面不抵消）②脊线高度项（格内高处微亮）。两项分离各自软钳制——
+          //     线性坡面上方向光是格内常量，若合并硬钳制会把格内变化一起抹平（调试踩坑）。
+          if (reliefK > 0) {
+            const u = sx * 0.125, w2 = sy * 0.125;
+            const gxL = (h10 - h00) * (1 - w2) + (h11 - h01) * w2;
+            const gyL = (h01 - h00) * (1 - u) + (h11 - h10) * u;
+            const hb = h00 * (1 - u) * (1 - w2) + h10 * u * (1 - w2) + h01 * (1 - u) * w2 + h11 * u * w2;
+            let dl = (gxL + gyL) * reliefK + (gxL - gyL) * reliefK * 0.35;
+            if (dl > 12) dl = 12 + (dl - 12) * 0.25; else if (dl < -12) dl = -12 + (dl + 12) * 0.25; // 软钳制保梯度
+            if (dl > 18) dl = 18; else if (dl < -18) dl = -18;
+            let rg = (hb - hC) * ridgeK;
+            if (rg > 6) rg = 6; else if (rg < -6) rg = -6;
+            pr += dl + rg; pg += dl + rg; pb += (dl + rg) * 0.95;
+          }
+          // (f) #101 雪-岩过渡：雪被贴岩一侧 3px 内，岩色尖突穿透 + 雪面反光 —— 悬崖根部的碎石感
+          if (snowRock) {
+            let dRk = 99;
+            if (rockL) dRk = Math.min(dRk, sx);
+            if (rockR) dRk = Math.min(dRk, 7 - sx);
+            if (rockT) dRk = Math.min(dRk, sy);
+            if (rockB) dRk = Math.min(dRk, 7 - sy);
+            if (dRk < 3) {
+              const nz6 = ((hsh ^ Math.imul((sy << 3) | sx, 1103515245)) >>> 10) % 100 / 100;
+              if (nz6 < (3 - dRk) / 3 * 0.45) {
+                const cr = TERRAIN_RGB[T.MOUNTAIN];
+                pr = ((cr[0] + v) * 0.92) | 0; pg = ((cr[1] + v) * 0.92) | 0; pb = ((cr[2] + v) * 0.92) | 0;
+              } else if (nz6 > 0.93 && dRk >= 1) { pr += 16; pg += 16; pb += 18; }
+            }
+          }
           data[off] = pr;
           data[off + 1] = pg;
           data[off + 2] = pb;
@@ -17566,17 +17616,24 @@ export class GameEngine {
         }
       };
       if (t === T.GRASS || t === T.FOREST) {
-        // 草簇：竖 1×2 草茎（深/亮二态）+ 偶发野花 —— 稀疏聚簇，大片平涂留白
-        const n = 1 + (hsh & 1);
+        // #101 去千篇一律：草簇密度随大尺度斑块场（茂密丛/裸露地）+ 三种草形（竖茎/斜丛/高草）
+        const lush = patch > 0.56, bare = patch < 0.34;
+        const n = bare ? 0 : 1 + (hsh & 1) + (lush ? (hsh >>> 7) & 1 : 0);
         for (let k = 0; k < n; k++) {
           const sx = (hsh >>> (k * 3 + 2)) & 7;
           const sy = (hsh >>> (k * 3 + 5)) & 6;
           const lit = ((hsh >>> (k * 5)) & 1) === 1;
           const dr2 = lit ? 14 : -16;
-          dot(sx, sy, dr2, (dr2 * 1.4) | 0, (dr2 * 0.4) | 0, 1, 2);
+          const shape = (hsh >>> (k * 2 + 13)) % 3;
+          if (shape === 0) dot(sx, sy, dr2, (dr2 * 1.4) | 0, (dr2 * 0.4) | 0, 1, 2); // 竖茎
+          else if (shape === 1) { // 斜丛：主茎 + 斜出短叶
+            dot(sx, sy, dr2, (dr2 * 1.4) | 0, (dr2 * 0.4) | 0, 1, 1);
+            dot(Math.min(7, sx + 1), Math.max(0, sy - 1), dr2 >> 1, (dr2 * 1.1) | 0, (dr2 * 0.3) | 0, 1, 1);
+          } else dot(sx, Math.min(5, sy), (dr2 * 0.7) | 0, (dr2 * 1.6) | 0, (dr2 * 0.3) | 0, 1, 3); // 高草
         }
-        // 野花（~2.7% 草地）：双色小花（红/黄/白轮换）
-        if (hsh % 37 === 0) {
+        // #101 花甸：花不是全图均匀撒，而是低频噪声场的成片盛放（花甸 1/9 vs 野地 1/80）
+        const flowerP = meadow > 0.62 ? 9 : 80;
+        if (hsh % flowerP === 0) {
           const fx = (hsh >>> 4) & 7;
           const fy = (hsh >>> 9) & 7;
           const kind = (hsh >>> 3) & 3;
@@ -17637,6 +17694,14 @@ export class GameEngine {
         if ((hsh & 1) === 0) dot((hsh >>> 3) & 7, (hsh >>> 6) & 7, 20, 20, 24);
         if ((hsh & 3) === 0) dot((hsh >>> 9) & 7, (hsh >>> 12) & 7, 14, 15, 20);
         if ((hsh & 7) === 0) dot((hsh >>> 15) & 6, (hsh >>> 18) & 7, -9, -8, -4, 2, 1);
+        // #101 雪垄：横向暗-亮雪纹（风吹积雪的起伏感）；行位由平滑噪声驱动 →
+        // 邻格行位相近，雪垄连成波浪带而非每格孤立的随机短线；风场门控成片出现
+        if (fbm(tx / 19 + 3, ty / 19 + 11, this.seed + 606, 2) > 0.56) {
+          const dy = Math.min(7, (fbm(tx / 6, ty / 6, this.seed + 77, 2) * 9) | 0);
+          const dx = (hsh >>> 9) & 5;
+          dot(dx, dy, -10, -9, -5, 3, 1);
+          dot(dx, Math.min(7, dy + 1), 13, 13, 11, 3, 1);
+        }
       } else if (t === T.ICE) {
         // 冰面裂纹与闪晶
         if ((hsh & 3) === 0) {
@@ -18781,7 +18846,7 @@ export class GameEngine {
         storms: this.nature.storms.map((st) => [st.id, Math.round(st.x * 10) / 10, Math.round(st.y * 10) / 10, Math.round(st.strength * 100) / 100, st.ttl, st.seed, st.kind === 'blizzard' ? 1 : 0, st.name.length, st.landed ? 1 : 0] as [number, number, number, number, number, number, number, number, number]),
         ash: Math.round(this.nature.ash * 1000) / 1000,
         seasonOffset: this.nature.seasonOffset,
-        counters: [this.nature.counters.quakes, this.nature.counters.quakesBig, this.nature.counters.eruptions, this.nature.counters.uplifts, this.nature.counters.erosions, this.nature.counters.cyclones, this.nature.counters.tsunamis, this.nature.counters.floods, this.nature.counters.blizzards, this.nature.counters.droughts],
+        counters: [this.nature.counters.quakes, this.nature.counters.quakesBig, this.nature.counters.eruptions, this.nature.counters.uplifts, this.nature.counters.erosions, this.nature.counters.cyclones, this.nature.counters.tsunamis, this.nature.counters.floods, this.nature.counters.blizzards, this.nature.counters.droughts, this.nature.counters.sprouts, this.nature.counters.regrows, this.nature.counters.desertified],
         stormSeq: this.nature.stormSeq,
         // v2：板块真实漂移接力（质心/构造期）+ 热点地幔柱 + 灰烬平流场
         pcx: this.nature.plateCx.map((v) => Math.round(v * 10) / 10),
@@ -19213,6 +19278,7 @@ export class GameEngine {
         this.nature.counters = {
           quakes: cts[0] | 0, quakesBig: cts[1] | 0, eruptions: cts[2] | 0, uplifts: cts[3] | 0, erosions: cts[4] | 0,
           cyclones: cts[5] | 0, tsunamis: cts[6] | 0, floods: cts[7] | 0, blizzards: cts[8] | 0, droughts: cts[9] | 0,
+          sprouts: (cts[10] ?? 0) | 0, regrows: (cts[11] ?? 0) | 0, desertified: (cts[12] ?? 0) | 0, // #101：旧档缺位 → 0（可选兼容）
         };
       }
       this.nature.stormSeq = Math.max(1, (natSave.stormSeq ?? 1) | 0, ...Array.isArray(natSave.storms) ? natSave.storms.map((s) => (s[0] | 0) + 1) : [1]);
@@ -19437,6 +19503,7 @@ export class GameEngine {
     const climate = generateWorld(this.seed);
     this.tempMap = climate.temp;
     this.moistMap = climate.moist;
+    this.heightMap = climate.heights; // 同 temp/moist 语义：模板偏置不入档 → 读档后按经典参数重算（起伏明暗随之微移，纯视觉无副作用）
     // 深度打磨：读档后重算水深场（地形已恢复，海岸纵深即时重建）
     this.rebuildWaterTiers();
     // 深时引擎读档重导出（零存档成本：全部场由已恢复地形 + seed 重建，不触碰任何已恢复状态）
