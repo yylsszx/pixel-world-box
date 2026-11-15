@@ -4,6 +4,7 @@
 // 防高频更新引发重渲染风暴）+ engine.units.length（同 devStats 的 units 口径）。
 import { useEffect, useState } from 'react';
 import { getEngine, useGameStore } from '@/store/gameStore';
+import { spriteCacheStats } from '@/lib/game/render';
 
 /** 采样快照（轮询产物，非响应式） */
 interface PerfSnap {
@@ -12,9 +13,11 @@ interface PerfSnap {
   simUps: number;
   drawMs: number;
   units: number;
+  sprcEntries: number;
+  sprcHitRate: number;
 }
 
-const EMPTY: PerfSnap = { fps: 0, simMs: 0, simUps: 0, drawMs: 0, units: 0 };
+const EMPTY: PerfSnap = { fps: 0, simMs: 0, simUps: 0, drawMs: 0, units: 0, sprcEntries: 0, sprcHitRate: 0 };
 
 /** FPS 档位配色：>50 绿 / 30-50 黄 / <30 红 */
 function fpsClass(fps: number): string {
@@ -33,7 +36,12 @@ export function PerfHud() {
     const poll = () => {
       const eng = getEngine();
       const p = eng.perf;
-      setSnap({ fps: p.fps, simMs: p.simMs, simUps: p.simUps, drawMs: p.drawMs, units: eng.units.length });
+      const sprcTotal = spriteCacheStats.hits + spriteCacheStats.misses;
+      setSnap({
+        fps: p.fps, simMs: p.simMs, simUps: p.simUps, drawMs: p.drawMs, units: eng.units.length,
+        sprcEntries: spriteCacheStats.entries,
+        sprcHitRate: sprcTotal > 0 ? spriteCacheStats.hits / sprcTotal : 0, // #93 精灵缓存命中率（稳定后应 >95%）
+      });
     };
     poll(); // 打开立即出数，不等首个 500ms
     const timer = window.setInterval(poll, 500);
@@ -62,6 +70,12 @@ export function PerfHud() {
       </p>
       <p>
         UNITS <span className="font-bold text-zinc-100">{snap.units}</span>
+      </p>
+      <p>
+        SPRC <span className="font-bold text-zinc-100">{snap.sprcEntries}</span> ·{' '}
+        <span className={`font-bold ${snap.sprcHitRate >= 0.95 ? 'text-emerald-400' : 'text-yellow-400'}`}>
+          {(snap.sprcHitRate * 100).toFixed(0)}%
+        </span>
       </p>
     </div>
   );

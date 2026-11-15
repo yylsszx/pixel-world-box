@@ -2220,145 +2220,139 @@ function tryDrawFine(engine: GameEngine, u: Unit, def: (typeof RACES)[number], w
   return false;
 }
 
-/** 单位本体分发（LOD 四档：zoom<2.5 色点 / 2.5–5.6 中档迷你形态 / 5.6–8 全精灵 / ≥8 ×4 精绘） */
-function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], wc: CanvasRenderingContext2D) {
-  const zoom = engine.cam.zoom;
-  const fc = engine.frameCount;
+// ==================================================================================
+// —— 质感地基 #93：单位精灵按需缓存（LRU）—— docs/世界盒质感打磨方案.md M1 ——
+// 动物/怪物精灵的视觉状态 =（物种, 离散相位, 移动中, 朝向, 受击, 染疫, 武器）有界小集合：
+// 首次出现把 draw* 光栅到小离屏 canvas（锚定原点、自动测包），此后每帧 1 次 drawImage
+// 替代 20-40 次 fillRect —— 这是「废除默认视野色块档」的性能前提。
+// 人形（国色×武备×职业×发型…状态维度爆炸，#94 专题）与 Boss 巨兽（数量上帽 ≤6，直绘更省）不入缓存。
+// 黄金链零影响：光栅走的就是同一 dispatchUnitSprite 真实现；无头测试环境自动退化为直绘。
+// ==================================================================================
+
+/** 可缓存物种：常见野生动物 + 骷髅（亡灵潮可达数百）。Boss/罕见怪直绘不缓存。 */
+const SPRITE_CACHEABLE: ReadonlySet<string> = new Set([
+  'sheep', 'wolf', 'snowwolf', 'bear', 'deer', 'penguin', 'camel', 'scorpion', 'snake',
+  'chicken', 'pig', 'rabbit', 'fox', 'fish', 'crab', 'turtle', 'shark', 'horse', 'eagle',
+  'skeleton',
+]);
+
+/** 各物种离散视觉相位提取器（逐函数核验自 sprites.ts 的全部 fc 依赖，折叠为小整数）：
+ *  同 key ⇒ 像素级同图；移动门控（isMoving ? 相位 : 0）由 key 的 mv 位兜底。
+ *  新增物种接入缓存时必须在此登记相位函数，否则缓存会冻结动画（未登记物种不缓存，安全回退直绘）。 */
+const SPRITE_PHASE: Record<string, (fc: number, u: Unit) => number> = {
+  sheep: (fc) => (fc >> 3) & 1,
+  wolf: (fc) => (fc >> 3) & 1,
+  snowwolf: (fc) => (fc >> 3) & 1,
+  bear: (fc) => (fc >> 3) & 1,
+  deer: (fc) => (fc >> 3) & 1,
+  penguin: (fc) => Math.floor(fc / 6) & 1,
+  camel: (fc) => Math.floor(fc / 8) & 1,
+  scorpion: (fc) => Math.floor(fc / 4) & 1,
+  snake: (fc) => (Math.floor(fc / 5) % 4) | (fc % 9 < 3 ? 4 : 0), // 蛇信 1/3 时段
+  chicken: (fc, u) => ((fc >> 3) & 1) | ((((fc >> 4) + u.id) % 7 === 0) ? 2 : 0), // 周期啄食
+  pig: (fc) => (fc >> 3) & 1,
+  rabbit: (fc) => (fc >> 3) & 1,
+  fox: (fc) => ((fc >> 3) & 1) | ((fc >> 4) & 1 ? 2 : 0), // 尾摆
+  fish: (fc, u) => {
+    const jp = (fc + u.id * 13) % 260;
+    return jp < 10 ? 16 | (Math.round(Math.sin((jp / 10) * Math.PI) * 3) << 1) : (fc >> 3) & 1; // 跃身抛物线分档
+  },
+  crab: (fc) => ((fc >> 3) & 1) | ((fc >> 4) & 1 ? 2 : 0), // 开合钳
+  turtle: (fc) => ((fc >> 4) & 1) | (((fc >> 5) & 3) !== 3 ? 2 : 0), // 偶发缩头
+  shark: (fc) => (fc >> 3) & 1,
+  horse: (fc) => ((fc >> 2) & 1) | (((fc >> 3) & 1) << 1), // 步态 + 尾摆
+  eagle: (fc) => ((fc >> 3) & 1) | (((fc >> 6) & 3) === 0 ? 2 : 0), // 扇翅 + 周期滑翔
+  skeleton: (fc) => ((fc >> 2) & 1) | (fc % 14 < 7 ? 2 : 0), // 步态 + 眼火闪烁
+};
+
+/** 光栅画布（精灵格）：28 宽 × 18 高，锚点 (14,16) —— 覆盖 x±14、y-16..+1，容得下全部可缓存物种 */
+const SPRC_W = 28, SPRC_H = 18, SPRC_AX = 14, SPRC_AY = 16;
+const SPRITE_CACHE_MAX = 2048; // LRU 上限（28×18×4B ≈ 2KB/条 → 峰值 ≈ 4MB）
+
+interface SpriteRaster {
+  cv: HTMLCanvasElement;
+  sx: number; sy: number; sw: number; sh: number; // 实占包围盒（含半透明阴影，blit 源窗口）
+}
+
+const spriteCache = new Map<string, SpriteRaster>();
+
+/** 缓存仪表（PerfHud 直读）：条目数 / 命中 / 未命中 */
+export const spriteCacheStats = { entries: 0, hits: 0, misses: 0 };
+
+/** 首帧光栅：把真实现画到锚定原点的小画布，并自动测量实占包围盒 */
+function rasterSprite(engine: GameEngine, u: Unit, def: (typeof RACES)[number], fc: number): SpriteRaster | null {
+  const cv = document.createElement('canvas');
+  cv.width = SPRC_W;
+  cv.height = SPRC_H;
+  const cx = cv.getContext('2d');
+  if (!cx) return null;
+  cx.imageSmoothingEnabled = false;
+  const cu = { ...u, dpx: SPRC_AX, dpy: SPRC_AY }; // 浅克隆：仅锚定光栅原点，其余状态原样
+  dispatchUnitSprite(engine, cu, def, cx, fc);
+  const data = cx.getImageData(0, 0, SPRC_W, SPRC_H).data;
+  let minX = SPRC_W, minY = SPRC_H, maxX = -1, maxY = -1;
+  for (let y = 0; y < SPRC_H; y++) {
+    for (let x = 0; x < SPRC_W; x++) {
+      if (data[(y * SPRC_W + x) * 4 + 3] > 0) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) { minX = 0; minY = 0; maxX = SPRC_W - 1; maxY = SPRC_H - 1; } // 空精灵防御
+  return { cv, sx: minX, sy: minY, sw: maxX - minX + 1, sh: maxY - minY + 1 };
+}
+
+/** 缓存档入口：命中 1 次 drawImage；未命中光栅后入表。不可缓存/无头环境返回 false 走直绘。 */
+function blitCachedSprite(engine: GameEngine, u: Unit, def: (typeof RACES)[number], wc: CanvasRenderingContext2D, fc: number): boolean {
+  const sprite = def.sprite;
+  if (def.vis || def.dynTint || !SPRITE_CACHEABLE.has(sprite)) return false; // 涌现物种/人形/巨兽 → 直绘
+  if (typeof document === 'undefined') return false; // 无头测试环境（node/jiti 垫片）→ 直绘
+  const phaseFn = SPRITE_PHASE[sprite];
+  if (!phaseFn) return false; // 相位表未登记 → 安全回退
+  const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  const key = `${sprite}|${phaseFn(fc, u)}|${moving ? 1 : 0}|${u.flip ? 1 : 0}|${u.hurt > 0 ? 1 : 0}|${u.infected ? 1 : 0}`
+    + (sprite === 'skeleton' ? `|${u.wep ?? '-'}|${(u.atk ?? 0) > 0 ? 1 : 0}` : '');
+  let e = spriteCache.get(key);
+  if (e) {
+    spriteCache.delete(key);
+    spriteCache.set(key, e); // LRU 触碰（Map 尾部 = 最近）
+    spriteCacheStats.hits++;
+  } else {
+    const r = rasterSprite(engine, u, def, fc);
+    if (!r) return false;
+    e = r;
+    spriteCache.set(key, e);
+    spriteCacheStats.misses++;
+    if (spriteCache.size > SPRITE_CACHE_MAX) {
+      const oldest = spriteCache.keys().next().value;
+      if (oldest !== undefined && oldest !== key) spriteCache.delete(oldest);
+    }
+  }
+  spriteCacheStats.entries = spriteCache.size;
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
-  const king = !!u.king;
+  wc.drawImage(e.cv, e.sx, e.sy, e.sw, e.sh, px - (SPRC_AX - e.sx), py - (SPRC_AY - e.sy), e.sw, e.sh);
+  return true;
+}
 
-  // —— P2：水生精灵水面门控（离水不画 —— 防御性：正常情况下引擎保证栖息地） ——
-  if (def.sprite === 'fish' || def.sprite === 'turtle' || def.sprite === 'shark') {
-    if (!onWaterTile(engine, u, false)) return;
-  } else if (def.sprite === 'crab' && !onWaterTile(engine, u, true)) {
-    return;
-  }
-
-  // —— P0-A 精绘档（zoom≥8）：×4 精细像素精灵 ——
-  if (zoom >= 8 && tryDrawFine(engine, u, def, wc, px, py, king)) return;
-
-  // —— P0-A 色点档（zoom<2.5）：单 rect 国色/族色（超大视野性能保底） ——
-  if (zoom < 2.5) {
-    if (def.sprite === 'person') {
-      const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-      wc.fillStyle = civ && civ.alive ? civ.colorHex : u.hurt > 0 ? '#ff6b5e' : '#9a8460';
-      wc.fillRect(px - 1, py - 2, 2, 2);
-      if (king) { wc.fillStyle = '#e6ba6c'; wc.fillRect(px - 1, py - 3, 2, 1); }
-      return;
-    }
-    if (!def.vis) {
-      const lod = ANIMAL_LOD[def.sprite];
-      if (lod) {
-        wc.fillStyle = u.hurt > 0 ? '#ff6b5e' : lod[0];
-        wc.fillRect(px - (lod[2] >> 1), py - lod[3], lod[2], lod[3]);
-        return;
-      }
-    }
-    // 无表条目（涌现物种等）→ 落入下方全绘（数量稀少，成本可接受）
-  } else if (zoom < 5.6) {
-    // —— P0-A 中档 LOD（2.5–5.6）：可读迷你形态 ——
-    if (def.sprite === 'person') {
-      const f = u.flip ? -1 : 1;
-      const hurt = u.hurt > 0;
-      const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-      const bx0 = f > 0 ? px : px - 1; // 身体左缘（朝向对齐）
-      const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
-      const g = moving ? (fc >> 3) & 1 : -1;
-      // 双腿（两相步态；暗色裤装 —— 免国色系暗化字符串拼接）
-      wc.fillStyle = '#3a342c';
-      if (g === 0) {
-        wc.fillRect(bx0, py, 1, 2);
-        wc.fillRect(bx0 + 1, py + 1, 1, 1);
-      } else if (g === 1) {
-        wc.fillRect(bx0, py + 1, 1, 1);
-        wc.fillRect(bx0 + 1, py, 1, 2);
-      } else {
-        wc.fillRect(bx0, py, 1, 2);
-        wc.fillRect(bx0 + 1, py, 1, 2);
-      }
-      // 躯干（国色 2 宽）
-      wc.fillStyle = hurt ? '#ff6b5e' : civ && civ.alive ? civ.colorHex : '#9a8460';
-      wc.fillRect(bx0, py - 2, 2, 2);
-      // 头（肤色 1×1，朝向前缘）
-      wc.fillStyle = hurt ? '#ff6b5e' : '#d9a066';
-      wc.fillRect(bx0 + (f > 0 ? 1 : 0), py - 3, 1, 1);
-      // 武器像素（攻击时高举；火器深色近战钢色）
-      if (u.wep) {
-        wc.fillStyle = u.wep === 'musket' || u.wep === 'rifle' || u.wep === 'laser_rifle' ? '#4a4038' : '#d9d9d9';
-        wc.fillRect(bx0 + (f > 0 ? 2 : -1), (u.atk ?? 0) > 0 ? py - 4 : py - 2, 1, 1);
-      }
-      // P4 脚底暗描边（森林/湿地背景可读性）
-      wc.fillStyle = 'rgba(20,16,12,0.4)';
-      wc.fillRect(bx0, py + 2, 2, 1);
-      // 国王金冠（头顶 3px）
-      if (king) drawCrown(wc, bx0 + (f > 0 ? 1 : 0), py - 4);
-      return;
-    }
-    if (!def.vis) {
-      const lod = ANIMAL_LOD[def.sprite];
-      if (lod) {
-        const hurt = u.hurt > 0;
-        const w = lod[2], h = lod[3];
-        const hw = w >> 1;
-        const bx = px - hw;
-        const by = py - h;
-        const f = u.flip ? -1 : 1;
-        const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
-        const g = moving ? (fc >> 3) & 1 : -1;
-        // 四肢步态：前后腿常驻；中腿按对角相位起落（提起的腿藏进躯干不画）
-        wc.fillStyle = hurt ? '#cf3f2e' : lod[1];
-        wc.fillRect(bx, py, 1, 1);
-        wc.fillRect(bx + w - 1, py, 1, 1);
-        if (g !== 1) wc.fillRect(bx + 1, py, 1, 1);
-        if (w >= 4 && g !== 0) wc.fillRect(bx + w - 2, py, 1, 1);
-        // 躯干
-        wc.fillStyle = hurt ? '#ff6b5e' : lod[0];
-        wc.fillRect(bx, by, w, h);
-        // P4 背部 1px 受光高光
-        if (w >= 3) {
-          wc.fillStyle = 'rgba(255,255,240,0.3)';
-          wc.fillRect(bx + 1, by, 1, 1);
-        }
-        // 头部暗点（朝向感知：跟随 flip）
-        const headX = px + (u.flip ? -hw - 1 : hw);
-        wc.fillStyle = hurt ? '#cf3f2e' : lod[1];
-        wc.fillRect(headX, by + (h > 2 ? 1 : 0), 1, 1);
-        // P4 脚底暗描边
-        wc.fillStyle = 'rgba(20,16,12,0.35)';
-        wc.fillRect(bx, py + 1, w, 1);
-        // 国王金冠（头顶）
-        if (king) drawCrown(wc, headX, by - 1);
-        return;
-      }
-    }
-  }
-
-  // v3 涌现物种（视觉基因组）：动态种化的非人形物种走程序化生物绘制 —— 外观随进化真实变化
-  // Task 33：水生/沙泳/蛇形族系走专属巨怪形态（不再退化为四足兽形）
-  if (def.vis && def.sprite !== 'person') {
-    const mShape = def.aquatic ? 'aquatic' : def.sandswim ? 'worm' : def.sprite === 'basilisk' || def.sprite === 'snake' || def.sprite === 'dragon' ? 'serpent' : null;
-    const vc = visCacheFor(u.race, def.vis, def.sprite);
-    if (mShape && vc) {
-      drawEmergentMonster(wc, u, vc, mShape, fc);
-      return;
-    }
-    if (vc) {
-      drawEmergentCreature(wc, u, vc, fc);
-      return;
-    }
-  }
+/** 精灵真实现分发（原 drawUnitBody 主体 switch —— 缓存光栅与直绘共用同一实现，黄金链零影响） */
+function dispatchUnitSprite(engine: GameEngine, u: Unit, def: (typeof RACES)[number], wc: CanvasRenderingContext2D, fc: number) {
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
   switch (def.sprite) {
     case 'person': {
       const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
       drawPerson(wc, u, civ && civ.alive ? civ.color : null, fc, armLvOf(engine, u.civ));
       break;
     }
-    case 'sheep': drawSheep(wc, u); break;
-    case 'wolf': drawWolf(wc, u); break;
-    case 'snowwolf': drawSnowWolf(wc, u); break;
-    case 'bear': drawBear(wc, u); break;
-    case 'deer': drawDeer(wc, u); break;
+    case 'sheep': drawSheep(wc, u, fc); break;
+    case 'wolf': drawWolf(wc, u, fc); break;
+    case 'snowwolf': drawSnowWolf(wc, u, fc); break;
+    case 'bear': drawBear(wc, u, fc); break;
+    case 'deer': drawDeer(wc, u, fc); break;
     case 'penguin': drawPenguin(wc, u, fc); break;
     case 'camel': drawCamel(wc, u, fc); break;
     case 'scorpion': drawScorpion(wc, u, fc); break;
@@ -2407,6 +2401,102 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
       break;
     }
   }
+}
+
+/** 单位本体分发（#93 质感地基后 LOD 三档：zoom<2.5 色点 / 2.5–8 全精灵（动物走缓存 blit） / ≥8 ×4 精绘）
+ *  —— 旧「2.5–5.6 中档 ANIMAL_LOD 双色块」档废除：默认视野 zoom 4.5 从此是完整像素精灵
+ *  （色点档下限维持 2.5 而非方案的 1.5：1 帧格 = 8 设备 px，<2.5 缩小到亚像素会闪烁摩尔纹） */
+function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], wc: CanvasRenderingContext2D) {
+  const zoom = engine.cam.zoom;
+  const fc = engine.frameCount;
+  const px = u.dpx ?? (u.rx ?? u.x) * 2;
+  const py = u.dpy ?? (u.ry ?? u.y) * 2;
+  const king = !!u.king;
+
+  // —— P2：水生精灵水面门控（离水不画 —— 防御性：正常情况下引擎保证栖息地） ——
+  if (def.sprite === 'fish' || def.sprite === 'turtle' || def.sprite === 'shark') {
+    if (!onWaterTile(engine, u, false)) return;
+  } else if (def.sprite === 'crab' && !onWaterTile(engine, u, true)) {
+    return;
+  }
+
+  // —— P0-A 精绘档（zoom≥8）：×4 精细像素精灵 ——
+  if (zoom >= 8 && tryDrawFine(engine, u, def, wc, px, py, king)) return;
+
+  // —— P0-A 色点档（zoom<2.5）：单 rect 国色/族色（超大视野性能保底） ——
+  if (zoom < 2.5) {
+    if (def.sprite === 'person') {
+      const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
+      wc.fillStyle = civ && civ.alive ? civ.colorHex : u.hurt > 0 ? '#ff6b5e' : '#9a8460';
+      wc.fillRect(px - 1, py - 2, 2, 2);
+      if (king) { wc.fillStyle = '#e6ba6c'; wc.fillRect(px - 1, py - 3, 2, 1); }
+      return;
+    }
+    if (!def.vis) {
+      const lod = ANIMAL_LOD[def.sprite];
+      if (lod) {
+        wc.fillStyle = u.hurt > 0 ? '#ff6b5e' : lod[0];
+        wc.fillRect(px - (lod[2] >> 1), py - lod[3], lod[2], lod[3]);
+        return;
+      }
+    }
+    // 无表条目（涌现物种等）→ 落入下方全绘（数量稀少，成本可接受）
+  } else if (zoom < 5.6 && def.sprite === 'person') {
+    // —— P0-A 中档人形迷你形态（#93 起仅人形保留此档；动物已升级为全精灵缓存 blit —— #94 人形缓存专题） ——
+    const f = u.flip ? -1 : 1;
+    const hurt = u.hurt > 0;
+    const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
+    const bx0 = f > 0 ? px : px - 1; // 身体左缘（朝向对齐）
+    const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+    const g = moving ? (fc >> 3) & 1 : -1;
+    // 双腿（两相步态；暗色裤装 —— 免国色系暗化字符串拼接）
+    wc.fillStyle = '#3a342c';
+    if (g === 0) {
+      wc.fillRect(bx0, py, 1, 2);
+      wc.fillRect(bx0 + 1, py + 1, 1, 1);
+    } else if (g === 1) {
+      wc.fillRect(bx0, py + 1, 1, 1);
+      wc.fillRect(bx0 + 1, py, 1, 2);
+    } else {
+      wc.fillRect(bx0, py, 1, 2);
+      wc.fillRect(bx0 + 1, py, 1, 2);
+    }
+    // 躯干（国色 2 宽）
+    wc.fillStyle = hurt ? '#ff6b5e' : civ && civ.alive ? civ.colorHex : '#9a8460';
+    wc.fillRect(bx0, py - 2, 2, 2);
+    // 头（肤色 1×1，朝向前缘）
+    wc.fillStyle = hurt ? '#ff6b5e' : '#d9a066';
+    wc.fillRect(bx0 + (f > 0 ? 1 : 0), py - 3, 1, 1);
+    // 武器像素（攻击时高举；火器深色近战钢色）
+    if (u.wep) {
+      wc.fillStyle = u.wep === 'musket' || u.wep === 'rifle' || u.wep === 'laser_rifle' ? '#4a4038' : '#d9d9d9';
+      wc.fillRect(bx0 + (f > 0 ? 2 : -1), (u.atk ?? 0) > 0 ? py - 4 : py - 2, 1, 1);
+    }
+    // P4 脚底暗描边（森林/湿地背景可读性）
+    wc.fillStyle = 'rgba(20,16,12,0.4)';
+    wc.fillRect(bx0, py + 2, 2, 1);
+    // 国王金冠（头顶 3px）
+    if (king) drawCrown(wc, bx0 + (f > 0 ? 1 : 0), py - 4);
+    return;
+  }
+
+  // v3 涌现物种（视觉基因组）：动态种化的非人形物种走程序化生物绘制 —— 外观随进化真实变化
+  // Task 33：水生/沙泳/蛇形族系走专属巨怪形态（不再退化为四足兽形）
+  if (def.vis && def.sprite !== 'person') {
+    const mShape = def.aquatic ? 'aquatic' : def.sandswim ? 'worm' : def.sprite === 'basilisk' || def.sprite === 'snake' || def.sprite === 'dragon' ? 'serpent' : null;
+    const vc = visCacheFor(u.race, def.vis, def.sprite);
+    if (mShape && vc) {
+      drawEmergentMonster(wc, u, vc, mShape, fc);
+      return;
+    }
+    if (vc) {
+      drawEmergentCreature(wc, u, vc, fc);
+      return;
+    }
+  }
+  // —— #93 缓存档：常见动物/骷髅一次 drawImage（未命中或不可缓存 → dispatchUnitSprite 真实现直绘） ——
+  if (blitCachedSprite(engine, u, def, wc, fc)) return;
+  dispatchUnitSprite(engine, u, def, wc, fc);
   // P0-A：全绘档国王金冠（人形头顶；×2 精灵头顶 = 发际线上一行）
   if (king && def.sprite === 'person') drawCrown(wc, px, py - 4);
   // 涌现物种标记：动态种化诞生的新物种头顶 1px 突变色点（一眼辨识演化后裔）

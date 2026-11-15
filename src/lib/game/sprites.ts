@@ -2,6 +2,7 @@
 import type { Building, Effect, GroundItem, ItemKind, Unit } from './types';
 import { T, R, RACES } from './types';
 import { shiftColor, shiftRgb, visCacheFor, type VisCache } from './emergence';
+import { PAL } from './palette';
 
 const rgb = (c: [number, number, number]) => `rgb(${c[0]},${c[1]},${c[2]})`;
 const mix = (a: [number, number, number], b: [number, number, number], t: number): [number, number, number] => [
@@ -1345,50 +1346,137 @@ export function drawEmergentCreature(ctx: CanvasRenderingContext2D, u: Unit, vc:
   if (scaled) ctx.restore();
 }
 
-export function drawSheep(ctx: CanvasRenderingContext2D, u: Unit) {
+// —— #93 质感地基·草原五兽重制 v2（字符网格排版：明暗比可控、美术可迭代 —— WorldBox 极简可爱路线）
+//  设计铁律（VLM 盲测校准）：深色点缀 ≤ 15%（眼/鼻各 1px）、脸部用体色浅灰而非深色、
+//  描边只勾剪影边、尺寸对标 drawQuadFine 精绘档足迹（zoom 8 边界零跳变）。
+//  行动步态不入网格（腿独立 2px 碎步，缓存相位驱动）。
+
+/** 字符网格印章：逐行游程合并成 fillRect（'.' 透明；字母经色表解析） */
+function stampGrid(ctx: CanvasRenderingContext2D, grid: readonly string[], x0: number, y0: number, colors: Record<string, string>) {
+  for (let r = 0; r < grid.length; r++) {
+    const row = grid[r];
+    let c = 0;
+    while (c < row.length) {
+      const ch = row[c];
+      if (ch === '.') { c++; continue; }
+      let c2 = c + 1;
+      while (c2 < row.length && row[c2] === ch) c2++;
+      ctx.fillStyle = colors[ch];
+      ctx.fillRect(x0 + c, y0 + r, c2 - c, 1);
+      c = c2;
+    }
+  }
+}
+
+/** 网格水平镜像（flip 用） */
+function mirrorGrid(grid: readonly string[]): string[] {
+  return grid.map((row) => row.split('').reverse().join(''));
+}
+
+/** 绵羊网格（7×4 身体，朝向 +x；W 羊毛亮 / S 羊毛暗+脸灰 / F 耳 / N 眼+鼻） */
+const SHEEP_GRID = [
+  '.KKKFK.',
+  'KWWWSNK',
+  'KWWWSWK',
+  'KSSSSNK',
+];
+const SHEEP_GRID_M = mirrorGrid(SHEEP_GRID);
+/** 狼网格（9×4；B 灰毛 / S 腹暗+尾 / H 头 / A 琥珀眼 / N 鼻尖） */
+const WOLF_GRID = [
+  '......K..',
+  'SKBBBAHK.',
+  'SKBBBHHN.',
+  '.KSSSSK..',
+];
+const WOLF_GRID_M = mirrorGrid(WOLF_GRID);
+/** 雪狼：狼形白装 */
+const SNOWWOLF_GRID = WOLF_GRID;
+const SNOWWOLF_GRID_M = WOLF_GRID_M;
+/** 熊网格（9×4 宽厚；B 褐棕 / L2 肩背受光 / S 腹暗 / N 鼻） */
+const BEAR_GRID = [
+  '.KKKKKK..',
+  'KBBL2BBHK',
+  'KBBBBBHHN',
+  'KSSSSSSK.',
+];
+const BEAR_GRID_M = mirrorGrid(BEAR_GRID);
+/** 鹿网格（9×5 高一级；B 鹿棕 / L2 背受光 / G 沉金角 / R 白臀 / N 鼻） */
+const DEER_GRID = [
+  '.....G...',
+  '.KKKKGK..',
+  'KBBL2RHHK',
+  'KBBBBBHHN',
+  '.KSSSSK..',
+];
+const DEER_GRID_M = mirrorGrid(DEER_GRID);
+
+export function drawSheep(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
   const f = u.flip ? -1 : 1;
-  ctx.fillStyle = u.infected ? '#b8e2b4' : '#f2ead8';
-  ctx.fillRect(px - 1, py, 2, 1);
-  ctx.fillStyle = '#575757';
-  ctx.fillRect(px + f, py, 1, 1);
+  const hurt = u.hurt > 0;
+  const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  const step = moving ? (fc >> 3) & 1 : 0;
+  const W = hurt ? PAL.hurt : u.infected ? PAL.infected : PAL.wool;
+  const S = hurt ? PAL.hurtDeep : u.infected ? PAL.infectedShade : PAL.woolShade;
+  stampGrid(ctx, u.flip ? SHEEP_GRID_M : SHEEP_GRID, px - 3, py - 4, {
+    K: PAL.outline, W, S, F: S, N: PAL.inkDeep,
+  });
+  // 双腿碎步（前后错位）
+  ctx.fillStyle = PAL.ink;
+  ctx.fillRect(px + (step ? -1 : -2), py, 1, 1);
+  ctx.fillRect(px + (step ? 2 : 1), py, 1, 1);
 }
 
-export function drawWolf(ctx: CanvasRenderingContext2D, u: Unit) {
+export function drawWolf(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
-  const f = u.flip ? -1 : 1;
-  ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#8d8d8d';
-  ctx.fillRect(px - 1, py, 3, 1);
-  ctx.fillStyle = '#3a342c';
-  ctx.fillRect(px + f, py - 1, 1, 1);
+  const hurt = u.hurt > 0;
+  const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  const step = moving ? (fc >> 3) & 1 : 0;
+  const B = hurt ? PAL.hurt : PAL.fur;
+  const S = hurt ? PAL.hurtDeep : PAL.furShade;
+  stampGrid(ctx, u.flip ? WOLF_GRID_M : WOLF_GRID, px - 4, py - 3, {
+    K: PAL.outline, B, S, H: B, A: hurt ? PAL.eyeLight : PAL.eyeAmber, N: PAL.inkDeep,
+  });
+  ctx.fillStyle = PAL.ink;
+  ctx.fillRect(px + (step ? -1 : -2), py, 1, 1);
+  ctx.fillRect(px + (step ? 2 : 1), py, 1, 1);
 }
 
-export function drawSnowWolf(ctx: CanvasRenderingContext2D, u: Unit) {
+/** 雪狼：狼形白装（雪地可辨）+ 冰蓝眼 */
+export function drawSnowWolf(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
-  const f = u.flip ? -1 : 1;
-  // 雪地阴影下仍可辨的白身
-  ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#eef2f5';
-  ctx.fillRect(px - 1, py, 3, 1);
-  // 头 + 竖耳
-  ctx.fillStyle = '#d4dde4';
-  ctx.fillRect(px + f, py - 1, 1, 1);
-  ctx.fillRect(px + f, py - 2, 1, 1);
-  // 冰蓝鼻尖（朝向前方）
-  ctx.fillStyle = '#38bdf8';
-  ctx.fillRect(px + 2 * f, py - 1, 1, 1);
+  const hurt = u.hurt > 0;
+  const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  const step = moving ? (fc >> 3) & 1 : 0;
+  const B = hurt ? PAL.hurt : PAL.snowFur;
+  const S = hurt ? PAL.hurtDeep : PAL.snowShade;
+  stampGrid(ctx, u.flip ? SNOWWOLF_GRID_M : SNOWWOLF_GRID, px - 4, py - 3, {
+    K: PAL.outline, B, S, H: B, A: PAL.eyeIce, N: PAL.inkDeep,
+  });
+  ctx.fillStyle = PAL.ink;
+  ctx.fillRect(px + (step ? -1 : -2), py, 1, 1);
+  ctx.fillRect(px + (step ? 2 : 1), py, 1, 1);
 }
 
-export function drawBear(ctx: CanvasRenderingContext2D, u: Unit) {
+/** 熊：宽厚躯干 + 白爪尖 */
+export function drawBear(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
-  ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#6e4a2b';
-  ctx.fillRect(px - 1, py - 1, 3, 2);
-  ctx.fillStyle = '#3a342c';
-  ctx.fillRect(px - 1, py - 2, 1, 1);
-  ctx.fillRect(px + 1, py - 2, 1, 1);
+  const hurt = u.hurt > 0;
+  const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  const step = moving ? (fc >> 3) & 1 : 0;
+  const B = hurt ? PAL.hurt : PAL.bearFur;
+  const S = hurt ? PAL.hurtDeep : PAL.bearShade;
+  stampGrid(ctx, u.flip ? BEAR_GRID_M : BEAR_GRID, px - 4, py - 3, {
+    K: PAL.outline, B, S, H: B, L2: hurt ? PAL.hurtLight : PAL.bearLight, N: PAL.inkDeep,
+  });
+  // 矮腿即爪：白爪尖碎步
+  ctx.fillStyle = hurt ? PAL.hurtDeep : PAL.claw;
+  ctx.fillRect(px + (step ? -2 : -3), py, 1, 1);
+  ctx.fillRect(px + (step ? 2 : 1), py, 1, 1);
 }
 
 export function drawDragon(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
@@ -2539,25 +2627,24 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
   }
 }
 
-/** 鹿：棕色身体 + 金色小角 + 头部朝向移动方向 */
-export function drawDeer(ctx: CanvasRenderingContext2D, u: Unit) {
+/** 鹿：纤长体型 + 高抬头 + 沉金角 + 白臀斑 + 长腿碎步 */
+export function drawDeer(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
-  const f = u.flip ? -1 : 1;
-  // 鹿角（金色，1px 两叉）
-  ctx.fillStyle = '#ffd93d';
-  ctx.fillRect(px + f, py - 2, 1, 1);
-  ctx.fillRect(px + 2 * f, py - 2, 1, 1);
-  // 身体（浅棕）+ 头（深棕）
-  ctx.fillStyle = u.hurt > 0 ? '#ff6b5e' : '#c98d5a';
-  ctx.fillRect(px - 1, py, 3, 1);
-  ctx.fillStyle = '#6e4a2b';
-  ctx.fillRect(px + f, py - 1, 1, 1);
-  // 腿
-  ctx.fillRect(px - 1, py + 1, 1, 1);
-  ctx.fillRect(px + 1, py + 1, 1, 1);
+  const hurt = u.hurt > 0;
+  const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+  const step = moving ? (fc >> 3) & 1 : 0;
+  const B = hurt ? PAL.hurt : PAL.deerFur;
+  const S = hurt ? PAL.hurtDeep : PAL.deerShade;
+  stampGrid(ctx, u.flip ? DEER_GRID_M : DEER_GRID, px - 4, py - 5, {
+    K: PAL.outline, B, S, H: B, l: hurt ? PAL.hurtLight : PAL.deerLight,
+    G: PAL.goldDeep, R: PAL.rump, A: PAL.eyeLight, N: PAL.inkDeep,
+  });
+  // 长腿碎步（1×2）
+  ctx.fillStyle = PAL.ink;
+  ctx.fillRect(px + (step ? -1 : -2), py - 1, 1, 2);
+  ctx.fillRect(px + (step ? 2 : 1), py - 1, 1, 2);
 }
-
 /** 企鹅：黑色轮廓 + 白肚 + 橙喙，走路左右蹒跚 */
 export function drawPenguin(ctx: CanvasRenderingContext2D, u: Unit, frame: number) {
   const px = u.dpx ?? (u.rx ?? u.x) * 2;

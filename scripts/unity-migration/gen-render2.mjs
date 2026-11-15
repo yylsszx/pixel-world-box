@@ -419,14 +419,15 @@ function styleOf(s, i) { return s.ops[i] && s.ops[i].s ? s.ops[i].s[0] : null; }
   const c1 = findS('C01_caravan_civ');
   ok(c1.ops.some((o) => o.s && o.s[0] === 'rgba(0,0,0,0.25)'), 'C01 车辙影 0.25');
   ok(c1.ops.some((o) => o.s && o.s[0] === '#d9a94e'), 'C01 麻袋金');
-  // 五族
-  ok(nRect(findS('S01_sheep')) === 2, 'S01 羊 2 rect');
-  ok(nRect(findS('S04_wolf')) === 2, 'S04 狼 2 rect');
-  ok(nRect(findS('S07_snowwolf')) === 4, 'S07 雪狼 4 rect');
-  ok(nRect(findS('S09_bear')) === 3, 'S09 熊 3 rect');
-  ok(nRect(findS('S10_deer')) === 6, 'S10 鹿 6 rect');
+  // 五族（#93 质感地基重制：1px 描边壳 + 双色体积 + 眼/耳/鼻 + 碎步 —— rect 数 = 探针 scripts/probe-sprite-counts.mjs 实测）
+  ok(nRect(findS('S01_sheep')) === 19, `S01 羊 19 rect（网格 v2）got ${nRect(findS('S01_sheep'))}`);
+  ok(nRect(findS('S04_wolf')) === 17, `S04 狼 17 rect（网格 v2）got ${nRect(findS('S04_wolf'))}`);
+  ok(nRect(findS('S07_snowwolf')) === 17, `S07 雪狼 17 rect（网格 v2）got ${nRect(findS('S07_snowwolf'))}`);
+  ok(nRect(findS('S09_bear')) === 17, `S09 熊 17 rect（网格 v2）got ${nRect(findS('S09_bear'))}`);
+  ok(nRect(findS('S10_deer')) === 20, `S10 鹿 20 rect（网格 v2）got ${nRect(findS('S10_deer'))}`);
   const s2 = findS('S02_sheep_infected');
-  ok(s2.ops[0].s && s2.ops[0].s[0] === '#b8e2b4', 'S02 感染绿 #b8e2b4 @op0');
+  ok(s2.ops[0].s && s2.ops[0].s[0] === '#1a1613', 'S02 描边壳 #1a1613 @op0（#93 起 1px 轮廓先行）');
+  ok(s2.ops[4].s && s2.ops[4].s[0] === '#b8e2b4', 'S02 感染绿 #b8e2b4 @op4（网格 v2：描边/羊毛游程先行）');
 }
 console.log('[GEN RENDER2] scen=' + scen.length);
 console.log('[GEN RENDER2] sanity ' + (assertN - assertFail) + '/' + assertN + (assertFail === 0 ? ' PASS' : ' FAIL'));

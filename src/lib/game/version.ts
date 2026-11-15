@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.87-preview';
+export const GAME_VERSION = 'v0.88-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.88-preview',
+    date: '2026-11-15',
+    items: [
+      '质感地基第一笔（WorldBox 质感打磨 M1 开工）：主调色板模块落地——描边/羊毛/狼棕/熊褐/鹿金等 50+ 命名色收编为唯一合法色源，新代码禁止裸色值',
+      '单位精灵按需缓存上线：常见动物从每帧 20-40 次矩形即时绘制变为 1 次贴图（LRU 上限 2048 条），性能面板新增 SPRC 缓存命中率仪表',
+      '废除默认视野的“动物色块档”：中等缩放（2.5-8×）下所有动物从此显示完整像素精灵，不再降级为双色矩形',
+      '草原五兽全面重制（羊/狼/雪狼/熊/鹿）：1px 深色描边 + 双色体积明暗 + 眼睛/耳/鼻尖细节 + 碎步步态，尺寸对标精绘档零跳变',
+    ],
+  },
   {
     ver: 'v0.87-preview',
     date: '2026-11-15',
