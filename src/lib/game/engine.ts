@@ -17797,7 +17797,7 @@ export class GameEngine {
       if (x > pmaxX) pmaxX = x;
       if (y < pminY) pminY = y;
       if (y > pmaxY) pmaxY = y;
-      propsCtx.clearRect(x * 4 - 2, y * 4 - 3, 9, 10);
+      propsCtx.clearRect(x * 4 - 2, y * 4 - 5, 9, 11); // #102 树 12×14 艺术 px（冠顶 y−10 → 盒顶 −5 用户）
       const tt = this.terrain[i];
       if (tt === T.FOREST) {
         // import lazily to avoid cycle at module load

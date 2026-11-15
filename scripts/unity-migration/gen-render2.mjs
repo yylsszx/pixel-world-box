@@ -379,33 +379,33 @@ function styleOf(s, i) { return s.ops[i] && s.ops[i].s ? s.ops[i].s[0] : null; }
   const tr1 = findS('TR01_winter_snow');
   ok(tr1.ops.every((o) => o.o === 'fillRect'), 'TR01 全 fillRect');
   ok(styleOf(tr1, 0) === 'rgba(0,0,0,0.22)', 'TR01 根影开头 rgba(0,0,0,0.22)');
-  ok(nRect(findS('TR02_winter_nosnow')) === 5, `TR02 冬秃 5 rect got ${nRect(findS('TR02_winter_nosnow'))}`);
-  ok(nRect(findS('TR01_winter_snow')) === 7, `TR01 冬雪 7 rect got ${nRect(findS('TR01_winter_snow'))}`);
-  ok(nRect(findS('TR03_autumn_gold_dark')) === 8, `TR03 秋金 8 rect(含 2 落叶) got ${nRect(findS('TR03_autumn_gold_dark'))}`);
-  ok(nRect(findS('TR04_autumn_red_light')) === 6, `TR04 秋红无落叶 6 rect got ${nRect(findS('TR04_autumn_red_light'))}`);
-  ok(nRect(findS('TR06_spring_sakura')) === 7, `TR06 樱 7 rect got ${nRect(findS('TR06_spring_sakura'))}`);
+  ok(nRect(findS('TR02_winter_nosnow')) === 8, `TR02 冬秃 8 rect（#102 半单位树）got ${nRect(findS('TR02_winter_nosnow'))}`);
+  ok(nRect(findS('TR01_winter_snow')) === 11, `TR01 冬雪 11 rect（#102）got ${nRect(findS('TR01_winter_snow'))}`);
+  ok(nRect(findS('TR03_autumn_gold_dark')) === 13, `TR03 秋金 13 rect（#102 三层冠+描边）got ${nRect(findS('TR03_autumn_gold_dark'))}`);
+  ok(nRect(findS('TR04_autumn_red_light')) === 11, `TR04 秋红无落叶 11 rect（#102）got ${nRect(findS('TR04_autumn_red_light'))}`);
+  ok(nRect(findS('TR06_spring_sakura')) === 11, `TR06 樱 11 rect（#102）got ${nRect(findS('TR06_spring_sakura'))}`);
   const tr9 = findS('TR09_summer_dark_hi');
-  ok(tr9.ops[3].s && tr9.ops[3].s[0] === '#6fc04a', 'TR09 %5==0 高光亮档 #6fc04a @op3');
+  ok(tr9.ops.some((o) => o.s && o.s[0] === '#6fc04a'), 'TR09 %5==0 高光亮档 #6fc04a（#102 起用 some 定位）');
   // 山：真值 MT01(40) 基态含岩纹（40%5==0）9 rect；雪线 +3
-  ok(nRect(findS('MT01_base_nosnow')) === 9, `MT01 基态 9 rect got ${nRect(findS('MT01_base_nosnow'))}`);
+  ok(nRect(findS('MT01_base_nosnow')) === 10, `MT01 基态 10 rect（#101b 地形轮三形态山）got ${nRect(findS('MT01_base_nosnow'))}`);
   ok(nRect(findS('MT02_rock')) === 9, 'MT02 岩纹 9（45%5==0 同样触发岩纹，与基态等量）');
-  ok(nRect(findS('MT04_snow_elev')) === 12, 'MT04 海拔雪线 12（9+3）');
-  ok(nRect(findS('MT06_nosnow_elevcold')) === 9, 'MT06 双门不过无雪 9');
-  // 人形（#100 文明七杰 8×10 网格重制）：基态 32 rect = 阴影1 + 网格27（描边/发/肤/瞳/衣/裤/臂游程）+ 腿2 + 靴2
-  // （种族计数 = 探针 scripts/probe-person-counts.mjs 实测；旧 6px 体 9 rect 时代断言全数退役）
+  ok(nRect(findS('MT04_snow_elev')) === 15, `MT04 海拔雪线 15（10+5，#101b 地形轮三形态雪被）got ${nRect(findS('MT04_snow_elev'))}`);
+  ok(nRect(findS('MT06_nosnow_elevcold')) === 10, 'MT06 双门不过无雪 10（#101b 地形轮）');
+  // 人形（#102 半单位重制 13×14）：基态 47 rect = 阴影1 + 网格38 + 腿2 + 靴2（腿 2 宽）
+  // （种族计数 = 探针 scripts/probe-person-counts.mjs 实测；#100 8×10 断言全数退役）
   const p1 = findS('P01_human_civ');
   ok(styleOf(p1, 0) === 'rgba(0,0,0,0.28)', 'P01 阴影 rgba(0,0,0,0.28)');
   ok(styleOf(p1, 1) === '#1a1613', `P01 网格描边 #1a1613 @op1 got ${styleOf(p1, 1)}`);
   ok(styleOf(p1, 3) === '#5b3a1e', `P01 人类褐发 #5b3a1e @op3 got ${styleOf(p1, 3)}`);
-  ok(nRect(p1) === 32, `P01 基态 32 rect got ${nRect(p1)}`);
-  ok(nRect(findS('P02_human_civ_flip')) === 32, `P02 翻转同 32（镜像网格）got ${nRect(findS('P02_human_civ_flip'))}`);
+  ok(nRect(p1) === 47, `P01 基态 47 rect（#102 半单位）got ${nRect(p1)}`);
+  ok(nRect(findS('P02_human_civ_flip')) === 47, `P02 翻转同 47（镜像网格）got ${nRect(findS('P02_human_civ_flip'))}`);
   // 七杰种族（哥布林/僵尸共用底座但特征件各异）
-  ok(nRect(findS('P10_goblin')) === 34, `P10 哥布林大耳 34 got ${nRect(findS('P10_goblin'))}`);
-  ok(nRect(findS('P11_zombie')) === 33, `P11 僵尸前伸臂 33 got ${nRect(findS('P11_zombie'))}`);
-  ok(nRect(findS('P12_elf')) === 34, `P12 精灵尖耳 34 got ${nRect(findS('P12_elf'))}`);
-  ok(nRect(findS('P13_dwarf')) === 36, `P13 矮人宽体+帽+颌须2+胸须 36 got ${nRect(findS('P13_dwarf'))}`);
-  ok(nRect(findS('P14_orc')) === 34, `P14 兽人獠牙 34 got ${nRect(findS('P14_orc'))}`);
-  ok(nRect(findS('P15_bandit')) === 33, `P15 强盗兜帽 33 got ${nRect(findS('P15_bandit'))}`);
+  ok(nRect(findS('P10_goblin')) === 49, `P10 哥布林大耳 49 got ${nRect(findS('P10_goblin'))}`);
+  ok(nRect(findS('P11_zombie')) === 48, `P11 僵尸前伸臂 48 got ${nRect(findS('P11_zombie'))}`);
+  ok(nRect(findS('P12_elf')) === 49, `P12 精灵尖耳 49 got ${nRect(findS('P12_elf'))}`);
+  ok(nRect(findS('P13_dwarf')) === 52, `P13 矮人宽体+帽+颌须2+胸须 52 got ${nRect(findS('P13_dwarf'))}`);
+  ok(nRect(findS('P14_orc')) === 49, `P14 兽人獠牙 49 got ${nRect(findS('P14_orc'))}`);
+  ok(nRect(findS('P15_bandit')) === 49, `P15 强盗兜帽 49 got ${nRect(findS('P15_bandit'))}`);
   ok(findS('P13_dwarf').ops.some((o) => o.s && o.s[0] === '#c96a15'), 'P13 矮人须 #c96a15');
   ok(findS('P14_orc').ops.some((o) => o.s && o.s[0] === '#f2ead8'), 'P14 獠牙 #f2ead8');
   ok(findS('P15_bandit').ops.some((o) => o.s && o.s[0] === '#3a342c'), 'P15 兜帽 #3a342c');
@@ -416,13 +416,13 @@ function styleOf(s, i) { return s.ops[i] && s.ops[i].s ? s.ops[i].s[0] : null; }
   ok(!!p4f && p4f.s[0] === 'rgba(0,0,0,0.28)', `P04 巨人标准阴影 0.28（专属分支废除）got ${p4f && p4f.s[0]}`);
   ok(nRect(p4) === nRect(p1), `P04 巨人 rect 与凡人同图（${nRect(p4)}）`);
   const p16 = findS('P16_lizard_tailup');
-  ok(nRect(p16) === 35, `P16 蜥蜴吻+摆尾 35 rect got ${nRect(p16)}`);
+  ok(nRect(p16) === 50, `P16 蜥蜴吻+摆尾 50 rect got ${nRect(p16)}`);
   ok(p16.ops.some((o) => o.s && o.s[0] === 'rgb(79,158,58)'), 'P16 吻/尾(蜥蜴肤) rgb(79,158,58)');
   ok(styleOf(p16, p16.ops.length - 1) === '#3a2c1c', `P16 默认革靴 #3a2c1c 收尾 got ${styleOf(p16, p16.ops.length - 1)}`);
   const p17 = findS('P17_elder');
   ok(p17.ops.some((o) => o.s && o.s[0] === '#c9c5bd'), 'P17 长者灰发 #c9c5bd');
   const p33 = findS('P33_vis_full');
-  ok(nRect(p33) === 38, `P33 涌现全标记 38 rect（ears2+horns2+冠+纹=+6）got ${nRect(p33)}`);
+  ok(nRect(p33) === 53, `P33 涌现全标记 53 rect（#102 半单位）got ${nRect(p33)}`);
   ok(p33.ops.some((o) => o.s && o.s[0] === '#7df9ff'), 'P33 荧光瞳 #7df9ff');
   ok(p33.ops.some((o) => o.s && o.s[0] === '#e9e5c9'), 'P33 角色移 shiftColor(#e8dcc8,-0.08)');
   ok(p33.ops.some((o) => o.s && o.s[0] === '#e19368'), 'P33 头冠色移 shiftColor(#cf3f2e,+0.1)');
@@ -453,14 +453,14 @@ function styleOf(s, i) { return s.ops[i] && s.ops[i].s ? s.ops[i].s[0] : null; }
   ok(c1.ops.some((o) => o.s && o.s[0] === 'rgba(0,0,0,0.25)'), 'C01 车辙影 0.25');
   ok(c1.ops.some((o) => o.s && o.s[0] === '#d9a94e'), 'C01 麻袋金');
   // 五族（#93 质感地基重制：1px 描边壳 + 双色体积 + 眼/耳/鼻 + 碎步 —— rect 数 = 探针 scripts/probe-sprite-counts.mjs 实测）
-  ok(nRect(findS('S01_sheep')) === 19, `S01 羊 19 rect（网格 v2）got ${nRect(findS('S01_sheep'))}`);
-  ok(nRect(findS('S04_wolf')) === 17, `S04 狼 17 rect（网格 v2）got ${nRect(findS('S04_wolf'))}`);
-  ok(nRect(findS('S07_snowwolf')) === 17, `S07 雪狼 17 rect（网格 v2）got ${nRect(findS('S07_snowwolf'))}`);
-  ok(nRect(findS('S09_bear')) === 19, `S09 熊 19 rect（#99 底描边行+浅腹）got ${nRect(findS('S09_bear'))}`);
-  ok(nRect(findS('S10_deer')) === 20, `S10 鹿 20 rect（网格 v2）got ${nRect(findS('S10_deer'))}`);
+  ok(nRect(findS('S01_sheep')) === 28, `S01 羊 28 rect（#102 半单位 12×8）got ${nRect(findS('S01_sheep'))}`);
+  ok(nRect(findS('S04_wolf')) === 29, `S04 狼 29 rect（#102 14×8）got ${nRect(findS('S04_wolf'))}`);
+  ok(nRect(findS('S07_snowwolf')) === 29, `S07 雪狼 29 rect（#102）got ${nRect(findS('S07_snowwolf'))}`);
+  ok(nRect(findS('S09_bear')) === 37, `S09 熊 37 rect（#102 16×9+圆耳）got ${nRect(findS('S09_bear'))}`);
+  ok(nRect(findS('S10_deer')) === 33, `S10 鹿 33 rect（#102 15×10 角+白臀）got ${nRect(findS('S10_deer'))}`);
   const s2 = findS('S02_sheep_infected');
   ok(s2.ops[0].s && s2.ops[0].s[0] === '#1a1613', 'S02 描边壳 #1a1613 @op0（#93 起 1px 轮廓先行）');
-  ok(s2.ops[4].s && s2.ops[4].s[0] === '#b8e2b4', 'S02 感染绿 #b8e2b4 @op4（网格 v2：描边/羊毛游程先行）');
+  ok(s2.ops.some((o) => o.s && o.s[0] === '#b8e2b4'), 'S02 感染绿 #b8e2b4（#102 起用 some 定位）');
 }
 console.log('[GEN RENDER2] scen=' + scen.length);
 console.log('[GEN RENDER2] sanity ' + (assertN - assertFail) + '/' + assertN + (assertFail === 0 ? ' PASS' : ' FAIL'));
