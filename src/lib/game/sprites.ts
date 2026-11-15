@@ -1488,6 +1488,34 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
         ctx.fillRect(px - 1, py - 8, 2, 2);
         ctx.fillRect(px + 10, py - 8, 2, 2);
       }
+      // —— #97 超限形态二笔·扩展（tier≥3）：悬浮符文炮台——几何结构进化而非仅换色。
+      //    棱堡上空浮空石台 + 斜指能量炮管 + 反重力光柱；炮管数随 tier 递增（1/2/3/4）——
+      //    每再 +1 阶形态可辨识递进（永筑之道高阶箭塔 = 空中堡垒）
+      if (tier >= 3) {
+        const aura = INF_AURA[(tier - 3) % INF_AURA.length];
+        const guns = Math.min(4, tier - 2); // 3→1 / 4→2 / 5→3 / 6+→4
+        // 浮空石台（悬于塔顶双旗之上，与旗杆拉开反重力缝隙）
+        ctx.fillStyle = '#5a5f6e';
+        ctx.fillRect(px - 1, py - 13, 14, 2);
+        ctx.fillStyle = '#7d8494';
+        ctx.fillRect(px - 1, py - 13, 14, 1); // 台缘受光
+        ctx.fillStyle = '#3c4050';
+        ctx.fillRect(px - 1, py - 12, 14, 1); // 台底阴影
+        // 反重力光柱（台两角托举，两帧呼吸）
+        ctx.fillStyle = aura;
+        ctx.globalAlpha = ((fc >> 4) & 1) === 0 ? 0.7 : 0.35;
+        ctx.fillRect(px, py - 11, 1, 3);
+        ctx.fillRect(px + 11, py - 11, 1, 3);
+        ctx.globalAlpha = 1;
+        // 能量炮管（台上斜指锥管：底座 + 管身 + 管口光点——阶位越高越多）
+        for (let g = 0; g < guns; g++) {
+          const gx = px + 2 + g * 3;
+          ctx.fillStyle = '#8d93a8';
+          ctx.fillRect(gx, py - 16, 2, 2); // 管身
+          ctx.fillStyle = aura;
+          ctx.fillRect(gx, py - 17, 1, 1); // 管口光点
+        }
+      }
       return;
     }
     case 4: {
@@ -1781,6 +1809,34 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
         ctx.fillStyle = ((fc >> 3) & 1) === 1 ? 'rgba(200,200,200,0.7)' : 'rgba(160,160,160,0.5)';
         ctx.fillRect(px - 3, py - 9, 2, 2); // 烟柱（fc 呼吸）
       }
+      // —— #97 超限形态二笔·扩展（tier≥3）：悬浮能量浮坞——几何结构进化而非仅换色。
+      //    蒸汽码头上空悬空泊台 + 能量灯标链；灯标数随 tier 递增（1/2/3）——
+      //    每再 +1 阶形态可辨识递进（永筑之道高阶港口 = 空中灯塔港）
+      if (tier >= 3) {
+        const aura = INF_AURA[(tier - 3) % INF_AURA.length];
+        const beacons = Math.min(3, tier - 2); // 3→1 / 4→2 / 5+→3
+        // 悬空泊台（浮于起重机吊塔之上，与烟囱拉开反重力缝隙）
+        ctx.fillStyle = '#5a5f6e';
+        ctx.fillRect(px - 2, py - 12, 18, 2);
+        ctx.fillStyle = '#7d8494';
+        ctx.fillRect(px - 2, py - 12, 18, 1); // 台缘受光
+        ctx.fillStyle = '#3c4050';
+        ctx.fillRect(px - 2, py - 11, 18, 1); // 台底阴影
+        // 反重力光柱（台两角托举，两帧呼吸）
+        ctx.fillStyle = aura;
+        ctx.globalAlpha = ((fc >> 4) & 1) === 0 ? 0.7 : 0.35;
+        ctx.fillRect(px, py - 10, 1, 3);
+        ctx.fillRect(px + 13, py - 10, 1, 3);
+        ctx.globalAlpha = 1;
+        // 能量灯标链（台沿灯塔段：塔柱 + 塔灯——阶位越高越多）
+        for (let b = 0; b < beacons; b++) {
+          const bx = px + 2 + b * 6;
+          ctx.fillStyle = '#d8d3c5';
+          ctx.fillRect(bx, py - 15, 2, 3); // 塔柱
+          ctx.fillStyle = aura;
+          ctx.fillRect(bx, py - 16, 2, 1); // 塔灯
+        }
+      }
       return;
     }
     case 8: {
@@ -1849,6 +1905,37 @@ export function drawBuilding(ctx: CanvasRenderingContext2D, b: Building, color: 
         ctx.fillStyle = '#3a342c';
         ctx.fillRect(px - 1, py + 1, 2, 3);
         ctx.fillRect(px + 13, py + 1, 2, 3); // 门柱
+      }
+      // —— #97 超限形态二笔·扩展（tier≥3）：悬浮空中集市——几何结构进化而非仅换色。
+      //    交易所金穹上空悬空贸易环（两段石板拼环 + 环心透空）+ 能量铺位灯；
+      //    铺位数随 tier 递增（1/2/3）——每再 +1 阶形态可辨识递进（永筑之道高阶集市 = 空中商团）
+      if (tier >= 3) {
+        const aura = INF_AURA[(tier - 3) % INF_AURA.length];
+        const stalls = Math.min(3, tier - 2); // 3→1 / 4→2 / 5+→3
+        // 悬浮贸易环（环身两段石板拼环 + 中段 3px 透空——环形几何而非实板）
+        ctx.fillStyle = '#5a5f6e';
+        ctx.fillRect(px - 1, py - 11, 6, 2);
+        ctx.fillRect(px + 9, py - 11, 6, 2);
+        ctx.fillStyle = '#7d8494';
+        ctx.fillRect(px - 1, py - 11, 6, 1);
+        ctx.fillRect(px + 9, py - 11, 6, 1); // 环段受光
+        ctx.fillStyle = '#3c4050';
+        ctx.fillRect(px - 1, py - 10, 6, 1);
+        ctx.fillRect(px + 9, py - 10, 6, 1); // 环段阴影
+        // 反重力光柱（环下两柱托举，两帧呼吸）
+        ctx.fillStyle = aura;
+        ctx.globalAlpha = ((fc >> 4) & 1) === 0 ? 0.7 : 0.35;
+        ctx.fillRect(px + 2, py - 9, 1, 2);
+        ctx.fillRect(px + 11, py - 9, 1, 2);
+        ctx.globalAlpha = 1;
+        // 环上能量铺位（铺灯暖金 + 幌旗光点——阶位越高越多）
+        for (let s = 0; s < stalls; s++) {
+          const sx = px + 2 + s * 5;
+          ctx.fillStyle = '#ffd93d';
+          ctx.fillRect(sx, py - 13, 2, 2); // 铺灯（暖金）
+          ctx.fillStyle = aura;
+          ctx.fillRect(sx + 2, py - 13, 1, 1); // 幌旗光点
+        }
       }
       return;
     }

@@ -1,7 +1,7 @@
 // ============ 版本与更新日志（设置中心「关于」节 + 标题屏版本徽章共用） ============
 
 /** 当前游戏版本（预览版阶段：主版本.轮次-preview） */
-export const GAME_VERSION = 'v0.86-preview';
+export const GAME_VERSION = 'v0.87-preview';
 
 /** 更新日志条目：版本号 + 日期 + 玩家视角要点（新条目在最前） */
 export interface ChangelogEntry {
@@ -11,6 +11,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    ver: 'v0.87-preview',
+    date: '2026-11-15',
+    items: [
+      '超限形态进化·补全三建筑：高阶箭塔升起悬浮符文炮台（能量炮管随阶位递增至 4 尊），高阶港口升起悬浮能量浮坞（灯标链点亮空中灯塔港），高阶集市升起悬浮空中集市（贸易环上铺位灯随阶位递增）——永筑之道超越的六大可阶进建筑（农田/兵营/箭塔/港口/集市+航船）至此全部拥有 tier≥3 几何形态，每再 +1 阶肉眼可辨',
+      '形态层与 #87 同一视觉语言：悬浮石板 + 反重力光柱两帧呼吸 + 能量构件递进 1/2/… 封顶——超限建筑群在像素天际线上连成一片',
+    ],
+  },
   {
     ver: 'v0.86-preview',
     date: '2026-11-15',
