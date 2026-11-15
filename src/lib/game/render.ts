@@ -1,5 +1,6 @@
 // ============ WorldBox Replica — Rendering pipeline ============
 import type { Army, Effect, Unit } from './types';
+import { ITEM_DEFS } from './items';
 import { T, R, RACES } from './types';
 import { drawBuilding, drawDragon, drawFire, drawPerson, drawSheep, drawTornado, drawWolf, drawBear, drawDeer, drawPenguin, drawCamel, drawScorpion, drawSnake, drawSnowWolf, drawBoat, drawSkeleton, drawDemon, drawAngel, drawPhoenix, drawEnt, drawLich, drawHydra, drawMage, drawItem, drawTroll, drawOgre, drawWhiteWalker, drawVampire, drawKraken, drawSandworm, drawBasilisk, drawCaravan, drawEmergentCreature, drawEmergentMonster, drawPersonFine, drawQuadFine, drawChicken, drawPig, drawRabbit, drawFox, drawFish, drawCrab, drawTurtle, drawShark, drawHorse, drawEagle, drawPlane } from './sprites';
 import { visCacheFor } from './emergence';
@@ -2132,8 +2133,9 @@ function drawUnitSprite(engine: GameEngine, u: Unit, wc: CanvasRenderingContext2
   drawUnitBody(engine, u, def, wc);
 }
 
-/** 质感工程 v3（Task 49）：动物远距 LOD 色表 —— zoom < 5.6 时简绘
- *  （全图视图 600+ 单位的完整精灵 ~30 rect/只 → 简绘 ~1/10 成本；远距肉眼等价）
+/** 质感工程 v3（Task 49，#98 语义更新）：动物远距色点表 —— zoom < 2.5 色点档专用
+ *  （全图视图 600+ 单位的完整精灵 ~30 rect/只 → 色点 ~1/10 成本；远距肉眼等价；
+ *  2.5–8 已全量升级为缓存精灵 blit，本表仅剩色点档与未知精灵兜底两处消费）
  *  [body, dark, w, h]：主体系列色取自各族精灵本体，尺寸近似真实占地（512 空间） */
 const ANIMAL_LOD: Record<string, [string, string, number, number]> = {
   sheep: ['#d4dde4', '#575757', 3, 2],
@@ -2221,11 +2223,11 @@ function tryDrawFine(engine: GameEngine, u: Unit, def: (typeof RACES)[number], w
 }
 
 // ==================================================================================
-// —— 质感地基 #93：单位精灵按需缓存（LRU）—— docs/世界盒质感打磨方案.md M1 ——
-// 动物/怪物精灵的视觉状态 =（物种, 离散相位, 移动中, 朝向, 受击, 染疫, 武器）有界小集合：
+// —— 质感地基 #93 动物 + #99 人形：单位精灵按需缓存（LRU）—— docs/世界盒质感打磨方案.md M1 ——
+// 精灵视觉状态 = 有界小集合（动物：物种/相位/移动/朝向/受击/染疫/武器；人形：见 personCacheKey 维度核验）。
 // 首次出现把 draw* 光栅到小离屏 canvas（锚定原点、自动测包），此后每帧 1 次 drawImage
-// 替代 20-40 次 fillRect —— 这是「废除默认视野色块档」的性能前提。
-// 人形（国色×武备×职业×发型…状态维度爆炸，#94 专题）与 Boss 巨兽（数量上帽 ≤6，直绘更省）不入缓存。
+// 替代 20-50 次 fillRect —— 这是「废除默认视野降级档」的性能前提（#98 动物双色块档 / #99 人形迷你档）。
+// Boss 巨兽（数量上帽 ≤6，直绘更省）与涌现非人形物种（visCacheFor 程序化生物）不入缓存。
 // 黄金链零影响：光栅走的就是同一 dispatchUnitSprite 真实现；无头测试环境自动退化为直绘。
 // ==================================================================================
 
@@ -2265,12 +2267,18 @@ const SPRITE_PHASE: Record<string, (fc: number, u: Unit) => number> = {
   skeleton: (fc) => ((fc >> 2) & 1) | (fc % 14 < 7 ? 2 : 0), // 步态 + 眼火闪烁
 };
 
-/** 光栅画布（精灵格）：28 宽 × 18 高，锚点 (14,16) —— 覆盖 x±14、y-16..+1，容得下全部可缓存物种 */
+/** 光栅画布（精灵格·动物）：28 宽 × 18 高，锚点 (14,16) —— 覆盖 x±14、y-16..+1，容得下全部可缓存物种 */
 const SPRC_W = 28, SPRC_H = 18, SPRC_AX = 14, SPRC_AY = 16;
-const SPRITE_CACHE_MAX = 2048; // LRU 上限（28×18×4B ≈ 2KB/条 → 峰值 ≈ 4MB）
+/** 光栅画布（精灵格·人形 #99）：20 宽 × 16 高，锚点 (10,10) —— 覆盖 x−10..+9、y−10..+5。
+ *  容得下常规/睡姿/巨躯/骑兵全分支（骑枪尖 +5f、冲锋扬尘 −6f、马背徽标 jY−8、
+ *  巨人底影 gy+3、法师星闪 headTop−2 实测均留一格裕量） */
+const PPC_W = 20, PPC_H = 16, PPC_AX = 10, PPC_AY = 10;
+const SPRITE_CACHE_MAX = 16384; // LRU 上限（#99b：2252 单位实测键数破 6144 颠簸 → 提至 16k ≈ 21MB；
+//  更极端的多样性世界由 personGate 断路器兜底回退直绘，性能下界 = M1 前直绘）
 
 interface SpriteRaster {
   cv: HTMLCanvasElement;
+  ax: number; ay: number; // 光栅锚点（人形/动物双格各异，blit 偏移用）
   sx: number; sy: number; sw: number; sh: number; // 实占包围盒（含半透明阴影，blit 源窗口）
 }
 
@@ -2279,21 +2287,76 @@ const spriteCache = new Map<string, SpriteRaster>();
 /** 缓存仪表（PerfHud 直读）：条目数 / 命中 / 未命中 */
 export const spriteCacheStats = { entries: 0, hits: 0, misses: 0 };
 
-/** 首帧光栅：把真实现画到锚定原点的小画布，并自动测量实占包围盒 */
-function rasterSprite(engine: GameEngine, u: Unit, def: (typeof RACES)[number], fc: number): SpriteRaster | null {
+/** QA A/B 开关（2400 单位满载基线对照）：window.__wbSPRC.off = true 时全量直绘；stats 挂仪表引用 */
+export const spriteCacheSwitch = { off: false, stats: null as typeof spriteCacheStats | null };
+if (typeof window !== 'undefined') {
+  spriteCacheSwitch.stats = spriteCacheStats;
+  (window as unknown as { __wbSPRC?: typeof spriteCacheSwitch }).__wbSPRC = spriteCacheSwitch;
+}
+
+/** 人形缓存断路器（#99b）：极端多样世界（异色×异装×相位组合键数超帽）防 LRU 颠簸 ——
+ *  「满帽 且 滚动窗口未中率 >40%」双条件触发后，人形回退直绘 900 帧（≈15s）再自动重试；
+ *  直绘恒正确，最坏代价 = 一次 key 构建字符串（2252 单位实测 <0.5ms/帧）。 */
+const personCacheGate = { miss: 0, tot: 0, offUntil: -1 };
+
+/** 人形缓存 key（#99 状态维度压缩）：drawPerson 全部输入 → 单串折叠。
+ *  维度核验（逐分支逐 paint* 枚举）：race（vis 基因组/dynTint 均随种族注册折叠）/ 王国色 hex /
+ *  灰发阈值位 / flip / 移动 / 16 相位（t>>2 步态·术士瞳 / t>>3 尾摆·能量槽·星闪·流光·zZ /
+ *  t>>4 呼吸·超限光环 / t>>5 睡息；zp=(t>>3)&3 与睡眠呼吸 (t>>5) 均被覆盖）/ 受击 / 染疫 /
+ *  低血条 / 睡眠 / 巨躯 / 骑乘 / 七槽装备 hlm·wep·arm·bts·shd·rng·amu / atk / job / 军备 armLv。
+ *  国冠与涌现色点画在精灵之外（blit 后补）不入 key；幼年/侏儒/受击挤压缩放在 drawUnitBody
+ *  外层 wc.scale 变换 —— 对 drawImage 同效，无需入 key；僵尸灰发守卫在 drawPerson 内
+ *  （race 折叠已隔离，key 超集仅多占条目不出错）。 */
+/** 人形相位提取（#99b 降维）：全 16 相位在 96 种族×王国组合下键数破帽（2252 单位实测
+ *  16384 满帽）—— 按位消费者裁剪维度：
+ *  · 睡姿 8 相 = zZ（bit3-4）+ 睡息（bit5）；
+ *  · 移动 4 相 = 步态（bit2）+ 装饰位（bit3：尾摆/能量槽/星闪/流光/戒闪/符闪/披风/帽冠辉）；
+ *    —— 法杖族/术士瞳/能量盾的 bit2 闪烁与步态同位，随步态位免费携带；
+ *  · 静止 4 相 = 呼吸（bit4）+ 装饰位（bit3）；持 bit2 消费件（法杖/术士兜帽/能量盾）者
+ *    补闪烁位 → 8 相；
+ *  · 移动且军备 ≥6 无拾取武器（超限战士光环明灭 bit4）者补 bit4 → 8 相。
+ *  典型世界键数 ≈ 1/4（96 组合 × 16 微态），2252 单位实测 16k 满帽 → ~4k。 */
+function personPhaseBits(fc: number, u: Unit, moving: boolean, armLv: number): number {
+  if (u.sleep) return ((fc >> 3) & 3) | (((fc >> 5) & 1) << 2);
+  const p = ((fc >> 3) & 1) | (((fc >> 2) & 1) << 1); // 装饰位 + 步态/闪烁位
+  if (moving) {
+    if (armLv >= 6 && !u.wep) return p | (((fc >> 4) & 1) << 2); // 超限光环明灭
+    return p;
+  }
+  const blink2 = u.arm === 'energy_shield' || u.hlm === 'warlock_hood' || ITEM_DEFS[u.wep ?? '']?.art === 'staff';
+  return blink2 ? (p | (((fc >> 4) & 1) << 2)) : ((((fc >> 3) & 1) | (((fc >> 4) & 1) << 2)));
+}
+
+function personCacheKey(engine: GameEngine, u: Unit, fc: number): string {
+  const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
+  const civKey = civ && civ.alive ? civ.colorHex : '-';
+  const grey = u.age > u.maxAge * 0.78 ? 1 : 0;
+  const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y) ? 1 : 0;
+  const armLv = armLvOf(engine, u.civ);
+  const phase = personPhaseBits(fc, u, moving === 1, armLv);
+  return 'P|' + u.race + '|' + civKey + '|' + grey + moving + (u.flip ? 1 : 0)
+    + (u.hurt > 0 ? 1 : 0) + (u.infected ? 1 : 0) + (u.hp < u.maxHp * 0.4 ? 1 : 0)
+    + (u.sleep ? 1 : 0) + (u.trait === 'giant' ? 1 : 0) + (u.mount ? 1 : 0) + ((u.atk ?? 0) > 0 ? 1 : 0)
+    + '|' + (u.hlm ?? '-') + '|' + (u.wep ?? '-') + '|' + (u.arm ?? '-') + '|' + (u.bts ?? '-')
+    + '|' + (u.shd ?? '-') + '|' + (u.rng ?? '-') + '|' + (u.amu ?? '-') + '|' + (u.job ?? 0)
+    + '|' + armLv + '|' + phase;
+}
+
+/** 首帧光栅：把真实现画到锚定原点的小画布，并自动测量实占包围盒（动物/人形双格参数化） */
+function rasterSprite(engine: GameEngine, u: Unit, def: (typeof RACES)[number], fc: number, w: number, h: number, ax: number, ay: number): SpriteRaster | null {
   const cv = document.createElement('canvas');
-  cv.width = SPRC_W;
-  cv.height = SPRC_H;
+  cv.width = w;
+  cv.height = h;
   const cx = cv.getContext('2d');
   if (!cx) return null;
   cx.imageSmoothingEnabled = false;
-  const cu = { ...u, dpx: SPRC_AX, dpy: SPRC_AY }; // 浅克隆：仅锚定光栅原点，其余状态原样
+  const cu = { ...u, dpx: ax, dpy: ay }; // 浅克隆：仅锚定光栅原点，其余状态原样
   dispatchUnitSprite(engine, cu, def, cx, fc);
-  const data = cx.getImageData(0, 0, SPRC_W, SPRC_H).data;
-  let minX = SPRC_W, minY = SPRC_H, maxX = -1, maxY = -1;
-  for (let y = 0; y < SPRC_H; y++) {
-    for (let x = 0; x < SPRC_W; x++) {
-      if (data[(y * SPRC_W + x) * 4 + 3] > 0) {
+  const data = cx.getImageData(0, 0, w, h).data;
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (data[(y * w + x) * 4 + 3] > 0) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
@@ -2301,27 +2364,42 @@ function rasterSprite(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
       }
     }
   }
-  if (maxX < 0) { minX = 0; minY = 0; maxX = SPRC_W - 1; maxY = SPRC_H - 1; } // 空精灵防御
-  return { cv, sx: minX, sy: minY, sw: maxX - minX + 1, sh: maxY - minY + 1 };
+  if (maxX < 0) { minX = 0; minY = 0; maxX = w - 1; maxY = h - 1; } // 空精灵防御
+  return { cv, ax, ay, sx: minX, sy: minY, sw: maxX - minX + 1, sh: maxY - minY + 1 };
 }
 
-/** 缓存档入口：命中 1 次 drawImage；未命中光栅后入表。不可缓存/无头环境返回 false 走直绘。 */
+/** 缓存档入口：命中 1 次 drawImage；未命中光栅后入表。不可缓存/无头环境返回 false 走直绘。
+ *  #99：人形走 personCacheKey + 20×16 人形格（常规/睡姿/巨躯/骑兵全分支入缓存）；
+ *  动物走相位表 + 28×18 动物格（涌现非人形与巨兽维持直绘）。 */
 function blitCachedSprite(engine: GameEngine, u: Unit, def: (typeof RACES)[number], wc: CanvasRenderingContext2D, fc: number): boolean {
-  const sprite = def.sprite;
-  if (def.vis || def.dynTint || !SPRITE_CACHEABLE.has(sprite)) return false; // 涌现物种/人形/巨兽 → 直绘
+  if (spriteCacheSwitch.off) return false; // QA 基线 A/B：全量直绘
   if (typeof document === 'undefined') return false; // 无头测试环境（node/jiti 垫片）→ 直绘
-  const phaseFn = SPRITE_PHASE[sprite];
-  if (!phaseFn) return false; // 相位表未登记 → 安全回退
-  const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
-  const key = `${sprite}|${phaseFn(fc, u)}|${moving ? 1 : 0}|${u.flip ? 1 : 0}|${u.hurt > 0 ? 1 : 0}|${u.infected ? 1 : 0}`
-    + (sprite === 'skeleton' ? `|${u.wep ?? '-'}|${(u.atk ?? 0) > 0 ? 1 : 0}` : '');
+  const sprite = def.sprite;
+  let key: string;
+  let cw: number, ch: number, cax: number, cay: number;
+  let isPerson = false;
+  if (sprite === 'person') {
+    if (fc < personCacheGate.offUntil) return false; // 断路中 → 人形直绘（见 personCacheGate 注释）
+    isPerson = true;
+    key = personCacheKey(engine, u, fc);
+    cw = PPC_W; ch = PPC_H; cax = PPC_AX; cay = PPC_AY;
+  } else {
+    if (def.vis || def.dynTint || !SPRITE_CACHEABLE.has(sprite)) return false; // 涌现物种/巨兽 → 直绘
+    const phaseFn = SPRITE_PHASE[sprite];
+    if (!phaseFn) return false; // 相位表未登记 → 安全回退
+    const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
+    key = `${sprite}|${phaseFn(fc, u)}|${moving ? 1 : 0}|${u.flip ? 1 : 0}|${u.hurt > 0 ? 1 : 0}|${u.infected ? 1 : 0}`
+      + (sprite === 'skeleton' ? `|${u.wep ?? '-'}|${(u.atk ?? 0) > 0 ? 1 : 0}` : '');
+    cw = SPRC_W; ch = SPRC_H; cax = SPRC_AX; cay = SPRC_AY;
+  }
   let e = spriteCache.get(key);
+  const hit = !!e;
   if (e) {
     spriteCache.delete(key);
     spriteCache.set(key, e); // LRU 触碰（Map 尾部 = 最近）
     spriteCacheStats.hits++;
   } else {
-    const r = rasterSprite(engine, u, def, fc);
+    const r = rasterSprite(engine, u, def, fc, cw, ch, cax, cay);
     if (!r) return false;
     e = r;
     spriteCache.set(key, e);
@@ -2331,10 +2409,22 @@ function blitCachedSprite(engine: GameEngine, u: Unit, def: (typeof RACES)[numbe
       if (oldest !== undefined && oldest !== key) spriteCache.delete(oldest);
     }
   }
+  if (isPerson) {
+    // 断路器记账：满帽 且 滚动窗口（2048 次人形 blit）未中率 >40% → 触发回退 900 帧
+    personCacheGate.tot++;
+    if (!hit) personCacheGate.miss++;
+    if (personCacheGate.tot >= 2048) {
+      if (personCacheGate.miss * 5 > personCacheGate.tot * 2 && spriteCache.size >= SPRITE_CACHE_MAX) {
+        personCacheGate.offUntil = fc + 900;
+      }
+      personCacheGate.tot = 0;
+      personCacheGate.miss = 0;
+    }
+  }
   spriteCacheStats.entries = spriteCache.size;
   const px = u.dpx ?? (u.rx ?? u.x) * 2;
   const py = u.dpy ?? (u.ry ?? u.y) * 2;
-  wc.drawImage(e.cv, e.sx, e.sy, e.sw, e.sh, px - (SPRC_AX - e.sx), py - (SPRC_AY - e.sy), e.sw, e.sh);
+  wc.drawImage(e.cv, e.sx, e.sy, e.sw, e.sh, px - (e.ax - e.sx), py - (e.ay - e.sy), e.sw, e.sh);
   return true;
 }
 
@@ -2403,8 +2493,8 @@ function dispatchUnitSprite(engine: GameEngine, u: Unit, def: (typeof RACES)[num
   }
 }
 
-/** 单位本体分发（#93 质感地基后 LOD 三档：zoom<2.5 色点 / 2.5–8 全精灵（动物走缓存 blit） / ≥8 ×4 精绘）
- *  —— 旧「2.5–5.6 中档 ANIMAL_LOD 双色块」档废除：默认视野 zoom 4.5 从此是完整像素精灵
+/** 单位本体分发（#93/#99 质感地基后 LOD 三档：zoom<2.5 色点 / 2.5–8 全精灵（动物+人形均走缓存 blit） / ≥8 ×4 精绘）
+ *  —— 旧「2.5–5.6 中档」降级档全废除（#98 动物双色块 / #99 人形迷你形）：默认视野 zoom 4.5 从此是完整像素精灵
  *  （色点档下限维持 2.5 而非方案的 1.5：1 帧格 = 8 设备 px，<2.5 缩小到亚像素会闪烁摩尔纹） */
 function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], wc: CanvasRenderingContext2D) {
   const zoom = engine.cam.zoom;
@@ -2441,43 +2531,6 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
       }
     }
     // 无表条目（涌现物种等）→ 落入下方全绘（数量稀少，成本可接受）
-  } else if (zoom < 5.6 && def.sprite === 'person') {
-    // —— P0-A 中档人形迷你形态（#93 起仅人形保留此档；动物已升级为全精灵缓存 blit —— #94 人形缓存专题） ——
-    const f = u.flip ? -1 : 1;
-    const hurt = u.hurt > 0;
-    const civ = u.civ >= 0 ? engine.civs[u.civ] : null;
-    const bx0 = f > 0 ? px : px - 1; // 身体左缘（朝向对齐）
-    const moving = u.lx !== undefined && (u.lx !== u.x || u.ly !== u.y);
-    const g = moving ? (fc >> 3) & 1 : -1;
-    // 双腿（两相步态；暗色裤装 —— 免国色系暗化字符串拼接）
-    wc.fillStyle = '#3a342c';
-    if (g === 0) {
-      wc.fillRect(bx0, py, 1, 2);
-      wc.fillRect(bx0 + 1, py + 1, 1, 1);
-    } else if (g === 1) {
-      wc.fillRect(bx0, py + 1, 1, 1);
-      wc.fillRect(bx0 + 1, py, 1, 2);
-    } else {
-      wc.fillRect(bx0, py, 1, 2);
-      wc.fillRect(bx0 + 1, py, 1, 2);
-    }
-    // 躯干（国色 2 宽）
-    wc.fillStyle = hurt ? '#ff6b5e' : civ && civ.alive ? civ.colorHex : '#9a8460';
-    wc.fillRect(bx0, py - 2, 2, 2);
-    // 头（肤色 1×1，朝向前缘）
-    wc.fillStyle = hurt ? '#ff6b5e' : '#d9a066';
-    wc.fillRect(bx0 + (f > 0 ? 1 : 0), py - 3, 1, 1);
-    // 武器像素（攻击时高举；火器深色近战钢色）
-    if (u.wep) {
-      wc.fillStyle = u.wep === 'musket' || u.wep === 'rifle' || u.wep === 'laser_rifle' ? '#4a4038' : '#d9d9d9';
-      wc.fillRect(bx0 + (f > 0 ? 2 : -1), (u.atk ?? 0) > 0 ? py - 4 : py - 2, 1, 1);
-    }
-    // P4 脚底暗描边（森林/湿地背景可读性）
-    wc.fillStyle = 'rgba(20,16,12,0.4)';
-    wc.fillRect(bx0, py + 2, 2, 1);
-    // 国王金冠（头顶 3px）
-    if (king) drawCrown(wc, bx0 + (f > 0 ? 1 : 0), py - 4);
-    return;
   }
 
   // v3 涌现物种（视觉基因组）：动态种化的非人形物种走程序化生物绘制 —— 外观随进化真实变化
@@ -2494,8 +2547,16 @@ function drawUnitBody(engine: GameEngine, u: Unit, def: (typeof RACES)[number], 
       return;
     }
   }
-  // —— #93 缓存档：常见动物/骷髅一次 drawImage（未命中或不可缓存 → dispatchUnitSprite 真实现直绘） ——
-  if (blitCachedSprite(engine, u, def, wc, fc)) return;
+  // —— #93/#99 缓存档：动物与人形一次 drawImage（未命中或不可缓存 → dispatchUnitSprite 真实现直绘） ——
+  if (blitCachedSprite(engine, u, def, wc, fc)) {
+    // 国冠/涌现色点画在缓存精灵之外（直绘随动效，不进光栅不冻结）
+    if (king && def.sprite === 'person') drawCrown(wc, px, py - 4);
+    if (def.dynTint) {
+      wc.fillStyle = u.hurt > 0 ? '#ff6b5e' : def.dynTint;
+      wc.fillRect(px, py - 4, 1, 1);
+    }
+    return;
+  }
   dispatchUnitSprite(engine, u, def, wc, fc);
   // P0-A：全绘档国王金冠（人形头顶；×2 精灵头顶 = 发际线上一行）
   if (king && def.sprite === 'person') drawCrown(wc, px, py - 4);

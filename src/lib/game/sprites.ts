@@ -1381,23 +1381,24 @@ const SHEEP_GRID = [
   'KSSSSNK',
 ];
 const SHEEP_GRID_M = mirrorGrid(SHEEP_GRID);
-/** 狼网格（9×4；B 灰毛 / S 腹暗+尾 / H 头 / A 琥珀眼 / N 鼻尖） */
+/** 狼网格（9×4；B 灰毛 / M 浅腹[#98 VLM 遗留：暗腹与山岩粘底→浅腹抬离地面] / S 尾 / H 头 / A 琥珀眼 / N 鼻尖） */
 const WOLF_GRID = [
   '......K..',
   'SKBBBAHK.',
   'SKBBBHHN.',
-  '.KSSSSK..',
+  '.KMMMMK..',
 ];
 const WOLF_GRID_M = mirrorGrid(WOLF_GRID);
 /** 雪狼：狼形白装 */
 const SNOWWOLF_GRID = WOLF_GRID;
 const SNOWWOLF_GRID_M = WOLF_GRID_M;
-/** 熊网格（9×4 宽厚；B 褐棕 / L2 肩背受光 / S 腹暗 / N 鼻） */
+/** 熊网格（9×5 宽厚；B 褐棕 / L2 肩背受光 / M 浅腹 / N 鼻；#99：底描边行 + 吻下 K 闭合——VLM 遗留「轮廓不完整」） */
 const BEAR_GRID = [
   '.KKKKKK..',
   'KBBL2BBHK',
   'KBBBBBHHN',
-  'KSSSSSSK.',
+  'KBMMMMMKK',
+  '.KKKKKKK.',
 ];
 const BEAR_GRID_M = mirrorGrid(BEAR_GRID);
 /** 鹿网格（9×5 高一级；B 鹿棕 / L2 背受光 / G 沉金角 / R 白臀 / N 鼻） */
@@ -1436,8 +1437,9 @@ export function drawWolf(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
   const step = moving ? (fc >> 3) & 1 : 0;
   const B = hurt ? PAL.hurt : PAL.fur;
   const S = hurt ? PAL.hurtDeep : PAL.furShade;
+  const M = hurt ? PAL.hurtLight : PAL.furLight; // 浅腹：抬离岩地（#98 VLM 盲测遗留）
   stampGrid(ctx, u.flip ? WOLF_GRID_M : WOLF_GRID, px - 4, py - 3, {
-    K: PAL.outline, B, S, H: B, A: hurt ? PAL.eyeLight : PAL.eyeAmber, N: PAL.inkDeep,
+    K: PAL.outline, B, S, M, H: B, A: hurt ? PAL.eyeLight : PAL.eyeAmber, N: PAL.inkDeep,
   });
   ctx.fillStyle = PAL.ink;
   ctx.fillRect(px + (step ? -1 : -2), py, 1, 1);
@@ -1453,8 +1455,9 @@ export function drawSnowWolf(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
   const step = moving ? (fc >> 3) & 1 : 0;
   const B = hurt ? PAL.hurt : PAL.snowFur;
   const S = hurt ? PAL.hurtDeep : PAL.snowShade;
+  const M = hurt ? PAL.hurtLight : PAL.snowShade; // 浅腹同雪影（雪地高亮，腹浅不突兀）
   stampGrid(ctx, u.flip ? SNOWWOLF_GRID_M : SNOWWOLF_GRID, px - 4, py - 3, {
-    K: PAL.outline, B, S, H: B, A: PAL.eyeIce, N: PAL.inkDeep,
+    K: PAL.outline, B, S, M, H: B, A: PAL.eyeIce, N: PAL.inkDeep,
   });
   ctx.fillStyle = PAL.ink;
   ctx.fillRect(px + (step ? -1 : -2), py, 1, 1);
@@ -1470,10 +1473,10 @@ export function drawBear(ctx: CanvasRenderingContext2D, u: Unit, fc = 0) {
   const step = moving ? (fc >> 3) & 1 : 0;
   const B = hurt ? PAL.hurt : PAL.bearFur;
   const S = hurt ? PAL.hurtDeep : PAL.bearShade;
-  stampGrid(ctx, u.flip ? BEAR_GRID_M : BEAR_GRID, px - 4, py - 3, {
-    K: PAL.outline, B, S, H: B, L2: hurt ? PAL.hurtLight : PAL.bearLight, N: PAL.inkDeep,
+  stampGrid(ctx, u.flip ? BEAR_GRID_M : BEAR_GRID, px - 4, py - 4, {
+    K: PAL.outline, B, S, M: hurt ? PAL.hurtLight : PAL.bearLight, H: B, L2: hurt ? PAL.hurtLight : PAL.bearLight, N: PAL.inkDeep,
   });
-  // 矮腿即爪：白爪尖碎步
+  // 矮腿即爪：白爪尖碎步（落在底描边行上——白爪点即脚）
   ctx.fillStyle = hurt ? PAL.hurtDeep : PAL.claw;
   ctx.fillRect(px + (step ? -2 : -3), py, 1, 1);
   ctx.fillRect(px + (step ? 2 : 1), py, 1, 1);

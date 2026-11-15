@@ -423,7 +423,7 @@ function styleOf(s, i) { return s.ops[i] && s.ops[i].s ? s.ops[i].s[0] : null; }
   ok(nRect(findS('S01_sheep')) === 19, `S01 羊 19 rect（网格 v2）got ${nRect(findS('S01_sheep'))}`);
   ok(nRect(findS('S04_wolf')) === 17, `S04 狼 17 rect（网格 v2）got ${nRect(findS('S04_wolf'))}`);
   ok(nRect(findS('S07_snowwolf')) === 17, `S07 雪狼 17 rect（网格 v2）got ${nRect(findS('S07_snowwolf'))}`);
-  ok(nRect(findS('S09_bear')) === 17, `S09 熊 17 rect（网格 v2）got ${nRect(findS('S09_bear'))}`);
+  ok(nRect(findS('S09_bear')) === 19, `S09 熊 19 rect（#99 底描边行+浅腹）got ${nRect(findS('S09_bear'))}`);
   ok(nRect(findS('S10_deer')) === 20, `S10 鹿 20 rect（网格 v2）got ${nRect(findS('S10_deer'))}`);
   const s2 = findS('S02_sheep_infected');
   ok(s2.ops[0].s && s2.ops[0].s[0] === '#1a1613', 'S02 描边壳 #1a1613 @op0（#93 起 1px 轮廓先行）');
